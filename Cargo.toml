@@ -1,6 +1,16 @@
 [package]
 name = "libreroaster"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "LibreRoaster is an OpenSource coffee bean roaster compatible with Artisan+"
+
+[[bin]]
+name = "libreroaster"
+path = "src/main.rs"
 
 [dependencies]
+esp-idf-hal = "0.35"
+
+[profile.release]
+opt-level = "s"
+lto = true

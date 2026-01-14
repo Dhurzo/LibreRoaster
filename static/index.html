@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 NodeMCU Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            margin: 5px;
+        }
+
+        .status-online {
+            background: #10b981;
+            color: white;
+        }
+
+        .status-offline {
+            background: #ef4444;
+            color: white;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .icon {
+            width: 30px;
+            height: 30px;
+            display: inline-block;
+        }
+
+        .led-indicator {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 3px solid #ddd;
+            margin: 20px auto;
+            transition: all 0.3s ease;
+        }
+
+        .led-indicator.on {
+            background: #ef4444;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.8);
+            border-color: #ef4444;
+        }
+
+        .led-indicator.off {
+            background: #e5e7eb;
+            border-color: #9ca3af;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .info-item {
+            padding: 15px;
+            background: #f3f4f6;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-label {
+            font-size: 0.9em;
+            color: #6b7280;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 1.1em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .slider-container {
+            margin: 20px 0;
+        }
+
+        .slider {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #e5e7eb;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            cursor: pointer;
+        }
+
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            cursor: pointer;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+
+        .notification.show {
+            transform: translateX(0);
+        }
+
+        .notification.success {
+            background: #10b981;
+        }
+
+        .notification.error {
+            background: #ef4444;
+        }
+
+        .networks-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+
+        .network-item {
+            padding: 10px;
+            border-bottom: 1px solid #f3f4f6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .network-item:last-child {
+            border-bottom: none;
+        }
+
+        .signal-strength {
+            font-size: 0.9em;
+            color: #6b7280;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔌 ESP32 NodeMCU Control Panel</h1>
+            <div id="connectionStatus">
+                <span class="status-badge status-offline">Offline</span>
+                <span id="deviceInfo" class="status-badge">Loading...</span>
+            </div>
+        </header>
+
+        <div class="dashboard">
+            <!-- LED Control Card -->
+            <div class="card">
+                <h2>
+                    <span class="icon">💡</span>
+                    LED Control
+                </h2>
+                <div id="ledIndicator" class="led-indicator off"></div>
+                
+                <div style="text-align: center;">
+                    <button class="btn" onclick="toggleLED()">Toggle LED</button>
+                    <button class="btn btn-secondary" onclick="blinkLED(5)">Blink 5x</button>
+                    <button class="btn btn-danger" onclick="turnOffLED()">Turn Off</button>
+                </div>
+
+                <div class="slider-container">
+                    <label for="brightnessSlider">Brightness: <span id="brightnessValue">50%</span></label>
+                    <input type="range" id="brightnessSlider" class="slider" min="0" max="100" value="50" onchange="setBrightness(this.value)">
+                </div>
+            </div>
+
+            <!-- System Status Card -->
+            <div class="card">
+                <h2>
+                    <span class="icon">📊</span>
+                    System Status
+                </h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Uptime</div>
+                        <div class="info-value" id="uptime">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Free Heap</div>
+                        <div class="info-value" id="freeHeap">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">CPU Frequency</div>
+                        <div class="info-value" id="cpuFreq">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Device Name</div>
+                        <div class="info-value" id="deviceName">--</div>
+                    </div>
+                </div>
+                <button class="btn" onclick="refreshStatus()" style="margin-top: 15px;">
+                    🔄 Refresh Status
+                </button>
+            </div>
+
+            <!-- WiFi Status Card -->
+            <div class="card">
+                <h2>
+                    <span class="icon">📶</span>
+                    WiFi Status
+                </h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Status</div>
+                        <div class="info-value" id="wifiStatus">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">IP Address</div>
+                        <div class="info-value" id="wifiIP">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Gateway</div>
+                        <div class="info-value" id="wifiGateway">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">DNS</div>
+                        <div class="info-value" id="wifiDNS">--</div>
+                    </div>
+                </div>
+                <button class="btn" onclick="scanNetworks()" style="margin-top: 15px;">
+                    📡 Scan Networks
+                </button>
+                <div id="networksList" class="networks-list" style="display: none;"></div>
+            </div>
+
+            <!-- Quick Actions Card -->
+            <div class="card">
+                <h2>
+                    <span class="icon">⚡</span>
+                    Quick Actions
+                </h2>
+                <div style="text-align: center;">
+                    <button class="btn" onclick="blinkPattern('sos')">💫 SOS Pattern</button>
+                    <button class="btn btn-secondary" onclick="blinkLED(10)">⚡ Rapid Blink</button>
+                    <button class="btn btn-danger" onclick="resetDevice()">🔄 Reset Device</button>
+                </div>
+                <div style="margin-top: 20px;">
+                    <button class="btn" onclick="exportLogs()">📝 Export Logs</button>
+                    <button class="btn btn-secondary" onclick="checkHealth()">🏥 Health Check</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+        const API_BASE = '/api';
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshStatus();
+            setInterval(refreshStatus, 5000); // Auto-refresh every 5 seconds
+        });
+
+        // Notification system
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type} show`;
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // API helper
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+                
+                if (data) {
+                    options.body = JSON.stringify(data);
+                }
+                
+                const response = await fetch(API_BASE + endpoint, options);
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'API call failed');
+                }
+                
+                return result;
+            } catch (error) {
+                console.error('API Error:', error);
+                showNotification(error.message, 'error');
+                throw error;
+            }
+        }
+
+        // LED Control Functions
+        async function toggleLED() {
+            try {
+                const status = await apiCall('/led');
+                const currentState = status.data.state;
+                await apiCall('/led', 'POST', { state: !currentState });
+                refreshStatus();
+                showNotification(`LED turned ${!currentState ? 'on' : 'off'}`);
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        async function turnOffLED() {
+            try {
+                await apiCall('/led', 'POST', { state: false });
+                refreshStatus();
+                showNotification('LED turned off');
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        async function blinkLED(count) {
+            try {
+                await apiCall('/led', 'POST', { 
+                    blink_count: count, 
+                    blink_on_ms: 200, 
+                    blink_off_ms: 200 
+                });
+                showNotification(`Blinked LED ${count} times`);
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        async function blinkPattern(pattern) {
+            if (pattern === 'sos') {
+                try {
+                    // SOS pattern: ... --- ...
+                    await apiCall('/led', 'POST', { 
+                        blink_count: 3, 
+                        blink_on_ms: 100, 
+                        blink_off_ms: 100 
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await apiCall('/led', 'POST', { 
+                        blink_count: 3, 
+                        blink_on_ms: 300, 
+                        blink_off_ms: 300 
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await apiCall('/led', 'POST', { 
+                        blink_count: 3, 
+                        blink_on_ms: 100, 
+                        blink_off_ms: 100 
+                    });
+                    showNotification('SOS pattern sent');
+                } catch (error) {
+                    // Error already shown by apiCall
+                }
+            }
+        }
+
+        async function setBrightness(value) {
+            try {
+                const brightness = value / 100;
+                await apiCall('/led', 'POST', { brightness });
+                document.getElementById('brightnessValue').textContent = value + '%';
+                showNotification(`Brightness set to ${value}%`);
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        // Status and System Functions
+        async function refreshStatus() {
+            try {
+                const [status, systemInfo] = await Promise.all([
+                    apiCall('/status'),
+                    apiCall('/system/info')
+                ]);
+                
+                updateUI(status.data, systemInfo.data);
+                updateConnectionStatus(true);
+            } catch (error) {
+                updateConnectionStatus(false);
+            }
+        }
+
+        function updateUI(status, systemInfo) {
+            // Update LED indicator
+            const ledIndicator = document.getElementById('ledIndicator');
+            if (status.led && status.led.state) {
+                ledIndicator.className = 'led-indicator on';
+            } else {
+                ledIndicator.className = 'led-indicator off';
+            }
+            
+            // Update system info
+            if (systemInfo) {
+                document.getElementById('uptime').textContent = formatUptime(systemInfo.uptime);
+                document.getElementById('freeHeap').textContent = formatBytes(systemInfo.system.heap_free);
+                document.getElementById('cpuFreq').textContent = systemInfo.system.cpu_freq + ' MHz';
+                document.getElementById('deviceName').textContent = systemInfo.device.name;
+                document.getElementById('deviceInfo').textContent = systemInfo.device.name + ' v' + systemInfo.device.version;
+            }
+            
+            // Update WiFi status
+            if (status.wifi) {
+                document.getElementById('wifiStatus').textContent = status.wifi.status;
+                document.getElementById('wifiIP').textContent = status.wifi.ip;
+                document.getElementById('wifiGateway').textContent = status.wifi.gateway;
+                document.getElementById('wifiDNS').textContent = status.wifi.primary_dns;
+            }
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusBadge = document.querySelector('.status-badge');
+            if (connected) {
+                statusBadge.className = 'status-badge status-online';
+                statusBadge.textContent = 'Online';
+            } else {
+                statusBadge.className = 'status-badge status-offline';
+                statusBadge.textContent = 'Offline';
+            }
+        }
+
+        // WiFi Functions
+        async function scanNetworks() {
+            try {
+                showNotification('Scanning networks...');
+                const result = await apiCall('/wifi/scan');
+                displayNetworks(result.data);
+                showNotification(`Found ${result.data.length} networks`);
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        function displayNetworks(networks) {
+            const networksList = document.getElementById('networksList');
+            networksList.innerHTML = '';
+            networksList.style.display = 'block';
+            
+            networks.forEach(network => {
+                const networkItem = document.createElement('div');
+                networkItem.className = 'network-item';
+                
+                const signalStrength = getSignalStrength(network.rssi);
+                
+                networkItem.innerHTML = `
+                    <div>
+                        <strong>${network.ssid}</strong><br>
+                        <small>${network.auth_mode}</small>
+                    </div>
+                    <div class="signal-strength">${signalStrength}</div>
+                `;
+                
+                networksList.appendChild(networkItem);
+            });
+        }
+
+        function getSignalStrength(rssi) {
+            if (rssi > -50) return 'Excellent';
+            if (rssi > -60) return 'Good';
+            if (rssi > -70) return 'Fair';
+            return 'Weak';
+        }
+
+        // Utility Functions
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        async function checkHealth() {
+            try {
+                const result = await apiCall('/system/health');
+                if (result.data === 'OK') {
+                    showNotification('System health: OK', 'success');
+                } else {
+                    showNotification('System health issues detected', 'error');
+                }
+            } catch (error) {
+                // Error already shown by apiCall
+            }
+        }
+
+        async function exportLogs() {
+            showNotification('Log export not implemented yet', 'error');
+        }
+
+        async function resetDevice() {
+            if (confirm('Are you sure you want to reset the device?')) {
+                showNotification('Device reset not implemented via API', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

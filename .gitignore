@@ -24,5 +24,28 @@ target
 .embuild
 
 # Added by cargo
-
 /target
+
+# Local configuration (contains secrets)
+config.json
+
+# Lock files (generated)
+Cargo.lock
+
+# Build artifacts and temporary files
+*.bin
+*.elf
+*.out
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
