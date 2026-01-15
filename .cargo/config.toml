@@ -1,21 +1,17 @@
-[unstable]
-build-std = ["core", "alloc", "compiler_builtins"]
-build-std-features = ["compiler-builtins-mem"]
-
-[build]
-target = "xtensa-esp32-espidf"
-
-[target.xtensa-esp32-espidf]
-linker = "ldproxy"
-runner = "cargo-espflash"
-
-# Fix libclang target triple issue for bindgen
-# Note: LIBCLANG_PATH should be updated to match your installation
-[target.xtensa-esp32-espidf.env]
-# LIBCLANG_PATH = "/path/to/your/esp-clang/lib"
-BINDGEN_EXTRA_CLANG_ARGS = "--target=xtensa --allowlist-var='.*' --blocklist-type='mbstate_t'"
-ESP_IDF_SYS_PURE_CONFIG_FILE = "1"
+[target.riscv32imc-unknown-none-elf]
+runner = "espflash flash --monitor --chip esp32c3"
 
 [env]
-ESP_IDF_TOOLS_INSTALL_DIR = "global"
-ESP_IDF_VERSION = "v5.2.2"
+ESP_LOG="info"
+
+[build]
+rustflags = [
+  # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
+  # NOTE: May negatively impact performance of produced code
+  "-C", "force-frame-pointers",
+]
+
+target = "riscv32imc-unknown-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]

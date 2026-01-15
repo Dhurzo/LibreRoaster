@@ -1,5 +1,4 @@
 [toolchain]
-channel = "esp"
-components = ["rust-src", "rustfmt", "clippy"]
-targets = ["xtensa-esp32-espidf"]
-profile = "minimal"
+channel    = "stable"
+components = ["rust-src"]
+targets = ["riscv32imc-unknown-none-elf"]
