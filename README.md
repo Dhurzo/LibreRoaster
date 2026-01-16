@@ -44,5 +44,5 @@ Improper handling can result in **severe injury, fire, or death**.
 
 ## 📜 License
 
-This project is open source under MIT LICENCE.  
+This project is open source under APACHE-2 LICENCE.  
 See the `LICENSE` file for more information.
