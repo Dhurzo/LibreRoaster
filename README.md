@@ -308,9 +308,7 @@ target/riscv32imc-esp-espidf/release/libreroaster
 
 ## License
 
-This project is licensed under the MIT License. See LICENSE file for details.
-
-
+This project is licensed under the APACHE-2 License. See LICENSE file for details.
 
 
 ## Support
