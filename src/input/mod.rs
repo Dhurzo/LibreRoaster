@@ -1,6 +1,6 @@
 // Simplified input handler for demonstration
 use crate::config::ArtisanCommand;
-use log::{info, warn};
+use log::info;
 
 #[derive(Debug)]
 pub enum InputError {
@@ -11,6 +11,7 @@ pub enum InputError {
 
 pub struct ArtisanInput {
     // Simplified placeholder for demo
+    #[allow(dead_code)]
     enabled: bool,
 }
 

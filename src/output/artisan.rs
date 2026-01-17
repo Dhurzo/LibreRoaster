@@ -49,11 +49,6 @@ impl ArtisanFormatter {
         }
     }
 
-    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-        Self::update_bt_history(&mut self.bt_history, current_bt);
-        Self::compute_ror_from_history(&self.bt_history)
-    }
-
     fn update_bt_history(history: &mut Vec<f32>, current_bt: f32) {
         if history.len() >= 5 {
             history.remove(0);

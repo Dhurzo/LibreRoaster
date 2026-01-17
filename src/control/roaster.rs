@@ -271,7 +271,7 @@ impl RoasterControl {
 
     /// Process Artisan+ commands
     pub fn process_artisan_command(&mut self, command: ArtisanCommand) -> Result<(), RoasterError> {
-        let current_time = Instant::now();
+        let _current_time = Instant::now();
 
         match command {
             ArtisanCommand::SetHeater(value) => {

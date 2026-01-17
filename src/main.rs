@@ -48,8 +48,8 @@ async fn main(spawner: Spawner) -> ! {
     info!("LibreRoaster started - Artisan+ control ready");
 
     // Initialize components
-    let mut roaster = RoasterControl::new().unwrap();
-    let mut fan = FanController::new(()).unwrap();
+    let roaster = RoasterControl::new().unwrap();
+    let fan = FanController::new(()).unwrap();
     let formatter = ArtisanFormatter::new();
 
     // Store in static for shared access
@@ -61,20 +61,31 @@ async fn main(spawner: Spawner) -> ! {
     // Clone formatter for tasks
     let formatter2 = formatter.clone();
     let formatter3 = formatter.clone();
-    let formatter4 = formatter.clone();
 
     // Spawn Artisan+ tasks
     spawner
         .spawn(control_loop(
-            unsafe { ROASTER.as_mut().unwrap() },
-            unsafe { FAN.as_mut().unwrap() },
+            #[allow(static_mut_refs)]
+            unsafe {
+                ROASTER.as_mut().unwrap()
+            },
+            #[allow(static_mut_refs)]
+            unsafe {
+                FAN.as_mut().unwrap()
+            },
             formatter2,
         ))
         .unwrap();
     spawner
         .spawn(artisan_demo(
-            unsafe { ROASTER.as_mut().unwrap() },
-            unsafe { FAN.as_mut().unwrap() },
+            #[allow(static_mut_refs)]
+            unsafe {
+                ROASTER.as_mut().unwrap()
+            },
+            #[allow(static_mut_refs)]
+            unsafe {
+                FAN.as_mut().unwrap()
+            },
             formatter3,
         ))
         .unwrap();
@@ -88,8 +99,8 @@ async fn main(spawner: Spawner) -> ! {
 #[embassy_executor::task]
 async fn control_loop(
     roaster: &'static mut RoasterControl,
-    fan: &'static mut FanController,
-    formatter: ArtisanFormatter,
+    _fan: &'static mut FanController,
+    _formatter: ArtisanFormatter,
 ) {
     info!("Roaster control loop started");
 
@@ -123,7 +134,7 @@ async fn control_loop(
 async fn artisan_demo(
     roaster: &'static mut RoasterControl,
     fan: &'static mut FanController,
-    formatter: ArtisanFormatter,
+    _formatter: ArtisanFormatter,
 ) {
     info!("Artisan+ Command Demo Started");
 
