@@ -26,7 +26,6 @@ pub struct ArtisanFormatter {
 }
 
 impl ArtisanFormatter {
-    /// Create new Artisan+ formatter
     pub fn new() -> Self {
         Self {
             start_time: Instant::now(),
@@ -35,7 +34,7 @@ impl ArtisanFormatter {
         }
     }
 
-    /// Reset formatter (call when roast starts)
+
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
@@ -68,29 +67,22 @@ impl ArtisanFormatter {
 
 impl OutputFormatter for ArtisanFormatter {
     fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
-        // Calculate elapsed seconds since start
+
         let elapsed_secs = self.start_time.elapsed().as_secs();
 
-        // Get temperatures
         let et = status.env_temp;
         let bt = status.bean_temp;
 
-        // Calculate delta BT (change from previous)
         let delta_bt = if self.last_bt != 0.0 {
             bt - self.last_bt
         } else {
             0.0
         };
 
-        // Get power output (SSR percentage)
         let power = status.ssr_output;
 
-        // Note: ROR calculation would need mutable access,
-        // for now using delta_BT as approximation
         let ror = delta_bt;
 
-        // Format according to Artisan+ protocol
-        // Format: #time,ET,BT,ROR,Power,DeltaBT
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
         let line = format!(
             "#{}.{:02},{:.1},{:.1},{:.2},{:.1},{:.2}",
@@ -104,6 +96,19 @@ impl OutputFormatter for ArtisanFormatter {
         );
 
         Ok(line)
+    }
+}
+
+impl ArtisanFormatter {
+
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+        format!(
+            "{:.1},{:.1},{:.1},{:.1}",
+            status.env_temp,   // ET
+            status.bean_temp,  // BT
+            status.ssr_output, // Power (heater)
+            fan_speed          // Fan
+        )
     }
 }
 
@@ -115,7 +120,6 @@ pub struct MutableArtisanFormatter {
 }
 
 impl MutableArtisanFormatter {
-    /// Create new mutable Artisan+ formatter
     pub fn new() -> Self {
         Self {
             start_time: Instant::now(),
@@ -124,39 +128,34 @@ impl MutableArtisanFormatter {
         }
     }
 
-    /// Reset formatter (call when roast starts)
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
         self.bt_history.clear();
     }
 
-    /// Format system status into Artisan+ protocol string
     pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
-        // Calculate elapsed seconds since start
+
         let elapsed_secs = self.start_time.elapsed().as_secs();
 
-        // Get temperatures
+
         let et = status.env_temp;
         let bt = status.bean_temp;
 
-        // Calculate delta BT
+
         let delta_bt = if self.last_bt != 0.0 {
             bt - self.last_bt
         } else {
             0.0
         };
 
-        // Update last BT
         self.last_bt = bt;
 
-        // Calculate ROR using moving average
         let ror = self.calculate_ror(bt);
 
-        // Get power output
+
         let power = status.ssr_output;
 
-        // Format according to Artisan+ protocol
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
         let line = format!(
             "#{}.{:02},{:.1},{:.1},{:.2},{:.1},{:.2}",
@@ -172,16 +171,14 @@ impl MutableArtisanFormatter {
         Ok(line)
     }
 
-    /// Calculate rate of rise using moving average
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-        // Add current temperature to history
+
         if self.bt_history.len() >= 5 {
-            // Remove oldest if full
+
             self.bt_history.remove(0);
         }
         self.bt_history.push(current_bt);
 
-        // Calculate ROR using last 2-5 points
         if self.bt_history.len() < 2 {
             0.0
         } else {
