@@ -20,6 +20,9 @@ use libreroaster::control::RoasterControl;
 use libreroaster::hardware::fan::FanController;
 use libreroaster::output::artisan::ArtisanFormatter;
 
+static mut ROASTER: Option<RoasterControl> = None;
+static mut FAN: Option<FanController> = None;
+
 // This creates a default app-descriptor required by esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -49,21 +52,31 @@ async fn main(spawner: Spawner) -> ! {
     let mut fan = FanController::new(()).unwrap();
     let formatter = ArtisanFormatter::new();
 
-    info!("LibreRoaster Artisan+ Control System");
-    info!("=====================================");
-    info!("Supported Commands:");
-    info!("  READ  -> Returns ET,BT,Power,Fan");
-    info!("  OT1 x -> Set heater to x% (0-100)");
-    info!("  IO3 x -> Set fan to x% (0-100)");
-    info!("  STOP  -> Emergency stop");
-    info!("=====================================");
+    // Store in static for shared access
+    unsafe {
+        ROASTER = Some(roaster);
+        FAN = Some(fan);
+    }
+
+    // Clone formatter for tasks
+    let formatter2 = formatter.clone();
+    let formatter3 = formatter.clone();
+    let formatter4 = formatter.clone();
 
     // Spawn Artisan+ tasks
     spawner
-        .spawn(control_loop(&mut roaster, &mut fan, &formatter))
+        .spawn(control_loop(
+            unsafe { ROASTER.as_mut().unwrap() },
+            unsafe { FAN.as_mut().unwrap() },
+            formatter2,
+        ))
         .unwrap();
     spawner
-        .spawn(artisan_demo(&mut roaster, &mut fan, &formatter))
+        .spawn(artisan_demo(
+            unsafe { ROASTER.as_mut().unwrap() },
+            unsafe { FAN.as_mut().unwrap() },
+            formatter3,
+        ))
         .unwrap();
 
     loop {
@@ -74,9 +87,9 @@ async fn main(spawner: Spawner) -> ! {
 
 #[embassy_executor::task]
 async fn control_loop(
-    roaster: &mut RoasterControl,
-    fan: &mut FanController,
-    formatter: &ArtisanFormatter,
+    roaster: &'static mut RoasterControl,
+    fan: &'static mut FanController,
+    formatter: ArtisanFormatter,
 ) {
     info!("Roaster control loop started");
 
@@ -107,7 +120,11 @@ async fn control_loop(
 }
 
 #[embassy_executor::task]
-async fn artisan_demo(roaster: &mut RoasterControl, fan: &mut FanController) {
+async fn artisan_demo(
+    roaster: &'static mut RoasterControl,
+    fan: &'static mut FanController,
+    formatter: ArtisanFormatter,
+) {
     info!("Artisan+ Command Demo Started");
 
     // Wait for system to stabilize
@@ -118,7 +135,7 @@ async fn artisan_demo(roaster: &mut RoasterControl, fan: &mut FanController) {
 
     // Initial status (READ command simulation)
     let status = roaster.get_status();
-    let response = formatter.format_read_response(&status, fan.get_speed());
+    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
     info!("READ Response: {}", response);
 
     // OT1 command - Set heater to 75%
@@ -138,7 +155,7 @@ async fn artisan_demo(roaster: &mut RoasterControl, fan: &mut FanController) {
 
     // Updated status
     let status = roaster.get_status();
-    let response = formatter.format_read_response(&status, fan.get_speed());
+    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
     info!("Updated READ Response: {}", response);
 
     // OT1 command - Set heater to 25%
@@ -162,7 +179,7 @@ async fn artisan_demo(roaster: &mut RoasterControl, fan: &mut FanController) {
 
     // Final status
     let status = roaster.get_status();
-    let response = formatter.format_read_response(&status, fan.get_speed());
+    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
     info!("Final READ Response: {}", response);
 
     info!("=== Demo Complete ===");
