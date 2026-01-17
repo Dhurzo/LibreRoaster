@@ -34,73 +34,86 @@ impl ArtisanFormatter {
         }
     }
 
-
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
         self.bt_history.clear();
     }
 
-    /// Calculate rate of rise using moving average
-    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-        // Add current temperature to history
-        if self.bt_history.len() >= 5 {
-            // Remove oldest if full
-            self.bt_history.remove(0);
+    fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
+        if last_bt != 0.0 {
+            current_bt - last_bt
+        } else {
+            0.0
         }
-        self.bt_history.push(current_bt);
+    }
 
-        // Calculate ROR using last 2-5 points
-        if self.bt_history.len() < 2 {
+    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
+        Self::update_bt_history(&mut self.bt_history, current_bt);
+        Self::compute_ror_from_history(&self.bt_history)
+    }
+
+    fn update_bt_history(history: &mut Vec<f32>, current_bt: f32) {
+        if history.len() >= 5 {
+            history.remove(0);
+        }
+        history.push(current_bt);
+    }
+
+    fn compute_ror_from_history(history: &[f32]) -> f32 {
+        if history.len() < 2 {
             0.0
         } else {
-            let samples = self.bt_history.len();
-            let first_bt = self.bt_history[0];
-            let last_bt = self.bt_history[samples - 1];
+            let samples = history.len();
+            let first_bt = history[0];
+            let last_bt = history[samples - 1];
 
             // ROR = (BT_current - BT_oldest) / (time_elapsed)
             // Assuming 1-second intervals between samples
             (last_bt - first_bt) / (samples as f32 - 1.0)
         }
     }
+
+    fn format_time(elapsed_secs: u64, elapsed_ms: u32) -> String {
+        format!("{}.{:02}", elapsed_secs, elapsed_ms / 10)
+    }
+
+    fn format_artisan_line(
+        time_str: &str,
+        et: f32,
+        bt: f32,
+        ror: f32,
+        power: f32,
+        delta_bt: f32,
+    ) -> String {
+        format!(
+            "#{}{:.1},{:.1},{:.2},{:.1},{:.2}",
+            time_str, et, bt, ror, power, delta_bt
+        )
+    }
 }
 
 impl OutputFormatter for ArtisanFormatter {
     fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
-
         let elapsed_secs = self.start_time.elapsed().as_secs();
+        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
         let et = status.env_temp;
         let bt = status.bean_temp;
-
-        let delta_bt = if self.last_bt != 0.0 {
-            bt - self.last_bt
-        } else {
-            0.0
-        };
-
         let power = status.ssr_output;
 
+        let delta_bt = Self::calculate_delta_bt(bt, self.last_bt);
         let ror = delta_bt;
 
-        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
-        let line = format!(
-            "#{}.{:02},{:.1},{:.1},{:.2},{:.1},{:.2}",
-            elapsed_secs,
-            elapsed_ms / 10,
-            et,
-            bt,
-            ror,
-            power,
-            delta_bt
-        );
+        let time_str = Self::format_time(elapsed_secs, elapsed_ms);
+        let line = Self::format_artisan_line(&time_str, et, bt, ror, power, delta_bt);
 
         Ok(line)
     }
 }
+}
 
 impl ArtisanFormatter {
-
     pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
         format!(
             "{:.1},{:.1},{:.1},{:.1}",
@@ -135,13 +148,42 @@ impl MutableArtisanFormatter {
     }
 
     pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
-
         let elapsed_secs = self.start_time.elapsed().as_secs();
-
+        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
         let et = status.env_temp;
         let bt = status.bean_temp;
+        let power = status.ssr_output;
 
+        let delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
+        self.last_bt = bt;
+
+        let ror = self.calculate_ror(bt);
+
+        let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
+        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, power, delta_bt);
+
+        Ok(line)
+    }
+
+    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
+        ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        ArtisanFormatter::compute_ror_from_history(&self.bt_history)
+    }
+}
+    }
+
+    pub fn reset(&mut self) {
+        self.start_time = Instant::now();
+        self.last_bt = 0.0;
+        self.bt_history.clear();
+    }
+
+    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
+        let elapsed_secs = self.start_time.elapsed().as_secs();
+
+        let et = status.env_temp;
+        let bt = status.bean_temp;
 
         let delta_bt = if self.last_bt != 0.0 {
             bt - self.last_bt
@@ -152,7 +194,6 @@ impl MutableArtisanFormatter {
         self.last_bt = bt;
 
         let ror = self.calculate_ror(bt);
-
 
         let power = status.ssr_output;
 
@@ -172,9 +213,7 @@ impl MutableArtisanFormatter {
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-
         if self.bt_history.len() >= 5 {
-
             self.bt_history.remove(0);
         }
         self.bt_history.push(current_bt);
