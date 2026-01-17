@@ -23,10 +23,6 @@ use libreroaster::output::artisan::ArtisanFormatter;
 static mut ROASTER: Option<RoasterControl> = None;
 static mut FAN: Option<FanController> = None;
 
-// This creates a default app-descriptor required by esp-idf bootloader.
-// For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
-esp_bootloader_esp_idf::esp_app_desc!();
-
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
