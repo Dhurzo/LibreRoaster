@@ -41,7 +41,8 @@ async fn main(spawner: Spawner) -> ! {
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
-    info!("LibreRoaster started - Artisan+ control ready");
+    info!("LibreRoaster started - Artisan+ control ready:\n
+            Wake the f*** up samurai we have beans to burn!");
 
     // Initialize components
     let roaster = RoasterControl::new().unwrap();
