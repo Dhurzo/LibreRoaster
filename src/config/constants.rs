@@ -74,6 +74,17 @@ pub const MAX31856_FAULT_CNVRANGE: u8 = 0x01; // Converter Range
 // Error Messages
 pub const WAKE_MESSAGE: &str = "Wake the f*** up samurai we have beans to burn!";
 
+// Output/Serial Configuration
+pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000; // 1Hz default output frequency
+pub const ARTISAN_BAUD_RATE: u32 = 115200; // Artisan+ compatible baud rate
+pub const OUTPUT_BUFFER_SIZE: usize = 256; // Buffer size for output formatting
+
+// Artisan+ Protocol Configuration
+pub const ARTISAN_FORMAT: &str = "#time,ET,BT,ROR,Power,DeltaBT";
+pub const ARTISAN_DECIMAL_PLACES: usize = 1; // Decimal places for temperature
+pub const ARTISAN_ROR_DECIMAL_PLACES: usize = 2; // Decimal places for rate of rise
+pub const ROR_HISTORY_SIZE: usize = 5; // Number of samples for ROR calculation
+
 // PID Controller Gains (Coffee Roaster Optimized)
 pub const PID_KP: f32 = 2.0; // Proportional gain
 pub const PID_KI: f32 = 0.01; // Integral gain (small to prevent overshoot)

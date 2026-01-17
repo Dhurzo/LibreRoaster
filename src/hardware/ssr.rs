@@ -1,5 +1,4 @@
 use embedded_hal::digital::OutputPin;
-use esp_hal::gpio::Output;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SsrError {

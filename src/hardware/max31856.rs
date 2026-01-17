@@ -1,8 +1,7 @@
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::{SpiBus, SpiDevice};
-use esp_hal::gpio::Output;
-use esp_hal::peripherals::SPI2;
-use esp_hal::spi::{Spi, SpiMode};
+use esp_hal::spi::master::Spi;
+use esp_hal::spi::SpiMode;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Max31856Error {

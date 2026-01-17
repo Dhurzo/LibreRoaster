@@ -1,6 +1,7 @@
 use crate::config::*;
-use crate::hardware::pid::CoffeeRoasterPid;
-use embassy_time::{Duration, Instant, Timer};
+use crate::control::pid::CoffeeRoasterPid;
+use crate::output::OutputManager;
+use embassy_time::{Duration, Instant};
 use log::{info, warn};
 
 #[derive(Debug)]
@@ -18,6 +19,7 @@ pub struct RoasterControl {
     last_temp_read: Option<Instant>,
     last_pid_update: Option<Instant>,
     emergency_flag: bool,
+    output_manager: OutputManager,
 }
 
 impl RoasterControl {
@@ -31,6 +33,7 @@ impl RoasterControl {
             last_temp_read: None,
             last_pid_update: None,
             emergency_flag: false,
+            output_manager: OutputManager::new(),
         })
     }
 
@@ -72,48 +75,40 @@ impl RoasterControl {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::StartRoast(target_temp) => {
-                if self.state != RoasterState::Idle {
-                    return Err(RoasterError::InvalidState);
-                }
-
+                // Simplified for Artisan+ - no state restrictions
                 self.pid_controller
                     .set_target(target_temp)
                     .map_err(|_| RoasterError::PidError)?;
                 self.pid_controller.enable();
                 self.status.target_temp = target_temp;
-                self.state = RoasterState::Heating;
                 self.status.pid_enabled = true;
 
+                // Reset output manager for new roast
+                self.output_manager.reset();
+
                 info!(
-                    "Starting roast with target temperature: {:.1}°C",
+                    "Artisan+ control started with target temperature: {:.1}°C",
                     target_temp
                 );
             }
 
             RoasterCommand::StopRoast => {
-                if self.state == RoasterState::EmergencyStop {
-                    return Err(RoasterError::InvalidState);
-                }
-
+                // Simplified for Artisan+ - immediate stop
                 self.pid_controller.disable();
                 self.status.ssr_output = 0.0;
                 self.status.pid_enabled = false;
-                self.state = RoasterState::Cooling;
 
-                info!("Stopping roast, entering cooling phase");
+                info!("Artisan+ control stopped - heating disabled");
             }
 
             RoasterCommand::SetTemperature(target_temp) => {
-                if !self.pid_controller.is_enabled() {
-                    return Err(RoasterError::InvalidState);
-                }
-
+                // Simplified for Artisan+ - allow temperature setting even if not enabled
                 self.pid_controller
                     .set_target(target_temp)
                     .map_err(|_| RoasterError::PidError)?;
                 self.status.target_temp = target_temp;
 
-                info!("Target temperature updated to: {:.1}°C", target_temp);
+                info!("Artisan+ target temperature set to: {:.1}°C", target_temp);
             }
 
             RoasterCommand::EmergencyStop => {
@@ -133,58 +128,65 @@ impl RoasterControl {
         // Check temperature sensor validity
         if let Some(last_read) = self.last_temp_read {
             if current_time.duration_since(last_read)
-                > Duration::from_millis(TEMP_VALIDITY_TIMEOUT_MS)
+                > Duration::from_millis(TEMP_VALIDITY_TIMEOUT_MS as u64)
             {
                 warn!("Temperature sensor timeout detected");
                 self.emergency_shutdown("Temperature sensor timeout")?;
             }
         }
 
-        // Update PID control based on current state
+        // Simplified control for Artisan+ - only check fault states
         let output = match self.state {
-            RoasterState::Heating => {
-                // PID control with maximum output allowed
-                self.update_pid_control(current_time)
-            }
-            RoasterState::Stable => {
-                // Normal PID control
-                self.update_pid_control(current_time)
-            }
-            RoasterState::Idle => {
-                // No heating when idle
-                self.pid_controller.disable();
-                self.status.pid_enabled = false;
-                0.0
-            }
-            RoasterState::Cooling => {
-                // Gradual reduction to zero
-                self.status.pid_enabled = false;
-                self.pid_controller.disable();
-
-                let current_output = self.status.ssr_output;
-                let reduction = current_output * 0.1; // Reduce by 10% per cycle
-
-                if current_output <= 1.0 {
-                    self.state = RoasterState::Idle;
-                    0.0
-                } else {
-                    current_output - reduction
-                }
-            }
             RoasterState::Fault | RoasterState::EmergencyStop => {
-                // Always off in fault states
+                // Always off in fault states - safety override
                 0.0
+            }
+            _ => {
+                // For all other states (Idle, Heating, Stable, Cooling), use PID control
+                // Artisan+ manages when to enable/disable via commands
+                if self.status.pid_enabled {
+                    self.update_pid_control(current_time)
+                } else {
+                    // PID disabled - no heating
+                    0.0
+                }
             }
         };
 
         self.status.ssr_output = output.clamp(0.0, 100.0);
+
+        // Update output status
+        self.status.state = self.state;
+
         Ok(self.status.ssr_output)
+    }
+
+    /// Process output (serial printing) - call this from main loop
+    ///
+    /// Modified for Artisan+ control - always processes output when enabled
+    pub async fn process_output(&mut self) -> Result<(), RoasterError> {
+        // Always process output for Artisan+ compatibility
+        if let Err(e) = self.output_manager.process_status(&self.status).await {
+            warn!("Output error: {:?}", e);
+        }
+        Ok(())
+    }
+
+    /// Get reference to output manager for configuration
+    pub fn get_output_manager(&self) -> &OutputManager {
+        &self.output_manager
+    }
+
+    /// Get mutable reference to output manager for configuration
+    pub fn get_output_manager_mut(&mut self) -> &mut OutputManager {
+        &mut self.output_manager
     }
 
     fn update_pid_control(&mut self, current_time: Instant) -> f32 {
         // Check if it's time for PID update
         let should_update = if let Some(last_update) = self.last_pid_update {
-            current_time.duration_since(last_update) >= Duration::from_millis(PID_SAMPLE_TIME_MS)
+            current_time.duration_since(last_update)
+                >= Duration::from_millis(PID_SAMPLE_TIME_MS as u64)
         } else {
             true
         };

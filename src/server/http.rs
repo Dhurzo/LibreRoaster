@@ -1,6 +1,10 @@
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::String;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
-use embassy_time::{Duration, Timer};
+use embassy_time::Duration;
 use log::info;
 
 pub struct HttpServer<'a> {
