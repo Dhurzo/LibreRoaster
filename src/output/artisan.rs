@@ -7,18 +7,17 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use embassy_time::Instant;
 
-/// Artisan+ protocol formatter
+/// Artisan standard CSV protocol formatter
 ///
-/// Implements the standard Artian+ serial protocol format:
-/// #time,ET,BT,ROR,Power,DeltaBT
+/// Implements the standard Artisan serial protocol format:
+/// time,ET,BT,ROR,Gas
 ///
 /// Fields:
 /// - time: Seconds since roast start
 /// - ET: Environment temperature (°C)
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
-/// - Power: SSR output percentage (0-100)
-/// - DeltaBT: BT change from previous reading
+/// - Gas: SSR output percentage (0-100) as heater control
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
@@ -74,18 +73,8 @@ impl ArtisanFormatter {
         format!("{}.{:02}", elapsed_secs, elapsed_ms / 10)
     }
 
-    fn format_artisan_line(
-        time_str: &str,
-        et: f32,
-        bt: f32,
-        ror: f32,
-        power: f32,
-        delta_bt: f32,
-    ) -> String {
-        format!(
-            "#{}{:.1},{:.1},{:.2},{:.1},{:.2}",
-            time_str, et, bt, ror, power, delta_bt
-        )
+    fn format_artisan_line(time_str: &str, et: f32, bt: f32, ror: f32, gas: f32) -> String {
+        format!("{}{:.1},{:.1},{:.2},{:.1}", time_str, et, bt, ror, gas)
     }
 }
 
@@ -96,13 +85,13 @@ impl OutputFormatter for ArtisanFormatter {
 
         let et = status.env_temp;
         let bt = status.bean_temp;
-        let power = status.ssr_output;
+        let gas = status.ssr_output; // SSR output as gas control
 
         let delta_bt = Self::calculate_delta_bt(bt, self.last_bt);
         let ror = delta_bt;
 
         let time_str = Self::format_time(elapsed_secs, elapsed_ms);
-        let line = Self::format_artisan_line(&time_str, et, bt, ror, power, delta_bt);
+        let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
         Ok(line)
     }
@@ -148,15 +137,15 @@ impl MutableArtisanFormatter {
 
         let et = status.env_temp;
         let bt = status.bean_temp;
-        let power = status.ssr_output;
+        let gas = status.ssr_output; // SSR output as gas control
 
-        let delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
+        let _delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
         self.last_bt = bt;
 
         let ror = self.calculate_ror(bt);
 
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
-        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, power, delta_bt);
+        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
         Ok(line)
     }

@@ -19,6 +19,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     match parts.as_slice() {
         ["READ"] => Ok(ArtisanCommand::ReadStatus),
 
+        ["START"] => Ok(ArtisanCommand::StartRoast),
+
         ["OT1", value_str] => {
             let value = parse_percentage(value_str)?;
             if value <= 100 {
@@ -57,6 +59,12 @@ mod tests {
     fn test_parse_read_command() {
         let result = parse_artisan_command("READ");
         assert!(matches!(result, Ok(ArtisanCommand::ReadStatus)));
+    }
+
+    #[test]
+    fn test_parse_start_command() {
+        let result = parse_artisan_command("START");
+        assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
     }
 
     #[test]

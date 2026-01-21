@@ -18,10 +18,14 @@ extern crate alloc;
 
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::fan::FanController;
+use libreroaster::hardware::uart::initialize_uart_system;
+use libreroaster::hardware::uart::tasks::{uart_reader_task, uart_writer_task};
+use libreroaster::input::ArtisanInput;
 use libreroaster::output::artisan::ArtisanFormatter;
 
 static mut ROASTER: Option<RoasterControl> = None;
 static mut FAN: Option<FanController> = None;
+static mut ARTISAN_INPUT: Option<ArtisanInput> = None;
 
 #[allow(
     clippy::large_stack_frames,
@@ -41,25 +45,35 @@ async fn main(spawner: Spawner) -> ! {
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
-    info!("LibreRoaster started - Artisan+ control ready:\n
-            Wake the f*** up samurai we have beans to burn!");
+    initialize_uart_system(peripherals.UART0).expect("Failed to initialize UART system");
+
+    info!(
+        "LibreRoaster started - Artisan+ UART control ready:\n
+            Wake the f*** up samurai we have beans to burn!"
+    );
 
     // Initialize components
     let roaster = RoasterControl::new().unwrap();
     let fan = FanController::new(()).unwrap();
+    let artisan_input = ArtisanInput::new().unwrap();
     let formatter = ArtisanFormatter::new();
 
     // Store in static for shared access
     unsafe {
         ROASTER = Some(roaster);
         FAN = Some(fan);
+        ARTISAN_INPUT = Some(artisan_input);
     }
 
     // Clone formatter for tasks
     let formatter2 = formatter.clone();
     let formatter3 = formatter.clone();
 
-    // Spawn Artisan+ tasks
+    // Start UART communication tasks
+    spawner.spawn(uart_reader_task()).unwrap();
+    spawner.spawn(uart_writer_task()).unwrap();
+
+    // Spawn Artisan+ control loop
     spawner
         .spawn(control_loop(
             #[allow(static_mut_refs)]
@@ -74,7 +88,7 @@ async fn main(spawner: Spawner) -> ! {
         ))
         .unwrap();
     spawner
-        .spawn(artisan_demo(
+        .spawn(artisan_uart_handler(
             #[allow(static_mut_refs)]
             unsafe {
                 ROASTER.as_mut().unwrap()
@@ -128,74 +142,61 @@ async fn control_loop(
 }
 
 #[embassy_executor::task]
-async fn artisan_demo(
+async fn artisan_uart_handler(
     roaster: &'static mut RoasterControl,
     fan: &'static mut FanController,
     _formatter: ArtisanFormatter,
 ) {
-    info!("Artisan+ Command Demo Started");
+    info!("Artisan+ UART Handler Started");
 
-    // Wait for system to stabilize
-    Timer::after(Duration::from_secs(3)).await;
+    let artisan_input = unsafe { ARTISAN_INPUT.as_mut().unwrap() };
 
-    // Simulate Artisan+ commands
-    info!("=== Artisan+ Command Demo ===");
-
-    // Initial status (READ command simulation)
-    let status = roaster.get_status();
-    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
-    info!("READ Response: {}", response);
-
-    // OT1 command - Set heater to 75%
-    info!("Command: OT1 75 -> Setting heater to 75%");
-    let _ = roaster.process_command(
-        libreroaster::config::RoasterCommand::SetHeaterManual(75),
-        embassy_time::Instant::now(),
-    );
-
-    Timer::after(Duration::from_secs(2)).await;
-
-    // IO3 command - Set fan to 50%
-    info!("Command: IO3 50 -> Setting fan to 50%");
-    let _ = fan.set_speed(50.0);
-
-    Timer::after(Duration::from_secs(2)).await;
-
-    // Updated status
-    let status = roaster.get_status();
-    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
-    info!("Updated READ Response: {}", response);
-
-    // OT1 command - Set heater to 25%
-    info!("Command: OT1 25 -> Setting heater to 25%");
-    let _ = roaster.process_command(
-        libreroaster::config::RoasterCommand::SetHeaterManual(25),
-        embassy_time::Instant::now(),
-    );
-
-    Timer::after(Duration::from_secs(2)).await;
-
-    // STOP command - Emergency stop
-    info!("Command: STOP -> Emergency stop");
-    let _ = roaster.process_command(
-        libreroaster::config::RoasterCommand::ArtisanEmergencyStop,
-        embassy_time::Instant::now(),
-    );
-    let _ = fan.disable();
-
-    Timer::after(Duration::from_secs(2)).await;
-
-    // Final status
-    let status = roaster.get_status();
-    let response = ArtisanFormatter::format_read_response(&status, fan.get_speed());
-    info!("Final READ Response: {}", response);
-
-    info!("=== Demo Complete ===");
-    info!("Artisan+ system fully operational.");
-
-    // Keep demo task alive
     loop {
-        Timer::after(Duration::from_secs(30)).await;
-        info!("Artisan+ demo complete - monitoring active");
+        Timer::after(Duration::from_millis(50)).await;
+
+        match artisan_input.read_command().await {
+            Ok(Some(command)) => {
+                info!("Received Artisan+ command: {:?}", command);
+
+                let result = match command {
+                    libreroaster::config::ArtisanCommand::ReadStatus => {
+                        let status = roaster.get_status();
+                        let response =
+                            ArtisanFormatter::format_read_response(&status, fan.get_speed());
+                        artisan_input.send_response(&response).await
+                    }
+                    libreroaster::config::ArtisanCommand::StartRoast => {
+                        let _ = roaster.process_artisan_command(command);
+                        Ok(())
+                    }
+                    libreroaster::config::ArtisanCommand::SetHeater(value) => {
+                        let _ = roaster.process_command(
+                            libreroaster::config::RoasterCommand::SetHeaterManual(value),
+                            embassy_time::Instant::now(),
+                        );
+                        Ok(())
+                    }
+                    libreroaster::config::ArtisanCommand::SetFan(value) => fan
+                        .set_speed(value as f32)
+                        .map_err(|_| libreroaster::input::InputError::UartError),
+                    libreroaster::config::ArtisanCommand::EmergencyStop => {
+                        let _ = roaster.process_command(
+                            libreroaster::config::RoasterCommand::ArtisanEmergencyStop,
+                            embassy_time::Instant::now(),
+                        );
+                        let _ = fan.disable();
+                        Ok(())
+                    }
+                };
+
+                if let Err(e) = result {
+                    info!("Error processing command: {:?}", e);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                info!("UART command error: {:?}", e);
+            }
+        }
     }
 }

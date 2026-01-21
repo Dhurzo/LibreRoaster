@@ -274,6 +274,15 @@ impl RoasterControl {
         let _current_time = Instant::now();
 
         match command {
+            ArtisanCommand::StartRoast => {
+                // Start roasting for Artisan+ with default target
+                self.status.artisan_control = true;
+                self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
+                self.output_manager.enable_continuous_output();
+
+                info!("Artisan+ roast started with target {:.1}°C", DEFAULT_TARGET_TEMP);
+            }
+
             ArtisanCommand::SetHeater(value) => {
                 // Artisan+ takes control, disable PID
                 self.status.artisan_control = true;
@@ -293,6 +302,7 @@ impl RoasterControl {
             }
 
             ArtisanCommand::EmergencyStop => {
+                self.output_manager.disable_continuous_output();
                 self.emergency_shutdown("Artisan+ emergency stop")?;
             }
 

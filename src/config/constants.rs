@@ -40,6 +40,7 @@ pub enum RoasterState {
 #[derive(Debug, Clone, Copy)]
 pub enum ArtisanCommand {
     ReadStatus,    // READ -> ET,BT,Power,Fan
+    StartRoast,    // START -> Begin roasting and continuous output
     SetHeater(u8), // OT1 x (0-100%)
     SetFan(u8),    // IO3 x (0-100%)
     EmergencyStop, // STOP
