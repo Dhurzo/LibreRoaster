@@ -2,17 +2,19 @@ use crate::output::traits::{OutputError, SerialOutput};
 
 /// Trait for UART communication channels (DIP compliance)
 pub trait UartChannel {
-    async fn send(&self, data: &str) -> Result<(), OutputError>;
+    fn send(&self, data: &str) -> impl core::future::Future<Output = Result<(), OutputError>> + Send;
 }
 
 /// Default UART channel implementation using existing send_stream
 pub struct DefaultUartChannel;
 
 impl UartChannel for DefaultUartChannel {
-    async fn send(&self, data: &str) -> Result<(), OutputError> {
-        crate::hardware::uart::send_stream(data)
-            .await
-            .map_err(|_| OutputError::SerialComm)
+    fn send(&self, data: &str) -> impl core::future::Future<Output = Result<(), OutputError>> + Send {
+        async move {
+            crate::hardware::uart::send_stream(data)
+                .await
+                .map_err(|_| OutputError::SerialComm)
+        }
     }
 }
 
@@ -118,8 +120,10 @@ impl Default for MockUartChannel {
 
 #[cfg(test)]
 impl UartChannel for MockUartChannel {
-    async fn send(&self, data: &str) -> Result<(), OutputError> {
-        let _ = self.sent_data.push(data.to_string());
-        Ok(())
+    fn send(&self, data: &str) -> impl core::future::Future<Output = Result<(), OutputError>> + Send {
+        async move {
+            let _ = self.sent_data.push(data.to_string());
+            Ok(())
+        }
     }
 }

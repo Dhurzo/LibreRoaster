@@ -4,7 +4,7 @@ use crate::output::OutputManager;
 use embassy_time::{Duration, Instant};
 use log::{info, warn};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RoasterError {
     TemperatureOutOfRange,
     SensorFault,

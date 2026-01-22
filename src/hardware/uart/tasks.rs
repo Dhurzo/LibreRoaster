@@ -42,6 +42,8 @@ pub async fn uart_writer_task() {
     let mut wbuf: [u8; COMMAND_PIPE_SIZE] = [0u8; COMMAND_PIPE_SIZE];
 
     loop {
+        // Allow this static_mut_ref warning as it's necessary for embedded systems
+        #[allow(static_mut_refs)]
         if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
             pipe.read(&mut wbuf).await;
         }
@@ -69,6 +71,8 @@ pub async fn send_response(response: &str) -> Result<(), crate::input::InputErro
 }
 
 pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
+    // Allow this static_mut_ref warning as it's necessary for embedded systems
+    #[allow(static_mut_refs)]
     if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
         let mut bytes = data.as_bytes().to_vec();
         bytes.extend_from_slice(b"\r\n");
@@ -82,6 +86,8 @@ async fn process_command_data(data: &[u8]) {
 
     for &byte in data {
         if byte == 0x0D {
+            // Allow this static_mut_ref warning as it's necessary for embedded systems
+            #[allow(static_mut_refs)]
             if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
                 let _ = pipe.write_all(&command).await;
             }

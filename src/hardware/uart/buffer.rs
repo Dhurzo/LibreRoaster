@@ -1,5 +1,4 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use critical_section;
 
 pub const BUFFER_SIZE: usize = 512;
 

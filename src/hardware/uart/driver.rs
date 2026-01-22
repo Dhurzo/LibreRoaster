@@ -1,9 +1,8 @@
 use core::fmt;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embedded_io::{Read, Write};
+use embedded_io::Write;
 use esp_hal::uart::{Config, Uart, UartRx, UartTx};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
     TransmissionError,
     ReceptionError,
@@ -46,7 +45,6 @@ impl UartDriver {
     }
 }
 
-static UART_DRIVER: CriticalSectionRawMutex = CriticalSectionRawMutex::new();
 static mut UART_INSTANCE: Option<UartDriver> = None;
 
 pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
@@ -72,5 +70,7 @@ pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
 }
 
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
+    // Allow this static_mut_ref warning as it's necessary for embedded systems
+    #[allow(static_mut_refs)]
     unsafe { UART_INSTANCE.as_mut() }
 }

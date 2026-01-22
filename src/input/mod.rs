@@ -3,7 +3,6 @@ pub mod parser;
 pub use parser::parse_artisan_command;
 
 use crate::hardware::uart::{send_response, uart_reader_task, uart_writer_task, COMMAND_PIPE_SIZE};
-use critical_section;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
@@ -11,7 +10,7 @@ use embassy_time::Timer;
 
 static mut COMMAND_PIPE: Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> = None;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InputError {
     UartError,
     ParseError,
@@ -30,6 +29,8 @@ impl ArtisanInput {
     ) -> Result<Option<crate::config::ArtisanCommand>, InputError> {
         let mut cmd_buf: [u8; 64] = [0u8; 64];
 
+        // Allow this static_mut_ref warning as it's necessary for embedded systems
+        #[allow(static_mut_refs)]
         if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
             pipe.read(&mut cmd_buf).await;
         }
