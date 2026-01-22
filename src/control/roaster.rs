@@ -4,7 +4,7 @@ use crate::output::OutputManager;
 use embassy_time::{Duration, Instant};
 use log::{info, warn};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RoasterError {
     TemperatureOutOfRange,
     SensorFault,
@@ -20,6 +20,8 @@ pub struct RoasterControl {
     last_pid_update: Option<Instant>,
     emergency_flag: bool,
     output_manager: OutputManager,
+    manual_heater: f32, // Manual heater output when Artisan+ control active
+    manual_fan: f32,    // Manual fan output
 }
 
 impl RoasterControl {
@@ -34,6 +36,8 @@ impl RoasterControl {
             last_pid_update: None,
             emergency_flag: false,
             output_manager: OutputManager::new(),
+            manual_heater: 0.0,
+            manual_fan: 0.0,
         })
     }
 
@@ -119,6 +123,28 @@ impl RoasterControl {
                 self.reset_system(current_time)?;
                 info!("System reset completed");
             }
+
+            RoasterCommand::SetHeaterManual(value) => {
+                // Artisan+ takes control, disable PID
+                self.status.artisan_control = true;
+                self.manual_heater = value as f32;
+                self.pid_controller.disable();
+                self.status.pid_enabled = false;
+
+                info!("Artisan+ manual heater set to: {}%", value);
+            }
+
+            RoasterCommand::SetFanManual(value) => {
+                // Fan control works independently
+                self.manual_fan = value as f32;
+                self.status.fan_output = value as f32;
+
+                info!("Artisan+ manual fan set to: {}%", value);
+            }
+
+            RoasterCommand::ArtisanEmergencyStop => {
+                self.emergency_shutdown("Artisan+ emergency stop")?;
+            }
         }
 
         Ok(())
@@ -135,25 +161,29 @@ impl RoasterControl {
             }
         }
 
-        // Simplified control for Artisan+ - only check fault states
+        // Control logic with Artisan+ override
         let output = match self.state {
             RoasterState::Fault | RoasterState::EmergencyStop => {
                 // Always off in fault states - safety override
                 0.0
             }
             _ => {
-                // For all other states (Idle, Heating, Stable, Cooling), use PID control
-                // Artisan+ manages when to enable/disable via commands
-                if self.status.pid_enabled {
+                // Check if Artisan+ has control
+                if self.status.artisan_control {
+                    // Use manual heater setting from Artisan+
+                    self.manual_heater
+                } else if self.status.pid_enabled {
+                    // Use PID control
                     self.update_pid_control(current_time)
                 } else {
-                    // PID disabled - no heating
+                    // Neither PID nor Artisan+ control - no heating
                     0.0
                 }
             }
         };
 
         self.status.ssr_output = output.clamp(0.0, 100.0);
+        self.status.fan_output = self.manual_fan; // Always use manual fan setting
 
         // Update output status
         self.status.state = self.state;
@@ -233,8 +263,76 @@ impl RoasterControl {
         self.last_temp_read = Some(current_time);
         self.last_pid_update = Some(current_time);
         self.emergency_flag = false;
+        self.manual_heater = 0.0;
+        self.manual_fan = 0.0;
 
         Ok(())
+    }
+
+    /// Process Artisan+ commands
+    pub fn process_artisan_command(&mut self, command: ArtisanCommand) -> Result<(), RoasterError> {
+        let _current_time = Instant::now();
+
+        match command {
+            ArtisanCommand::StartRoast => {
+                // Start roasting for Artisan+ with default target
+                self.status.artisan_control = true;
+                self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
+                self.output_manager.enable_continuous_output();
+
+                info!("Artisan+ roast started with target {:.1}°C", DEFAULT_TARGET_TEMP);
+            }
+
+            ArtisanCommand::SetHeater(value) => {
+                // Artisan+ takes control, disable PID
+                self.status.artisan_control = true;
+                self.manual_heater = value as f32;
+                self.pid_controller.disable();
+                self.status.pid_enabled = false;
+
+                info!("Artisan+ heater set to: {}%", value);
+            }
+
+            ArtisanCommand::SetFan(value) => {
+                // Fan control works independently
+                self.manual_fan = value as f32;
+                self.status.fan_output = value as f32;
+
+                info!("Artisan+ fan set to: {}%", value);
+            }
+
+            ArtisanCommand::EmergencyStop => {
+                self.output_manager.disable_continuous_output();
+                self.emergency_shutdown("Artisan+ emergency stop")?;
+            }
+
+            ArtisanCommand::ReadStatus => {
+                // This will be handled by the command processor
+                // No action needed here
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Re-enable PID control (disables Artisan+ manual control)
+    pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {
+        self.status.artisan_control = false;
+        self.pid_controller
+            .set_target(target_temp)
+            .map_err(|_| RoasterError::PidError)?;
+        self.pid_controller.enable();
+        self.status.pid_enabled = true;
+        self.status.target_temp = target_temp;
+
+        info!("PID control re-enabled with target: {:.1}°C", target_temp);
+
+        Ok(())
+    }
+
+    /// Get fan speed for READ command
+    pub fn get_fan_speed(&self) -> f32 {
+        self.status.fan_output
     }
 
     fn is_temperature_valid(temp: f32) -> bool {

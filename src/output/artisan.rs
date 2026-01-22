@@ -7,18 +7,18 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use embassy_time::Instant;
 
-/// Artisan+ protocol formatter
+/// Artisan standard CSV protocol formatter
 ///
-/// Implements the standard Artian+ serial protocol format:
-/// #time,ET,BT,ROR,Power,DeltaBT
+/// Implements the standard Artisan serial protocol format:
+/// time,ET,BT,ROR,Gas
 ///
 /// Fields:
 /// - time: Seconds since roast start
 /// - ET: Environment temperature (°C)
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
-/// - Power: SSR output percentage (0-100)
-/// - DeltaBT: BT change from previous reading
+/// - Gas: SSR output percentage (0-100) as heater control
+#[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
@@ -26,7 +26,6 @@ pub struct ArtisanFormatter {
 }
 
 impl ArtisanFormatter {
-    /// Create new Artisan+ formatter
     pub fn new() -> Self {
         Self {
             start_time: Instant::now(),
@@ -35,75 +34,78 @@ impl ArtisanFormatter {
         }
     }
 
-    /// Reset formatter (call when roast starts)
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
         self.bt_history.clear();
     }
 
-    /// Calculate rate of rise using moving average
-    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-        // Add current temperature to history
-        if self.bt_history.len() >= 5 {
-            // Remove oldest if full
-            self.bt_history.remove(0);
+    fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
+        if last_bt != 0.0 {
+            current_bt - last_bt
+        } else {
+            0.0
         }
-        self.bt_history.push(current_bt);
+    }
 
-        // Calculate ROR using last 2-5 points
-        if self.bt_history.len() < 2 {
+    fn update_bt_history(history: &mut Vec<f32>, current_bt: f32) {
+        if history.len() >= 5 {
+            history.remove(0);
+        }
+        history.push(current_bt);
+    }
+
+    fn compute_ror_from_history(history: &[f32]) -> f32 {
+        if history.len() < 2 {
             0.0
         } else {
-            let samples = self.bt_history.len();
-            let first_bt = self.bt_history[0];
-            let last_bt = self.bt_history[samples - 1];
+            let samples = history.len();
+            let first_bt = history[0];
+            let last_bt = history[samples - 1];
 
             // ROR = (BT_current - BT_oldest) / (time_elapsed)
             // Assuming 1-second intervals between samples
             (last_bt - first_bt) / (samples as f32 - 1.0)
         }
     }
+
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> String {
+        format!("{}.{:02}", elapsed_secs, elapsed_ms / 10)
+    }
+
+    fn format_artisan_line(time_str: &str, et: f32, bt: f32, ror: f32, gas: f32) -> String {
+        format!("{}{:.1},{:.1},{:.2},{:.1}", time_str, et, bt, ror, gas)
+    }
 }
 
 impl OutputFormatter for ArtisanFormatter {
     fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
-        // Calculate elapsed seconds since start
         let elapsed_secs = self.start_time.elapsed().as_secs();
+        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
-        // Get temperatures
         let et = status.env_temp;
         let bt = status.bean_temp;
+        let gas = status.ssr_output; // SSR output as gas control
 
-        // Calculate delta BT (change from previous)
-        let delta_bt = if self.last_bt != 0.0 {
-            bt - self.last_bt
-        } else {
-            0.0
-        };
-
-        // Get power output (SSR percentage)
-        let power = status.ssr_output;
-
-        // Note: ROR calculation would need mutable access,
-        // for now using delta_BT as approximation
+        let delta_bt = Self::calculate_delta_bt(bt, self.last_bt);
         let ror = delta_bt;
 
-        // Format according to Artisan+ protocol
-        // Format: #time,ET,BT,ROR,Power,DeltaBT
-        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
-        let line = format!(
-            "#{}.{:02},{:.1},{:.1},{:.2},{:.1},{:.2}",
-            elapsed_secs,
-            elapsed_ms / 10,
-            et,
-            bt,
-            ror,
-            power,
-            delta_bt
-        );
+        let time_str = Self::format_time(elapsed_secs, elapsed_ms);
+        let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
         Ok(line)
+    }
+}
+
+impl ArtisanFormatter {
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+        format!(
+            "{:.1},{:.1},{:.1},{:.1}",
+            status.env_temp,   // ET
+            status.bean_temp,  // BT
+            status.ssr_output, // Power (heater)
+            fan_speed          // Fan
+        )
     }
 }
 
@@ -115,7 +117,6 @@ pub struct MutableArtisanFormatter {
 }
 
 impl MutableArtisanFormatter {
-    /// Create new mutable Artisan+ formatter
     pub fn new() -> Self {
         Self {
             start_time: Instant::now(),
@@ -124,74 +125,33 @@ impl MutableArtisanFormatter {
         }
     }
 
-    /// Reset formatter (call when roast starts)
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
         self.bt_history.clear();
     }
 
-    /// Format system status into Artisan+ protocol string
     pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
-        // Calculate elapsed seconds since start
         let elapsed_secs = self.start_time.elapsed().as_secs();
+        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
-        // Get temperatures
         let et = status.env_temp;
         let bt = status.bean_temp;
+        let gas = status.ssr_output; // SSR output as gas control
 
-        // Calculate delta BT
-        let delta_bt = if self.last_bt != 0.0 {
-            bt - self.last_bt
-        } else {
-            0.0
-        };
-
-        // Update last BT
+        let _delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
         self.last_bt = bt;
 
-        // Calculate ROR using moving average
         let ror = self.calculate_ror(bt);
 
-        // Get power output
-        let power = status.ssr_output;
-
-        // Format according to Artisan+ protocol
-        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
-        let line = format!(
-            "#{}.{:02},{:.1},{:.1},{:.2},{:.1},{:.2}",
-            elapsed_secs,
-            elapsed_ms / 10,
-            et,
-            bt,
-            ror,
-            power,
-            delta_bt
-        );
+        let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
+        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
         Ok(line)
     }
 
-    /// Calculate rate of rise using moving average
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
-        // Add current temperature to history
-        if self.bt_history.len() >= 5 {
-            // Remove oldest if full
-            self.bt_history.remove(0);
-        }
-        self.bt_history.push(current_bt);
-
-        // Calculate ROR using last 2-5 points
-        if self.bt_history.len() < 2 {
-            0.0
-        } else {
-            let samples = self.bt_history.len();
-            let first_bt = self.bt_history[0];
-            let last_bt = self.bt_history[samples - 1];
-
-            // ROR = (BT_current - BT_oldest) / (time_elapsed)
-            // Assuming 1-second intervals between samples
-            (last_bt - first_bt) / (samples as f32 - 1.0)
-        }
+        ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        ArtisanFormatter::compute_ror_from_history(&self.bt_history)
     }
 }

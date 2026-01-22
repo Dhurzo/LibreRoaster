@@ -3,7 +3,7 @@ extern crate alloc;
 use crate::config::SystemStatus;
 use crate::output::artisan::MutableArtisanFormatter;
 use crate::output::scheduler::IntervalScheduler;
-use crate::output::serial::SerialPrinter;
+use crate::output::uart::{UartPrinter, DefaultUartChannel};
 use crate::output::traits::{OutputError, PrintScheduler, SerialOutput};
 use alloc::string::String;
 use log::info;
@@ -17,7 +17,7 @@ use log::info;
 /// - Providing a simple interface for the rest of the system
 pub struct OutputManager {
     formatter: MutableArtisanFormatter,
-    printer: SerialPrinter,
+    printer: UartPrinter<DefaultUartChannel>,
     scheduler: IntervalScheduler,
     enabled: bool,
 }
@@ -27,7 +27,7 @@ impl OutputManager {
     pub fn new() -> Self {
         Self {
             formatter: MutableArtisanFormatter::new(),
-            printer: SerialPrinter::new(),
+            printer: UartPrinter::new(),
             scheduler: IntervalScheduler::hz1(), // 1Hz as requested
             enabled: true,
         }
@@ -37,7 +37,7 @@ impl OutputManager {
     pub fn with_interval(interval_ms: u64) -> Self {
         Self {
             formatter: MutableArtisanFormatter::new(),
-            printer: SerialPrinter::new(),
+            printer: UartPrinter::new(),
             scheduler: IntervalScheduler::new(interval_ms),
             enabled: true,
         }
@@ -57,6 +57,18 @@ impl OutputManager {
     /// Enable or disable just the scheduler (stops timing but keeps formatter ready)
     pub fn set_scheduler_enabled(&mut self, enabled: bool) {
         self.scheduler.set_enabled(enabled);
+    }
+
+    /// Enable continuous output for Artisan+ (enables scheduler)
+    pub fn enable_continuous_output(&mut self) {
+        self.scheduler.set_enabled(true);
+        info!("Continuous output enabled for Artisan+");
+    }
+
+    /// Disable continuous output (disables scheduler)
+    pub fn disable_continuous_output(&mut self) {
+        self.scheduler.set_enabled(false);
+        info!("Continuous output disabled");
     }
 
     /// Enable or disable just the serial printer

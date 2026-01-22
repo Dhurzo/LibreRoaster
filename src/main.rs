@@ -1,4 +1,11 @@
 #![no_std]
+#![no_main]
+#![deny(
+    clippy::mem_forget,
+    reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+    holding buffers for the duration of a data transfer."
+)]
+#![deny(clippy::large_stack_frames)]
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -9,9 +16,15 @@ use log::info;
 
 extern crate alloc;
 
-use libreroaster::control::RoasterControl;
+use libreroaster::application::AppBuilder;
+use libreroaster::output::ArtisanFormatter;
 
-fn main() -> ! {
+#[allow(
+    clippy::large_stack_frames,
+    reason = "it's not unusual to allocate larger buffers etc. in main"
+)]
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -24,17 +37,27 @@ fn main() -> ! {
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
-    info!("LibreRoaster started - Artisan+ control ready");
+    info!(
+        "LibreRoaster started - Artisan+ UART control ready:\n
+            Wake the f*** up samurai we have beans to burn!"
+    );
 
-    let executor = embassy_executor::Executor::new();
-    let spawner = executor.spawner();
+    // Build and initialize application using AppBuilder
+    let app = AppBuilder::new()
+        .with_uart(peripherals.UART0)
+        .with_formatter(ArtisanFormatter::new())
+        .build()
+        .expect("Failed to build application");
 
-    executor.run(|spawner| async {
-        let _roaster = RoasterControl::new().unwrap();
+    // Start all application tasks
+    app.start_tasks(spawner)
+        .await
+        .expect("Failed to start application tasks");
 
-        loop {
-            Timer::after(Duration::from_secs(5)).await;
-            info!("Heartbeat - LibreRoaster running");
-        }
-    })
+    loop {
+        Timer::after(Duration::from_secs(5)).await;
+        info!("Heartbeat - LibreRoaster running with Artisan+ control");
+    }
 }
+
+
