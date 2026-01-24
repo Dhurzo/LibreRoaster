@@ -96,7 +96,7 @@ impl SerialOutput for SerialPrinter {
 /// Mock serial printer for testing
 #[cfg(test)]
 pub struct MockSerialPrinter {
-    output: heapless::Vec<String, 100>,
+    output: heapless::Vec<heapless::String<256>, 100>,
     enabled: bool,
 }
 
@@ -109,7 +109,7 @@ impl MockSerialPrinter {
         }
     }
 
-    pub fn get_output(&self) -> &[String] {
+    pub fn get_output(&self) -> &[heapless::String<256>] {
         &self.output
     }
 
@@ -125,7 +125,7 @@ impl SerialOutput for MockSerialPrinter {
             return Ok(());
         }
 
-        if self.output.push(data.to_string()).is_err() {
+        if self.output.push(heapless::String::<256>::try_from(data).unwrap_or_default()).is_err() {
             return Err(OutputError::Serialization);
         }
 

@@ -8,7 +8,10 @@ use core::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
     /// Temperature-related errors
-    Temperature { source: TemperatureError },
+    Temperature {
+        message: heapless::String<256>,
+        source: TemperatureError,
+    },
 
     /// Control system errors
     Control { source: ControlError },
@@ -94,7 +97,7 @@ impl AppError {
     /// Check if the error is recoverable
     pub fn is_recoverable(&self) -> bool {
         match self {
-            AppError::Temperature { source } => match source {
+            AppError::Temperature { source, .. } => match source {
                 TemperatureError::ReadingTimeout | TemperatureError::InvalidValue => true,
                 _ => false,
             },
@@ -114,8 +117,7 @@ impl AppError {
     /// Check if the error requires immediate system shutdown
     pub fn requires_emergency_shutdown(&self) -> bool {
         match self {
-            AppError::Safety { severity } => severity == &SafetyLevel::Emergency,
-            AppError::Temperature { source } => matches!(source, TemperatureError::OutOfRange),
+            AppError::Temperature { source, .. } => matches!(source, TemperatureError::OutOfRange),
             AppError::Hardware { source } => matches!(source, HardwareError::SsrError),
             _ => false,
         }
@@ -137,7 +139,7 @@ impl AppError {
     /// Get user-friendly error message
     pub fn user_message(&self) -> &'static str {
         match self {
-            AppError::Temperature { source } => match source {
+            AppError::Temperature { source, .. } => match source {
                 TemperatureError::OutOfRange => "Temperature out of safe range",
                 TemperatureError::SensorFault => "Temperature sensor malfunction",
                 TemperatureError::ReadingTimeout => "Temperature reading timeout",
@@ -213,9 +215,13 @@ impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {
         match err {
             crate::control::RoasterError::TemperatureOutOfRange => AppError::Temperature {
+                message: heapless::String::<256>::try_from("Temperature out of range")
+                    .unwrap_or_default(),
                 source: TemperatureError::OutOfRange,
             },
             crate::control::RoasterError::SensorFault => AppError::Temperature {
+                message: heapless::String::<256>::try_from("Temperature sensor fault")
+                    .unwrap_or_default(),
                 source: TemperatureError::SensorFault,
             },
             crate::control::RoasterError::InvalidState => AppError::Control {
@@ -267,7 +273,7 @@ mod tests {
     #[test]
     fn test_error_categorization() {
         let temp_err = AppError::Temperature {
-            message: "Test".to_string(),
+            message: heapless::String::<256>::try_from("Test").unwrap_or_default(),
             source: TemperatureError::OutOfRange,
         };
         assert_eq!(temp_err.category(), "temperature");
@@ -287,7 +293,7 @@ mod tests {
     #[test]
     fn test_user_messages() {
         let err = AppError::Temperature {
-            message: "Test".to_string(),
+            message: heapless::String::<256>::try_from("Test").unwrap_or_default(),
             source: TemperatureError::SensorFault,
         };
         assert_eq!(err.user_message(), "Temperature sensor malfunction");

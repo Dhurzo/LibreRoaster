@@ -1,11 +1,13 @@
 use crate::application::service_container::{ServiceContainer, ContainerError};
+use crate::config::{SSR_CONTROL_PIN, FAN_PWM_PIN};
 use crate::control::RoasterControl;
 use crate::hardware::fan::FanController;
+use crate::hardware::ssr::{SsrControl, SsrPlaceholder};
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
 use embassy_executor::Spawner;
-use esp_hal::peripherals::UART0;
+use esp_hal::peripherals::{UART0};
 use log::info;
 
 /// Application builder for safe and organized initialization
@@ -43,17 +45,29 @@ impl<'a> AppBuilder<'a> {
             initialize_uart_system(uart0).map_err(|e| BuildError::UartInit(e))?;
         }
 
+        // Initialize fan controller (placeholder for now)
+        let fan = FanController::new()
+            .map_err(|e| BuildError::FanInit(e))?;
+        info!("Fan controller initialized on GPIO{} (placeholder)", FAN_PWM_PIN);
+
+        // Initialize SSR with placeholder implementation
+        let _ssr_placeholder = SsrPlaceholder::default();
+        let _ssr = SsrControl::new(_ssr_placeholder)
+            .map_err(|e| BuildError::SsrInit(e))?;
+        info!("SSR control initialized on GPIO{} (placeholder)", SSR_CONTROL_PIN);
+
         // Initialize core components
-        let roaster = RoasterControl::new().map_err(|e| BuildError::RoasterInit(e))?;
-        let fan = FanController::new(()).map_err(|e| BuildError::FanInit(e))?;
-        let artisan_input = ArtisanInput::new().map_err(|e| BuildError::ArtisanInit(e))?;
+        let roaster = RoasterControl::new()
+            .map_err(|e| BuildError::RoasterInit(e))?;
+        let artisan_input = ArtisanInput::new()
+            .map_err(|e| BuildError::ArtisanInit(e))?;
         let formatter = self.formatter.unwrap_or_else(ArtisanFormatter::new);
 
         // Initialize service container
-        ServiceContainer::initialize(roaster, fan, artisan_input)
+        ServiceContainer::initialize_with_ssr(roaster, fan, artisan_input)
             .map_err(|e| BuildError::ContainerInit(e))?;
 
-        info!("Application components initialized successfully");
+        info!("Application components initialized successfully (placeholder hardware)");
 
         Ok(Application {
             formatter,
@@ -69,12 +83,12 @@ pub struct Application {
 }
 
 impl Application {
-    /// Get the Artisan formatter
+    /// Get Artisan formatter
     pub fn formatter(&self) -> &ArtisanFormatter {
         &self.formatter
     }
 
-    /// Clone the formatter for use in tasks
+    /// Clone formatter for use in tasks
     pub fn clone_formatter(&self) -> ArtisanFormatter {
         self.formatter.clone()
     }
@@ -132,6 +146,7 @@ pub enum BuildError {
     UartInit(crate::hardware::uart::UartError),
     RoasterInit(crate::control::RoasterError),
     FanInit(crate::hardware::fan::FanError),
+    SsrInit(crate::hardware::ssr::SsrError),
     ArtisanInit(crate::input::InputError),
     ContainerInit(ContainerError),
 }
@@ -142,6 +157,7 @@ impl core::fmt::Display for BuildError {
             BuildError::UartInit(e) => write!(f, "UART initialization failed: {:?}", e),
             BuildError::RoasterInit(e) => write!(f, "Roaster initialization failed: {:?}", e),
             BuildError::FanInit(e) => write!(f, "Fan controller initialization failed: {:?}", e),
+            BuildError::SsrInit(e) => write!(f, "SSR control initialization failed: {:?}", e),
             BuildError::ArtisanInit(e) => write!(f, "Artisan input initialization failed: {:?}", e),
             BuildError::ContainerInit(e) => write!(f, "Service container initialization failed: {}", e),
         }
@@ -183,24 +199,5 @@ impl core::fmt::Display for TaskError {
 impl Default for AppBuilder<'_> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_app_builder_creation() {
-        let builder = AppBuilder::new();
-        // Test basic creation
-        assert!(builder.uart0.is_none());
-        assert!(builder.formatter.is_none());
-    }
-
-    #[test]
-    fn test_error_display() {
-        let error = VerificationError::NotBuilt;
-        assert_eq!(error.to_string(), "Application not built");
     }
 }

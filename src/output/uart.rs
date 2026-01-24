@@ -91,7 +91,7 @@ impl Default for UartPrinterBuilder {
 /// Mock UART channel for testing purposes
 #[cfg(test)]
 pub struct MockUartChannel {
-    pub sent_data: heapless::Vec<String, 100>,
+    pub sent_data: heapless::Vec<heapless::String<256>, 100>,
 }
 
 #[cfg(test)]
@@ -106,7 +106,7 @@ impl MockUartChannel {
         self.sent_data.clear();
     }
 
-    pub fn get_sent_data(&self) -> &[String] {
+    pub fn get_sent_data(&self) -> &[heapless::String<256>] {
         &self.sent_data
     }
 }
@@ -120,9 +120,9 @@ impl Default for MockUartChannel {
 
 #[cfg(test)]
 impl UartChannel for MockUartChannel {
-    fn send(&self, data: &str) -> impl core::future::Future<Output = Result<(), OutputError>> + Send {
+    fn send(&mut self, data: &str) -> impl core::future::Future<Output = Result<(), OutputError>> + Send {
         async move {
-            let _ = self.sent_data.push(data.to_string());
+            let _ = self.sent_data.push(heapless::String::<256>::try_from(data).unwrap_or_default());
             Ok(())
         }
     }

@@ -3,6 +3,7 @@ runner = "espflash flash --monitor --chip esp32c3"
 
 [env]
 ESP_LOG="info"
+TEST_ENV="1"
 
 [build]
 rustflags = [
@@ -14,4 +15,4 @@ rustflags = [
 target = "riscv32imc-unknown-none-elf"
 
 [unstable]
-build-std = ["alloc", "core"]
+build-std = ["alloc", "core", "test"]

@@ -1,6 +1,6 @@
 # LibreRoaster - OpenSource Coffee Bean Roaster
 
-LibreRoaster is a professional-grade open-source coffee bean roaster designed for ESP32-C3. Built with modern embedded Rust using Embassy async framework, featuring precision temperature control, dual thermocouple monitoring, PID-based heating, and WiFi connectivity.
+LibreRoaster is a professional-grade open-source coffee bean roaster designed for ESP32-C3. Built with modern embedded Rust using Embassy async framework, featuring precision temperature control, dual thermocouple monitoring, PID-based heating, and **Artisan+ compatibility via UART communication**.
 
 ## Features
 
@@ -13,15 +13,17 @@ LibreRoaster is a professional-grade open-source coffee bean roaster designed fo
 
 ### ⚡ Technical Architecture
 - **Modern Embedded Rust**: Embassy async framework with esp-hal ~1.0
-- **WiFi Connectivity**: HTTP server with health endpoints for remote monitoring
+- **Artisan+ Compatibility**: Standard UART protocol for integration with Artisan coffee roasting software
 - **RISC-V Architecture**: Optimized for ESP32-C3's RISC-V core
 - **Memory Management**: 66KB heap with esp-alloc
 - **Async/Await**: Non-blocking operations with Embassy concurrency
+- **Service Container Pattern**: Modular dependency injection and error handling
 - **Structured Logging**: Comprehensive debug output and system monitoring
 
 ### 🔧 Hardware Features
 - **Optimized GPIO Assignment**: SPI on GPIO5-7, CS pins GPIO3-4, SSR control on GPIO2
 - **High-Speed SPI**: 1MHz communication with MAX31856 sensors
+- **UART Communication**: Serial interface for Artisan+ protocol (GPIO21/22)
 - **SSR PWM**: 1Hz control frequency suitable for heating elements
 - **Temperature Ranges**: 225°C base temperature, 250°C maximum safe limit
 
@@ -34,19 +36,21 @@ LibreRoaster is a professional-grade open-source coffee bean roaster designed fo
 - **1x SSR** (Solid State Relay) for heating element control
 - **Ceramic heating element** (compatible with your roaster design)
 - **USB-C cable** for power and programming
-- **WiFi network** (2.4GHz) for remote monitoring
+- **USB-to-UART adapter** (for Artisan+ connection to computer)
 
 ### Wiring Configuration
 ```
-ESP32-C3    →    MAX31856 #1 (BT)    MAX31856 #2 (ET)    SSR
-GPIO7       →    SCLK                 SCLK              
-GPIO6       →    MISO                 MISO              
-GPIO5       →    MOSI                 MOSI              
-GPIO4       →    CS                   —                 
-GPIO3       →    —                    CS                 
-GPIO2       →    —                    —                  Control
-3.3V        →    VCC                  VCC               
-GND         →    GND                  GND               
+ESP32-C3    →    MAX31856 #1 (BT)    MAX31856 #2 (ET)    SSR         UART (to PC)
+GPIO7       →    SCLK                 SCLK              —            —
+GPIO6       →    MISO                 MISO              —            —
+GPIO5       →    MOSI                 MOSI              —            —
+GPIO4       →    CS                   —                 —            —
+GPIO3       →    —                    CS                —            —
+GPIO2       →    —                    —                 Control      —
+GPIO21      →    —                    —                 —            TX
+GPIO22      →    —                    —                 —            RX
+3.3V        →    VCC                  VCC               —            —
+GND         →    GND                  GND               —            GND
 ```
 
 ### Power Requirements
@@ -82,9 +86,11 @@ Improper handling can result in **severe injury, fire, or death**.
 
 ## Software Requirements
 
-- Rust stable toolchain (1.92.0+)
+- Rust stable toolchain (1.88+)
 - cargo-espflash (for flashing)
 - Optional: probe-rs (for debugging)
+- Artisan software (for roasting control and logging)
+- USB-to-UART drivers for your operating system
 
 *All ESP32-C3 dependencies are automatically managed via Cargo.*
 
@@ -143,10 +149,17 @@ LibreRoaster provides a complete coffee roaster control system with:
 - **MAX31856 Driver**: Async communication with fault detection
 - **SSR Control**: PWM output with 0-100% duty cycle control
 
-### 🌐 Network & Monitoring
-- **HTTP Server**: Built-in web server with health monitoring
-- **WiFi Integration**: Ready for network configuration and remote access
-- **API Endpoints**: Health check and system status endpoints
+### 📡 Artisan+ Integration
+- **UART Communication**: Standard Artisan protocol over serial (time,ET,BT,ROR,Gas)
+- **Real-time Data Streaming**: 10Hz output rate for smooth plotting
+- **ArtisanFormatter**: Built-in CSV protocol formatter
+- **Rate of Rise (ROR)**: Automatic calculation using 5-sample moving average
+
+### 🏗️ Modular Architecture
+- **Service Container**: Dependency injection pattern for clean separation of concerns
+- **Error Handling**: Comprehensive error management with custom error types
+- **Input/Output System**: Modular data flow from sensors to Artisan output
+- **Task Management**: Embassy async tasks for concurrent operations
 
 ### 🔄 State Machine
 - **Roaster States**: Idle → Heating → Stable → Cooling → Emergency
@@ -162,26 +175,37 @@ LibreRoaster provides a complete coffee roaster control system with:
 ### Sample Output
 
 ```
-INFO  Wake the f*** up samurai we have beans to burn!
+INFO  LibreRoaster started - Artisan+ UART control ready:
+            Wake the f*** up samurai we have beans to burn!
 INFO  Embassy initialized!
 INFO  Roaster is ready!
 INFO  Starting roast with target temperature: 225.0°C
 INFO  Target temperature reached, entering stable state
 ```
 
-### HTTP API Endpoints
+### Artisan+ Protocol Output
 
+The system outputs CSV data in Artisan standard format:
 ```
-GET /health  → "Wake the f*** up samurai we have beans to burn!"
-GET /        → LibreRoaster information and available endpoints
+0.0,25.1,24.8,0.0,0
+0.1,25.3,25.0,0.2,0
+0.2,26.1,25.8,0.8,5
+0.3,27.4,27.1,1.3,12
+...
 ```
+
+Fields: `time,ET,BT,ROR,Gas`
+- **time**: Seconds since roast start
+- **ET**: Environment temperature (°C)
+- **BT**: Bean temperature (°C)  
+- **ROR**: Rate of rise (°C/s)
+- **Gas**: SSR output percentage (0-100)
 
 The system is ready for:
 - Hardware integration with actual thermocouples and SSR
-- WiFi configuration for network connectivity
+- Direct connection to Artisan software via UART
 - Advanced roasting profiles and automation
-- Artisan+ compatibility implementation
-- Real-time data logging and analysis
+- Real-time data logging and analysis in Artisan
 
 ## Project Structure
 
@@ -189,20 +213,53 @@ The system is ready for:
 ├── src/
 │   ├── main.rs              # Main application entry point
 │   ├── lib.rs               # Library interface
+│   ├── application/         # Application architecture
+│   │   ├── mod.rs           # Application module exports
+│   │   ├── app_builder.rs   # ✅ Service container and dependency injection
+│   │   ├── service_container.rs # Service management
+│   │   └── tasks.rs         # Application tasks
 │   ├── hardware/            # Hardware abstraction layer
 │   │   ├── mod.rs           # Hardware module exports
 │   │   ├── max31856.rs      # ✅ MAX31856 thermocouple driver
 │   │   ├── ssr.rs           # ✅ SSR control implementation
-│   │   └── pid.rs           # ✅ PID controller (coffee roaster optimized)
-│   ├── server/              # Web server and API
-│   │   ├── mod.rs           # Server module exports
-│   │   └── http.rs          # ✅ HTTP server with health endpoints
+│   │   ├── pid.rs           # ✅ PID controller (coffee roaster optimized)
+│   │   ├── uart/            # UART communication
+│   │   │   ├── mod.rs       # UART module exports
+│   │   │   ├── driver.rs    # ✅ UART driver implementation
+│   │   │   ├── buffer.rs    # ✅ Circular buffer management
+│   │   │   └── tasks.rs     # ✅ Async UART tasks
+│   │   └── fan.rs           # ✅ Fan control (if implemented)
 │   ├── control/             # Roaster control logic
 │   │   ├── mod.rs           # Control module exports
-│   │   └── roaster.rs       # ✅ Complete roaster state machine
-│   └── config/              # Configuration management
-│       ├── mod.rs           # Configuration exports
-│       └── constants.rs     # ✅ Hardware constants and pin assignments
+│   │   ├── roaster.rs       # ✅ Complete roaster state machine
+│   │   ├── roaster_refactored.rs # Refactored control logic
+│   │   ├── command_handler.rs # ✅ Command processing
+│   │   ├── handlers.rs      # Control handlers
+│   │   ├── abstractions.rs  # Control abstractions
+│   │   ├── abstractions_tests.rs # Control tests
+│   │   └── pid.rs           # Alternative PID implementation
+│   ├── input/               # Input processing
+│   │   ├── mod.rs           # Input module exports
+│   │   └── parser.rs        # ✅ Command parsing
+│   ├── output/              # Output and formatting
+│   │   ├── mod.rs           # Output module exports
+│   │   ├── artisan.rs       # ✅ Artisan+ CSV formatter
+│   │   ├── serial.rs        # Serial output management
+│   │   ├── uart.rs          # UART output implementation
+│   │   ├── scheduler.rs     # Output scheduling
+│   │   ├── manager.rs       # Output manager
+│   │   └── traits.rs        # Output trait definitions
+│   ├── server/              # Communication server
+│   │   ├── mod.rs           # Server module exports
+│   │   └── http.rs          # HTTP server (future/optional)
+│   ├── config/              # Configuration management
+│   │   ├── mod.rs           # Configuration exports
+│   │   └── constants.rs     # ✅ Hardware constants and pin assignments
+│   └── error/               # Error handling
+│       ├── mod.rs           # Error module exports
+│       └── app_error.rs     # ✅ Custom error types
+├── examples/
+│   └── artisan_test.rs     # ✅ Artisan+ protocol example
 ├── .cargo/
 │   └── config.toml          # Cargo target configuration
 ├── Cargo.toml               # Project dependencies
@@ -213,16 +270,31 @@ The system is ready for:
 
 ### Architecture Overview
 
+#### `application/` - Core Architecture
+- **`app_builder.rs`**: Service container pattern with dependency injection and clean initialization
+- **`service_container.rs`**: Service management and lifetime handling
+- **`tasks.rs`**: Main application task orchestration
+
 #### `hardware/` - Hardware Abstraction Layer
 - **`max31856.rs`**: Complete MAX31856 driver with async support, fault detection, and Type-K thermocouple configuration
 - **`ssr.rs`**: Solid State Relay control with PWM output capabilities
 - **`pid.rs`**: Professional PID controller with coffee roaster optimized parameters and anti-windup protection
-
-#### `server/` - Network & API
-- **`http.rs`**: Lightweight HTTP server with routing, error handling, and health endpoints
+- **`uart/`**: Complete UART communication stack with buffering and async operations
 
 #### `control/` - Business Logic
 - **`roaster.rs`**: Complete state machine implementation with safety monitoring, temperature validation, and command processing
+- **`command_handler.rs`**: Command processing and response handling
+- **`handlers.rs`**: Control operation handlers
+- **`abstractions.rs`**: Control system abstractions and interfaces
+
+#### `input/` & `output/` - Data Flow
+- **`parser.rs`**: Command parsing and validation
+- **`artisan.rs`**: Artisan+ CSV protocol formatter with ROR calculation
+- **`uart.rs`**: UART output implementation and management
+- **`traits.rs`**: Output abstraction interfaces
+
+#### `error/` - Error Management
+- **`app_error.rs`**: Comprehensive error types and handling
 
 #### `config/` - Configuration
 - **`constants.rs`**: All hardware pin assignments, temperature limits, PID parameters, and system constants
@@ -303,7 +375,7 @@ cargo espflash monitor --speed 115200
 
 After successful build, binary is located at:
 ```
-target/riscv32imc-esp-espidf/release/libreroaster
+target/riscv32imc-unknown-none-elf/release/libreroaster
 ```
 
 ## License
@@ -319,6 +391,19 @@ For issues and questions:
 2. Review the [Wiki](../../wiki) documentation
 3. Create a new issue with detailed information
 
+## Examples
+
+### Artisan+ Test
+
+Run the Artisan+ protocol example to test the data formatting:
+
+```bash
+# Build and run the example (requires host target)
+cargo run --example artisan_test --features std
+```
+
+This example demonstrates the CSV output format that will be sent to Artisan software during actual roasting.
+
 ---
 
-**Note**: This project requires an ESP32-C3 development board. Ensure proper power supply and USB connection during flashing and operation.
+**Note**: This project requires an ESP32-C3 development board. Ensure proper power supply and USB connection during flashing and operation. Connect the UART pins (GPIO21/TX, GPIO22/RX) to a USB-to-UART adapter for Artisan+ integration.

@@ -7,11 +7,30 @@ description  = "OpenSource Coffee Bean Roaster compatible with Artisan+"
 authors      = ["LibreRoaster Team"]
 license      = "MIT"
 
+[[example]]
+name = "artisan_test"
+path = "examples/artisan_test.rs"
+
+[features]
+default = []
+std = []
+test = ["std"]
+
 [[bin]]
 name = "libreroaster"
 path = "./src/main.rs"
 
 [dependencies]
+# Core dependencies - available for all targets
+heapless         = "0.8.0"
+embedded-hal     = "1.0.0"
+embedded-io       = "0.7.1"
+embassy-time     = "0.5.0"
+critical-section = "1.2.0"
+static_cell      = "2.1.1"
+
+# ESP-specific dependencies - only for embedded target
+[target.'cfg(target_arch = "riscv32")'.dependencies]
 esp-hal = { version = "~1.0", features = ["esp32c3", "log-04", "unstable"] }
 
 esp-rtos = { version = "0.2.0", features = [
@@ -32,8 +51,6 @@ embassy-net = { version = "0.7.1", features = [
   "tcp",
   "udp",
 ] }
-embedded-io = "0.7.1"
-embedded-io-async = "0.7.0"
 esp-alloc = "0.9.0"
 esp-backtrace = { version = "0.18.1", features = [
   "esp32c3",
@@ -69,9 +86,18 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
-heapless         = "0.8.0"
-embedded-hal     = "1.0.0"
 embassy-sync     = "0.6.1"
+
+
+
+[dev-dependencies]
+# Test dependencies
+log = "0.4.27"
+critical-section = "1.2.0"
+static_cell      = "2.1.1"
+embassy-sync = "0.6.1"
+
+
 
 
 [profile.dev]

@@ -1,6 +1,21 @@
 // GPIO Pin Assignments for LibreRoaster ESP32-C3
 // These pins are optimized for the ESP32-C3 capabilities and coffee roaster application
 
+// GPIO Pin Assignments for ESP32-C3 Coffee Roaster
+pub const SPI_SCLK_PIN: u8 = 7; // SPI Clock for MAX31856
+pub const SPI_MOSI_PIN: u8 = 5; // SPI MOSI for MAX31856
+pub const SPI_MISO_PIN: u8 = 6; // SPI MISO for MAX31856
+pub const THERMOCOUPLE_BT_CS_PIN: u8 = 4; // Bean Temperature Chip Select
+pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3; // Environment Temperature Chip Select
+pub const SSR_CONTROL_PIN: u8 = 2; // Solid State Relay Control
+pub const FAN_PWM_PIN: u8 = 8; // Fan PWM Control
+pub const UART_TX_PIN: u8 = 21; // UART Transmit to Artisan+
+pub const UART_RX_PIN: u8 = 22; // UART Receive from Artisan+
+
+// PWM Configuration
+pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000; // 25kHz for DC fan motor
+pub const SSR_PWM_FREQUENCY_HZ: u32 = 1; // 1Hz for heating element (slow PWM)
+
 // Hardware Configuration
 pub const PWM_FREQUENCY: u32 = 1000; // 1Hz PWM frequency for SSR (suitable for heating elements)
 

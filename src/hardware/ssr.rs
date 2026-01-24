@@ -1,8 +1,14 @@
 use embedded_hal::digital::OutputPin;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SsrError {
     OutputError,
+}
+
+impl embedded_hal::digital::Error for SsrError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
 }
 
 pub struct SsrControl<PIN> {
@@ -51,5 +57,25 @@ where
     pub fn toggle(&mut self) -> Result<(), SsrError> {
         // Simple toggle - assumes current state can be tracked
         self.set_on()
+    }
+}
+
+// Placeholder type for SSR when no GPIO is available
+#[derive(Debug, Default)]
+pub struct SsrPlaceholder;
+
+impl embedded_hal::digital::ErrorType for SsrPlaceholder {
+    type Error = SsrError;
+}
+
+impl OutputPin for SsrPlaceholder {
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        log::info!("SSR placeholder set LOW (off)");
+        Ok(())
+    }
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        log::info!("SSR placeholder set HIGH (on)");
+        Ok(())
     }
 }

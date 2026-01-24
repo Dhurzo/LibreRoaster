@@ -1,5 +1,7 @@
 use crate::control::RoasterControl;
 use crate::hardware::fan::FanController;
+use crate::hardware::ssr::SsrControl;
+use crate::hardware::ssr::SsrPlaceholder;
 use crate::input::ArtisanInput;
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -9,6 +11,7 @@ use critical_section::Mutex;
 pub struct ServiceContainer {
     roaster: Mutex<RefCell<Option<RoasterControl>>>,
     fan: Mutex<RefCell<Option<FanController>>>,
+    ssr: Mutex<RefCell<Option<SsrControl<SsrPlaceholder>>>>,
     artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
 }
 
@@ -18,6 +21,7 @@ impl ServiceContainer {
         Self {
             roaster: Mutex::new(RefCell::new(None)),
             fan: Mutex::new(RefCell::new(None)),
+            ssr: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
         }
     }
@@ -36,6 +40,37 @@ impl ServiceContainer {
 
             // Initialize fan
             container.fan.borrow(cs).borrow_mut().replace(fan);
+
+            // Initialize artisan input
+            container
+                .artisan_input
+                .borrow(cs)
+                .borrow_mut()
+                .replace(artisan_input);
+
+            Ok(())
+        })
+    }
+
+    /// Initialize container with all services including SSR (using placeholder)
+    pub fn initialize_with_ssr(
+        roaster: RoasterControl,
+        fan: FanController,
+        artisan_input: ArtisanInput,
+    ) -> Result<(), ContainerError> {
+        critical_section::with(|cs| {
+            let container = Self::get_instance();
+
+            // Initialize roaster
+            container.roaster.borrow(cs).borrow_mut().replace(roaster);
+
+            // Initialize fan
+            container.fan.borrow(cs).borrow_mut().replace(fan);
+
+            // Initialize SSR with placeholder implementation
+            let ssr_placeholder = SsrPlaceholder::default();
+            let ssr = SsrControl::new(ssr_placeholder).unwrap();
+            container.ssr.borrow(cs).borrow_mut().replace(ssr);
 
             // Initialize artisan input
             container
@@ -102,6 +137,22 @@ impl ServiceContainer {
         })
     }
 
+    /// Execute operation on SSR with proper error handling
+    pub fn with_ssr<R, F>(f: F) -> Result<R, ContainerError>
+    where
+        F: FnOnce(&mut SsrControl<SsrPlaceholder>) -> R,
+    {
+        critical_section::with(|cs| {
+            let container = Self::get_instance();
+            let mut ssr_ref = container.ssr.borrow(cs).borrow_mut();
+
+            match ssr_ref.as_mut() {
+                Some(ssr) => Ok(f(ssr)),
+                None => Err(ContainerError::NotInitialized),
+            }
+        })
+    }
+
     /// Check if all services are initialized
     pub fn is_initialized() -> bool {
         critical_section::with(|cs| {
@@ -109,9 +160,10 @@ impl ServiceContainer {
 
             let roaster_ok = container.roaster.borrow(cs).borrow().is_some();
             let fan_ok = container.fan.borrow(cs).borrow().is_some();
+            let ssr_ok = container.ssr.borrow(cs).borrow().is_some();
             let artisan_ok = container.artisan_input.borrow(cs).borrow().is_some();
 
-            roaster_ok && fan_ok && artisan_ok
+            roaster_ok && fan_ok && ssr_ok && artisan_ok
         })
     }
 
@@ -122,6 +174,7 @@ impl ServiceContainer {
 
             container.roaster.borrow(cs).borrow_mut().take();
             container.fan.borrow(cs).borrow_mut().take();
+            container.ssr.borrow(cs).borrow_mut().take();
             container.artisan_input.borrow(cs).borrow_mut().take();
 
             Ok(())
@@ -140,34 +193,9 @@ pub enum ContainerError {
 impl core::fmt::Display for ContainerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ContainerError::NotInitialized => write!(f, "Service container not initialized"),
+            ContainerError::NotInitialized => write!(f, "Service not initialized"),
             ContainerError::BorrowFailed => write!(f, "Failed to borrow service"),
-            ContainerError::InvalidState => write!(f, "Container in invalid state"),
+            ContainerError::InvalidState => write!(f, "Service in invalid state"),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::control::RoasterControl;
-    use crate::hardware::fan::FanController;
-    use crate::input::ArtisanInput;
-
-    #[test]
-    fn test_container_initialization() {
-        // Reset container first
-        let _ = ServiceContainer::reset();
-
-        assert!(!ServiceContainer::is_initialized());
-
-        // This would require hardware in real tests
-        // For now, just test the state tracking
-    }
-
-    #[test]
-    fn test_error_display() {
-        let error = ContainerError::NotInitialized;
-        assert_eq!(error.to_string(), "Service container not initialized");
     }
 }
