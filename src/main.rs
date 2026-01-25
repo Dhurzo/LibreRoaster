@@ -28,7 +28,7 @@ async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let mut peripherals = esp_hal::init(config);
+    let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 66320);
 
@@ -46,11 +46,12 @@ async fn main(spawner: Spawner) -> ! {
     let uart0 = peripherals.UART0;
     let ledc = peripherals.LEDC;
     let gpio8 = peripherals.GPIO8;
-    let gpio2 = peripherals.GPIO2;
+    let _gpio2 = peripherals.GPIO2;
     
     // Build and initialize application using AppBuilder
     let app = AppBuilder::new()
         .with_uart(uart0)                 // UART with GPIO21/22 pins
+        .with_ledc(ledc, gpio8)           // LEDC for fan PWM control
         .with_formatter(ArtisanFormatter::new())
         .build()
         .expect("Failed to build application");

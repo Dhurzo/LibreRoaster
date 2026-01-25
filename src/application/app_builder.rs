@@ -7,13 +7,15 @@ use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
 use embassy_executor::Spawner;
-use esp_hal::peripherals::{UART0};
+use esp_hal::peripherals::{UART0, LEDC, GPIO8};
 use log::info;
 
 /// Application builder for safe and organized initialization
 /// Extracts initialization logic from main.rs for better maintainability
 pub struct AppBuilder<'a> {
     uart0: Option<UART0<'a>>,
+    ledc: Option<LEDC<'a>>,
+    gpio8: Option<GPIO8<'a>>,
     formatter: Option<ArtisanFormatter>,
 }
 
@@ -22,6 +24,8 @@ impl<'a> AppBuilder<'a> {
     pub fn new() -> Self {
         Self {
             uart0: None,
+            ledc: None,
+            gpio8: None,
             formatter: None,
         }
     }
@@ -32,6 +36,13 @@ impl<'a> AppBuilder<'a> {
         self
     }
 
+    /// Configure LEDC peripherals for fan control
+    pub fn with_ledc(mut self, ledc: LEDC<'a>, gpio8: GPIO8<'a>) -> Self {
+        self.ledc = Some(ledc);
+        self.gpio8 = Some(gpio8);
+        self
+    }
+
     /// Configure Artisan formatter
     pub fn with_formatter(mut self, formatter: ArtisanFormatter) -> Self {
         self.formatter = Some(formatter);
@@ -39,16 +50,24 @@ impl<'a> AppBuilder<'a> {
     }
 
     /// Build and initialize the complete application
-    pub fn build(self) -> Result<Application, BuildError> {
+    pub fn build(mut self) -> Result<Application, BuildError> {
         // Initialize UART system
         if let Some(uart0) = self.uart0 {
             initialize_uart_system(uart0).map_err(|e| BuildError::UartInit(e))?;
         }
 
-        // Initialize fan controller (placeholder for now)
-        let fan = FanController::new()
-            .map_err(|e| BuildError::FanInit(e))?;
-        info!("Fan controller initialized on GPIO{} (placeholder)", FAN_PWM_PIN);
+        // Initialize fan controller with real LEDC if available, otherwise placeholder
+        let fan = if let (Some(ledc), Some(gpio8)) = (self.ledc.take(), self.gpio8.take()) {
+            let fan_controller = FanController::with_ledc(ledc, gpio8)
+                .map_err(|e| BuildError::FanInit(e))?;
+            info!("Fan controller initialized with LEDC PWM on GPIO{}", FAN_PWM_PIN);
+            fan_controller
+        } else {
+            let fan_controller = FanController::new()
+                .map_err(|e| BuildError::FanInit(e))?;
+            info!("Fan control not available - no LEDC hardware");
+            fan_controller
+        };
 
         // Initialize SSR with placeholder implementation
         let _ssr_placeholder = SsrPlaceholder::default();
