@@ -65,7 +65,7 @@ impl<'a> AppBuilder<'a> {
         } else {
             let fan_controller = FanController::new()
                 .map_err(|e| BuildError::FanInit(e))?;
-            info!("Fan controller initialized on GPIO{} (placeholder)", FAN_PWM_PIN);
+            info!("Fan control not available - no LEDC hardware");
             fan_controller
         };
 

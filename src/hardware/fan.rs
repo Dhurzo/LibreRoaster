@@ -29,7 +29,7 @@ struct PwmState {
 
 impl FanController {
     pub fn new() -> Result<Self, FanError> {
-        log::warn!("Fan controller initialized with placeholder - use with_ledc() for real PWM");
+        log::info!("No LEDC peripherals available - fan control disabled");
 
         Ok(Self {
             current_speed: 0.0,
@@ -48,7 +48,7 @@ impl FanController {
             .configure(timer::config::Config {
                 duty: timer::config::Duty::Duty8Bit,
                 clock_source: timer::LSClockSource::APBClk,
-                frequency: Rate::from_hz(crate::config::FAN_PWM_FREQUENCY_HZ), 
+                frequency: Rate::from_hz(crate::config::FAN_PWM_FREQUENCY_HZ),
             })
             .map_err(|_| FanError::LedcError)?;
 
@@ -87,26 +87,23 @@ impl FanController {
     }
 
     fn update_pwm_duty(duty: u8) -> Result<(), FanError> {
-        critical_section::with(|_| {
-            unsafe {
-                if let Some(ref mut state) = PWM_CHANNEL_STATE {
-                    if state.configured {
-    
-                        state.current_duty = duty;
+        critical_section::with(|_| unsafe {
+            if let Some(ref mut state) = PWM_CHANNEL_STATE {
+                if state.configured {
+                    state.current_duty = duty;
 
-                        log::debug!(
-                            "PWM duty cycle updated: {} ({:.1}%) - LEDC HARDWARE READY",
-                            duty,
-                            duty as f32 * 100.0 / 255.0
-                        );
+                    log::debug!(
+                        "PWM duty cycle updated: {} ({:.1}%) - LEDC HARDWARE READY",
+                        duty,
+                        duty as f32 * 100.0 / 255.0
+                    );
 
-                        Ok(())
-                    } else {
-                        Err(FanError::InitializationError)
-                    }
+                    Ok(())
                 } else {
                     Err(FanError::InitializationError)
                 }
+            } else {
+                Err(FanError::InitializationError)
             }
         })
     }
@@ -161,7 +158,7 @@ impl FanController {
 
 impl Default for FanController {
     fn default() -> Self {
-        log::warn!("Creating default fan controller");
+        log::info!("Creating default fan controller - no LEDC hardware");
         Self {
             current_speed: 0.0,
             has_lecd: false,
