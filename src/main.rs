@@ -137,6 +137,8 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Drivers initialized and moved to static memory");
 
+    info!("Wake the f*** up samurai we have beans to burn!");
+
     // Build and start application
     // We pass UART0 for the builder to initialize UART system
     let app = AppBuilder::new()

@@ -187,16 +187,6 @@ LibreRoaster provides a complete coffee roaster control system with:
 - **Calibration Support**: Adjustable thermocouple offsets for accuracy
 - **Emergency Systems**: Automatic shutdown on fault conditions
 
-### Sample Output
-
-```
-INFO  LibreRoaster started - Artisan+ UART control ready:
-            Wake the f*** up samurai we have beans to burn!
-INFO  Embassy initialized!
-INFO  Roaster is ready!
-INFO  Starting roast with target temperature: 225.0°C
-INFO  Target temperature reached, entering stable state
-```
 
 ### Artisan+ Protocol Output
 
