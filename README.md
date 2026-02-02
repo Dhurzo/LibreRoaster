@@ -1,13 +1,15 @@
 # LibreRoaster - OpenSource Coffee Bean Roaster
 
-LibreRoaster is a professional-grade open-source coffee bean roaster designed for ESP32-C3. Built with modern embedded Rust using Embassy async framework, featuring precision temperature control, dual thermocouple monitoring, PID-based heating, and **Artisan+ compatibility via UART communication**.
+LibreRoaster is a professional-grade open-source coffee bean roaster designed for ESP32-C3. Built with modern embedded Rust using Embassy async framework, featuring temperature control, dual thermocouple monitoring, proportional-based heating, fan control, heat source detection, and **Artisan+ compatibility via UART communication**.
 
 ## Features
 
 ### 🎯 Core Roasting System
-- **Precision Temperature Control**: Coffee roaster optimized PID controller (Kp=2.0, Ki=0.01, Kd=0.5)
+- **Simple Temperature Control**: Proportional control loop for heating regulation
 - **Dual Thermocouple Support**: 2x MAX31856 Type-K thermocouples for Bean Temp (BT) and Environment Temp (ET)
-- **SSR Control**: Solid State Relay control with PWM for ceramic heating elements
+- **SSR Control with PWM**: Solid State Relay control with LEDC PWM for ceramic heating elements
+- **Fan Control**: Variable speed fan control using LEDC PWM (25kHz)
+- **Heat Source Detection**: Automatic detection of connected heating element (GPIO1)
 - **Safety Systems**: Multi-layer temperature protection with emergency shutdown (250°C limit)
 - **Real-time Monitoring**: 10Hz sampling rate with responsive control loop
 
@@ -19,12 +21,13 @@ LibreRoaster is a professional-grade open-source coffee bean roaster designed fo
 - **Async/Await**: Non-blocking operations with Embassy concurrency
 - **Service Container Pattern**: Modular dependency injection and error handling
 - **Structured Logging**: Comprehensive debug output and system monitoring
+- **Trait-Based Hardware**: Abstractions for Thermometer, Heater, and Fan
 
 ### 🔧 Hardware Features
-- **Optimized GPIO Assignment**: SPI on GPIO5-7, CS pins GPIO3-4, SSR control on GPIO2
-- **High-Speed SPI**: 1MHz communication with MAX31856 sensors
-- **UART Communication**: Serial interface for Artisan+ protocol (GPIO21/22)
-- **SSR PWM**: 1Hz control frequency suitable for heating elements
+- **Optimized GPIO Assignment**: SPI on GPIO5-7, CS pins GPIO3-4, SSR control on GPIO10, Fan on GPIO9
+- **High-Speed SPI**: 1MHz communication with MAX31856 sensors using shared SPI bus
+- **UART Communication**: Serial interface for Artisan+ protocol (GPIO20/21)
+- **LEDC PWM**: Dual-channel PWM for SSR (1Hz) and Fan (25kHz)
 - **Temperature Ranges**: 225°C base temperature, 250°C maximum safe limit
 
 ## Hardware Requirements
@@ -40,18 +43,22 @@ LibreRoaster is a professional-grade open-source coffee bean roaster designed fo
 
 ### Wiring Configuration
 ```
-ESP32-C3    →    MAX31856 #1 (BT)    MAX31856 #2 (ET)    SSR         UART (to PC)
-GPIO7       →    SCLK                 SCLK              —            —
-GPIO6       →    MISO                 MISO              —            —
-GPIO5       →    MOSI                 MOSI              —            —
-GPIO4       →    CS                   —                 —            —
-GPIO3       →    —                    CS                —            —
-GPIO2       →    —                    —                 Control      —
-GPIO21      →    —                    —                 —            TX
-GPIO22      →    —                    —                 —            RX
-3.3V        →    VCC                  VCC               —            —
-GND         →    GND                  GND               —            GND
+ESP32-C3    →    MAX31856 #1 (BT)    MAX31856 #2 (ET)    SSR         Fan         UART (to PC)
+GPIO7       →    SCLK                 SCLK              —            —           —
+GPIO6       →    MISO                 MISO              —            —           —
+GPIO5       →    MOSI                 MOSI              —            —           —
+GPIO4       →    CS                   —                 —            —           —
+GPIO3       →    —                    CS                —            —           —
+GPIO10      →    —                    —                 PWM          —           —
+GPIO9       →    —                    —                 —            PWM        —
+GPIO1       →    —                    —                 Detect*      —           —
+GPIO20      →    —                    —                 —            —           TX
+GPIO21      →    —                    —                 —            —           RX
+3.3V        →    VCC                  VCC               —            —           —
+GND         →    GND                  GND               —            —           GND
 ```
+
+*GPIO1 is an input with internal pull-up for heat source detection (active low)
 
 ### Power Requirements
 - **ESP32-C3**: 3.3V (500mA minimum)
@@ -144,10 +151,15 @@ cargo espflash monitor --port /dev/ttyUSB0
 LibreRoaster provides a complete coffee roaster control system with:
 
 ### 🎛️ Temperature Control System
-- **PID Controller**: Coffee roaster optimized with anti-windup protection
-- **Dual Sensor Support**: Independent BT and ET thermocouple monitoring
-- **MAX31856 Driver**: Async communication with fault detection
-- **SSR Control**: PWM output with 0-100% duty cycle control
+- **Temperature Control**: Proportional control loop for heating regulation
+- **Dual Sensor Support**: Independent BT and ET thermocouple monitoring via shared SPI
+- **MAX31856 Driver**: Async communication with fault detection and Type-K support
+- **SSR Control with Heat Detection**: PWM output with 0-100% duty cycle and automatic heat source detection
+
+### 🌬️ Fan Control System
+- **SimpleLedcFan**: LEDC-based PWM control (25kHz) for variable speed fan
+- **Fan Trait**: Abstraction for fan control with speed 0-100%
+- **Channel0 LEDC**: Dedicated channel on GPIO9 for fan PWM output
 
 ### 📡 Artisan+ Integration
 - **UART Communication**: Standard Artisan protocol over serial (time,ET,BT,ROR,Gas)
@@ -156,7 +168,9 @@ LibreRoaster provides a complete coffee roaster control system with:
 - **Rate of Rise (ROR)**: Automatic calculation using 5-sample moving average
 
 ### 🏗️ Modular Architecture
-- **Service Container**: Dependency injection pattern for clean separation of concerns
+- **Service Container**: Dependency injection pattern with AppBuilder
+- **Hardware Abstractions**: Traits for Thermometer, Heater, and Fan
+- **Shared SPI**: Multiple MAX31856 sensors on single SPI bus with chip select
 - **Error Handling**: Comprehensive error management with custom error types
 - **Input/Output System**: Modular data flow from sensors to Artisan output
 - **Task Management**: Embassy async tasks for concurrent operations
@@ -167,8 +181,9 @@ LibreRoaster provides a complete coffee roaster control system with:
 - **Safety Monitoring**: Over-temperature protection and sensor validation
 
 ### 📊 System Features
-- **Real-time Control**: 10Hz PID loop with responsive temperature regulation
+- **Real-time Control**: 10Hz control loop with responsive temperature regulation
 - **Safety First**: Multiple protection layers including hard limits at 250°C
+- **Heat Source Detection**: Automatic detection of connected heating element via GPIO1
 - **Calibration Support**: Adjustable thermocouple offsets for accuracy
 - **Emergency Systems**: Automatic shutdown on fault conditions
 
@@ -215,51 +230,45 @@ The system is ready for:
 │   ├── lib.rs               # Library interface
 │   ├── application/         # Application architecture
 │   │   ├── mod.rs           # Application module exports
-│   │   ├── app_builder.rs   # ✅ Service container and dependency injection
+│   │   ├── app_builder.rs   # Service container and dependency injection
 │   │   ├── service_container.rs # Service management
 │   │   └── tasks.rs         # Application tasks
 │   ├── hardware/            # Hardware abstraction layer
 │   │   ├── mod.rs           # Hardware module exports
-│   │   ├── max31856.rs      # ✅ MAX31856 thermocouple driver
-│   │   ├── ssr.rs           # ✅ SSR control implementation
-│   │   ├── pid.rs           # ✅ PID controller (coffee roaster optimized)
-│   │   ├── uart/            # UART communication
-│   │   │   ├── mod.rs       # UART module exports
-│   │   │   ├── driver.rs    # ✅ UART driver implementation
-│   │   │   ├── buffer.rs    # ✅ Circular buffer management
-│   │   │   └── tasks.rs     # ✅ Async UART tasks
-│   │   └── fan.rs           # ✅ Fan control (if implemented)
+│   │   ├── max31856.rs      # MAX31856 thermocouple driver
+│   │   ├── ssr.rs           # SSR control with LEDC PWM and heat detection
+│   │   ├── fan.rs           # Fan control with LEDC PWM
+│   │   ├── shared_spi.rs    # Shared SPI bus implementation
+│   │   └── board.rs         # Board-specific hardware types
 │   ├── control/             # Roaster control logic
 │   │   ├── mod.rs           # Control module exports
-│   │   ├── roaster.rs       # ✅ Complete roaster state machine
 │   │   ├── roaster_refactored.rs # Refactored control logic
-│   │   ├── command_handler.rs # ✅ Command processing
+│   │   ├── command_handler.rs # Command processing
 │   │   ├── handlers.rs      # Control handlers
 │   │   ├── abstractions.rs  # Control abstractions
 │   │   ├── abstractions_tests.rs # Control tests
-│   │   └── pid.rs           # Alternative PID implementation
+│   │   └── traits.rs        # Hardware traits (Thermometer, Heater, Fan)
 │   ├── input/               # Input processing
 │   │   ├── mod.rs           # Input module exports
-│   │   └── parser.rs        # ✅ Command parsing
+│   │   └── parser.rs        # Command parsing
 │   ├── output/              # Output and formatting
 │   │   ├── mod.rs           # Output module exports
-│   │   ├── artisan.rs       # ✅ Artisan+ CSV formatter
+│   │   ├── artisan.rs       # Artisan+ CSV formatter
 │   │   ├── serial.rs        # Serial output management
 │   │   ├── uart.rs          # UART output implementation
 │   │   ├── scheduler.rs     # Output scheduling
 │   │   ├── manager.rs       # Output manager
 │   │   └── traits.rs        # Output trait definitions
-│   ├── server/              # Communication server
-│   │   ├── mod.rs           # Server module exports
-│   │   └── http.rs          # HTTP server (future/optional)
+│   ├── server/              # Communication server (placeholder)
+│   │   └── mod.rs           # Server module exports (empty)
 │   ├── config/              # Configuration management
 │   │   ├── mod.rs           # Configuration exports
-│   │   └── constants.rs     # ✅ Hardware constants and pin assignments
+│   │   └── constants.rs     # Hardware constants and pin assignments
 │   └── error/               # Error handling
 │       ├── mod.rs           # Error module exports
-│       └── app_error.rs     # ✅ Custom error types
+│       └── app_error.rs     # Custom error types
 ├── examples/
-│   └── artisan_test.rs     # ✅ Artisan+ protocol example
+│   └── artisan_test.rs     # Artisan+ protocol example
 ├── .cargo/
 │   └── config.toml          # Cargo target configuration
 ├── Cargo.toml               # Project dependencies
@@ -277,15 +286,17 @@ The system is ready for:
 
 #### `hardware/` - Hardware Abstraction Layer
 - **`max31856.rs`**: Complete MAX31856 driver with async support, fault detection, and Type-K thermocouple configuration
-- **`ssr.rs`**: Solid State Relay control with PWM output capabilities
-- **`pid.rs`**: Professional PID controller with coffee roaster optimized parameters and anti-windup protection
-- **`uart/`**: Complete UART communication stack with buffering and async operations
+- **`ssr.rs`**: Solid State Relay control with LEDC PWM, heat source detection (GPIO1), and simple mode implementation
+- **`fan.rs`**: Fan control with LEDC PWM (25kHz), including FanController and SimpleLedcFan implementations
+- **`shared_spi.rs`**: Shared SPI bus for multiple MAX31856 sensors with chip select
+- **`board.rs`**: Board-specific hardware type definitions
 
 #### `control/` - Business Logic
-- **`roaster.rs`**: Complete state machine implementation with safety monitoring, temperature validation, and command processing
+- **`roaster_refactored.rs`**: State machine implementation with safety monitoring and command processing
 - **`command_handler.rs`**: Command processing and response handling
 - **`handlers.rs`**: Control operation handlers
 - **`abstractions.rs`**: Control system abstractions and interfaces
+- **`traits.rs`**: Hardware traits (Thermometer, Heater, Fan)
 
 #### `input/` & `output/` - Data Flow
 - **`parser.rs`**: Command parsing and validation
@@ -297,7 +308,7 @@ The system is ready for:
 - **`app_error.rs`**: Comprehensive error types and handling
 
 #### `config/` - Configuration
-- **`constants.rs`**: All hardware pin assignments, temperature limits, PID parameters, and system constants
+- **`constants.rs`**: All hardware pin assignments, temperature limits, and system constants
 
 ## Development
 
@@ -406,4 +417,4 @@ This example demonstrates the CSV output format that will be sent to Artisan sof
 
 ---
 
-**Note**: This project requires an ESP32-C3 development board. Ensure proper power supply and USB connection during flashing and operation. Connect the UART pins (GPIO21/TX, GPIO22/RX) to a USB-to-UART adapter for Artisan+ integration.
+**Note**: This project requires an ESP32-C3 development board. Ensure proper power supply and USB connection during flashing and operation. Connect the UART pins (GPIO20/TX, GPIO21/RX) to a USB-to-UART adapter for Artisan+ integration.

@@ -2,6 +2,7 @@ pub mod parser;
 
 pub use parser::parse_artisan_command;
 
+use crate::config::ArtisanCommand;
 use crate::hardware::uart::{send_response, uart_reader_task, uart_writer_task, COMMAND_PIPE_SIZE};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
@@ -26,10 +27,9 @@ impl ArtisanInput {
 
     pub async fn read_command(
         &mut self,
-    ) -> Result<Option<crate::config::ArtisanCommand>, InputError> {
+    ) -> Result<Option<ArtisanCommand>, InputError> {
         let mut cmd_buf: [u8; 64] = [0u8; 64];
 
-        // Allow this static_mut_ref warning as it's necessary for embedded systems
         #[allow(static_mut_refs)]
         if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
             pipe.read(&mut cmd_buf).await;
@@ -52,6 +52,16 @@ impl ArtisanInput {
             Ok(cmd) => Ok(Some(cmd)),
             Err(_) => Ok(None),
         }
+    }
+
+    pub fn try_read_command(&mut self) -> Result<Option<ArtisanCommand>, InputError> {
+        let _cmd_buf: [u8; 64] = [0u8; 64];
+
+        #[allow(static_mut_refs)]
+        if let Some(_pipe) = unsafe { COMMAND_PIPE.as_ref() } {
+        }
+
+        Ok(None)
     }
 
     pub async fn send_response(&mut self, response: &str) -> Result<(), InputError> {

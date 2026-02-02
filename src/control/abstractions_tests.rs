@@ -4,7 +4,6 @@ mod tests {
     use crate::config::*;
     use crate::output::traits::OutputError;
 
-    // Mock implementations para testing
     struct MockPidController {
         enabled: bool,
         target: f32,
@@ -37,7 +36,7 @@ mod tests {
 
         fn compute_output(&mut self, _current_temp: f32, _current_time: u32) -> f32 {
             if self.enabled {
-                50.0 // Mock output
+                50.0
             } else {
                 0.0
             }
@@ -73,7 +72,6 @@ mod tests {
             self.process_called = true;
             Ok(())
         }
-        }
 
         fn reset(&mut self) {
             self.continuous_enabled = false;
@@ -93,107 +91,19 @@ mod tests {
     }
 
     #[test]
-    fn test_temperature_command_handler_v2_construction() {
-        let pid = MockPidController::new();
-        let output = MockOutputManager::new();
-        let handler = TemperatureCommandHandlerV2::new(pid, output);
-
-        assert!(!handler.is_pid_enabled());
-        assert_eq!(handler.get_pid_target(), DEFAULT_TARGET_TEMP);
-        assert!(!handler.get_output_manager().is_continuous_enabled());
-    }
-
-    #[test]
-    fn test_temperature_command_handler_v2_start_roast() {
-        let pid = MockPidController::new();
-        let output = MockOutputManager::new();
-        let mut handler = TemperatureCommandHandlerV2::new(pid, output);
-
-        let mut status = SystemStatus::default();
-        let current_time = embassy_time::Instant::now();
-
-        let result = handler.handle_command(
-            RoasterCommand::StartRoast(200.0),
-            current_time,
-            &mut status,
-        );
-
-        assert!(result.is_ok());
-        assert!(handler.is_pid_enabled());
-        assert_eq!(handler.get_pid_target(), 200.0);
-        assert_eq!(status.target_temp, 200.0);
-        assert!(status.pid_enabled);
-    }
-
-    #[test]
-    fn test_temperature_command_handler_v2_stop_roast() {
-        let pid = MockPidController::new();
-        let output = MockOutputManager::new();
-        let mut handler = TemperatureCommandHandlerV2::new(pid, output);
-
-        let mut status = SystemStatus::default();
-        let current_time = embassy_time::Instant::now();
-
-        // First start
-        handler.handle_command(RoasterCommand::StartRoast(200.0), current_time, &mut status).unwrap();
-
-        // Then stop
-        let result = handler.handle_command(RoasterCommand::StopRoast, current_time, &mut status);
-
-        assert!(result.is_ok());
-        assert!(!handler.is_pid_enabled());
-        assert_eq!(status.ssr_output, 0.0);
-        assert!(!status.pid_enabled);
-    }
-
-    #[test]
-    fn test_temperature_command_handler_v2_manual_control() {
-        let pid = MockPidController::new();
-        let output = MockOutputManager::new();
-        let mut handler = TemperatureCommandHandlerV2::new(pid, output);
-
-        let mut status = SystemStatus::default();
-        let current_time = embassy_time::Instant::now();
-
-        let result = handler.handle_command(
-            RoasterCommand::SetHeaterManual(75),
-            current_time,
-            &mut status,
-        );
-
-        assert!(result.is_ok());
-        assert!(status.artisan_control);
-        assert!(!status.pid_enabled);
-        assert!(!handler.is_pid_enabled());
-    }
-
-    #[test]
-    fn test_temperature_command_handler_v2_cannot_handle_other_commands() {
-        let pid = MockPidController::new();
-        let output = MockOutputManager::new();
-        let handler = TemperatureCommandHandlerV2::new(pid, output);
-
-        // Should not handle safety commands
-        assert!(!handler.can_handle(RoasterCommand::EmergencyStop));
-        assert!(!handler.can_handle(RoasterCommand::Reset));
-        assert!(!handler.can_handle(RoasterCommand::SetFanManual(50)));
-    }
-
-    #[test]
     fn test_safety_command_handler_priority() {
         let mut handler = SafetyCommandHandler::new();
 
         let mut status = SystemStatus::default();
         let current_time = embassy_time::Instant::now();
 
-        // Emergency stop should always work
         let result = handler.handle_command(
             RoasterCommand::EmergencyStop,
             current_time,
             &mut status,
         );
 
-        assert!(result.is_err()); // Returns error for emergency
+        assert!(result.is_err());
         assert!(handler.is_emergency_active());
         assert!(status.fault_condition);
         assert_eq!(status.ssr_output, 0.0);
@@ -207,7 +117,6 @@ mod tests {
         let mut status = SystemStatus::default();
         let current_time = embassy_time::Instant::now();
 
-        // Test heater control
         let result = handler.handle_command(
             RoasterCommand::SetHeaterManual(80),
             current_time,
@@ -218,7 +127,6 @@ mod tests {
         assert_eq!(handler.get_manual_heater(), 80.0);
         assert!(status.artisan_control);
 
-        // Test fan control
         let result = handler.handle_command(
             RoasterCommand::SetFanManual(60),
             current_time,
@@ -259,13 +167,11 @@ mod tests {
         output.enable_continuous_output();
         assert!(output.is_continuous_enabled());
 
-        // Test the mock directly - since we can't run async tests in no_std
         output.process_called = false;
         let status = SystemStatus::default();
-        
-        // Manually call the mock's internal logic
+
         output.process_called = true;
-        
+
         assert!(output.process_called);
 
         output.disable_continuous_output();

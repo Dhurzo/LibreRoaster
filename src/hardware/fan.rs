@@ -4,7 +4,7 @@ use esp_hal::ledc::{
     timer::{self, TimerIFace},
     Ledc, LowSpeed,
 };
-use esp_hal::peripherals::{GPIO8, LEDC};
+use esp_hal::peripherals::{GPIO9, LEDC};
 use esp_hal::time::Rate;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +37,7 @@ impl FanController {
         })
     }
 
-    pub fn with_ledc(ledc_peripheral: LEDC, gpio8: GPIO8) -> Result<Self, FanError> {
+    pub fn with_ledc(ledc_peripheral: LEDC, gpio9: GPIO9) -> Result<Self, FanError> {
         log::info!("Initializing LEDC fan controller on GPIO{}", FAN_PWM_PIN);
 
         let mut ledc = Ledc::new(ledc_peripheral);
@@ -52,7 +52,7 @@ impl FanController {
             })
             .map_err(|_| FanError::LedcError)?;
 
-        let mut channel = ledc.channel(channel::Number::Channel0, gpio8);
+        let mut channel = ledc.channel(channel::Number::Channel0, gpio9);
         channel
             .configure(channel::config::Config {
                 timer: &timer,
@@ -156,6 +156,18 @@ impl FanController {
     }
 }
 
+use crate::control::traits::Fan;
+use crate::control::RoasterError;
+
+impl Fan for FanController {
+    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
+        self.set_speed(duty)
+            .map_err(|_| RoasterError::HardwareError)
+    }
+}
+
+use core::marker::PhantomData;
+
 impl Default for FanController {
     fn default() -> Self {
         log::info!("Creating default fan controller - no LEDC hardware");
@@ -165,3 +177,45 @@ impl Default for FanController {
         }
     }
 }
+
+/// A simple fan controller that takes an already configured LEDC channel
+pub struct SimpleLedcFan<'a, C>
+where
+    C: ChannelIFace<'a, LowSpeed>,
+{
+    channel: C,
+    _phantom: PhantomData<&'a ()>,
+}
+
+impl<'a, C> SimpleLedcFan<'a, C>
+where
+    C: ChannelIFace<'a, LowSpeed>,
+{
+    pub fn new(channel: C) -> Self {
+        Self {
+            channel,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, C> Fan for SimpleLedcFan<'a, C>
+where
+    C: ChannelIFace<'a, LowSpeed>,
+{
+    fn set_speed(&mut self, speed_percent: f32) -> Result<(), RoasterError> {
+        let clamped = speed_percent.clamp(0.0, 100.0);
+        let max_duty = 255;
+        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
+
+        self.channel
+            .set_duty(duty as u8)
+            .map_err(|_| RoasterError::HardwareError)?;
+
+        log::debug!("SimpleLedcFan set to {:.1}% (duty {})", clamped, duty);
+        Ok(())
+    }
+}
+
+// SAFETY: See SsrControl Send impl.
+unsafe impl<'a, C> Send for SimpleLedcFan<'a, C> where C: ChannelIFace<'a, LowSpeed> {}

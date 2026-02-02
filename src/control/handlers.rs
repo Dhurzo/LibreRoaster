@@ -1,5 +1,5 @@
 use super::{RoasterCommandHandler, RoasterError};
-use crate::config::{RoasterCommand, SystemStatus};
+use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
 use crate::control::pid::CoffeeRoasterPid;
 use crate::output::OutputManager;
 use embassy_time::Instant;
@@ -9,6 +9,7 @@ use log::{info, warn};
 pub struct TemperatureCommandHandler {
     pid_controller: CoffeeRoasterPid,
     output_manager: OutputManager,
+    // El hardware SSR ha sido movido a RoasterControl
 }
 
 impl TemperatureCommandHandler {
@@ -21,7 +22,10 @@ impl TemperatureCommandHandler {
         })
     }
 
+    // Nota: with_ssr ha sido eliminado. El hardware se inyecta en RoasterControl.
+
     pub fn get_pid_output(&mut self, bean_temp: f32, current_time: Instant) -> f32 {
+        // Solo calculamos, no aplicamos. RoasterControl aplica al hardware.
         self.pid_controller
             .compute_output(bean_temp, current_time.as_millis() as u32)
     }
@@ -63,8 +67,8 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 self.enable_pid();
                 status.target_temp = target_temp;
                 status.pid_enabled = true;
+                // status.ssr_hardware_status se actualiza en el bucle principal de RoasterControl
 
-                // Reset output manager for new roast
                 self.output_manager.reset();
 
                 info!(
@@ -76,6 +80,7 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
 
             RoasterCommand::StopRoast => {
                 self.disable_pid();
+
                 status.ssr_output = 0.0;
                 status.pid_enabled = false;
 
@@ -92,16 +97,18 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
             }
 
             RoasterCommand::SetHeaterManual(value) => {
-                // Artisan+ takes control, disable PID
                 status.artisan_control = true;
                 status.pid_enabled = false;
                 self.disable_pid();
+
+                let heater_value = value as f32;
+                status.ssr_output = heater_value;
 
                 info!("Artisan+ manual heater set to: {}%", value);
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState), // No puede manejar otros comandos
+            _ => Err(RoasterError::InvalidState),
         }
     }
 
@@ -116,7 +123,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
     }
 }
 
-/// Maneja comandos de seguridad y emergencia
 pub struct SafetyCommandHandler {
     emergency_flag: bool,
 }
@@ -155,6 +161,7 @@ impl RoasterCommandHandler for SafetyCommandHandler {
                 status.fault_condition = true;
                 status.ssr_output = 0.0;
                 status.pid_enabled = false;
+                status.ssr_hardware_status = SsrHardwareStatus::Error;
                 self.trigger_emergency("Manual emergency stop")
             }
 
@@ -162,6 +169,7 @@ impl RoasterCommandHandler for SafetyCommandHandler {
                 status.fault_condition = true;
                 status.ssr_output = 0.0;
                 status.pid_enabled = false;
+                status.ssr_hardware_status = SsrHardwareStatus::Error;
                 self.trigger_emergency("Artisan+ emergency stop")
             }
 
@@ -177,7 +185,6 @@ impl RoasterCommandHandler for SafetyCommandHandler {
     }
 }
 
-/// Maneja comandos específicos de Artisan+ y control manual
 pub struct ArtisanCommandHandler {
     manual_heater: f32,
     manual_fan: f32,

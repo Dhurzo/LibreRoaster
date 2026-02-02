@@ -1,1 +1,1 @@
-pub mod http;
+// Server module - HTTP server removed as it was not integrated

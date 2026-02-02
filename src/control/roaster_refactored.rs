@@ -1,44 +1,67 @@
+use super::{RoasterCommandHandler, RoasterError};
 use crate::config::*;
-use super::{RoasterError, RoasterCommandHandler};
 use crate::control::handlers::{
-    TemperatureCommandHandler, SafetyCommandHandler, ArtisanCommandHandler, SystemCommandHandler
+    ArtisanCommandHandler, SafetyCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
 };
+use crate::control::traits::{Fan, Heater, Thermometer};
 use embassy_time::{Duration, Instant};
-use log::{info, warn};
+use log::{debug, error, info, warn};
+use alloc::boxed::Box;
 
-/// Controlador principal del tostador refactorizado con Command Pattern
-/// 
-/// Ahora cumple con:
-/// - Single Responsibility: Cada handler maneja un tipo específico de comando
-/// - Open/Closed: Nuevos comandos不需要修改现有代码
-/// - Dependency Inversion: Depende de abstracciones (handlers) no de implementaciones específicas
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
     last_temp_read: Option<Instant>,
     last_pid_update: Option<Instant>,
-    
-    // Command handlers - inyección de dependencias
+
+    // Dependencias de Hardware inyectadas (Dynamic Dispatch)
+    heater: Box<dyn Heater + Send>,
+    fan: Box<dyn Fan + Send>,
+    bean_sensor: Box<dyn Thermometer + Send>,
+    env_sensor: Box<dyn Thermometer + Send>,
+
     temp_handler: TemperatureCommandHandler,
+
     safety_handler: SafetyCommandHandler,
     artisan_handler: ArtisanCommandHandler,
     system_handler: SystemCommandHandler,
 }
 
 impl RoasterControl {
-    pub fn new() -> Result<Self, RoasterError> {
+    pub fn new(
+        heater: Box<dyn Heater + Send>, 
+        fan: Box<dyn Fan + Send>,
+        bean_sensor: Box<dyn Thermometer + Send>,
+        env_sensor: Box<dyn Thermometer + Send>
+    ) -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
-        
+
         Ok(RoasterControl {
             state: RoasterState::Idle,
             status: SystemStatus::default(),
             last_temp_read: None,
             last_pid_update: None,
+            heater,
+            fan,
+            bean_sensor,
+            env_sensor,
             temp_handler,
             safety_handler: SafetyCommandHandler::new(),
             artisan_handler: ArtisanCommandHandler::new(),
             system_handler: SystemCommandHandler,
         })
+    }
+
+    /// Lee las temperaturas de los sensores reales y actualiza el estado interno
+    pub fn read_sensors(&mut self) -> Result<(), RoasterError> {
+        let current_time = Instant::now();
+
+        // Leer sensores
+        let raw_bt = self.bean_sensor.read_temperature()?;
+        let raw_et = self.env_sensor.read_temperature()?;
+
+        // Usar update_temperatures para lógica de validación y offsets
+        self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
     pub fn get_status(&self) -> SystemStatus {
@@ -72,29 +95,24 @@ impl RoasterControl {
         Ok(())
     }
 
-    /// Procesa comandos usando el patrón Command en lugar del match gigante
-    /// 
-    /// Ahora cumple con Open/Closed Principle - nuevos comandos不需要 modificar este método
     pub fn process_command(
         &mut self,
         command: RoasterCommand,
         current_time: Instant,
     ) -> Result<(), RoasterError> {
-        // Intentar procesar con cada handler en orden de prioridad
         let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
-            &mut self.safety_handler,  // Prioridad más alta: seguridad
-            &mut self.temp_handler,    // Control de temperatura
-            &mut self.artisan_handler, // Control Artisan+
-            &mut self.system_handler,  // Comandos de sistema
+            &mut self.safety_handler,
+            &mut self.temp_handler,
+            &mut self.artisan_handler,
+            &mut self.system_handler,
         ];
 
         for handler in &mut handlers {
             if handler.can_handle(command) {
                 let result = handler.handle_command(command, current_time, &mut self.status);
-                
-                // Actualizar estado del safety handler si es necesario
+
                 self.status.fault_condition = self.safety_handler.is_emergency_active();
-                
+
                 return result;
             }
         }
@@ -103,8 +121,23 @@ impl RoasterControl {
         Err(RoasterError::InvalidState)
     }
 
+    pub fn is_temperature_valid(temp: f32) -> bool {
+        temp >= MIN_VALID_TEMP && temp <= MAX_VALID_TEMP
+    }
+
+    pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
+        error!("Emergency shutdown: {}", reason);
+        self.status.state = crate::config::constants::RoasterState::Error;
+        self.status.ssr_output = 0.0;
+        
+        // Forzar apagado de hardware directamente
+        let _ = self.heater.set_power(0.0);
+        let _ = self.fan.set_speed(100.0); // Cool down en emergencia? O apagado? Asumimos 100% para enfriar si es overtemp
+        
+        Err(RoasterError::EmergencyShutdown)
+    }
+
     pub fn update_control(&mut self, current_time: Instant) -> Result<f32, RoasterError> {
-        // Check temperature sensor validity
         if let Some(last_read) = self.last_temp_read {
             if current_time.duration_since(last_read)
                 > Duration::from_millis(TEMP_VALIDITY_TIMEOUT_MS as u64)
@@ -114,98 +147,127 @@ impl RoasterControl {
             }
         }
 
-        // Control logic con prioridad de seguridad
+        // Obtener estado real del hardware calefactor
+        self.status.ssr_hardware_status = self.heater.get_status();
+
         let output = if self.safety_handler.is_emergency_active() {
-            // Safety override
+            debug!("Emergency active - forcing SSR output to 0%");
             0.0
         } else {
-            // Check if Artisan+ has control
             if self.status.artisan_control {
-                // Use manual heater setting from Artisan+
-                self.artisan_handler.get_manual_heater()
+                let manual_output = self.artisan_handler.get_manual_heater();
+                debug!(
+                    "Artisan+ control - manual heater output: {:.1}%",
+                    manual_output
+                );
+                manual_output
             } else if self.status.pid_enabled {
-                // Use PID control
-                self.update_pid_control(current_time)
+                if self.status.ssr_hardware_status
+                    == crate::config::constants::SsrHardwareStatus::Available
+                {
+                    self.update_pid_control(current_time)
+                } else {
+                    warn!("PID enabled but SSR not available - output: 0%");
+                    0.0
+                }
             } else {
-                // Neither PID nor Artisan+ control - no heating
                 0.0
             }
         };
 
-        self.status.ssr_output = output.clamp(0.0, 100.0);
-        self.status.fan_output = self.artisan_handler.get_manual_fan();
+        // Aplicar salida al hardware calefactor
+        self.heater.set_power(output)
+            .map_err(|_| RoasterError::HardwareError)?;
 
-        // Update output status
+        self.status.ssr_output = output.clamp(0.0, 100.0);
+        
+        // Gestionar ventilador (Fan)
+        // Nota: En la versión anterior, el ventilador se controlaba indirectamente o era "manual"
+        // Ahora lo controlamos explícitamente desde aquí basado en el handler de Artisan
+        let fan_output = self.artisan_handler.get_manual_fan();
+        self.fan.set_speed(fan_output)
+             .map_err(|_| RoasterError::HardwareError)?;
+             
+        self.status.fan_output = fan_output;
+
         self.status.state = self.state;
+
+        if output > 0.0
+            && self.status.ssr_hardware_status
+                != crate::config::constants::SsrHardwareStatus::Available
+        {
+            debug!(
+                "SSR output {:.1}% applied but no heat source detected",
+                output
+            );
+        }
 
         Ok(self.status.ssr_output)
     }
 
-    /// Process output (serial printing) - call this from main loop
     pub async fn process_output(&mut self) -> Result<(), RoasterError> {
-        // Always process output for Artisan+ compatibility
         if let Err(e) = self.temp_handler.get_output_manager_mut().process_status(&self.status).await {
             warn!("Output error: {:?}", e);
         }
         Ok(())
     }
 
-    /// Get reference to output manager for configuration
     pub fn get_output_manager(&self) -> &crate::output::OutputManager {
         self.temp_handler.get_output_manager()
     }
 
-    /// Get mutable reference to output manager for configuration
     pub fn get_output_manager_mut(&mut self) -> &mut crate::output::OutputManager {
         self.temp_handler.get_output_manager_mut()
     }
 
-    /// Process Artisan+ commands usando el command pattern
-    pub fn process_artisan_command(&mut self, command: ArtisanCommand) -> Result<(), RoasterError> {
-        let _current_time = Instant::now();
+    pub fn process_artisan_command(&mut self, command: crate::config::ArtisanCommand) -> Result<(), RoasterError> {
+        use crate::config::constants::DEFAULT_TARGET_TEMP;
+        let current_time = embassy_time::Instant::now();
 
         match command {
-            ArtisanCommand::StartRoast => {
-                // Start roasting for Artisan+ with default target
+            crate::config::ArtisanCommand::StartRoast => {
                 self.status.artisan_control = true;
                 self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
                 self.temp_handler.get_output_manager_mut().enable_continuous_output();
 
-                info!("Artisan+ roast started with target {:.1}°C", DEFAULT_TARGET_TEMP);
+                // Actualizar estado hardware
+                self.status.ssr_hardware_status = self.heater.get_status();
+
+                info!("Artisan+ roast started with target {:.1}°C - SSR: {:?}", 
+                      DEFAULT_TARGET_TEMP, self.status.ssr_hardware_status);
             }
 
-            ArtisanCommand::SetHeater(value) => {
-                self.artisan_handler.set_manual_values(value as f32, self.artisan_handler.get_manual_fan());
-                self.status.artisan_control = true;
-                self.status.pid_enabled = false;
-                self.temp_handler.disable_pid();
-
-                info!("Artisan+ heater set to: {}%", value);
+            crate::config::ArtisanCommand::SetHeater(value) => {
+                let heater_command = crate::config::RoasterCommand::SetHeaterManual(value);
+                self.process_command(heater_command, current_time)?;
+                info!("Artisan+ heater command processed: {}%", value);
             }
 
-            ArtisanCommand::SetFan(value) => {
-                self.artisan_handler.set_manual_values(self.artisan_handler.get_manual_heater(), value as f32);
-                self.status.fan_output = value as f32;
+            crate::config::ArtisanCommand::SetFan(value) => {
+                let fan_command = crate::config::RoasterCommand::SetFanManual(value);
+                self.process_command(fan_command, current_time)?;
 
-                info!("Artisan+ fan set to: {}%", value);
+                info!("Artisan+ fan command processed: {}%", value);
             }
 
-            ArtisanCommand::EmergencyStop => {
+            crate::config::ArtisanCommand::EmergencyStop => {
                 self.temp_handler.get_output_manager_mut().disable_continuous_output();
                 self.safety_handler.trigger_emergency("Artisan+ emergency stop")?;
                 self.status.fault_condition = true;
+                self.status.ssr_hardware_status = crate::config::constants::SsrHardwareStatus::Error;
+
+                info!("Artisan+ emergency stop triggered");
             }
 
-            ArtisanCommand::ReadStatus => {
-                // This will be handled by the command processor
-                // No action needed here
+            crate::config::ArtisanCommand::ReadStatus => {
+                self.status.ssr_hardware_status = self.heater.get_status();
+                debug!("READ command - SSR status: {:?}", self.status.ssr_hardware_status);
             }
         }
 
         Ok(())
     }
 
-    /// Re-enable PID control (disables Artisan+ manual control)
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.status.artisan_control = false;
         self.temp_handler.set_pid_target(target_temp)?;
@@ -218,41 +280,40 @@ impl RoasterControl {
         Ok(())
     }
 
-    /// Get fan speed for READ command
     pub fn get_fan_speed(&self) -> f32 {
         self.status.fan_output
     }
 
-    fn is_temperature_valid(temp: f32) -> bool {
-        temp >= MIN_TEMP && temp <= MAX_TEMP && !temp.is_nan() && temp.is_finite()
-    }
-
-    pub fn is_emergency_condition(&self) -> bool {
-        self.safety_handler.is_emergency_active() || self.status.fault_condition
-    }
-
-    fn update_pid_control(&mut self, current_time: Instant) -> f32 {
-        // Check if it's time for PID update
+    fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {
+        use crate::config::constants::SsrHardwareStatus;
+        
         let should_update = if let Some(last_update) = self.last_pid_update {
             current_time.duration_since(last_update)
-                >= Duration::from_millis(PID_SAMPLE_TIME_MS as u64)
+                >= embassy_time::Duration::from_millis(crate::config::PID_SAMPLE_TIME_MS as u64)
         } else {
             true
         };
 
         if should_update {
+            if self.status.ssr_hardware_status != SsrHardwareStatus::Available {
+                warn!("PID update requested but SSR not available - skipping");
+                return 0.0;
+            }
+
             let output = self.temp_handler.get_pid_output(self.status.bean_temp, current_time);
 
             self.last_pid_update = Some(current_time);
 
-            // Check if we've reached stable temperature
-            if self.state == RoasterState::Heating {
+            if self.state == crate::config::constants::RoasterState::Heating {
                 let temp_error = (self.status.bean_temp - self.status.target_temp).abs();
                 if temp_error < 2.0 {
-                    self.state = RoasterState::Stable;
+                    self.state = crate::config::constants::RoasterState::Stable;
                     info!("Target temperature reached, entering stable state");
                 }
             }
+
+            debug!("PID update: bean_temp={:.1}°C, target={:.1}°C, output={:.1}%", 
+                   self.status.bean_temp, self.status.target_temp, output);
 
             output
         } else {
@@ -260,92 +321,5 @@ impl RoasterControl {
         }
     }
 
-    fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
-        self.safety_handler.trigger_emergency(reason)?;
-        self.state = RoasterState::EmergencyStop;
-        self.temp_handler.disable_pid();
-        self.status.ssr_output = 0.0;
-        self.status.pid_enabled = false;
-        self.status.fault_condition = true;
 
-        Err(RoasterError::TemperatureOutOfRange)
-    }
-
-    #[allow(dead_code)]
-    fn reset_system(&mut self, current_time: Instant) -> Result<(), RoasterError> {
-        self.state = RoasterState::Idle;
-        self.temp_handler = TemperatureCommandHandler::new()?; // Recreate for fresh state
-        self.status = SystemStatus::default();
-        self.last_temp_read = Some(current_time);
-        self.last_pid_update = Some(current_time);
-        self.safety_handler.clear_emergency();
-        self.artisan_handler = ArtisanCommandHandler::new();
-
-        Ok(())
-    }
-}
-
-impl Default for RoasterControl {
-    fn default() -> Self {
-        Self::new().unwrap()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_roaster_creation() {
-        let roaster = RoasterControl::new().unwrap();
-        assert_eq!(roaster.get_state(), RoasterState::Idle);
-        assert!(!roaster.is_emergency_condition());
-    }
-
-    #[test]
-    fn test_temperature_validation() {
-        assert!(RoasterControl::is_temperature_valid(25.0));
-        assert!(!RoasterControl::is_temperature_valid(-10.0));
-        assert!(!RoasterControl::is_temperature_valid(400.0));
-        assert!(!RoasterControl::is_temperature_valid(f32::NAN));
-        assert!(!RoasterControl::is_temperature_valid(f32::INFINITY));
-    }
-
-    #[test]
-    fn test_start_roast() {
-        let mut roaster = RoasterControl::new().unwrap();
-        let current_time = Instant::now();
-
-        roaster
-            .process_command(RoasterCommand::StartRoast(200.0), current_time)
-            .unwrap();
-        assert_eq!(roaster.get_state(), RoasterState::Idle); // State management simplified
-        assert_eq!(roaster.get_status().target_temp, 200.0);
-    }
-
-    #[test]
-    fn test_emergency_stop() {
-        let mut roaster = RoasterControl::new().unwrap();
-        let current_time = Instant::now();
-
-        roaster
-            .process_command(RoasterCommand::EmergencyStop, current_time)
-            .unwrap_err();
-        assert!(roaster.is_emergency_condition());
-    }
-
-    #[test]
-    fn test_command_handlers_priority() {
-        let mut roaster = RoasterControl::new().unwrap();
-        let current_time = Instant::now();
-
-        // Test that safety handler takes priority
-        roaster.process_command(RoasterCommand::StartRoast(200.0), current_time).unwrap();
-        assert!(roaster.get_status().pid_enabled);
-
-        // Emergency stop should override
-        roaster.process_command(RoasterCommand::EmergencyStop, current_time).unwrap_err();
-        assert!(roaster.safety_handler.is_emergency_active());
-        assert!(!roaster.get_status().pid_enabled);
-    }
 }

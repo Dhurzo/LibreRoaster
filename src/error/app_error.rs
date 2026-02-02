@@ -48,6 +48,7 @@ pub enum ControlError {
     InvalidState,
     CommandFailed,
     OutputError,
+    EmergencyShutdown,
 }
 
 /// Hardware-related errors
@@ -150,6 +151,7 @@ impl AppError {
                 ControlError::InvalidState => "Invalid system state",
                 ControlError::CommandFailed => "Command execution failed",
                 ControlError::OutputError => "Output control error",
+                ControlError::EmergencyShutdown => "Emergency shutdown",
             },
             AppError::Hardware { source } => match source {
                 HardwareError::UartError => "Communication hardware error",
@@ -229,6 +231,12 @@ impl From<crate::control::RoasterError> for AppError {
             },
             crate::control::RoasterError::PidError => AppError::Control {
                 source: ControlError::PidError,
+            },
+            crate::control::RoasterError::HardwareError => AppError::Hardware {
+                source: HardwareError::SsrError,
+            },
+            crate::control::RoasterError::EmergencyShutdown => AppError::Control {
+                source: ControlError::EmergencyShutdown,
             },
         }
     }

@@ -4,8 +4,8 @@ name         = "libreroaster"
 rust-version = "1.88"
 version      = "0.1.0"
 description  = "OpenSource Coffee Bean Roaster compatible with Artisan+"
-authors      = ["LibreRoaster Team"]
-license      = "MIT"
+authors      = ["Juan Ángel López"]
+license      = "APACHE-2"
 
 [[example]]
 name = "artisan_test"
@@ -13,7 +13,7 @@ path = "examples/artisan_test.rs"
 
 [features]
 default = []
-std = []
+std = ["embedded-hal-02"]
 test = ["std"]
 
 [[bin]]
@@ -24,6 +24,8 @@ path = "./src/main.rs"
 # Core dependencies - available for all targets
 heapless         = "0.8.0"
 embedded-hal     = "1.0.0"
+embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", optional = true }
+embedded-hal-bus = "0.2.0"
 embedded-io       = "0.7.1"
 embassy-time     = "0.5.0"
 critical-section = "1.2.0"

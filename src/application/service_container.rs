@@ -1,201 +1,126 @@
+use crate::config::ArtisanCommand;
 use crate::control::RoasterControl;
-use crate::hardware::fan::FanController;
-use crate::hardware::ssr::SsrControl;
-use crate::hardware::ssr::SsrPlaceholder;
 use crate::input::ArtisanInput;
 use core::cell::RefCell;
 use critical_section::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use heapless::String;
 
-/// Thread-safe service container for managing global application state
-/// Replaces unsafe static mut variables with proper synchronization
 pub struct ServiceContainer {
-    roaster: Mutex<RefCell<Option<RoasterControl>>>,
-    fan: Mutex<RefCell<Option<FanController>>>,
-    ssr: Mutex<RefCell<Option<SsrControl<SsrPlaceholder>>>>,
-    artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
+    pub roaster: Mutex<RefCell<Option<RoasterControl>>>,
+    pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
 }
 
+pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 8;
+pub const ARTISAN_OUTPUT_CHANNEL_SIZE: usize = 16;
+static ARTISAN_CMD_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    ArtisanCommand,
+    ARTISAN_CMD_CHANNEL_SIZE,
+> = Channel::new();
+static ARTISAN_OUTPUT_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    String<128>,
+    ARTISAN_OUTPUT_CHANNEL_SIZE,
+> = Channel::new();
+
 impl ServiceContainer {
-    /// Create a new empty service container
     pub const fn new() -> Self {
         Self {
             roaster: Mutex::new(RefCell::new(None)),
-            fan: Mutex::new(RefCell::new(None)),
-            ssr: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
         }
     }
 
-    /// Initialize the container with all services
-    pub fn initialize(
-        roaster: RoasterControl,
-        fan: FanController,
-        artisan_input: ArtisanInput,
-    ) -> Result<(), ContainerError> {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-
-            // Initialize roaster
-            container.roaster.borrow(cs).borrow_mut().replace(roaster);
-
-            // Initialize fan
-            container.fan.borrow(cs).borrow_mut().replace(fan);
-
-            // Initialize artisan input
-            container
-                .artisan_input
-                .borrow(cs)
-                .borrow_mut()
-                .replace(artisan_input);
-
-            Ok(())
-        })
+    pub fn get_instance() -> &'static mut Self {
+        static mut INSTANCE: ServiceContainer = ServiceContainer::new();
+        unsafe { &mut *core::ptr::addr_of_mut!(INSTANCE) }
     }
 
-    /// Initialize container with all services including SSR (using placeholder)
-    pub fn initialize_with_ssr(
-        roaster: RoasterControl,
-        fan: FanController,
-        artisan_input: ArtisanInput,
-    ) -> Result<(), ContainerError> {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-
-            // Initialize roaster
-            container.roaster.borrow(cs).borrow_mut().replace(roaster);
-
-            // Initialize fan
-            container.fan.borrow(cs).borrow_mut().replace(fan);
-
-            // Initialize SSR with placeholder implementation
-            let ssr_placeholder = SsrPlaceholder::default();
-            let ssr = SsrControl::new(ssr_placeholder).unwrap();
-            container.ssr.borrow(cs).borrow_mut().replace(ssr);
-
-            // Initialize artisan input
-            container
-                .artisan_input
-                .borrow(cs)
-                .borrow_mut()
-                .replace(artisan_input);
-
-            Ok(())
-        })
-    }
-
-    /// Get reference to the global service container instance
-    fn get_instance() -> &'static Self {
-        static INSTANCE: ServiceContainer = ServiceContainer::new();
-        &INSTANCE
-    }
-
-    /// Execute operation on roaster with proper error handling
     pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut RoasterControl) -> R,
     {
         critical_section::with(|cs| {
             let container = Self::get_instance();
-            let mut roaster_ref = container.roaster.borrow(cs).borrow_mut();
-
-            match roaster_ref.as_mut() {
+            match container.roaster.borrow(cs).borrow_mut().as_mut() {
                 Some(roaster) => Ok(f(roaster)),
                 None => Err(ContainerError::NotInitialized),
             }
         })
     }
 
-    /// Execute operation on fan with proper error handling
-    pub fn with_fan<R, F>(f: F) -> Result<R, ContainerError>
+    pub fn with_roaster_mut<R, F>(f: F) -> Result<R, ContainerError>
     where
-        F: FnOnce(&mut FanController) -> R,
+        F: FnOnce(&mut RoasterControl) -> R,
     {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            let mut fan_ref = container.fan.borrow(cs).borrow_mut();
-
-            match fan_ref.as_mut() {
-                Some(fan) => Ok(f(fan)),
-                None => Err(ContainerError::NotInitialized),
-            }
-        })
+        Self::with_roaster(f)
     }
 
-    /// Execute operation on artisan input with proper error handling
+    pub fn read_bean_temperature() -> Result<f32, ContainerError> {
+        Self::with_roaster(|roaster| Ok(roaster.get_status().bean_temp)).unwrap_or(Ok(0.0))
+    }
+
+    pub fn read_env_temperature() -> Result<f32, ContainerError> {
+        Self::with_roaster(|roaster| Ok(roaster.get_status().env_temp)).unwrap_or(Ok(0.0))
+    }
+
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut ArtisanInput) -> R,
     {
         critical_section::with(|cs| {
             let container = Self::get_instance();
-            let mut artisan_ref = container.artisan_input.borrow(cs).borrow_mut();
-
-            match artisan_ref.as_mut() {
-                Some(artisan) => Ok(f(artisan)),
+            match container.artisan_input.borrow(cs).borrow_mut().as_mut() {
+                Some(artisan_input) => Ok(f(artisan_input)),
                 None => Err(ContainerError::NotInitialized),
             }
         })
     }
 
-    /// Execute operation on SSR with proper error handling
-    pub fn with_ssr<R, F>(f: F) -> Result<R, ContainerError>
-    where
-        F: FnOnce(&mut SsrControl<SsrPlaceholder>) -> R,
-    {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            let mut ssr_ref = container.ssr.borrow(cs).borrow_mut();
-
-            match ssr_ref.as_mut() {
-                Some(ssr) => Ok(f(ssr)),
-                None => Err(ContainerError::NotInitialized),
-            }
-        })
-    }
-
-    /// Check if all services are initialized
     pub fn is_initialized() -> bool {
         critical_section::with(|cs| {
             let container = Self::get_instance();
-
-            let roaster_ok = container.roaster.borrow(cs).borrow().is_some();
-            let fan_ok = container.fan.borrow(cs).borrow().is_some();
-            let ssr_ok = container.ssr.borrow(cs).borrow().is_some();
-            let artisan_ok = container.artisan_input.borrow(cs).borrow().is_some();
-
-            roaster_ok && fan_ok && ssr_ok && artisan_ok
+            container.roaster.borrow(cs).borrow().is_some()
+                && container.artisan_input.borrow(cs).borrow().is_some()
         })
     }
 
-    /// Reset all services (for testing/emergency reset)
-    pub fn reset() -> Result<(), ContainerError> {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
+    pub fn get_artisan_channel(
+    ) -> &'static Channel<CriticalSectionRawMutex, ArtisanCommand, ARTISAN_CMD_CHANNEL_SIZE> {
+        &ARTISAN_CMD_CHANNEL
+    }
 
-            container.roaster.borrow(cs).borrow_mut().take();
-            container.fan.borrow(cs).borrow_mut().take();
-            container.ssr.borrow(cs).borrow_mut().take();
-            container.artisan_input.borrow(cs).borrow_mut().take();
-
-            Ok(())
-        })
+    pub fn get_output_channel(
+    ) -> &'static Channel<CriticalSectionRawMutex, String<128>, ARTISAN_OUTPUT_CHANNEL_SIZE> {
+        &ARTISAN_OUTPUT_CHANNEL
     }
 }
 
-/// Error types for service container operations
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ContainerError {
     NotInitialized,
+    AlreadyInitialized,
     BorrowFailed,
     InvalidState,
+    SensorError,
+    HardwareInit(&'static str),
 }
 
 impl core::fmt::Display for ContainerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ContainerError::NotInitialized => write!(f, "Service not initialized"),
-            ContainerError::BorrowFailed => write!(f, "Failed to borrow service"),
-            ContainerError::InvalidState => write!(f, "Service in invalid state"),
+            ContainerError::NotInitialized => write!(f, "Service container not initialized"),
+            ContainerError::AlreadyInitialized => {
+                write!(f, "Service container already initialized")
+            }
+            ContainerError::BorrowFailed => write!(f, "Container borrow failed"),
+            ContainerError::InvalidState => write!(f, "Container in invalid state"),
+            ContainerError::HardwareInit(msg) => {
+                write!(f, "Hardware initialization failed: {}", msg)
+            }
+            ContainerError::SensorError => write!(f, "Sensor error"),
         }
     }
 }

@@ -54,7 +54,6 @@ fn linker_be_nice() {
                 }
                 _ => (),
             },
-            // we don't have anything helpful for "missing-lib" yet
             _ => {
                 std::process::exit(1);
             }
