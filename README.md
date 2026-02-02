@@ -2,6 +2,12 @@
 
 LibreRoaster is a professional-grade open-source coffee bean roaster designed for ESP32-C3. Built with modern embedded Rust using Embassy async framework, featuring temperature control, dual thermocouple monitoring, proportional-based heating, fan control, heat source detection, and **Artisan+ compatibility via UART communication**.
 
+## Project Philosophy
+
+The project aims to enable anyone with intermediate technical skills to build their own affordable coffee roaster. Due to the cost-focused approach, certain components are chosen over more expensive alternatives - this is evident in the (future) hardware section where even recycled components are utilized.
+
+The project is adaptable to both more expensive and more budget-friendly components. The design has also been kept simple, which means the roaster is dependent on ARTISAN+ and does not function in "standalone" mode without ARTISAN+ (a standalone version with a different controller could be considered if there is community interest).
+
 ## Features
 
 ### 🎯 Core Roasting System
