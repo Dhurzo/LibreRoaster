@@ -24,6 +24,19 @@ impl core::fmt::Display for RoasterError {
     }
 }
 
+impl RoasterError {
+    pub fn message_token(&self) -> &'static str {
+        match self {
+            RoasterError::TemperatureOutOfRange => "temperature_out_of_range",
+            RoasterError::SensorFault => "sensor_fault",
+            RoasterError::InvalidState => "invalid_state",
+            RoasterError::PidError => "pid_error",
+            RoasterError::HardwareError => "hardware_error",
+            RoasterError::EmergencyShutdown => "emergency_shutdown",
+        }
+    }
+}
+
 pub trait PidController {
     type Error;
 
@@ -47,11 +60,15 @@ pub trait RoasterCommandHandler {
 }
 
 #[derive(Debug, Default)]
-pub struct OutputController;
+pub struct OutputController {
+    continuous_enabled: bool,
+}
 
 impl OutputController {
     pub fn new() -> Self {
-        OutputController
+        OutputController {
+            continuous_enabled: false,
+        }
     }
 
     pub async fn process_status(&mut self, _status: &SystemStatus) -> Result<(), RoasterError> {
@@ -59,15 +76,18 @@ impl OutputController {
     }
 
     pub fn reset(&mut self) {
+        self.continuous_enabled = false;
     }
 
     pub fn enable_continuous_output(&mut self) {
+        self.continuous_enabled = true;
     }
 
     pub fn disable_continuous_output(&mut self) {
+        self.continuous_enabled = false;
     }
 
     pub fn is_continuous_enabled(&self) -> bool {
-        true
+        self.continuous_enabled
     }
 }

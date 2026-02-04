@@ -25,9 +25,7 @@ impl ArtisanInput {
         Ok(Self)
     }
 
-    pub async fn read_command(
-        &mut self,
-    ) -> Result<Option<ArtisanCommand>, InputError> {
+    pub async fn read_command(&mut self) -> Result<Option<ArtisanCommand>, InputError> {
         let mut cmd_buf: [u8; 64] = [0u8; 64];
 
         #[allow(static_mut_refs)]
@@ -58,8 +56,7 @@ impl ArtisanInput {
         let _cmd_buf: [u8; 64] = [0u8; 64];
 
         #[allow(static_mut_refs)]
-        if let Some(_pipe) = unsafe { COMMAND_PIPE.as_ref() } {
-        }
+        if let Some(_pipe) = unsafe { COMMAND_PIPE.as_ref() } {}
 
         Ok(None)
     }
@@ -69,6 +66,7 @@ impl ArtisanInput {
     }
 }
 
+#[cfg(target_arch = "riscv32")]
 pub fn start_uart_tasks(spawner: &embassy_executor::Spawner) -> Result<(), InputError> {
     critical_section::with(|_| unsafe {
         COMMAND_PIPE = Some(Pipe::new());

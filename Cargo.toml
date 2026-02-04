@@ -15,10 +15,12 @@ path = "examples/artisan_test.rs"
 default = []
 std = ["embedded-hal-02"]
 test = ["std"]
+embedded = []
 
 [[bin]]
 name = "libreroaster"
 path = "./src/main.rs"
+required-features = ["embedded"]
 
 [dependencies]
 # Core dependencies - available for all targets
@@ -30,6 +32,8 @@ embedded-io       = "0.7.1"
 embassy-time     = "0.5.0"
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
+log              = "0.4.27"
+embassy-sync     = "0.6.1"
 
 # ESP-specific dependencies - only for embedded target
 [target.'cfg(target_arch = "riscv32")'.dependencies]

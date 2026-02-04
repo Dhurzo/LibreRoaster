@@ -280,10 +280,10 @@ fn test_error_handling_integration() {
 
     // Test invalid commands
     let invalid_commands = [
-        ("INVALID", ParseError::InvalidCommand),
+        ("INVALID", ParseError::UnknownCommand),
         ("", ParseError::EmptyCommand),
-        ("OT1 150", ParseError::InvalidValue),
-        ("IO3 150", ParseError::InvalidValue),
+        ("OT1 150", ParseError::OutOfRange),
+        ("IO3 150", ParseError::OutOfRange),
         ("OT1 abc", ParseError::InvalidValue),
     ];
 
@@ -296,14 +296,17 @@ fn test_error_handling_integration() {
             error => {
                 // Check error type matches
                 match (&error, &expected_error) {
-                    (ParseError::InvalidCommand, ParseError::InvalidCommand) => {
-                        println!("   ✅ '{}' → InvalidCommand", input);
+                    (ParseError::UnknownCommand, ParseError::UnknownCommand) => {
+                        println!("   ✅ '{}' → UnknownCommand", input);
                     }
                     (ParseError::EmptyCommand, ParseError::EmptyCommand) => {
                         println!("   ✅ '{}' → EmptyCommand", input);
                     }
                     (ParseError::InvalidValue, ParseError::InvalidValue) => {
                         println!("   ✅ '{}' → InvalidValue", input);
+                    }
+                    (ParseError::OutOfRange, ParseError::OutOfRange) => {
+                        println!("   ✅ '{}' → OutOfRange", input);
                     }
                     _ => {
                         panic!(

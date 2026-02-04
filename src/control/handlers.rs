@@ -62,13 +62,20 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::StartRoast(target_temp) => {
+                // Idempotent START: if PID/streaming already active, leave session intact
+                if self.output_manager.is_continuous_enabled() || status.pid_enabled {
+                    info!("Artisan+ start requested but already active; keeping current session");
+                    return Ok(());
+                }
+
                 self.set_pid_target(target_temp)?;
                 self.enable_pid();
                 status.target_temp = target_temp;
                 status.pid_enabled = true;
+                status.artisan_control = false;
                 // status.ssr_hardware_status se actualiza en el bucle principal de RoasterControl
 
-                self.output_manager.reset();
+                self.output_manager.enable_continuous_output();
 
                 info!(
                     "Artisan+ control started with target temperature: {:.1}°C",
@@ -82,6 +89,9 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
 
                 status.ssr_output = 0.0;
                 status.pid_enabled = false;
+                status.artisan_control = false;
+
+                self.output_manager.disable_continuous_output();
 
                 info!("Artisan+ control stopped - heating disabled");
                 Ok(())
@@ -96,6 +106,11 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
             }
 
             RoasterCommand::SetHeaterManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual heater value above 100%: {}", value);
+                    return Err(RoasterError::InvalidState);
+                }
+
                 status.artisan_control = true;
                 status.pid_enabled = false;
                 self.disable_pid();
@@ -209,6 +224,19 @@ impl ArtisanCommandHandler {
         self.manual_heater = heater;
         self.manual_fan = fan;
     }
+
+    pub fn set_manual_heater(&mut self, heater: f32) {
+        self.manual_heater = heater;
+    }
+
+    pub fn set_manual_fan(&mut self, fan: f32) {
+        self.manual_fan = fan;
+    }
+
+    pub fn clear_manual(&mut self) {
+        self.manual_heater = 0.0;
+        self.manual_fan = 0.0;
+    }
 }
 
 impl RoasterCommandHandler for ArtisanCommandHandler {
@@ -220,15 +248,28 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::SetHeaterManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual heater value above 100%: {}", value);
+                    return Err(RoasterError::InvalidState);
+                }
+
                 status.artisan_control = true;
                 self.manual_heater = value as f32;
                 status.pid_enabled = false;
+                status.ssr_output = self.manual_heater;
 
                 info!("Artisan+ manual heater set to: {}%", value);
                 Ok(())
             }
 
             RoasterCommand::SetFanManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual fan value above 100%: {}", value);
+                    return Err(RoasterError::InvalidState);
+                }
+
+                status.artisan_control = true;
+                status.pid_enabled = false;
                 self.manual_fan = value as f32;
                 status.fan_output = value as f32;
 

@@ -164,7 +164,7 @@ mod tests {
     /// Helper function to create a SystemStatus with known values for testing
     fn create_test_status() -> SystemStatus {
         SystemStatus {
-            state: RoasterState::Roasting,
+            state: RoasterState::Stable,
             bean_temp: 150.5,
             env_temp: 120.3,
             target_temp: 200.0,
@@ -173,7 +173,7 @@ mod tests {
             pid_enabled: true,
             artisan_control: false,
             fault_condition: false,
-            ssr_hardware_status: SsrHardwareStatus::Detected,
+            ssr_hardware_status: SsrHardwareStatus::Available,
         }
     }
 
@@ -198,6 +198,19 @@ mod tests {
         assert_eq!(parts[1], "150.5"); // BT
         assert_eq!(parts[2], "75.0"); // Power
         assert_eq!(parts[3], "25.0"); // Fan
+    }
+
+    /// TEST-07b: Verify format_read_response does not clamp values
+    #[test]
+    fn test_format_read_response_out_of_range_values() {
+        let mut status = create_test_status();
+        status.ssr_output = 123.45;
+        let fan_speed = -7.6;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "120.3,150.5,123.5,-7.6");
+        assert_eq!(output.split(',').count(), 4);
     }
 
     /// TEST-08: Verify format produces correct Artisan CSV line format

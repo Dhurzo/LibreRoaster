@@ -1,10 +1,31 @@
 use crate::config::ArtisanCommand;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
-    InvalidCommand,
+    UnknownCommand,
     InvalidValue,
+    OutOfRange,
     EmptyCommand,
+}
+
+impl ParseError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            ParseError::UnknownCommand => "unknown_command",
+            ParseError::InvalidValue => "invalid_value",
+            ParseError::OutOfRange => "out_of_range",
+            ParseError::EmptyCommand => "invalid_value",
+        }
+    }
+
+    pub fn message(&self) -> &'static str {
+        match self {
+            ParseError::UnknownCommand => "unknown_command",
+            ParseError::InvalidValue => "invalid_value",
+            ParseError::OutOfRange => "out_of_range",
+            ParseError::EmptyCommand => "empty_command",
+        }
+    }
 }
 
 pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError> {
@@ -23,32 +44,30 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
 
         ["OT1", value_str] => {
             let value = parse_percentage(value_str)?;
-            if value <= 100 {
-                Ok(ArtisanCommand::SetHeater(value))
-            } else {
-                Err(ParseError::InvalidValue)
-            }
+            Ok(ArtisanCommand::SetHeater(value))
         }
 
         ["IO3", value_str] => {
             let value = parse_percentage(value_str)?;
-            if value <= 100 {
-                Ok(ArtisanCommand::SetFan(value))
-            } else {
-                Err(ParseError::InvalidValue)
-            }
+            Ok(ArtisanCommand::SetFan(value))
         }
 
         ["STOP"] => Ok(ArtisanCommand::EmergencyStop),
 
-        _ => Err(ParseError::InvalidCommand),
+        _ => Err(ParseError::UnknownCommand),
     }
 }
 
 fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
-    value_str
+    let value = value_str
         .parse::<u8>()
-        .map_err(|_| ParseError::InvalidValue)
+        .map_err(|_| ParseError::InvalidValue)?;
+
+    if value <= 100 {
+        Ok(value)
+    } else {
+        Err(ParseError::OutOfRange)
+    }
 }
 
 #[cfg(test)]
@@ -88,13 +107,19 @@ mod tests {
     #[test]
     fn test_invalid_command() {
         let result = parse_artisan_command("INVALID");
-        assert!(matches!(result, Err(ParseError::InvalidCommand)));
+        assert!(matches!(result, Err(ParseError::UnknownCommand)));
     }
 
     #[test]
     fn test_invalid_value() {
-        let result = parse_artisan_command("OT1 150");
+        let result = parse_artisan_command("OT1 abc");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_out_of_range_value() {
+        let result = parse_artisan_command("OT1 150");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
     }
 
     #[test]
@@ -130,6 +155,6 @@ mod tests {
     #[test]
     fn test_parse_io3_invalid_above() {
         let result = parse_artisan_command("IO3 150");
-        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
     }
 }
