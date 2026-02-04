@@ -102,4 +102,34 @@ mod tests {
         let result = parse_artisan_command("");
         assert!(matches!(result, Err(ParseError::EmptyCommand)));
     }
+
+    #[test]
+    fn test_parse_ot1_zero() {
+        let result = parse_artisan_command("OT1 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(0))));
+    }
+
+    #[test]
+    fn test_parse_ot1_max() {
+        let result = parse_artisan_command("OT1 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(100))));
+    }
+
+    #[test]
+    fn test_parse_io3_zero() {
+        let result = parse_artisan_command("IO3 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(0))));
+    }
+
+    #[test]
+    fn test_parse_io3_max() {
+        let result = parse_artisan_command("IO3 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(100))));
+    }
+
+    #[test]
+    fn test_parse_io3_invalid_above() {
+        let result = parse_artisan_command("IO3 150");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
 }
