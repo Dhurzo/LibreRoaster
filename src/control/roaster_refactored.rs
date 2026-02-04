@@ -1,4 +1,4 @@
-use super::{RoasterCommandHandler, RoasterError};
+use super::{RoasterError, RoasterCommandHandler};
 use crate::config::*;
 use crate::control::handlers::{
     ArtisanCommandHandler, SafetyCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
@@ -212,11 +212,11 @@ impl RoasterControl {
         Ok(())
     }
 
-    pub fn get_output_manager(&self) -> &crate::output::OutputManager {
+    pub fn get_output_manager(&self) -> &crate::control::OutputController {
         self.temp_handler.get_output_manager()
     }
 
-    pub fn get_output_manager_mut(&mut self) -> &mut crate::output::OutputManager {
+    pub fn get_output_manager_mut(&mut self) -> &mut crate::control::OutputController {
         self.temp_handler.get_output_manager_mut()
     }
 

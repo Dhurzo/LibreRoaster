@@ -1,15 +1,14 @@
 use super::{RoasterCommandHandler, RoasterError};
 use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
 use crate::control::pid::CoffeeRoasterPid;
-use crate::output::OutputManager;
+use crate::control::OutputController;
 use embassy_time::Instant;
 use log::{info, warn};
 
 /// Maneja comandos relacionados con el control de temperatura (PID y manual)
 pub struct TemperatureCommandHandler {
     pid_controller: CoffeeRoasterPid,
-    output_manager: OutputManager,
-    // El hardware SSR ha sido movido a RoasterControl
+    output_manager: OutputController,
 }
 
 impl TemperatureCommandHandler {
@@ -18,7 +17,7 @@ impl TemperatureCommandHandler {
 
         Ok(Self {
             pid_controller: pid,
-            output_manager: OutputManager::new(),
+            output_manager: OutputController::new(),
         })
     }
 
@@ -45,11 +44,11 @@ impl TemperatureCommandHandler {
         self.pid_controller.disable();
     }
 
-    pub fn get_output_manager(&self) -> &OutputManager {
+    pub fn get_output_manager(&self) -> &OutputController {
         &self.output_manager
     }
 
-    pub fn get_output_manager_mut(&mut self) -> &mut OutputManager {
+    pub fn get_output_manager_mut(&mut self) -> &mut OutputController {
         &mut self.output_manager
     }
 }

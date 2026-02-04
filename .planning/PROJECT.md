@@ -8,6 +8,17 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session.
 
+## Current Milestone: v1.1 Cleanup
+
+**Goal:** Remove unused code, consolidate duplicates, and fix warnings for a cleaner codebase.
+
+**Target cleanup:**
+- Delete unused output modules (serial.rs, uart.rs, manager.rs, scheduler.rs)
+- Delete unused control modules (command_handler.rs, pid.rs, abstractions_tests.rs)
+- Consolidate OutputManager trait
+- Simplify error handling
+- Fix all compiler warnings
+
 ## Requirements
 
 ### Validated
@@ -23,12 +34,17 @@ Artisan can read temperatures and control heater/fan during a roast session.
 
 ### Active
 
-_(None — awaiting next milestone)_
+- [ ] Remove unused output modules (serial.rs, uart.rs, manager.rs, scheduler.rs)
+- [ ] Remove unused control modules (command_handler.rs, pid.rs, abstractions_tests.rs)
+- [ ] Consolidate OutputManager trait in control/abstractions.rs
+- [ ] Simplify error handling architecture
+- [ ] Fix unused import warnings
+- [ ] Verify build succeeds after cleanup
 
 ### Out of Scope
 
 - Hardware testing (actual ESP32 + roaster)
-- Firmware modifications or new features
+- New features or functionality changes
 
 ## Context
 
@@ -36,14 +52,11 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 **v1.0 shipped:** Comprehensive test infrastructure for ARTISAN+ protocol.
 
-Key files:
-- `src/input/parser.rs` — 13 tests
-- `src/output/artisan.rs` — 9 tests + bug fix
-- `tests/artisan_integration_test.rs` — 8 tests
-- `tests/mock_uart.rs` — 7 tests
-- `examples/artisan_test.rs` — 179 lines
-
-**Note:** Integration tests verified structurally. Requires ESP32-C3 toolchain to execute.
+**Codebase issues identified:**
+- 4 unused output modules (~700 lines
+- 3 unused control modules
+- Duplicate OutputManager trait
+- Multiple error types
 
 ## Constraints
 
