@@ -382,12 +382,35 @@ impl RoasterControl {
                 info!("Artisan+ stop requested - streaming disabled and outputs cleared");
             }
 
+            crate::config::ArtisanCommand::IncreaseHeater => {
+                let up_command = crate::config::RoasterCommand::IncreaseHeater;
+                self.process_command(up_command, current_time)?;
+                info!("Artisan+ UP command processed");
+            }
+
+            crate::config::ArtisanCommand::DecreaseHeater => {
+                let down_command = crate::config::RoasterCommand::DecreaseHeater;
+                self.process_command(down_command, current_time)?;
+                info!("Artisan+ DOWN command processed");
+            }
+
             crate::config::ArtisanCommand::ReadStatus => {
                 self.status.ssr_hardware_status = self.heater.get_status();
                 debug!(
                     "READ command - SSR status: {:?}",
                     self.status.ssr_hardware_status
                 );
+            }
+
+            // Initialization handshake commands - handled elsewhere, log and ignore here
+            crate::config::ArtisanCommand::Chan(_) => {
+                debug!("Chan command received - initialization handled by multiplexer");
+            }
+            crate::config::ArtisanCommand::Units(_) => {
+                debug!("Units command received - initialization handled by multiplexer");
+            }
+            crate::config::ArtisanCommand::Filt(_) => {
+                debug!("Filt command received - initialization handled by multiplexer");
             }
         }
 

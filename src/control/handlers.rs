@@ -237,6 +237,16 @@ impl ArtisanCommandHandler {
         self.manual_heater = 0.0;
         self.manual_fan = 0.0;
     }
+
+    /// Constant for heater increment/decrement percentage
+    const HEATER_DELTA: i8 = 5;
+
+    /// Apply 5% increment/decrement with clamping to 0-100 range
+    fn apply_heater_delta(current_value: f32, direction: i8) -> f32 {
+        let delta = direction * Self::HEATER_DELTA;
+        let new_value = (current_value as i16 + delta as i16).clamp(0, 100);
+        new_value as f32
+    }
 }
 
 impl RoasterCommandHandler for ArtisanCommandHandler {
@@ -277,6 +287,32 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
                 Ok(())
             }
 
+            RoasterCommand::IncreaseHeater => {
+                status.artisan_control = true;
+                status.pid_enabled = false;
+
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, 1);
+                status.ssr_output = new_value;
+                self.manual_heater = new_value;
+
+                info!("Artisan+ UP: heater increased to {:.0}%", new_value);
+                Ok(())
+            }
+
+            RoasterCommand::DecreaseHeater => {
+                status.artisan_control = true;
+                status.pid_enabled = false;
+
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, -1);
+                status.ssr_output = new_value;
+                self.manual_heater = new_value;
+
+                info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
+                Ok(())
+            }
+
             _ => Err(RoasterError::InvalidState),
         }
     }
@@ -284,7 +320,10 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
     fn can_handle(&self, command: RoasterCommand) -> bool {
         matches!(
             command,
-            RoasterCommand::SetHeaterManual(_) | RoasterCommand::SetFanManual(_)
+            RoasterCommand::SetHeaterManual(_)
+                | RoasterCommand::SetFanManual(_)
+                | RoasterCommand::IncreaseHeater
+                | RoasterCommand::DecreaseHeater
         )
     }
 }
@@ -312,5 +351,113 @@ impl RoasterCommandHandler for SystemCommandHandler {
 
     fn can_handle(&self, command: RoasterCommand) -> bool {
         matches!(command, RoasterCommand::Reset)
+    }
+}
+
+#[cfg(test)]
+mod artisan_command_handler_tests {
+    use super::*;
+    use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
+
+    /// Helper function to create a SystemStatus with known values for testing
+    fn create_test_status() -> SystemStatus {
+        SystemStatus {
+            state: RoasterState::Stable,
+            bean_temp: 150.5,
+            env_temp: 120.3,
+            target_temp: 200.0,
+            ssr_output: 50.0,
+            fan_output: 50.0,
+            pid_enabled: false,
+            artisan_control: false,
+            fault_condition: false,
+            ssr_hardware_status: SsrHardwareStatus::Available,
+        }
+    }
+
+    /// TEST-18-03a: Verify HEATER_DELTA constant is 5
+    #[test]
+    fn test_heater_delta_constant() {
+        assert_eq!(ArtisanCommandHandler::HEATER_DELTA, 5);
+    }
+
+    /// TEST-18-03b: Verify UP increases heater by 5%
+    #[test]
+    fn test_up_increases_heater() {
+        let current = 50.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, 1);
+        assert_eq!(result, 55.0);
+    }
+
+    /// TEST-18-03c: Verify UP at 100% stays at 100% (clamped)
+    #[test]
+    fn test_up_at_max_clamped() {
+        let current = 100.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, 1);
+        assert_eq!(result, 100.0);
+    }
+
+    /// TEST-18-03d: Verify UP at 98% goes to 100% (clamped)
+    #[test]
+    fn test_up_near_max_clamped() {
+        let current = 98.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, 1);
+        assert_eq!(result, 100.0);
+    }
+
+    /// TEST-18-03e: Verify DOWN decreases heater by 5%
+    #[test]
+    fn test_down_decreases_heater() {
+        let current = 50.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, -1);
+        assert_eq!(result, 45.0);
+    }
+
+    /// TEST-18-03f: Verify DOWN at 0% stays at 0% (clamped)
+    #[test]
+    fn test_down_at_min_clamped() {
+        let current = 0.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, -1);
+        assert_eq!(result, 0.0);
+    }
+
+    /// TEST-18-03g: Verify DOWN at 3% goes to 0% (clamped)
+    #[test]
+    fn test_down_near_min_clamped() {
+        let current = 3.0;
+        let result = ArtisanCommandHandler::apply_heater_delta(current, -1);
+        assert_eq!(result, 0.0);
+    }
+
+    /// TEST-18-03h: Verify UP/DOWN with boundary values
+    #[test]
+    fn test_up_down_boundary_values() {
+        // Test various boundary conditions
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(0.0, 1), 5.0); // 0 -> 5
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, 1), 10.0); // 5 -> 10
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(10.0, -1), 5.0); // 10 -> 5
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, -1), 0.0); // 5 -> 0
+    }
+
+    /// TEST-18-03i: Verify ArtisanCommandHandler::new initializes to zero
+    #[test]
+    fn test_handler_initialization() {
+        let handler = ArtisanCommandHandler::new();
+        assert_eq!(handler.get_manual_heater(), 0.0);
+        assert_eq!(handler.get_manual_fan(), 0.0);
+    }
+
+    /// TEST-18-03j: Verify can_handle includes IncreaseHeater
+    #[test]
+    fn test_can_handle_increase_heater() {
+        let handler = ArtisanCommandHandler::new();
+        assert!(handler.can_handle(RoasterCommand::IncreaseHeater));
+    }
+
+    /// TEST-18-03k: Verify can_handle includes DecreaseHeater
+    #[test]
+    fn test_can_handle_decrease_heater() {
+        let handler = ArtisanCommandHandler::new();
+        assert!(handler.can_handle(RoasterCommand::DecreaseHeater));
     }
 }

@@ -1,132 +1,184 @@
-# Project Research Summary
+# LibreRoaster v1.5 Research Summary
 
-**Project:** LibreRoaster
-**Domain:** ESP32-C3 Artisan/Artisan+ UART firmware (roaster control)
-**Researched:** 2026-02-04
-**Confidence:** MEDIUM
+**Project:** Full Artisan Serial Protocol Implementation  
+**Date:** February 4, 2026  
+**Confidence:** HIGH - Protocol well-documented with multiple reference implementations
+
+---
 
 ## Executive Summary
 
-LibreRoaster is an ESP32-C3 firmware that must present a fully compliant Artisan/Artisan+ UART protocol so Artisan can read roaster telemetry and drive heater/fan outputs. Experts ship this class of firmware by centralizing protocol knowledge (command registry + formatter), enforcing strict value and formatting rules, and proving behavior through host-side mocks before hardware testing. The recommended path is to extend the existing Embassy-based tasks with a data-driven command manifest, a single formatter with golden/property tests, and a strict mock UART harness for end-to-end command→response coverage.
+LibreRoaster v1.5 aims to implement full bidirectional Artisan serial protocol compatibility on ESP32-C3 firmware. Artisan is the dominant open-source coffee roasting software, communicating via a master-slave polling model at 115200 baud. The existing codebase provides solid foundations including Embassy async task framework, command multiplexer, ArtisanFormatter for READ responses, and RoasterControl with ArtisanCommandHandler.
 
-The stack should stay minimal on-device, keeping new crates as dev-only: proptest for parser/formatter fuzzing, insta for formatter golden outputs, mock-embedded-io for UART simulation, and rstest for command matrices. Key risks are partial command coverage, formatter drift (precision/CRLF), permissive mocks that hide timing/backpressure issues, and undefined behavior on malformed inputs; mitigate with a registry-backed coverage matrix, centralized formatter helpers, strict mock UART modes, and explicit error schemas. With these in place, the roadmap can sequence coverage, formatting, and integration hardening without inflating firmware size.
+**Key Research Findings:**
+
+1. **Stack Strategy:** Add `nom` 8.x for robust parser combinator support; existing Embassy+esp-hal stack is fully compatible
+2. **Critical Path:** Initialization sequence (CHAN → UNITS → FILT) must complete with `#` acknowledgment before Artisan polls temperatures
+3. **Architecture Leverage:** Extend existing parser and formatter rather than replacing them; maintain separation of concerns
+4. **Primary Risks:** UART buffer overflow, ISR blocking, and frame format errors are the highest-impact pitfalls
+
+The recommended approach is a phased implementation starting with protocol foundation (handshake + acknowledgments), followed by extended command parsing, response enhancement, PID integration, and streaming optimization. This minimizes risk while building toward full Artisan compatibility.
+
+---
 
 ## Key Findings
 
-### Recommended Stack
+### From STACK.md: Technology Recommendations
 
-Host-side test stack only (firmware size unchanged): proptest 1.9.0 for property fuzzing, insta 1.46.3 for golden formatter outputs, mock-embedded-io 0.1.0 plus embedded-io-cursor 0.1.0 for UART/fixture simulation, and rstest 0.26.1 for table-driven command matrices. Coverage via cargo-llvm-cov 0.8.2 on host. All align with embedded-io 0.7.1 and Rust 1.88 toolchain.
+| Component | Recommendation | Rationale |
+|-----------|----------------|-----------|
+| **Parser Library** | `nom` 8.x | Industry-standard Rust parsing library with no_std support, zero-copy parsing, compositional parsers, and precise error locations |
+| **Existing Stack** | Keep as-is | esp-hal, embassy-executor, embassy-time, heapless, embedded-hal are all compatible with no changes |
+| **What NOT to Add** | tokio, async-std, serde, regex | Incompatible with no_std embassy, or overkill for ASCII protocol |
 
-**Core technologies:**
-- proptest — property-based parser/formatter fuzzing — shrinks failing cases and exercises malformed commands without firmware bloat.
-- insta — snapshot approval testing — locks formatter precision/CRLF/columns to prevent regressions.
-- mock-embedded-io — UART mock implementing embedded-io/async — enables end-to-end command loops with Embassy tasks.
+**Critical Integration Points:**
+- `src/input/parser.rs` → extend with nom-based Artisan command parsing
+- `src/output/artisan.rs` → extend ArtisanFormatter with acknowledgment responses
+- `src/input/multiplexer.rs` → add initialization state machine
 
-### Expected Features
+### From FEATURES.md: Feature Landscape
 
-Must cover full Artisan/Artisan+ command matrix with strict bounds and deterministic formatting; start/stop state integrity and command→response integration tests are table stakes. Differentiators include defensive parser diagnostics, fuzz/soak coverage, timing-tolerance tests, formatter golden files, and optional per-channel safety caps. Defer feature-flagged protocol extensions, telemetry enrichments, and pluggable validation policies to v2+.
+**Table Stakes (MVP Required):**
+- Initialization handshake (CHAN → UNITS → FILT with `#` acknowledgment)
+- READ command response (ET,BT,ET2,BT2,ambient,fan,heater in CSV format)
+- OT1 heater control and IO3 fan control (existing)
+- 115200 baud, 8N1, line-oriented protocol with newline termination
+- Temperature unit conversion (F/C) and channel mapping support
 
-**Must have (table stakes):**
-- Complete Artisan/Artisan+ command coverage with explicit errors for unknown/bad payloads.
-- Strict bounds and error responses (0–100% outputs) with deterministic CSV formatting and cadence.
-- Command→response integration tests over mock UART plus start/stop state correctness.
+**Differentiators (Post-MVP):**
+- Extended command set (OT2, UP/DOWN, PID mode)
+- Rate-of-Rise reporting
+- WebSocket bridge for network-based Artisan connection
+- MODBUS support for commercial roaster integration
+- Autonomous PID control without Artisan connected
 
-**Should have (competitive):**
-- Defensive parser diagnostics with verbosity controls.
-- Fuzz/soak and timing-tolerance tests on parser/formatter via mock UART.
-- Formatter golden files for regression detection; configurable per-channel safety caps.
+**Anti-Features to Avoid:**
+- Missing `#` acknowledgment for CHAN (Artisan will hang)
+- Response times exceeding 100ms (causes missed samples)
+- Using `0` for unused temperature channels (use `-1`)
+- Arbitrary serial output breaking line-oriented parsing
 
-**Defer (v2+):**
-- Feature-flagged protocol extensions, telemetry/log enrichments, pluggable validation policies.
+### From ARCHITECTURE.md: Structural Analysis
 
-### Architecture Approach
+**Existing Architecture Strengths:**
+- Embassy async tasks for UART I/O with proper concurrency
+- Command multiplexer handling dual-channel (UART + USB CDC)
+- Clear separation: Parser → Handler → Formatter → Output
+- ServiceContainer for dependency injection
 
-Use Embassy async tasks for UART read/write, a shared command registry feeding parser and dispatcher, centralized formatter for Artisan/Artisan+ responses, and a mock UART-backed integration harness. Keep parsing/formatting pure and stateless; isolate hardware concerns in `uart/`, protocol logic in `input/` and `output/`, control/state in `control/`, and reusable mocks/fixtures in `test_support/` with round-trip tests under `tests/`.
+**New Components Required:**
+1. `ArtisanProtocolState` - Initialization state machine (ExpectingChan → ExpectingUnits → ExpectingFilt → Ready)
+2. `ArtisanResponseBuilder` - Centralized response formatting
+3. `ArtisanParser` - Extended delimiter support (`,`, `;`, space, `=`)
+4. Extended `ArtisanCommand` enum - PID commands, OT2, DCFAN, channel mapping
 
-**Major components:**
-1. Command registry/dispatcher — maps commands to handlers and enforces mode/validation.
-2. Formatter — canonicalizes CSV/Artisan+ outputs with golden/property tests.
-3. Mock UART integration harness — drives reader/formatter/writer tasks to assert timing, backpressure, and responses.
+**Data Flow (Enhanced):**
+```
+Artisan → CHAN;1200 → ProtocolState → #ACK → Artisan
+Artisan → UNITS;C → ProtocolState → (no response)
+Artisan → READ → Parser → Handler → ArtisanFormatter → Response
+```
 
-### Critical Pitfalls
+### From PITFALLS.md: Critical Risks
 
-1. **Partial command matrix coverage** — prevent with a spec-derived manifest + table-driven coverage tests for all commands and error paths.
-2. **Formatter drift (precision/CRLF/columns)** — avoid by centralizing formatter helpers and locking snapshots across normal and edge values (NaN/inf, large numbers).
-3. **Mock UART too permissive** — implement strict mode with buffer limits, per-byte timing, backpressure, and timeout assertions.
-4. **State leakage between handlers/formatter** — keep formatter stateless per request; add harness reset hooks and randomized command order tests.
-5. **Undefined behavior on invalid inputs** — define error schema, bound payload sizes, and test malformed frames/partial lines to ensure no panics or stale reuse.
+**Critical Pitfalls (Must Prevent):**
+1. **UART Buffer Overflow** - Process bytes faster than they arrive using event-driven RX with proper buffer sizing
+2. **Blocking in ISR** - Keep UART ISR minimal: copy bytes, signal semaphore, return immediately
+3. **Baud Rate Mismatch** - Verify ESP32-C3 clock accuracy; use exact 115200 configuration
+4. **Race Conditions** - Protect shared ArtisanFormatter buffers with mutexes
+5. **Incorrect Frame Format** - Use `R,TTTT,TTTT,...\r\n` format; always terminate with CRLF
+
+**Moderate Pitfalls:**
+- USB CDC conflict with UART0 (use UART1/UART2 for Artisan)
+- Temperature data staleness during serial transmission
+- Deep sleep breaking Artisan connection (disable during active roast)
+
+---
 
 ## Implications for Roadmap
 
-### Phase 1: Command Manifest & Coverage Matrix
-**Rationale:** Locks protocol completeness early and aligns parser/dispatcher with spec before formatter changes. Reduces risk of hidden missing commands.
-**Delivers:** Spec-derived command registry, coverage matrix, and unit tests for all command parses/handlers (success + explicit errors). Implements P1 feature “complete command coverage”.
-**Avoids:** Partial command matrix coverage; undefined behavior on unknown commands.
-**Research flag:** Validate latest Artisan/Artisan+ spec details (rare commands, mode gating) via `/gsd-research-phase` if spec ambiguity remains.
+### Suggested Phase Structure
 
-### Phase 2: Spec-Compliant Formatter & Error Schema
-**Rationale:** Formatter drift is a top risk; stabilizing output before integration avoids rework. Relies on Phase 1 commands enumerated.
-**Delivers:** Central formatter helpers, golden snapshots (insta), property tests (proptest) for precision/CRLF/column counts, standardized error codes/messages. Covers P1 deterministic formatter + strict bounds; sets up P2 formatter golden files.
-**Avoids:** Formatter drift, state leakage, undefined input behavior.
-**Research flag:** If official Artisan formatting nuances (line endings, decimal places) are unclear, run targeted research/tests with the PC app.
+**Phase 1: Protocol Foundation (Week 1)**
+- Implement initialization state machine (CHAN → UNITS → FILT)
+- Add acknowledgment response system (`#` prefix)
+- Create error response format (`ERR code message`)
+- Validate UART configuration with Artisan connection
 
-### Phase 3: Strict Mock UART Integration Loop
-**Rationale:** Confirms timing/backpressure and end-to-end correctness using real tasks; depends on Phase 1/2 protocol correctness.
-**Delivers:** Mock UART with buffer/backpressure/timing controls, integration tests for command sequences (success/error/start/stop), cadence verification, coverage reporting via cargo-llvm-cov. Implements P1 command→response integration; enables P2 timing-tolerance and fuzz/soak paths.
-**Avoids:** Permissive mock masking UART issues; latent panics on malformed frames.
-**Research flag:** Optional `/gsd-research-phase` on UART timing/backpressure norms for Artisan over USB serial if discrepancies arise.
+**Phase 2: Extended Command Parsing (Week 2)**
+- Integrate `nom` parser with multi-delimiter support
+- Add PID command variants (PID;ON, PID;SV, PID;T;...)
+- Add OT2 and DCFAN command support
+- Extend ArtisanCommand enum with new variants
 
-### Phase 4: Resilience & Safety Enhancements
-**Rationale:** Builds atop stable integration loop to add diagnostics and optional caps without destabilizing baseline.
-**Delivers:** Defensive parser diagnostics, timing-tolerance suites, fuzz/soak coverage, configurable per-channel safety caps (feature-gated), and snapshot maintenance workflow.
-**Avoids:** Regression from late-added safety/diagnostics; logging-induced performance traps.
-**Research flag:** Likely skip unless extending protocol; patterns are standard once baseline is verified.
+**Phase 3: Response Enhancement (Week 3)**
+- Create ArtisanResponseBuilder for centralized formatting
+- Implement ambient temperature in READ responses
+- Enhance dual_output_task for acknowledgment routing
+- Add Fahrenheit conversion support
 
-### Phase Ordering Rationale
+**Phase 4: PID Integration (Week 4)**
+- Extend ArtisanCommandHandler with PID state
+- Implement PID enable/disable and setpoint commands
+- Add PID tuning parameter support
+- Integrate with existing temperature control algorithms
 
-- Establish correctness (coverage) → stability (formatter) → realism (mock timing/backpressure) → robustness (fuzz/diagnostics) aligns with architecture dependencies.
-- Command registry first keeps parser/dispatcher in sync; formatter next avoids double work in integration tests; strict mock ensures CI confidence before optional enhancements.
-- Pitfall coverage maps: Phase 1 (coverage gaps), Phase 2 (formatter drift/state leakage/invalid inputs), Phase 3 (mock permissiveness), Phase 4 (resilience/diagnostics gaps).
+**Phase 5: Streaming Optimization (Week 5)**
+- Optimize CSV formatting for 10Hz streaming
+- Implement backpressure handling
+- Add streaming start/stop acknowledgment
+- Long-duration stability testing
 
 ### Research Flags
 
-Phases needing deeper research:
-- **Phase 1:** Confirm complete Artisan/Artisan+ command list and mode gating from latest spec/PC app behavior.
-- **Phase 2:** Verify canonical formatting (precision, CRLF) against Artisan client expectations.
-- **Phase 3:** Characterize typical USB-serial jitter/backpressure for Artisan to tune mock defaults.
+| Phase | Needs Deeper Research | Standard Patterns |
+|-------|----------------------|-------------------|
+| Phase 1 | None (protocol spec well-documented) | Initialization sequence, ACK format |
+| Phase 2 | None (nom well-documented) | Parser combinator patterns |
+| Phase 3 | PID algorithm details from existing codebase | Response builder patterns |
+| Phase 4 | YES - PID integration with Artisan requires existing PID implementation review | Extended command patterns |
+| Phase 5 | None (standard streaming patterns) | Performance optimization |
 
-Phases with standard patterns (research likely unnecessary):
-- **Phase 4:** Diagnostics/fuzz/safety caps use established Rust test/mocking patterns once baseline is stable.
+### Dependencies Between Phases
+
+```
+Phase 1 (Foundation) ──► Phase 2 (Parsing) ──► Phase 3 (Responses)
+        │                    │                      │
+        ▼                    ▼                      ▼
+   Must work first      Requires ACK            Requires parsing
+                                              and responses
+
+Phase 3 ──► Phase 4 (PID) ──► Phase 5 (Optimization)
+    │            │
+    ▼            ▼
+Requires    Requires all
+parsing     previous phases
+```
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Versions and crates pulled from crates.io with explicit compatibility to embedded-io 0.7.1 and Rust 1.88; dev-only usage keeps firmware unaffected. |
-| Features | MEDIUM | Derived from domain expectations and existing project goals; needs validation against current Artisan/Artisan+ spec nuances. |
-| Architecture | MEDIUM | Based on current repo structure and common Embassy patterns; limited external validation. |
-| Pitfalls | MEDIUM | Grounded in prior firmware experience; depends on confirming actual Artisan spec and USB-serial behavior. |
+| **Stack** | HIGH | nom well-documented, existing stack verified compatible |
+| **Features** | HIGH | Protocol specification clear, multiple reference implementations |
+| **Architecture** | HIGH | Codebase analyzed, clear integration points identified |
+| **Pitfalls** | MEDIUM | Based on ESP32 community sources and embedded patterns; some issues may be ESP32-C3 specific |
 
-**Overall confidence:** MEDIUM
+**Gaps to Address:**
+- PID algorithm details from existing codebase (Phase 4 planning)
+- USB CDC pin conflicts with UART0 (needs hardware verification)
+- Thermocouple polarity and sign convention (testing phase)
 
-### Gaps to Address
-
-- Confirm full Artisan/Artisan+ command manifest (including rare/diagnostic commands) against latest official docs/PC behavior.
-- Validate canonical formatter rules (decimal precision, CRLF, column ordering) with the Artisan client to finalize snapshots.
-- Measure realistic UART timing/backpressure under USB serial to set strict mock defaults and CI tolerances.
-- Hardware validation remains out of scope; plan a follow-up once host-side integration is green.
+---
 
 ## Sources
 
-### Primary (HIGH confidence)
-- crates.io package pages: proptest 1.9.0, insta 1.46.3, mock-embedded-io 0.1.0, embedded-io-cursor 0.1.0, rstest 0.26.1, cargo-llvm-cov 0.8.2 (version verification and compatibility notes).
-
-### Secondary (MEDIUM confidence)
-- Existing LibreRoaster codebase and prior milestone notes on Artisan formatter/parsing behavior; Artisan/Artisan+ protocol expectations inferred from project context (needs direct spec confirmation).
-
-### Tertiary (LOW confidence)
-- None cited beyond internal inference; future validation with the Artisan PC app recommended.
-
----
-*Research completed: 2026-02-04*
-*Ready for roadmap: yes*
+- **nom parser crate:** https://docs.rs/nom/8.0.0/nom/
+- **Artisan protocol spec:** https://github.com/greencardigan/TC4-shield
+- **Artisan Official Documentation:** https://artisan-scope.org/devices/arduino/
+- **TC4-Emulator Reference:** https://github.com/FilePhil/TC4-Emulator
+- **aArtisanQ PID Firmware:** https://github.com/greencardigan/TC4-shield/tree/master/applications/Artisan/aArtisan
+- **ESP32 UART Reference:** https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/peripherals/uart.html
+- **ESP32 GitHub Issues:** #6326, #10420 (UART data loss issues)

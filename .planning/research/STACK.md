@@ -1,89 +1,256 @@
-# Stack Research
+# Technology Stack: Artisan Serial Protocol Implementation
 
-**Domain:** ESP32-C3 firmware (Embassy) with Artisan+/UART command surface
+**Project:** LibreRoaster v1.5
 **Researched:** 2026-02-04
-**Confidence:** HIGH
+**Focus:** Full Artisan serial protocol for ESP32-C3 firmware
 
-## Recommended Stack
+---
 
-### Core Technologies
+## Recommended Stack Additions
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| proptest | 1.9.0 | Property-based tests for parser/formatter edge cases | Strong shrinking + strategy combinators make it practical to fuzz invalid/edge commands without hand-writing cases; works under `cfg(test)` with `std` only, keeping firmware size unchanged. |
-| insta | 1.46.3 | Snapshot testing of command → response pairs | Fast approval-style workflow to lock formatter golden outputs per Artisan/Artisan+ spec; rediffs make regressions obvious and keep specs executable. |
-| mock-embedded-io | 0.1.0 | Mock UART implementing `embedded-io`/`embedded-io-async` | Matches existing `embedded-io 0.7.x` stack and Embassy async traits, enabling end-to-end command/response tests without HAL hardware. |
+### Parser Library: `nom` 8.x
 
-### Supporting Libraries
+| Property | Value |
+|----------|-------|
+| Version | 8.0.0 |
+| Purpose | Robust parser combinator for serial command parsing |
+| Why | Industry-standard Rust parsing library, excellent no_std support, zero-copy parsing |
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| rstest | 0.26.1 | Table-driven/unit test parameterization | Enumerate full Artisan/Artisan+ command matrix without boilerplate; combine with proptest for fuzz + deterministic cases. |
-| embedded-io-cursor | 0.1.0 | Lightweight in-memory `Read`/`Write` for fixtures | Use when only simple byte sinks/sources are needed; cheaper than mocks, works in `no_std` with `alloc`. |
-| cargo-llvm-cov | 0.8.2 | Coverage runner using LLVM source-based instrumentation | Run `cargo llvm-cov` on host to prove command coverage and formatter branches; supports workspaces and merges unit + integration tests. |
+**Rationale:**
+The Artisan protocol uses semicolon-delimited commands with structured responses. A parser combinator approach provides:
 
-### Development Tools
+1. **Compositional parsing** - Build complex command parsers from simple primitives (tag, separated_list, etc.)
+2. **Error reporting** - Precise error locations when parsing fails (critical for debugging serial issues)
+3. **Zero-copy parsing** - nom can parse without allocating, important for embedded memory constraints
+4. **Battle-tested** - 10k+ stars, used in production embedded systems
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| cargo-llvm-cov | Coverage reporting | Install via `cargo install cargo-llvm-cov`; run on host (`--no-report --lcov` for CI artifacts). |
-| cargo-insta (optional) | Snapshot review CLI | `cargo insta review` to accept/reject formatter snapshot updates. |
+**NOT using simple string split:**
+While the current implementation uses `split_whitespace()`, the full Artisan protocol requires:
+- Semicolon delimiter support (`CHAN;1200`)
+- Response acknowledgment patterns (`#`)
+- Numeric parsing with error handling
+- Structured command responses
+
+**Alternative considered: `heapless::Vec` with manual parsing**
+Manual parsing would work but lacks:
+- Error location reporting
+- Composable parser primitives
+- Community verification
+
+```toml
+# Cargo.toml addition
+[dependencies]
+nom = { version = "8.0", default-features = false, features = ["alloc"] }
+```
+
+**Feature note:** Use `default-features = false` to disable std dependencies. The `alloc` feature enables heap allocation which we need for command parsing buffers.
+
+---
+
+## No Stack Changes Required
+
+### Existing Stack Components (Already Present)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `esp-hal` | ✅ Compatible | UART peripheral access via esp-hal |
+| `embassy-executor` | ✅ Compatible | Async task scheduling for serial handling |
+| `embassy-time` | ✅ Compatible | Timeout handling for 60s command window |
+| `heapless` | ✅ Compatible | `heapless::Vec` for fixed-capacity buffers |
+| `embedded-hal` | ✅ Compatible | Peripheral trait abstractions |
+
+**Rationale:**
+The existing Embassy + esp-hal stack already provides:
+- UART TX/RX via `embassy-esp32c3` UART driver
+- Async read/write operations
+- Timeout infrastructure via `embassy_time::Timer`
+- Buffer management via `heapless::Vec`
+
+No additional UART drivers, async runtimes, or peripheral abstractions are needed.
+
+---
+
+## Protocol Implementation Strategy
+
+### 1. Command Parser: `nom`-based Artisan Protocol
+
+**Parser structure:**
+
+```rust
+// Core command parsers
+named!(parse_read_command, ParseResult<ArtisanCommand>);
+named!(parse_ot1_command, ParseResult<ArtisanCommand>);
+named!(parse_io3_command, ParseResult<ArtisanCommand>);
+
+// Initialization sequence (required for Artisan to enable control features)
+named!(parse_chan_command, ParseResult<ConfigCommand>);
+named!(parse_units_command, ParseResult<ConfigCommand>);
+named!(parse_filt_command, ParseResult<ConfigCommand>);
+
+// Response formatter (existing ArtisanFormatter)
+pub fn format_ack() -> &'static str { "#OK" }
+```
+
+**Protocol requirements from research:**
+
+| Command | Direction | Format | Response |
+|---------|-----------|--------|----------|
+| `CHAN;ABCD` | Artisan→Roaster | Set channel config | `#<any_response>` |
+| `UNITS;C` | Artisan→Roaster | Set temperature units | `#<any_response>` |
+| `FILT;N` | Artisan→Roaster | Set filter value | `#<any_response>` |
+| `READ` | Artisan→Roaster | Request telemetry | `ET,BT,Power,Fan` |
+| `OT1;N` | Artisan→Roaster | Set heater % | `#<any_response>` |
+| `IO3;N` | Artisan→Roaster | Set fan % | `#<any_response>` |
+| `START` | Artisan→Roaster | Start roast | `#<any_response>` |
+| `STOP` | Artisan→Roaster | Emergency stop | `#<any_response>` |
+
+**Critical implementation detail:** Artisan requires the initialization sequence (`CHAN` → `UNITS` → `FILT`) to complete before it will send control commands. The `#` prefix response is mandatory.
+
+### 2. Serial I/O: Embassy UART Integration
+
+**Recommended pattern:**
+
+```rust
+// Using existing embassy-esp32c3 UART
+use esp_hal::peripherals::UART0;
+use embassy_esp32c3::uart::{Uart, Config};
+
+pub struct ArtisanSerial {
+    uart: Uart<'static, UART0>,
+    rx_buffer: heapless::Vec<u8, 256>,
+}
+
+impl ArtisanSerial {
+    pub fn new(uart: Uart<'static, UART0>) -> Self {
+        Self {
+            uart,
+            rx_buffer: heapless::Vec::new(),
+        }
+    }
+
+    pub async fn read_command(&mut self) -> Result<ArtisanCommand, ParseError> {
+        let mut buf = [0u8; 128];
+        let len = self.uart.read(&mut buf).await?;
+        let cmd_str = core::str::from_utf8(&buf[..len])?;
+        parse_artisan_command(cmd_str)
+    }
+
+    pub async fn send_response(&mut self, response: &str) -> Result<(), Error> {
+        self.uart.write(response.as_bytes()).await?;
+        self.uart.write(b"\n").await?;
+        Ok(())
+    }
+}
+```
+
+**Existing infrastructure to leverage:**
+- `src/hardware/uart/driver.rs` - UART peripheral access
+- `src/input/multiplexer.rs` - Command timeout handling (60s)
+- `src/input/parser.rs` - Basic command parsing (extends to nom)
+
+### 3. Response Formatting: Extend Existing ArtisanFormatter
+
+**Already implemented in `src/output/artisan.rs`:**
+
+```rust
+// READ response format (existing)
+pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+    format!(
+        "{:.1},{:.1},{:.1},{:.1}",
+        status.env_temp,   // ET
+        status.bean_temp,  // BT
+        status.ssr_output, // Power (heater)
+        fan_speed          // Fan
+    )
+}
+
+// Add acknowledgment response
+pub fn format_ack() -> &'static str { "#OK" }
+
+// Add error response
+pub fn format_error(code: &str) -> String { format!("#ERROR:{}", code) }
+```
+
+---
+
+## What NOT to Add
+
+### Unnecessary Dependencies
+
+| Rejected | Reason |
+|----------|--------|
+| `tokio` | Async runtime incompatible with no_std embassy |
+| `async-std` | Async runtime incompatible with no_std embassy |
+| `serde` | JSON serialization not needed for Artisan protocol |
+| `regex` | Parser combinators superior for structured protocols |
+| `csv` | CSV library overkill for simple `ET,BT,Power,Fan` format |
+| `embedded-nom` | Not actively maintained; use standard nom |
+| Any USB stack | Using UART, not USB serial |
+
+### Features to Avoid
+
+| Anti-pattern | Why |
+|--------------|-----|
+| Dynamic heap allocation | Use `heapless::Vec` for bounded buffers |
+| Blocking I/O | Must use async to avoid blocking the executor |
+| Global state | Use dependency injection via `ServiceContainer` |
+| String formatting in hot paths | Pre-allocate response buffers |
+
+---
+
+## Integration Points
+
+### With Existing Command Multiplexer
+
+```
+src/input/multiplexer.rs:60s_timeout
+        ↓
+src/input/parser.rs:parse_artisan_command()
+        ↓
+src/control/handlers.rs:ArtisanCommand handler
+        ↓
+src/output/artisan.rs:format_read_response()
+```
+
+### With Hardware UART
+
+```
+src/hardware/uart/driver.rs:embassy UART
+        ↓
+src/input/parser.rs:receive_command()
+        ↓
+src/output/artisan.rs:send_response()
+```
+
+### With System Status
+
+```
+src/config/SystemStatus
+        ├── env_temp (ET)
+        ├── bean_temp (BT)
+        ├── ssr_output (heater %)
+        └── fan_output (fan %)
+              ↓
+src/output/artisan.rs:format_read_response()
+```
+
+---
 
 ## Installation
 
 ```bash
-# Test-only dependencies
-cargo add --dev proptest@1.9.0 insta@1.46.3 rstest@0.26.1
+# No additional toolchain requirements
+# Existing ESP32-C3 toolchain supports nom compilation
 
-# UART mocking + fixtures
-cargo add --dev mock-embedded-io@0.1.0 embedded-io-cursor@0.1.0
-
-# Coverage tooling (binary install)
+cargo add nom --features alloc,default-features=false
 ```
 
-## Alternatives Considered
-
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| proptest | quickcheck | If compile times from proptest strategies become a bottleneck and only light randomness is needed. |
-| mock-embedded-io | mockall | When you need precise call expectations or to simulate errors beyond byte streams. |
-| insta | expect-test | If you prefer inline expected strings in code and can tolerate noisier diffs for multi-line responses. |
-
-## What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| embedded-hal-mock for UART | Targets `embedded-hal` 0.2 peripherals; does not implement `embedded-io` stream traits or Embassy async, so coverage misses actual UART path. | mock-embedded-io or embedded-io-cursor |
-| cargo-tarpaulin | Not reliable with `-Z instrument-coverage`, RISC-V targets, or async-heavy code; misses async branch coverage. | cargo-llvm-cov |
-
-## Stack Patterns by Variant
-
-**If building firmware (no_std/esp32c3):**
-- Keep new crates as `dev-dependencies` behind `cfg(test)` to avoid firmware size/regressions.
-- Continue using Embassy executor/serial drivers; mocks live only in host tests.
-
-**If running host-side integration tests:**
-- Enable `test` feature to pull `std` and allow proptest/insta/mocks.
-- Use `mock-embedded-io` (async) plus `embedded-io-cursor` for deterministic fixtures; layer formatter on top and assert snapshots.
-
-## Version Compatibility
-
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| mock-embedded-io 0.1.0 | embedded-io 0.7.1 | Implements both blocking and async traits used by current stack. |
-| embedded-io-cursor 0.1.0 | embedded-io 0.7.1 | Works in `no_std` with `alloc`; enable `std` feature for host tests. |
-| proptest 1.9.0 / insta 1.46.3 | Rust 1.88 (project toolchain) | Require `std`; safe as dev-deps gated by `cfg(test)`. |
-| cargo-llvm-cov 0.8.2 | rustc >= 1.70 | Supports source-based coverage; run on host only. |
+---
 
 ## Sources
 
-- https://crates.io/api/v1/crates/proptest — confirm 1.9.0 latest (2025-10-26)
-- https://crates.io/api/v1/crates/insta — confirm 1.46.3 latest (2026-02-02)
-- https://crates.io/api/v1/crates/mock-embedded-io — confirm 0.1.0 latest (2025-05-05)
-- https://crates.io/api/v1/crates/embedded-io-cursor — confirm 0.1.0 latest (2025-09-18)
-- https://crates.io/api/v1/crates/rstest — confirm 0.26.1 latest (2025-07-27)
-- https://crates.io/api/v1/crates/cargo-llvm-cov — confirm 0.8.2 latest (2026-01-27)
-
----
-*Stack research for: LibreRoaster v1.2 integration polish*
-*Researched: 2026-02-04*
+- **nom parser crate**: https://docs.rs/nom/8.0.0/nom/ (HIGH confidence)
+- **Artisan protocol spec**: https://github.com/greencardigan/TC4-shield (HIGH confidence)
+- **Embassy ESP32-C3 UART**: https://github.com/embassy-rs/embassy/tree/master/embassy-esp32c3 (HIGH confidence)
+- **ESP32-C3 HAL**: https://docs.rs/esp32c3/0.31.0/esp32c3/ (HIGH confidence)
+- **Protocol initialization sequence**: https://homeroasters.org/forum/viewthread.php?thread_id=5818 (MEDIUM confidence - community discussion)

@@ -1,5 +1,6 @@
 use crate::config::ArtisanCommand;
 use crate::control::RoasterControl;
+use crate::input::multiplexer::CommandMultiplexer;
 use crate::input::ArtisanInput;
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -10,6 +11,7 @@ use heapless::String;
 pub struct ServiceContainer {
     pub roaster: Mutex<RefCell<Option<RoasterControl>>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
+    pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
 }
 
 pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 8;
@@ -24,12 +26,15 @@ static ARTISAN_OUTPUT_CHANNEL: Channel<
     String<128>,
     ARTISAN_OUTPUT_CHANNEL_SIZE,
 > = Channel::new();
+static ARTISAN_MULTIPLEXER: Mutex<RefCell<Option<CommandMultiplexer>>> =
+    Mutex::new(RefCell::new(None));
 
 impl ServiceContainer {
     pub const fn new() -> Self {
         Self {
             roaster: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
+            multiplexer: Mutex::new(RefCell::new(None)),
         }
     }
 
@@ -95,6 +100,20 @@ impl ServiceContainer {
     pub fn get_output_channel(
     ) -> &'static Channel<CriticalSectionRawMutex, String<128>, ARTISAN_OUTPUT_CHANNEL_SIZE> {
         &ARTISAN_OUTPUT_CHANNEL
+    }
+
+    pub fn get_multiplexer() -> &'static Mutex<RefCell<Option<CommandMultiplexer>>> {
+        &ARTISAN_MULTIPLEXER
+    }
+
+    pub fn init_multiplexer() {
+        critical_section::with(|cs| {
+            let multiplexer = Self::get_multiplexer();
+            let mut guard = multiplexer.borrow(cs).borrow_mut();
+            if guard.is_none() {
+                guard.replace(CommandMultiplexer::new());
+            }
+        });
     }
 }
 

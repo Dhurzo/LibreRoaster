@@ -1,5 +1,6 @@
 use crate::application::service_container::ServiceContainer;
 use crate::input::parser::ParseError;
+use crate::input::multiplexer::CommChannel;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
@@ -87,25 +88,7 @@ pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
     Ok(())
 }
 
-#[cfg(feature = "test")]
 pub fn process_command_data(data: &[u8]) {
-    let mut command = Vec::<u8, 64>::new();
-
-    for &byte in data {
-        if byte == 0x0D {
-            handle_complete_command(&command);
-            return;
-        }
-
-        if command.push(byte).is_err() {
-            send_parse_error(ParseError::InvalidValue);
-            return;
-        }
-    }
-}
-
-#[cfg(not(feature = "test"))]
-pub(crate) fn process_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
 
     for &byte in data {
@@ -132,11 +115,21 @@ fn handle_complete_command(command: &[u8]) {
 
     match parse_result {
         Ok(cmd) => {
-            let channel = ServiceContainer::get_artisan_channel();
-            if let Err(err) = channel.try_send(cmd) {
-                warn!("Failed to enqueue Artisan command: {:?}", err);
-                send_parse_error(ParseError::InvalidValue);
-            }
+            critical_section::with(|cs| {
+                let multiplexer = ServiceContainer::get_multiplexer();
+                let mut guard = multiplexer.borrow(cs).borrow_mut();
+                if let Some(mux) = guard.as_mut() {
+                    let should_process = mux.should_process_command(CommChannel::Uart);
+
+                    if should_process {
+                        let channel = ServiceContainer::get_artisan_channel();
+                        if let Err(err) = channel.try_send(cmd) {
+                            warn!("Failed to enqueue Artisan command from UART: {:?}", err);
+                            send_parse_error(ParseError::InvalidValue);
+                        }
+                    }
+                }
+            });
         }
         Err(error) => {
             send_parse_error(error);
@@ -145,13 +138,21 @@ fn handle_complete_command(command: &[u8]) {
 }
 
 fn send_parse_error(error: ParseError) {
-    let output_channel = ServiceContainer::get_output_channel();
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            let should_write = mux.should_write_to(CommChannel::Uart);
 
-    let mut message = String::<128>::new();
-    let _ = message.push_str("ERR ");
-    let _ = message.push_str(error.code());
-    let _ = message.push_str(" ");
-    let _ = message.push_str(error.message());
-
-    let _ = output_channel.try_send(message);
+            if should_write {
+                let output_channel = ServiceContainer::get_output_channel();
+                let mut message = String::<128>::new();
+                let _ = message.push_str("ERR ");
+                let _ = message.push_str(error.code());
+                let _ = message.push_str(" ");
+                let _ = message.push_str(error.message());
+                let _ = output_channel.try_send(message);
+            }
+        }
+    });
 }

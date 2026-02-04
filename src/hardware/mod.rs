@@ -8,3 +8,9 @@ pub mod shared_spi;
 #[cfg(target_arch = "riscv32")]
 pub mod ssr;
 pub mod uart;
+#[cfg(target_arch = "riscv32")]
+#[path = "usb_cdc/mod.rs"]
+pub mod usb_cdc;
+#[cfg(not(target_arch = "riscv32"))]
+#[path = "usb_cdc/mod.rs"]
+pub mod usb_cdc;

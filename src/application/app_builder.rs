@@ -118,7 +118,6 @@ impl<'a> AppBuilder<'a> {
         let artisan_input = ArtisanInput::new().map_err(|e| BuildError::ArtisanInit(e))?;
         let formatter = self.formatter.unwrap_or_else(ArtisanFormatter::new);
 
-        // Store components in service container
         critical_section::with(|cs| {
             let container = crate::application::service_container::ServiceContainer::get_instance();
             container.roaster.borrow(cs).borrow_mut().replace(roaster);
@@ -128,6 +127,8 @@ impl<'a> AppBuilder<'a> {
                 .borrow_mut()
                 .replace(artisan_input);
         });
+
+        ServiceContainer::init_multiplexer();
 
         info!("Application components initialized successfully");
 
@@ -166,6 +167,7 @@ impl Application {
 
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
         use crate::hardware::uart::tasks::{uart_reader_task, uart_writer_task};
+        use crate::hardware::usb_cdc::tasks::{usb_reader_task, usb_writer_task};
 
         self.verify_initialization()
             .map_err(|e| TaskError::VerificationFailed(e))?;
@@ -178,7 +180,14 @@ impl Application {
             .map_err(|e| TaskError::SpawnFailed(e))?;
 
         spawner
-            .spawn(super::artisan_output_task())
+            .spawn(usb_reader_task())
+            .map_err(|e| TaskError::SpawnFailed(e))?;
+        spawner
+            .spawn(usb_writer_task())
+            .map_err(|e| TaskError::SpawnFailed(e))?;
+
+        spawner
+            .spawn(super::dual_output_task())
             .map_err(|e| TaskError::SpawnFailed(e))?;
 
         spawner

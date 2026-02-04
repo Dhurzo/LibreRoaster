@@ -15,7 +15,7 @@
 //! cargo test --test artisan_integration_test --features test
 //! ```
 
-#![cfg(test)]
+#![cfg(all(test, not(target_arch = "riscv32")))]
 
 extern crate std;
 

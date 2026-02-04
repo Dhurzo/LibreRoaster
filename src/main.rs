@@ -167,6 +167,8 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Drivers initialized and moved to static memory");
 
+    let _ = libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE);
+
     info!("Wake the f*** up samurai we have beans to burn!");
 
     // Build and start application

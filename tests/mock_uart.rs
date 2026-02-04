@@ -33,7 +33,7 @@
 //! assert!(transmitted.contains("120.3"));
 //! ```
 
-#![cfg(test)]
+#![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(non_snake_case)]
 
 extern crate std;
@@ -365,7 +365,7 @@ fn test_mock_uart_streaming() {
     let mut buffer = [0u8; 2];
     let bytes_read = mock.read_bytes(&mut buffer).unwrap();
     assert_eq!(bytes_read, 2, "Should read 2 bytes");
-    assert_eq!(buffer, b"RE", "Should have 'RE'");
+    assert_eq!(buffer[..bytes_read], b"RE", "Should have 'RE'");
 
     // Add more data (simulating streaming)
     mock.add_rx_data("\r\nOT1 50");

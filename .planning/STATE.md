@@ -1,120 +1,41 @@
-# STATE: LibreRoaster v1.2 Artisan integration polish
+# STATE: LibreRoaster
 
 **Updated:** 2026-02-04
 
-## Current Position
-
-Phase: Not started (planning next milestone)
-Plan: —
-Status: Ready to plan
-Last activity: 2026-02-04 — v1.2 milestone complete
-
-Progress: █░░░░░░░░░ 0% (0/0 phases)
-
 ## Project Reference
 
-**Core value:** Artisan can read temperatures and control heater/fan during a roast session.
-**Current focus:** Planning next milestone requirements.
+**Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
+**Current focus:** v1.5 complete, ready for next milestone.
 
-## Milestone Status
+## Current Position
 
-v1.2 Artisan integration polish — ✅ shipped.
+Phase: Not started
+Plan: —
+Status: Ready for next milestone
+Last activity: 2026-02-04 — v1.5 Serial Protocol Implementation shipped
 
-## Previous Milestone (v1.1 cleanup) — ✅ Complete
+Progress: ████████████████████████████████████░░░░░░░░░░░░░░░░░░░ 100%
 
-### Requirements Status
+## v1.5 Complete
 
-- Total v1.1 requirements: 20
-- Completed: 20 (100%)
-- Partially addressed: 0
-- Deferred: 0
+**Delivered:** Full Artisan serial protocol implementation
 
-### Cleanup Results
+| Phase | Name | Status |
+|-------|------|--------|
+| 17 | Initialization Handshake | ✅ Complete |
+| 18 | Command & Response Protocol | ✅ Complete |
 
-#### Deleted Files (6 files, ~959 lines)
+**Key features:**
+- CHAN→UNITS→FILT initialization with `#` acknowledgment
+- READ command with 7-value telemetry
+- OT1/IO3 heater/fan control
+- UP/DOWN incremental control with clamping
+- Comprehensive error handling
 
-| File | Lines | Status |
-|------|-------|--------|
-| src/output/serial.rs | ~134 | ✅ Deleted |
-| src/output/uart.rs | ~128 | ✅ Deleted |
-| src/output/manager.rs | ~251 | ✅ Deleted |
-| src/output/scheduler.rs | ~216 | ✅ Deleted |
-| src/control/command_handler.rs | ~50 | ✅ Deleted |
-| src/control/abstractions_tests.rs | ~180 | ✅ Deleted |
+## Next Steps
 
-#### Refactored Files
-
-| File | Changes |
-|------|---------|
-| src/output/mod.rs | Removed deleted module exports |
-| src/control/mod.rs | Removed deleted module exports, updated trait exports |
-| src/control/abstractions.rs | Added RoasterCommandHandler trait, OutputController struct |
-| src/control/handlers.rs | Updated to use OutputController |
-| src/control/roaster_refactored.rs | Updated imports and return types |
-
-#### Kept Files (verified used)
-
-| File | Reason |
-|------|--------|
-| src/control/pid.rs | CoffeeRoasterPid is used by TemperatureCommandHandler |
-
-### Build Status (post-cleanup)
-
-```
-cargo check: ✅ Passes
-cargo clippy: ⚠️ 28 warnings (style improvements, pre-existing)
-```
-
-### Files Modified During v1.1
-
-**Deleted:**
-- src/output/{serial.rs, uart.rs, manager.rs, scheduler.rs}
-- src/control/{command_handler.rs, abstractions_tests.rs}
-
-**Updated:**
-- src/output/mod.rs
-- src/control/mod.rs
-- src/control/abstractions.rs
-- src/control/handlers.rs
-- src/control/roaster_refactored.rs
-
-### Planning Files from v1.1
-
-```
-.planning/
-├── phases/04-code-removal/
-│   ├── 04-01-PLAN.md
-│   ├── 04-02-PLAN.md
-│   ├── 04-03-PLAN.md
-│   └── 04-03-SUMMARY.md
-├── phases/05-trait-consolidation/
-│   └── 05-01-SUMMARY.md
-├── phases/06-warning-fixes/
-│   └── 06-01-SUMMARY.md
-└── phases/07-final-cleanup/
-    └── 07-01-SUMMARY.md
-```
-
-### Optional future work (not started)
-
-- Fix 28 clippy warnings (Default impls, redundant closures, style suggestions)
-- Add comprehensive tests for ESP32 target
-- Error handling improvements
-
-## Decisions
-
-- See .planning/PROJECT.md for milestone decisions and outcomes.
-
-## Blockers/Concerns Carried Forward
-
-- None.
-
-## Session Continuity
-
-Last session: 2026-02-04
-Stopped at: v1.2 milestone completion
-Resume file: None
+Run `/gsd-new-milestone` to start the next milestone.
 
 ---
 
-*Milestone v1.2 complete — ready for next milestone planning*
+*Next: /gsd-new-milestone*

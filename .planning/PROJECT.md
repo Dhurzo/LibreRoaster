@@ -2,30 +2,15 @@
 
 ## What This Is
 
-ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compatibility. Allows Artisan coffee roasting software to read temperature data and control heater/fan output via UART.
+ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compatibility. Allows Artisan coffee roasting software to read temperature data and control heater/fan output via UART or USB CDC.
 
 ## Core Value
 
-Artisan can read temperatures and control heater/fan during a roast session.
+Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
 ## Current State
 
-v1.2 shipped: core Artisan command hardening, deterministic formatting, and mock UART end-to-end integration tests. Host-target testing is enabled via an `embedded` feature gate and host stubs for embedded-only modules.
-
-## Next Milestone Goals
-
-TBD — define with `/gsd-new-milestone`.
-
-<details>
-<summary>v1.2 Milestone Details (Archived)</summary>
-
-**Goal:** Polish Artisan integration with full protocol coverage, robust formatting, and verified end-to-end responses.
-
-**Target features:**
-- Complete remaining Artisan/Artisan+ command coverage, including status/error responses
-- Harden Artisan formatter against edge cases and invalid input for strict spec compliance
-- Add end-to-end integration tests (mock UART) for command → response flow
-</details>
+v1.5 Serial Protocol Implementation — Complete. Full Artisan serial protocol implemented.
 
 ## Requirements
 
@@ -39,52 +24,67 @@ TBD — define with `/gsd-new-milestone`.
 - ✓ Integration test infrastructure — v1.0
 - ✓ Mock UART driver — v1.0
 - ✓ Example file with correct API usage — v1.0
-- ✓ Unused output modules removed (serial, uart, manager, scheduler) — v1.1 cleanup
-- ✓ Unused control modules removed (command_handler, pid, abstractions_tests) — v1.1 cleanup
-- ✓ OutputManager trait consolidated and exports cleaned — v1.1 cleanup
+- ✓ Unused output modules removed — v1.1 cleanup
+- ✓ Unused control modules removed — v1.1 cleanup
+- ✓ OutputManager trait consolidated — v1.1 cleanup
 - ✓ Build verified after cleanup — v1.1 cleanup
 - ✓ Core command hardening with explicit ERR handling — v1.2
 - ✓ Deterministic formatter outputs and ERR schema — v1.2
 - ✓ Mock UART end-to-end integration tests — v1.2
+- ✓ Dual-channel Artisan support (USB CDC + UART0) — v1.3
+- ✓ Command multiplexer with 60s timeout — v1.3
+- ✓ USB CDC port appears and Artisan can connect — v1.3
+- ✓ Initialization handshake (CHAN→UNITS→FILT) — v1.5
+- ✓ READ command with 7-value telemetry — v1.5
+- ✓ UP/DOWN incremental heater control — v1.5
+- ✓ Comprehensive error handling (ERR format) — v1.5
+- ✓ Parser recovery for partial commands — v1.5
 
 ### Active
 
-(None — define next milestone requirements)
+(None — v1.5 complete)
 
 ### Out of Scope
 
-- Hardware testing (actual ESP32 + roaster)
-- Roast automation or new device features beyond Artisan protocol polish
+- Hardware testing (actual ESP32 + roaster) — requires physical hardware
+- PID control implementation
+- Roast profile automation
+- WiFi/Web UI
 
 ## Context
 
 Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
-**v1.0 shipped:** Comprehensive test infrastructure for ARTISAN+ protocol.
+**v1.0 shipped:** Core Artisan protocol implementation with test infrastructure.
 
-**v1.1 cleanup:** Removed unused modules and consolidated output abstractions; build verified clean post-removal.
+**v1.1 cleanup:** Removed unused modules and consolidated abstractions.
 
-**Current focus:** Planning the next milestone and defining the next protocol goals.
+**v1.2 polish:** Hardened commands and formatted outputs.
+
+**v1.3 verification:** USB CDC dual-channel implementation.
+
+**v1.5 complete:** Full Artisan serial protocol with READ, OT1, IO3, UP, DOWN, START, STOP commands.
 
 ## Constraints
 
 - **Protocol**: ARTISAN+ standard serial protocol
 - **Baud rate**: 115200 (typical for Artisan)
 - **Pins**: UART_TX=20, UART_RX=21
-- **Commands**: READ, START, STOP, OT1 (0-100), IO3 (0-100)
+- **Commands**: READ, START, STOP, OT1 (0-100), IO3 (0-100), UP, DOWN
+- **USB**: Native USB CDC (USB Serial JTAG)
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| UART for Artisan communication | Standard approach for ESP32 artisan integration | ✓ Verified structurally |
-| Test boundary values (0, 100) | Critical for safety - heater/fan edge cases | ✓ Implemented |
-| Mock UART for integration tests | Hardware not available, enables confidence | ✓ Implemented |
-| Standalone Rust verification | Embedded test framework unavailable | ✓ Worked around |
-| Fixed format_artisanLine comma bug | CSV compliance required | ✓ Fixed |
-| Standardize `ERR <code> <message>` schema | Stable parsing for Artisan clients and tests | ✓ Implemented |
-| Gate embedded binary behind `embedded` feature | Enable host-target integration tests | ✓ Implemented |
+| UART for Artisan communication | Standard approach for ESP32 artisan integration | ✓ Verified |
+| USB CDC as primary channel | Native USB, no external adapter needed | ✓ Implemented |
+| Multiplexer with timeout | Graceful channel switching | ✓ Implemented |
+| First command wins priority | Simple, predictable behavior | ✓ Implemented |
+| USB + UART dual support | Maximum flexibility for users | ✓ Implemented |
+| UP/DOWN clamping | No error at boundaries, just clamp | ✓ Implemented |
+| Unused READ channels = -1 | Per Artisan spec | ✓ Implemented |
 
 ---
 
-*Last updated: 2026-02-04 after v1.2 milestone completion*
+*Last updated: 2026-02-04 after v1.5 milestone shipped*

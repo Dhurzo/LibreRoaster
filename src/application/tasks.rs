@@ -1,11 +1,11 @@
 use crate::application::service_container::ServiceContainer;
+use crate::input::multiplexer::CommChannel;
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
 use embassy_executor::task;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
 use heapless::String;
-use core::fmt::Write;
 use log::{debug, info, warn};
 
 #[task]
@@ -20,7 +20,6 @@ pub async fn control_loop_task() {
     loop {
         let current_time = Instant::now();
 
-        // 1. Process any pending Artisan commands from UART
         if let Ok(command) = cmd_channel.try_receive() {
             let output_channel = ServiceContainer::get_output_channel();
 
@@ -29,15 +28,11 @@ pub async fn control_loop_task() {
                     Ok(()) => {
                         debug!("Processed Artisan command successfully");
 
-                        // On READ command, immediately send a response: ET,BT,Power,Fan
                         if let crate::config::ArtisanCommand::ReadStatus = command {
                             let status = roaster.get_status();
-                            let response = ArtisanFormatter::format_read_response(
-                                &status,
-                                roaster.get_fan_speed(),
-                            );
+                            // Use full READ response with 7 values per Artisan spec
+                            let response = ArtisanFormatter::format_read_response_full(&status);
 
-                            // best-effort send; ignore if channel is full
                             if let Ok(line) = String::<128>::try_from(response.as_str()) {
                                 let _ = output_channel.try_send(line);
                             }
@@ -51,7 +46,6 @@ pub async fn control_loop_task() {
             });
         }
 
-        // 2. Execute control logic
         let control_result = ServiceContainer::with_roaster(
             |roaster: &mut crate::control::RoasterControl| -> Result<(), ()> {
                 match roaster.read_sensors() {
@@ -86,7 +80,6 @@ pub async fn control_loop_task() {
             info!("Service container error in control loop: {:?}", e);
         }
 
-        // 3. Stream status only when continuous output is enabled
         let _ = ServiceContainer::with_roaster(|roaster: &mut crate::control::RoasterControl| {
             if roaster.get_output_manager().is_continuous_enabled() {
                 let status = roaster.get_status();
@@ -124,30 +117,44 @@ fn send_handler_error(
 }
 
 #[task]
-pub async fn artisan_output_task() {
-    info!("Artisan output task started");
+pub async fn dual_output_task() {
+    info!("Dual output task started - USB CDC + UART");
 
     let output_channel = ServiceContainer::get_output_channel();
-    let mut driver = crate::hardware::uart::get_uart_driver();
 
     loop {
         if let Ok(data) = output_channel.try_receive() {
-            if let Some(ref mut uart) = driver {
-                let mut bytes = data.as_bytes().to_vec();
-                bytes.extend_from_slice(b"\r\n");
-                if let Err(e) = uart.write_bytes(&bytes).await {
-                    warn!("UART write error: {:?}", e);
+            let (channel, data_to_write) = critical_section::with(|cs| {
+                let multiplexer = ServiceContainer::get_multiplexer();
+                let mut guard = multiplexer.borrow(cs).borrow_mut();
+                if let Some(mux) = guard.as_mut() {
+                    let active_channel = mux.get_active_channel();
+                    let mut bytes = data.as_bytes().to_vec();
+                    bytes.extend_from_slice(b"\r\n");
+                    (active_channel, Some(bytes))
+                } else {
+                    (CommChannel::None, None)
+                }
+            });
+
+            if let Some(bytes) = data_to_write {
+                match channel {
+                    CommChannel::Usb => {
+                        if let Some(usb) = crate::hardware::usb_cdc::driver::get_usb_cdc_driver() {
+                            let _ = usb.write_bytes(&bytes).await;
+                        }
+                    }
+                    CommChannel::Uart => {
+                        if let Some(uart) = crate::hardware::uart::driver::get_uart_driver() {
+                            let _ = uart.write_bytes(&bytes).await;
+                        }
+                    }
+                    CommChannel::None => {
+                    }
                 }
             }
         }
 
         Timer::after(Duration::from_millis(5)).await;
-    }
-}
-
-#[task]
-pub async fn artisan_uart_handler_task() {
-    loop {
-        Timer::after(Duration::from_secs(60)).await;
     }
 }

@@ -62,13 +62,19 @@ pub enum RoasterState {
 }
 
 // Artisan+ Input Commands (from Artisan software)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtisanCommand {
-    ReadStatus,    // READ -> ET,BT,Power,Fan
-    StartRoast,    // START -> Begin roasting and continuous output
-    SetHeater(u8), // OT1 x (0-100%)
-    SetFan(u8),    // IO3 x (0-100%)
-    EmergencyStop, // STOP
+    ReadStatus,     // READ -> ET,BT,Power,Fan
+    StartRoast,     // START -> Begin roasting and continuous output
+    SetHeater(u8),  // OT1 x (0-100%)
+    SetFan(u8),     // IO3 x (0-100%)
+    EmergencyStop,  // STOP
+    IncreaseHeater, // UP - increase heater by 5%
+    DecreaseHeater, // DOWN - decrease heater by 5%
+    // Initialization handshake commands (Phase 17)
+    Chan(u16),   // CHAN;channel_id - Channel configuration from Artisan
+    Units(bool), // UNITS;C | UNITS;F - Temperature unit (true = Fahrenheit, false = Celsius)
+    Filt(u8),    // FILT;filter_value - Filter setting value
 }
 
 // Roaster Control Commands (internal)
@@ -82,6 +88,8 @@ pub enum RoasterCommand {
     SetHeaterManual(u8),  // Manual heater control (overrides PID)
     SetFanManual(u8),     // Manual fan control
     ArtisanEmergencyStop, // Artisan+ specific stop
+    IncreaseHeater,       // UP - increase heater by 5% with clamping
+    DecreaseHeater,       // DOWN - decrease heater by 5% with clamping
 }
 
 // SSR Hardware Status

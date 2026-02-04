@@ -107,6 +107,31 @@ impl ArtisanFormatter {
             fan_speed          // Fan
         )
     }
+
+    /// Format full READ response per Artisan spec
+    /// Format: ET,BT,ET2,BT2,ambient,fan,heater\r\n
+    /// ET2, BT2, ambient return -1 as placeholders (unused channels)
+    pub fn format_read_response_full(status: &SystemStatus) -> String {
+        format!(
+            "{:.1},{:.1},-1,-1,-1,{:.1},{:.1}\r\n",
+            status.env_temp,   // ET
+            status.bean_temp,  // BT
+            status.fan_output, // Fan
+            status.ssr_output  // Heater
+        )
+    }
+
+    /// Format CHAN acknowledgment response per Artisan spec
+    /// Returns response starting with '#' prefix
+    pub fn format_chan_ack(channel: u16) -> String {
+        format!("#{}", channel)
+    }
+
+    /// Format ERR response per Artisan spec
+    /// Format: "ERR code message"
+    pub fn format_err(code: u8, message: &str) -> String {
+        format!("ERR {} {}", code, message)
+    }
 }
 
 /// Mutable version for proper ROR calculation
@@ -332,5 +357,97 @@ mod tests {
     fn test_time_format_typical_value() {
         let time = ArtisanFormatter::format_time(123, 456);
         assert_eq!(time, "123.45");
+    }
+
+    /// TEST-11a: Verify format_chan_ack produces correct output
+    #[test]
+    fn test_format_chan_ack() {
+        let result = ArtisanFormatter::format_chan_ack(1200);
+        assert_eq!(result, "#1200");
+    }
+
+    /// TEST-11b: Verify format_chan_ack with different channel values
+    #[test]
+    fn test_format_chan_ack_various_values() {
+        assert_eq!(ArtisanFormatter::format_chan_ack(1), "#1");
+        assert_eq!(ArtisanFormatter::format_chan_ack(9999), "#9999");
+        assert_eq!(ArtisanFormatter::format_chan_ack(0), "#0");
+    }
+
+    /// TEST-12a: Verify format_err produces correct output
+    #[test]
+    fn test_format_err() {
+        let result = ArtisanFormatter::format_err(1, "Unknown command");
+        assert_eq!(result, "ERR 1 Unknown command");
+    }
+
+    /// TEST-12b: Verify format_err with various codes and messages
+    #[test]
+    fn test_format_err_various() {
+        assert_eq!(
+            ArtisanFormatter::format_err(2, "Invalid value"),
+            "ERR 2 Invalid value"
+        );
+        assert_eq!(ArtisanFormatter::format_err(0, "Success"), "ERR 0 Success");
+    }
+
+    // Phase 18: Command & Response Protocol Tests
+
+    /// TEST-18-01a: Verify format_read_response_full produces 7 comma-separated values
+    #[test]
+    fn test_format_read_response_seven_values() {
+        let status = create_test_status();
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        // Response should contain 7 comma-separated values
+        let parts: Vec<&str> = response.trim_end().split(',').collect();
+        assert_eq!(parts.len(), 7, "READ response must have exactly 7 values");
+    }
+
+    /// TEST-18-01b: Verify unused channels return -1 placeholders
+    #[test]
+    fn test_unused_channels_return_negative_one() {
+        let status = create_test_status();
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        let parts: Vec<&str> = response.trim_end().split(',').collect();
+
+        // ET2 (index 2), BT2 (index 3), ambient (index 4) should be -1
+        assert_eq!(parts[2], "-1", "ET2 placeholder should be -1");
+        assert_eq!(parts[3], "-1", "BT2 placeholder should be -1");
+        assert_eq!(parts[4], "-1", "ambient placeholder should be -1");
+    }
+
+    /// TEST-18-01c: Verify response terminates with CRLF
+    #[test]
+    fn test_response_terminates_with_crlf() {
+        let status = create_test_status();
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        // Response must end with \r\n
+        assert!(
+            response.ends_with("\r\n"),
+            "READ response must terminate with CRLF"
+        );
+    }
+
+    /// TEST-18-01d: Verify format_read_response_full uses actual status values
+    #[test]
+    fn test_format_read_response_full_uses_status_values() {
+        let mut status = create_test_status();
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.fan_output = 60.0;
+        status.ssr_output = 80.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        let parts: Vec<&str> = response.trim_end().split(',').collect();
+
+        // Verify actual values are used
+        assert_eq!(parts[0], "125.5", "ET should use env_temp");
+        assert_eq!(parts[1], "155.7", "BT should use bean_temp");
+        assert_eq!(parts[5], "60.0", "Fan should use fan_output");
+        assert_eq!(parts[6], "80.0", "Heater should use ssr_output");
     }
 }
