@@ -76,6 +76,11 @@ Run `cargo test` on formatter module, observing 4 passing tests covering all out
 
 **Requirements:** TEST-11, TEST-12
 
+**Plans:**
+- [x] 03-01-PLAN.md — Fix example file and create integration tests with mock UART ✓ Complete
+
+**Status:** ✓ Complete (2026-02-04)
+
 ### Success Criteria
 
 1. **Example compiles:** `examples/artisan_test.rs` compiles without errors (API mismatch resolved)
