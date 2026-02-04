@@ -72,5 +72,7 @@ pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
     // Allow this static_mut_ref warning as it's necessary for embedded systems
     #[allow(static_mut_refs)]
-    unsafe { UART_INSTANCE.as_mut() }
+    unsafe {
+        UART_INSTANCE.as_mut()
+    }
 }
