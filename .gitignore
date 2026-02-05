@@ -50,6 +50,5 @@ Thumbs.db
 # Logs
 *.log
 
-# Ignore documentation files
-internalDoc/*
+# Ignore internal documentation files
 internalDoc/
