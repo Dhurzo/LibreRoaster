@@ -1,256 +1,191 @@
-# Technology Stack: Artisan Serial Protocol Implementation
+# Stack Research
 
-**Project:** LibreRoaster v1.5
-**Researched:** 2026-02-04
-**Focus:** Full Artisan serial protocol for ESP32-C3 firmware
+**Domain:** Rust Embedded Documentation Tools
+**Researched:** 2026-02-05
+**Confidence:** HIGH
 
----
+## Recommended Stack
 
-## Recommended Stack Additions
+### Core Documentation Tools
 
-### Parser Library: `nom` 8.x
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| **mdbook** | 0.5.x | Markdown-based book/documentation generator | Industry standard for Rust projects; used by rust-lang.org, embedded WG; 7.7M+ downloads; low maintenance, simple workflow |
+| **cargo-readme** | 3.3.x | Generate README.md from doc comments | Keeps documentation in sync with code; 703K downloads; supports embedded-friendly patterns; no_std compatible for library docs |
+| **rustdoc** | Built-in | API documentation from doc comments | Part of Cargo, no setup required; validates code examples; integrates with docs.rs hosting |
 
-| Property | Value |
-|----------|-------|
-| Version | 8.0.0 |
-| Purpose | Robust parser combinator for serial command parsing |
-| Why | Industry-standard Rust parsing library, excellent no_std support, zero-copy parsing |
+### Supporting Tools
 
-**Rationale:**
-The Artisan protocol uses semicolon-delimited commands with structured responses. A parser combinator approach provides:
+| Tool | Purpose | When to Use |
+|------|---------|-------------|
+| **mdbook-rust-doc** | Embed Rust doc comments into mdBook chapters | For detailed API documentation integrated with prose; useful when you want code examples alongside narrative |
+| **svd2rust** | Generate Rust API from SVD files | For peripheral register documentation in embedded projects; LibreRoaster uses ESP32-C3 SVD files |
+| **cargo-generate** | Project template generator | For consistent documentation structure across new embedded projects |
 
-1. **Compositional parsing** - Build complex command parsers from simple primitives (tag, separated_list, etc.)
-2. **Error reporting** - Precise error locations when parsing fails (critical for debugging serial issues)
-3. **Zero-copy parsing** - nom can parse without allocating, important for embedded memory constraints
-4. **Battle-tested** - 10k+ stars, used in production embedded systems
+## Why This Stack for LibreRoaster
 
-**NOT using simple string split:**
-While the current implementation uses `split_whitespace()`, the full Artisan protocol requires:
-- Semicolon delimiter support (`CHAN;1200`)
-- Response acknowledgment patterns (`#`)
-- Numeric parsing with error handling
-- Structured command responses
+### mdbook for Main Documentation
+mdbook is the standard tool in the Rust ecosystem for project documentation. The embedded Rust Working Group uses it for all their books (docs.rust-embedded.org). For LibreRoaster, this means:
+- **Low maintenance**: Simple markdown files, no complex build pipelines
+- **Embedded-friendly**: Works perfectly with no_std projects since it generates HTML, not code
+- **Search and navigation**: Built-in search, navigation sidebar, syntax highlighting
+- **GitHub Pages deployment**: Single command to build, deploy to GitHub Pages
 
-**Alternative considered: `heapless::Vec` with manual parsing**
-Manual parsing would work but lacks:
-- Error location reporting
-- Composable parser primitives
-- Community verification
-
-```toml
-# Cargo.toml addition
-[dependencies]
-nom = { version = "8.0", default-features = false, features = ["alloc"] }
+### cargo-readme for README Generation
+For firmware projects with public crates, cargo-readme keeps your README synchronized with source code documentation:
+```bash
+cargo readme > README.md
 ```
+This ensures the README on crates.io and GitHub matches the actual crate documentation. Works with no_std since it only processes doc comments, not runtime code.
 
-**Feature note:** Use `default-features = false` to disable std dependencies. The `alloc` feature enables heap allocation which we need for command parsing buffers.
+### rustdoc for API Docs
+The built-in `cargo doc` command generates API documentation from `///` doc comments. For embedded projects:
+- Use `#[doc(hidden)]` for internal-only docs
+- Configure `docs.rs` metadata for proper hosting
+- Works with no_std when using `#![no_std]` attribute on crates
 
----
+## Alternatives Considered
 
-## No Stack Changes Required
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|------------------------|
+| mdbook | GitHub Wiki | Only for trivial projects without CI/CD; lacks search, version control, and deployment automation |
+| cargo-readme | Manual README | For single-person projects with infrequent updates; manual is simpler initially but diverges over time |
+| mdbook | Docusaurus/other | For teams already using JS frameworks; adds maintenance burden without Rust ecosystem benefits |
 
-### Existing Stack Components (Already Present)
+## What NOT to Use
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| `esp-hal` | ✅ Compatible | UART peripheral access via esp-hal |
-| `embassy-executor` | ✅ Compatible | Async task scheduling for serial handling |
-| `embassy-time` | ✅ Compatible | Timeout handling for 60s command window |
-| `heapless` | ✅ Compatible | `heapless::Vec` for fixed-capacity buffers |
-| `embedded-hal` | ✅ Compatible | Peripheral trait abstractions |
-
-**Rationale:**
-The existing Embassy + esp-hal stack already provides:
-- UART TX/RX via `embassy-esp32c3` UART driver
-- Async read/write operations
-- Timeout infrastructure via `embassy_time::Timer`
-- Buffer management via `heapless::Vec`
-
-No additional UART drivers, async runtimes, or peripheral abstractions are needed.
-
----
-
-## Protocol Implementation Strategy
-
-### 1. Command Parser: `nom`-based Artisan Protocol
-
-**Parser structure:**
-
-```rust
-// Core command parsers
-named!(parse_read_command, ParseResult<ArtisanCommand>);
-named!(parse_ot1_command, ParseResult<ArtisanCommand>);
-named!(parse_io3_command, ParseResult<ArtisanCommand>);
-
-// Initialization sequence (required for Artisan to enable control features)
-named!(parse_chan_command, ParseResult<ConfigCommand>);
-named!(parse_units_command, ParseResult<ConfigCommand>);
-named!(parse_filt_command, ParseResult<ConfigCommand>);
-
-// Response formatter (existing ArtisanFormatter)
-pub fn format_ack() -> &'static str { "#OK" }
-```
-
-**Protocol requirements from research:**
-
-| Command | Direction | Format | Response |
-|---------|-----------|--------|----------|
-| `CHAN;ABCD` | Artisan→Roaster | Set channel config | `#<any_response>` |
-| `UNITS;C` | Artisan→Roaster | Set temperature units | `#<any_response>` |
-| `FILT;N` | Artisan→Roaster | Set filter value | `#<any_response>` |
-| `READ` | Artisan→Roaster | Request telemetry | `ET,BT,Power,Fan` |
-| `OT1;N` | Artisan→Roaster | Set heater % | `#<any_response>` |
-| `IO3;N` | Artisan→Roaster | Set fan % | `#<any_response>` |
-| `START` | Artisan→Roaster | Start roast | `#<any_response>` |
-| `STOP` | Artisan→Roaster | Emergency stop | `#<any_response>` |
-
-**Critical implementation detail:** Artisan requires the initialization sequence (`CHAN` → `UNITS` → `FILT`) to complete before it will send control commands. The `#` prefix response is mandatory.
-
-### 2. Serial I/O: Embassy UART Integration
-
-**Recommended pattern:**
-
-```rust
-// Using existing embassy-esp32c3 UART
-use esp_hal::peripherals::UART0;
-use embassy_esp32c3::uart::{Uart, Config};
-
-pub struct ArtisanSerial {
-    uart: Uart<'static, UART0>,
-    rx_buffer: heapless::Vec<u8, 256>,
-}
-
-impl ArtisanSerial {
-    pub fn new(uart: Uart<'static, UART0>) -> Self {
-        Self {
-            uart,
-            rx_buffer: heapless::Vec::new(),
-        }
-    }
-
-    pub async fn read_command(&mut self) -> Result<ArtisanCommand, ParseError> {
-        let mut buf = [0u8; 128];
-        let len = self.uart.read(&mut buf).await?;
-        let cmd_str = core::str::from_utf8(&buf[..len])?;
-        parse_artisan_command(cmd_str)
-    }
-
-    pub async fn send_response(&mut self, response: &str) -> Result<(), Error> {
-        self.uart.write(response.as_bytes()).await?;
-        self.uart.write(b"\n").await?;
-        Ok(())
-    }
-}
-```
-
-**Existing infrastructure to leverage:**
-- `src/hardware/uart/driver.rs` - UART peripheral access
-- `src/input/multiplexer.rs` - Command timeout handling (60s)
-- `src/input/parser.rs` - Basic command parsing (extends to nom)
-
-### 3. Response Formatting: Extend Existing ArtisanFormatter
-
-**Already implemented in `src/output/artisan.rs`:**
-
-```rust
-// READ response format (existing)
-pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
-    format!(
-        "{:.1},{:.1},{:.1},{:.1}",
-        status.env_temp,   // ET
-        status.bean_temp,  // BT
-        status.ssr_output, // Power (heater)
-        fan_speed          // Fan
-    )
-}
-
-// Add acknowledgment response
-pub fn format_ack() -> &'static str { "#OK" }
-
-// Add error response
-pub fn format_error(code: &str) -> String { format!("#ERROR:{}", code) }
-```
-
----
-
-## What NOT to Add
-
-### Unnecessary Dependencies
-
-| Rejected | Reason |
-|----------|--------|
-| `tokio` | Async runtime incompatible with no_std embassy |
-| `async-std` | Async runtime incompatible with no_std embassy |
-| `serde` | JSON serialization not needed for Artisan protocol |
-| `regex` | Parser combinators superior for structured protocols |
-| `csv` | CSV library overkill for simple `ET,BT,Power,Fan` format |
-| `embedded-nom` | Not actively maintained; use standard nom |
-| Any USB stack | Using UART, not USB serial |
-
-### Features to Avoid
-
-| Anti-pattern | Why |
-|--------------|-----|
-| Dynamic heap allocation | Use `heapless::Vec` for bounded buffers |
-| Blocking I/O | Must use async to avoid blocking the executor |
-| Global state | Use dependency injection via `ServiceContainer` |
-| String formatting in hot paths | Pre-allocate response buffers |
-
----
-
-## Integration Points
-
-### With Existing Command Multiplexer
-
-```
-src/input/multiplexer.rs:60s_timeout
-        ↓
-src/input/parser.rs:parse_artisan_command()
-        ↓
-src/control/handlers.rs:ArtisanCommand handler
-        ↓
-src/output/artisan.rs:format_read_response()
-```
-
-### With Hardware UART
-
-```
-src/hardware/uart/driver.rs:embassy UART
-        ↓
-src/input/parser.rs:receive_command()
-        ↓
-src/output/artisan.rs:send_response()
-```
-
-### With System Status
-
-```
-src/config/SystemStatus
-        ├── env_temp (ET)
-        ├── bean_temp (BT)
-        ├── ssr_output (heater %)
-        └── fan_output (fan %)
-              ↓
-src/output/artisan.rs:format_read_response()
-```
-
----
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| **GitBook** | Non-Rust tool, requires JS dependencies, adds maintenance overhead | mdbook - native Rust, no external dependencies |
+| **AsciiDoctor** | More complex setup, Ruby dependencies, less Rust integration | mdbook - Cargo integration, simpler workflow |
+| **Custom doc generators** | Maintenance burden, potential bitrot | rustdoc/cargo-doc - supported by Rust team |
 
 ## Installation
 
 ```bash
-# No additional toolchain requirements
-# Existing ESP32-C3 toolchain supports nom compilation
+# mdbook - documentation site generator
+cargo install mdbook
 
-cargo add nom --features alloc,default-features=false
+# cargo-readme - README generator from doc comments
+cargo install cargo-readme
+
+# cargo-generate - project templates
+cargo install cargo-generate
+
+# For ESP32-C3 peripheral docs (optional)
+cargo install svd2rust
 ```
 
----
+### Optional Preprocessors
+
+```bash
+# Embed Rust docs in mdbook
+cargo install mdbook-rust-doc
+```
+
+## LibreRoaster-Specific Configuration
+
+### mdbook Configuration (book.toml)
+
+```toml
+[book]
+title = "LibreRoaster Documentation"
+authors = ["Your Name"]
+description = "ESP32-C3 firmware with Artisan serial protocol compatibility"
+
+[build]
+build-dir = "docs"
+```
+
+### cargo-readme Setup
+
+Add to `Cargo.toml`:
+```toml
+[package.metadata.cargo-readme]
+# Custom templates available
+```
+
+### GitHub Actions for Documentation
+
+```yaml
+name: Build Documentation
+on:
+  push:
+    branches: [main]
+    paths: ['**.md', 'book.toml', 'src/**']
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build mdBook
+        run: |
+          cargo install mdbook
+          mdbook build docs/
+      - name: Deploy to Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/book
+```
+
+## Stack Patterns by Project Type
+
+**For single-crate embedded libraries:**
+- `cargo doc` for API docs
+- `cargo-readme` for README
+- No mdbook needed unless you have extensive tutorials
+
+**For firmware applications with documentation:**
+- `mdbook` for main documentation
+- `cargo doc` for API docs
+- `cargo-readme` for crate-level README
+- Deploy mdbook to GitHub Pages
+
+**For complex embedded projects (like LibreRoaster):**
+- `mdbook` for architecture, usage, and development guides
+- `cargo doc` for API reference
+- `svd2rust` for hardware register documentation if needed
+- Keep `internalDoc/` as supplementary markdown files that can be integrated into mdBook later
+
+## Version Compatibility
+
+| Tool | Rust Version | Notes |
+|------|--------------|-------|
+| mdbook 0.5.x | 1.56+ | Current stable, well-tested |
+| cargo-readme 3.3.x | 1.56+ | Works with all modern Rust |
+| svd2rust 0.37.x | 1.61+ (MSRV) | Check ESP32-C3 SVD compatibility |
+
+## LibreRoaster Documentation Structure Recommendation
+
+```
+LibreRoaster/
+├── README.md              # Auto-generated from lib crate docs
+├── CHANGELOG.md           # Manual, updated per release
+├── docs/                  # mdBook output (gitignored)
+├── book/                  # mdBook source
+│   ├── src/
+│   │   ├── README.md      # Project overview
+│   │   ├── architecture.md # System design
+│   │   ├── usage.md       # User guide
+│   │   └── development.md # Contributor guide
+│   └── book.toml          # mdBook config
+└── internalDoc/           # Legacy, migrate to book/ as needed
+```
 
 ## Sources
 
-- **nom parser crate**: https://docs.rs/nom/8.0.0/nom/ (HIGH confidence)
-- **Artisan protocol spec**: https://github.com/greencardigan/TC4-shield (HIGH confidence)
-- **Embassy ESP32-C3 UART**: https://github.com/embassy-rs/embassy/tree/master/embassy-esp32c3 (HIGH confidence)
-- **ESP32-C3 HAL**: https://docs.rs/esp32c3/0.31.0/esp32c3/ (HIGH confidence)
-- **Protocol initialization sequence**: https://homeroasters.org/forum/viewthread.php?thread_id=5818 (MEDIUM confidence - community discussion)
+- **mdBook Documentation** — https://rust-lang.github.io/mdBook/ — Official documentation, 7.7M+ downloads, industry standard
+- **cargo-readme on crates.io** — https://crates.io/crates/cargo-readme — 703K downloads, actively maintained
+- **Embedded Rust Bookshelf** — https://docs.rust-embedded.org/ — Uses mdbook for all documentation, validates approach for embedded projects
+- **Rustdoc Book** — https://doc.rust-lang.org/rustdoc/ — Built-in documentation system, part of Cargo
+- **mdbook-rust-doc** — https://github.com/mythmon/mdbook-rust-doc — For embedding Rust API docs in mdBook chapters
+
+---
+
+*Stack research for: Rust Embedded Documentation Tools*
+*Researched: 2026-02-05*

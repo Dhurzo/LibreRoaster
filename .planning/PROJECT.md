@@ -10,7 +10,7 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Current State
 
-v1.5 Serial Protocol Implementation — Complete. Full Artisan serial protocol implemented.
+v1.6 Documentation — Complete. Comprehensive developer documentation in place.
 
 ## Requirements
 
@@ -39,10 +39,11 @@ v1.5 Serial Protocol Implementation — Complete. Full Artisan serial protocol i
 - ✓ UP/DOWN incremental heater control — v1.5
 - ✓ Comprehensive error handling (ERR format) — v1.5
 - ✓ Parser recovery for partial commands — v1.5
+- ✓ Complete documentation update — v1.6
 
 ### Active
 
-(None — v1.5 complete)
+(None — v1.6 complete)
 
 ### Out of Scope
 
@@ -64,6 +65,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 **v1.3 verification:** USB CDC dual-channel implementation.
 
 **v1.5 complete:** Full Artisan serial protocol with READ, OT1, IO3, UP, DOWN, START, STOP commands.
+
+**v1.6 complete:** Comprehensive documentation update with ARCHITECTURE, PROTOCOL, HARDWARE, and DEVELOPMENT guides.
 
 ## Constraints
 
@@ -87,4 +90,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-04 after v1.5 milestone shipped*
+*Last updated: 2026-02-05 after v1.6 milestone shipped*

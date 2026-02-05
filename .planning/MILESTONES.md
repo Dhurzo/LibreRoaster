@@ -1,5 +1,28 @@
 # Project Milestones: LibreRoaster
 
+## v1.6 Documentation (Shipped: 2026-02-05)
+
+**Delivered:** Comprehensive documentation update for v2.0 accuracy and developer experience.
+
+**Phases completed:** 19-20 (2 phases, 2 plans)
+
+**Key accomplishments:**
+- Complete README.md rewrite with Artisan commands, Quick Start, Hardware Requirements, Pinout
+- Created internalDoc/ARCHITECTURE.md with system overview, task structure, async model
+- Created internalDoc/PROTOCOL.md with Artisan command reference and message formats
+- Created internalDoc/HARDWARE.md with pinout and thermocouple wiring guide
+- Created internalDoc/DEVELOPMENT.md with build, flash, test, and debugging guides
+
+**Stats:**
+- 1 file modified (README.md)
+- 4 new documentation files created
+- 2 phases, 2 plans, 4 tasks
+- Same-day ship (2026-02-05)
+
+**Git range:** `6bc05c8` → `1e34ea8`
+
+---
+
 ## v1.4 UART Verification (In Progress)
 
 **Goal:** Verify UART0 works as a reliable backup communication channel to USB CDC.
@@ -62,4 +85,4 @@
 
 ---
 
-*Last updated: 2026-02-04 during v1.4 milestone creation*
+*Last updated: 2026-02-05 during v1.6 milestone shipped*
