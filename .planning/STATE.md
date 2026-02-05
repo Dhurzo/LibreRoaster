@@ -5,16 +5,16 @@
 ## Project Reference
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** v1.8 - Flash & Test Documentation
+**Current focus:** v1.8 milestone complete, awaiting v1.9
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-02-05 — Milestone v1.8 started (documentation)
+Phase: 30 of 30 (Troubleshooting & Quick Start)
+Plan: 1 of 1 in current phase
+Status: Phase complete
+Last activity: 2026-02-05 — Completed 30-01-PLAN.md (TROUBLESHOOTING_GUIDE.md + QUICKSTART.md)
 
-Progress: ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 8%
+Progress: ██████████████████████████████████████████ 100%
 
 ## v1.7 Non-Blocking USB Logging ✅ COMPLETE
 
@@ -26,15 +26,15 @@ Progress: ████████░░░░░░░░░░░░░░░�
 | 24 | Defmt + bbqueue Foundation | ✅ Complete |
 | 25 | UART Drain Task | ✅ Complete |
 
-## v1.8 Flash & Test Documentation 🚧 IN PROGRESS
+## v1.8 Flash & Test Documentation ✅ COMPLETE
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 26 | Flash Instructions | ○ Pending |
-| 27 | Artisan Connection Guide | ○ Pending |
-| 28 | Command Reference | ○ Pending |
-| 29 | UART Logging Guide | ○ Pending |
-| 30 | Troubleshooting & Quick Start | ○ Pending | |
+| 26 | Flash Instructions | ✅ Complete |
+| 27 | Artisan Connection Guide | ✅ Complete |
+| 28 | Command Reference | ✅ Complete |
+| 29 | UART Logging Guide | ✅ Complete |
+| 30 | Troubleshooting & Quick Start | ✅ Complete |
 
 ## v1.7 Audit Results
 
@@ -48,12 +48,11 @@ Progress: ████████░░░░░░░░░░░░░░░�
 
 ## Next Steps
 
-1. Define v1.8 documentation requirements and roadmap
-2. Create flash instructions for ESP32-C3
-3. Document Artisan connection and command usage
-4. Add UART logging documentation (v1.7 features)
-5. Create troubleshooting guide
+1. ✅ v1.8 documentation phase complete
+2. All documentation guides created: Flash, Artisan Connection, Command Reference, UART Logging, Troubleshooting, Quick Start
+3. Ready for v1.9 milestone planning
 
 ---
 
-*Next: /gsd-plan-phase 26 (v1.8 planning)*
+*Phase: 30-troubleshooting-quick-start complete*
+*Next: /gsd-plan-phase for v1.9*

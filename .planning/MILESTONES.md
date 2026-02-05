@@ -1,5 +1,30 @@
 # Project Milestones: LibreRoaster
 
+## v1.8 Flash & Test Documentation (Shipped: 2026-02-05)
+
+**Delivered:** Comprehensive flash, connection, and usage documentation for roasters covering ESP32-C3 flashing, Artisan protocol commands, and v1.7 UART logging features.
+
+**Phases completed:** 26-30 (5 phases, 5 plans)
+
+**Key accomplishments:**
+- Flash instructions for ESP32-C3 via USB/JTAG (FLASH_GUIDE.md, QUICKSTART.md)
+- Artisan connection setup guide with USB CDC and UART0 (ARTISAN_CONNECTION.md)
+- Complete command reference for all Artisan protocol commands (COMMAND_REFERENCE.md)
+- UART logging usage guide covering v1.7 esp_println and drain task features (UART_LOGGING_GUIDE.md)
+- Troubleshooting guide and quick start reference (TROUBLESHOOTING_GUIDE.md, QUICKSTART.md)
+
+**Stats:**
+- 14+ documentation files created/modified
+- 6 documentation guides delivered (DOCS-01 through DOCS-06)
+- 5 phases, 5 plans, 10 tasks
+- 1 day from start to ship
+
+**Git range:** `docs(v1.8-start)` → `docs(30): complete troubleshooting & quick start phase`
+
+**What's next:** v1.9 milestone — TBD
+
+---
+
 ## v1.6 Documentation (Shipped: 2026-02-05)
 
 **Delivered:** Comprehensive documentation update for v2.0 accuracy and developer experience.

@@ -54,15 +54,16 @@ v1.7 Non-Blocking USB Logging — Complete. Non-blocking logging infrastructure 
 - ✓ Defmt + bbqueue foundation — v1.7
 - ✓ UART drain task for async logging — v1.7
 - ✓ USB traffic sniffing with log_channel! macro — v1.7
+- ✓ Flash instructions for ESP32-C3 — v1.8
+- ✓ Artisan connection setup guide — v1.8
+- ✓ Command reference for end users — v1.8
+- ✓ UART logging usage guide — v1.8
+- ✓ Troubleshooting common issues — v1.8
+- ✓ Quick start reference card — v1.8
 
 ### Active
 
-- [ ] **DOCS-01**: Flash instructions for ESP32-C3 (USB/JTAG, UART0)
-- [ ] **DOCS-02**: Artisan connection setup guide
-- [ ] **DOCS-03**: Command reference for end users (READ, OT1, IO3, UP, DOWN, START, STOP)
-- [ ] **DOCS-04**: UART logging usage guide (v1.7 features)
-- [ ] **DOCS-05**: Troubleshooting common issues
-- [ ] **DOCS-06**: Quick start reference card
+(None — v1.8 complete, awaiting next milestone)
 
 ### Out of Scope
 
@@ -109,4 +110,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-05 after v1.7 milestone shipped, starting v1.8 documentation*
+*Last updated: 2026-02-05 after v1.8 milestone shipped*

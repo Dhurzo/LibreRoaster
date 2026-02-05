@@ -37,28 +37,23 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Flash the Firmware
 
-```bash
-cargo install cargo-espflash
-```
+See [FLASH_GUIDE.md](internalDoc/FLASH_GUIDE.md) for detailed flashing instructions.
 
-### 2. Build
+**Summary:**
+1. Connect ESP32-C3 via USB
+2. Use espflash GUI or CLI to flash `libreroaster.bin`
+3. Verify successful flash
 
-```bash
-cargo build --release
-```
+### 2. Connect to Artisan
 
-### 3. Flash
+See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed connection instructions.
 
-```bash
-cargo espflash flash --release --monitor
-```
-
-### 4. Connect to Artisan
-
-1. USB CDC: Board appears as serial port
-2. UART: GPIO20 (TX), GPIO21 (RX) at 115200 baud
+**Summary:**
+1. Identify the USB port (ttyACM on Linux, COM on Windows)
+2. Configure Artisan: port + 115200 baud + Arduino/RPi mode
+3. Verify connection with READ command
 
 ## Hardware Requirements
 
@@ -84,12 +79,19 @@ cargo espflash flash --release --monitor
 
 ## Artisan Connection
 
-LibreRoaster supports dual-channel communication:
+LibreRoaster supports two connection methods to Artisan:
 
-- **USB CDC**: Native USB, no adapter needed
-- **UART0**: GPIO20/21 at 115200 baud
+| Method | Description |
+|--------|-------------|
+| **USB CDC** | Native ESP32-C3 USB (recommended) — no adapter needed |
+| **UART0** | GPIO20/21 at 115200 baud — requires USB-to-UART adapter |
 
-Artisan connects to either channel. The multiplexer automatically routes commands.
+**Detailed guide:** See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for complete connection instructions including wiring diagrams, port identification, and troubleshooting.
+
+**Key settings:**
+- Baud rate: 115200
+- Mode: Arduino/RPi
+- Commands work immediately (handshake disabled)
 
 ## Protocol
 
