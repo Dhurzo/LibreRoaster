@@ -8,4 +8,5 @@ pub mod control;
 pub mod error;
 pub mod hardware;
 pub mod input;
+pub mod logging;
 pub mod output;

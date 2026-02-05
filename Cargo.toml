@@ -35,6 +35,8 @@ static_cell      = "2.1.1"
 log              = "0.4.27"
 embassy-sync     = "0.6.1"
 
+# Logging - esp_println for direct UART0 output
+
 # ESP-specific dependencies - only for embedded target
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 esp-hal = { version = "~1.0", features = ["esp32c3", "log-04", "unstable"] }

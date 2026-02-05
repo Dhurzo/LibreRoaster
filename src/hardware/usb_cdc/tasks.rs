@@ -1,6 +1,8 @@
 use crate::application::service_container::ServiceContainer;
 use crate::input::parser::ParseError;
 use crate::input::multiplexer::CommChannel;
+use crate::log_channel;
+use crate::logging::channel::Channel;
 use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
@@ -20,6 +22,8 @@ pub async fn usb_reader_task() {
         if let Some(usb) = get_usb_cdc_driver() {
             match usb.read_bytes(&mut rbuf).await {
                 Ok(len) if len > 0 => {
+                    let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
+                    log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
                     process_usb_command_data(&rbuf[..len]);
                 }
                 _ => {}
@@ -39,6 +43,7 @@ pub async fn usb_writer_task() {
             if let Some(usb) = get_usb_cdc_driver() {
                 let mut bytes = data.as_bytes().to_vec();
                 bytes.extend_from_slice(b"\r\n");
+                log_channel!(Channel::Usb, "TX: {}", data);
                 if let Err(e) = usb.write_bytes(&bytes).await {
                     warn!("USB CDC write error: {:?}", e);
                 }

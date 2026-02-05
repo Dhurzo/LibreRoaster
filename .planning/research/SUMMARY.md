@@ -1,184 +1,125 @@
-# LibreRoaster v1.5 Research Summary
+# Project Research Summary
 
-**Project:** Full Artisan Serial Protocol Implementation  
-**Date:** February 4, 2026  
-**Confidence:** HIGH - Protocol well-documented with multiple reference implementations
-
----
+**Project:** LibreRoaster (ESP32-C3)
+**Domain:** Non-Blocking USB Logging for Real-Time Control
+**Researched:** 2026-02-05
+**Confidence:** HIGH
 
 ## Executive Summary
 
-LibreRoaster v1.5 aims to implement full bidirectional Artisan serial protocol compatibility on ESP32-C3 firmware. Artisan is the dominant open-source coffee roasting software, communicating via a master-slave polling model at 115200 baud. The existing codebase provides solid foundations including Embassy async task framework, command multiplexer, ArtisanFormatter for READ responses, and RoasterControl with ArtisanCommandHandler.
+LibreRoaster v1.7 requires a robust, non-blocking logging system to monitor USB communication without compromising the 100ms PID control loop. Standard synchronous logging (like `esp-println`) poses a critical risk: if the USB buffer fills or a serial monitor is disconnected, the entire firmware can stall, potentially leading to dangerous roasting conditions.
 
-**Key Research Findings:**
-
-1. **Stack Strategy:** Add `nom` 8.x for robust parser combinator support; existing Embassy+esp-hal stack is fully compatible
-2. **Critical Path:** Initialization sequence (CHAN → UNITS → FILT) must complete with `#` acknowledgment before Artisan polls temperatures
-3. **Architecture Leverage:** Extend existing parser and formatter rather than replacing them; maintain separation of concerns
-4. **Primary Risks:** UART buffer overflow, ISR blocking, and frame format errors are the highest-impact pitfalls
-
-The recommended approach is a phased implementation starting with protocol foundation (handshake + acknowledgments), followed by extended command parsing, response enhancement, PID integration, and streaming optimization. This minimizes risk while building toward full Artisan compatibility.
-
----
+The recommended approach is to adopt a **Producer-Consumer architecture** using `defmt` for deferred formatting and `defmt-bbq` as a lock-free buffer. This setup ensures that log "writes" are near-instantaneous memory operations. A low-priority background task handles the actual hardware transmission, allowing the high-priority PID and serial parser tasks to proceed without interruption. To manage log volume, "Smart Filtering" will be implemented to suppress repetitive Artisan polling commands.
 
 ## Key Findings
 
-### From STACK.md: Technology Recommendations
+### Recommended Stack
 
-| Component | Recommendation | Rationale |
-|-----------|----------------|-----------|
-| **Parser Library** | `nom` 8.x | Industry-standard Rust parsing library with no_std support, zero-copy parsing, compositional parsers, and precise error locations |
-| **Existing Stack** | Keep as-is | esp-hal, embassy-executor, embassy-time, heapless, embedded-hal are all compatible with no changes |
-| **What NOT to Add** | tokio, async-std, serde, regex | Incompatible with no_std embassy, or overkill for ASCII protocol |
+The stack moves away from synchronous blocking logs toward an async-native, deferred-formatting ecosystem.
 
-**Critical Integration Points:**
-- `src/input/parser.rs` → extend with nom-based Artisan command parsing
-- `src/output/artisan.rs` → extend ArtisanFormatter with acknowledgment responses
-- `src/input/multiplexer.rs` → add initialization state machine
+**Core technologies:**
+- **defmt (0.3.10):** Logging Interface — Minimizes CPU and binary size by deferring string formatting to the host PC.
+- **defmt-bbq (0.1.0):** Global Logger Shim — Decouples log sites from hardware by routing logs into a lock-free queue.
+- **bbqueue (0.5.1):** Lock-free Buffer — Provides the underlying SPSC queue for high-performance, non-blocking data transfer.
+- **esp-hal (1.0.0):** Peripheral Drivers — Utilizes the latest stable async drivers for non-blocking hardware I/O.
 
-### From FEATURES.md: Feature Landscape
+### Expected Features
 
-**Table Stakes (MVP Required):**
-- Initialization handshake (CHAN → UNITS → FILT with `#` acknowledgment)
-- READ command response (ET,BT,ET2,BT2,ambient,fan,heater in CSV format)
-- OT1 heater control and IO3 fan control (existing)
-- 115200 baud, 8N1, line-oriented protocol with newline termination
-- Temperature unit conversion (F/C) and channel mapping support
+**Must have (table stakes):**
+- **Non-blocking Logging** — PID loop must never wait for logs; users expect roaster stability regardless of logging state.
+- **Log Level Control** — Standard Info/Debug/Error filtering to manage log verbosity.
+- **USB-Serial-JTAG Output** — Native support for the ESP32-C3's internal debug peripheral.
 
-**Differentiators (Post-MVP):**
-- Extended command set (OT2, UP/DOWN, PID mode)
-- Rate-of-Rise reporting
-- WebSocket bridge for network-based Artisan connection
-- MODBUS support for commercial roaster integration
-- Autonomous PID control without Artisan connected
+**Should have (competitive):**
+- **Smart Filtering** — Suppression of repetitive `READ` commands to keep logs focused on meaningful state changes.
+- **Millisecond Timestamps** — High-precision timing integrated with `embassy-time` for latency analysis.
 
-**Anti-Features to Avoid:**
-- Missing `#` acknowledgment for CHAN (Artisan will hang)
-- Response times exceeding 100ms (causes missed samples)
-- Using `0` for unused temperature channels (use `-1`)
-- Arbitrary serial output breaking line-oriented parsing
+**Defer (v2+):**
+- **Remote Log Streaming** — Streaming logs over Wi-Fi/UDP is out of scope for the current USB-focused improvement.
 
-### From ARCHITECTURE.md: Structural Analysis
+### Architecture Approach
 
-**Existing Architecture Strengths:**
-- Embassy async tasks for UART I/O with proper concurrency
-- Command multiplexer handling dual-channel (UART + USB CDC)
-- Clear separation: Parser → Handler → Formatter → Output
-- ServiceContainer for dependency injection
+The architecture follows a strictly decoupled Producer-Consumer pattern where the logging system is an observer of the serial traffic, not a participant in the critical path.
 
-**New Components Required:**
-1. `ArtisanProtocolState` - Initialization state machine (ExpectingChan → ExpectingUnits → ExpectingFilt → Ready)
-2. `ArtisanResponseBuilder` - Centralized response formatting
-3. `ArtisanParser` - Extended delimiter support (`,`, `;`, space, `=`)
-4. Extended `ArtisanCommand` enum - PID commands, OT2, DCFAN, channel mapping
+**Major components:**
+1. **defmt Macros** — Fast log producers embedded in the Serial Reader/Writer tasks.
+2. **defmt-bbq (BBQueue)** — Centralized buffer managing the life-cycle of log data.
+3. **Async Logger Task** — A low-priority consumer that drains the queue and writes to the hardware transport async.
 
-**Data Flow (Enhanced):**
-```
-Artisan → CHAN;1200 → ProtocolState → #ACK → Artisan
-Artisan → UNITS;C → ProtocolState → (no response)
-Artisan → READ → Parser → Handler → ArtisanFormatter → Response
-```
+### Critical Pitfalls
 
-### From PITFALLS.md: Critical Risks
-
-**Critical Pitfalls (Must Prevent):**
-1. **UART Buffer Overflow** - Process bytes faster than they arrive using event-driven RX with proper buffer sizing
-2. **Blocking in ISR** - Keep UART ISR minimal: copy bytes, signal semaphore, return immediately
-3. **Baud Rate Mismatch** - Verify ESP32-C3 clock accuracy; use exact 115200 configuration
-4. **Race Conditions** - Protect shared ArtisanFormatter buffers with mutexes
-5. **Incorrect Frame Format** - Use `R,TTTT,TTTT,...\r\n` format; always terminate with CRLF
-
-**Moderate Pitfalls:**
-- USB CDC conflict with UART0 (use UART1/UART2 for Artisan)
-- Temperature data staleness during serial transmission
-- Deep sleep breaking Artisan connection (disable during active roast)
-
----
+1. **Synchronous Blocking in `esp-println`** — Prevented by strictly using `defmt-bbq` and avoiding standard `println!`.
+2. **Shared Resource Conflict (UsbSerialJtag)** — Avoided by using a dedicated transport (UART0) or protocol-aware multiplexing to prevent interleaving logs with Artisan data.
+3. **BBQueue Overrun** — Mitigated by "Smart Filtering" and a "Drop-Oldest" policy to ensure the system remains responsive even under heavy log load.
 
 ## Implications for Roadmap
 
-### Suggested Phase Structure
+Based on research, suggested phase structure:
 
-**Phase 1: Protocol Foundation (Week 1)**
-- Implement initialization state machine (CHAN → UNITS → FILT)
-- Add acknowledgment response system (`#` prefix)
-- Create error response format (`ERR code message`)
-- Validate UART configuration with Artisan connection
+### Phase 1: Logging Foundation
+**Rationale:** Establishing the non-blocking buffer and `defmt` integration is the prerequisite for all subsequent features.
+**Delivers:** Working `defmt` setup over `bbqueue` with a basic async drain task.
+**Addresses:** Non-blocking Logging.
+**Avoids:** Synchronous Blocking Pitfall.
 
-**Phase 2: Extended Command Parsing (Week 2)**
-- Integrate `nom` parser with multi-delimiter support
-- Add PID command variants (PID;ON, PID;SV, PID;T;...)
-- Add OT2 and DCFAN command support
-- Extend ArtisanCommand enum with new variants
+### Phase 2: Transport Configuration
+**Rationale:** The ESP32-C3 has specific hardware constraints for USB-Serial-JTAG that must be handled before attaching real traffic sniffers.
+**Delivers:** Stable log output over a designated channel (USB-JTAG or UART0) without interfering with Artisan.
+**Uses:** `esp-hal` 1.0.0 async drivers.
+**Implements:** Async Logger Task.
 
-**Phase 3: Response Enhancement (Week 3)**
-- Create ArtisanResponseBuilder for centralized formatting
-- Implement ambient temperature in READ responses
-- Enhance dual_output_task for acknowledgment routing
-- Add Fahrenheit conversion support
+### Phase 3: Communication Sniffer Integration
+**Rationale:** Once the transport is safe, we can hook into the existing Artisan command multiplexer.
+**Delivers:** Real-time visibility into RX/TX bytes for Artisan commands.
+**Addresses:** Bi-directional Monitoring.
+**Implements:** `defmt` log sites in Reader/Writer tasks.
 
-**Phase 4: PID Integration (Week 4)**
-- Extend ArtisanCommandHandler with PID state
-- Implement PID enable/disable and setpoint commands
-- Add PID tuning parameter support
-- Integrate with existing temperature control algorithms
+### Phase 4: Smart Filtering & Polish
+**Rationale:** High-frequency polling in Artisan will flood the logs; filtering is needed for usability.
+**Delivers:** Logic to suppress repetitive `READ` polling logs.
+**Addresses:** Smart Filtering.
+**Avoids:** BBQueue Overrun Pitfall.
 
-**Phase 5: Streaming Optimization (Week 5)**
-- Optimize CSV formatting for 10Hz streaming
-- Implement backpressure handling
-- Add streaming start/stop acknowledgment
-- Long-duration stability testing
+### Phase Ordering Rationale
+
+- **Dependencies:** The async runtime and `bbqueue` must exist before any logging can happen safely.
+- **Grouping:** Transport setup is grouped separately because it involves hardware-specific configuration (C3 JTAG vs UART) which is distinct from the logical sniffer implementation.
+- **Safety:** By building the "Smart Filter" last, we ensure the system is already non-blocking and safe, even if it is "chatty" initially.
 
 ### Research Flags
 
-| Phase | Needs Deeper Research | Standard Patterns |
-|-------|----------------------|-------------------|
-| Phase 1 | None (protocol spec well-documented) | Initialization sequence, ACK format |
-| Phase 2 | None (nom well-documented) | Parser combinator patterns |
-| Phase 3 | PID algorithm details from existing codebase | Response builder patterns |
-| Phase 4 | YES - PID integration with Artisan requires existing PID implementation review | Extended command patterns |
-| Phase 5 | None (standard streaming patterns) | Performance optimization |
+Phases likely needing deeper research during planning:
+- **Phase 2:** Hardware multiplexing vs RTT. Need to confirm if Artisan and logs can coexist on one USB port via different frames or if a physical UART is required.
 
-### Dependencies Between Phases
-
-```
-Phase 1 (Foundation) ──► Phase 2 (Parsing) ──► Phase 3 (Responses)
-        │                    │                      │
-        ▼                    ▼                      ▼
-   Must work first      Requires ACK            Requires parsing
-                                              and responses
-
-Phase 3 ──► Phase 4 (PID) ──► Phase 5 (Optimization)
-    │            │
-    ▼            ▼
-Requires    Requires all
-parsing     previous phases
-```
-
----
+Phases with standard patterns (skip research-phase):
+- **Phase 1:** `defmt-bbq` setup is a well-documented embedded Rust pattern.
+- **Phase 3:** Adding log macros to existing tasks is straightforward instrumentation.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| **Stack** | HIGH | nom well-documented, existing stack verified compatible |
-| **Features** | HIGH | Protocol specification clear, multiple reference implementations |
-| **Architecture** | HIGH | Codebase analyzed, clear integration points identified |
-| **Pitfalls** | MEDIUM | Based on ESP32 community sources and embedded patterns; some issues may be ESP32-C3 specific |
+| Stack | HIGH | `defmt` + `bbqueue` is the industry standard for this use case. |
+| Features | HIGH | Based on known pain points in the current blocking implementation. |
+| Architecture | HIGH | Producer-Consumer pattern is naturally suited for async logging. |
+| Pitfalls | HIGH | ESP32-C3 JTAG and blocking issues are well-documented. |
 
-**Gaps to Address:**
-- PID algorithm details from existing codebase (Phase 4 planning)
-- USB CDC pin conflicts with UART0 (needs hardware verification)
-- Thermocouple polarity and sign convention (testing phase)
+**Overall confidence:** HIGH
 
----
+### Gaps to Address
+
+- **Hardware Conflict:** Need to decide on the default log transport (UART vs USB) based on the user's hardware setup. This should be handled via a feature flag or config during implementation.
 
 ## Sources
 
-- **nom parser crate:** https://docs.rs/nom/8.0.0/nom/
-- **Artisan protocol spec:** https://github.com/greencardigan/TC4-shield
-- **Artisan Official Documentation:** https://artisan-scope.org/devices/arduino/
-- **TC4-Emulator Reference:** https://github.com/FilePhil/TC4-Emulator
-- **aArtisanQ PID Firmware:** https://github.com/greencardigan/TC4-shield/tree/master/applications/Artisan/aArtisan
-- **ESP32 UART Reference:** https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/peripherals/uart.html
-- **ESP32 GitHub Issues:** #6326, #10420 (UART data loss issues)
+### Primary (HIGH confidence)
+- [esp-hal 1.0.0 Release Notes](https://github.com/esp-rs/esp-hal/releases/tag/v1.0.0) — Stable async driver patterns.
+- [defmt Documentation](https://defmt.ferrous-systems.com/) — Logging framework specifics.
+- [defmt-bbq GitHub](https://github.com/knurling-rs/defmt-bbq) — Non-blocking bridge implementation.
+
+### Secondary (MEDIUM confidence)
+- [Artisan Protocol Documentation](https://artisan-roaster-scope.blogspot.com/) — Command structures for filtering.
+
+---
+*Research completed: 2026-02-05*
+*Ready for roadmap: yes*

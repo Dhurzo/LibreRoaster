@@ -1,191 +1,68 @@
-# Stack Research
+# Technology Stack: Non-Blocking USB Logging
 
-**Domain:** Rust Embedded Documentation Tools
+**Project:** LibreRoaster (ESP32-C3)
 **Researched:** 2026-02-05
-**Confidence:** HIGH
+**Focus:** Non-blocking logging for USB CDC communication in an Embassy/esp-hal environment.
 
-## Recommended Stack
+## Recommended Stack Additions
 
-### Core Documentation Tools
+For non-blocking logging on the ESP32-C3 with Embassy, the **`defmt` + `defmt-bbq`** pattern is the prescriptive choice. It separates the log-site execution from the hardware transmission, ensuring that logging high-frequency USB traffic does not stall the roaster's control loops.
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| **mdbook** | 0.5.x | Markdown-based book/documentation generator | Industry standard for Rust projects; used by rust-lang.org, embedded WG; 7.7M+ downloads; low maintenance, simple workflow |
-| **cargo-readme** | 3.3.x | Generate README.md from doc comments | Keeps documentation in sync with code; 703K downloads; supports embedded-friendly patterns; no_std compatible for library docs |
-| **rustdoc** | Built-in | API documentation from doc comments | Part of Cargo, no setup required; validates code examples; integrates with docs.rs hosting |
+### Core Logging Framework
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `defmt` | `0.3.10` | Logging Interface | Deferred formatting: only sends IDs/data. Formatting happens on host. Minimizes CPU cycles and binary size. |
+| `defmt-bbq` | `0.1.0` | Global Logger Shim | Routes `defmt` output into a `bbqueue` instead of writing directly to hardware. Essential for non-blocking behavior. |
+| `bbqueue` | `0.5.1` | Lock-free Buffer | Provides a SPSC (Single Producer Single Consumer) queue for encoded log data. Memory-efficient and async-friendly. |
 
-### Supporting Tools
+### Hardware Integration (Updates)
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `esp-hal` | `1.0.0` | Peripheral Drivers | Stable 1.0 release. Use `UsbSerialJtag` or `Uart` with `async` features for the logging drain task. |
+| `esp-hal-embassy` | `0.5.0` | Async Runtime | Provides the executor and timer support needed for the background logging drain task. |
 
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **mdbook-rust-doc** | Embed Rust doc comments into mdBook chapters | For detailed API documentation integrated with prose; useful when you want code examples alongside narrative |
-| **svd2rust** | Generate Rust API from SVD files | For peripheral register documentation in embedded projects; LibreRoaster uses ESP32-C3 SVD files |
-| **cargo-generate** | Project template generator | For consistent documentation structure across new embedded projects |
+## Integration Strategy
 
-## Why This Stack for LibreRoaster
+The logging system should be implemented as a **Producer-Consumer** pattern:
 
-### mdbook for Main Documentation
-mdbook is the standard tool in the Rust ecosystem for project documentation. The embedded Rust Working Group uses it for all their books (docs.rust-embedded.org). For LibreRoaster, this means:
-- **Low maintenance**: Simple markdown files, no complex build pipelines
-- **Embedded-friendly**: Works perfectly with no_std projects since it generates HTML, not code
-- **Search and navigation**: Built-in search, navigation sidebar, syntax highlighting
-- **GitHub Pages deployment**: Single command to build, deploy to GitHub Pages
+1.  **Global Logger:** `defmt-bbq` is registered as the `#[defmt::global_logger]`. When `info!`, `debug!`, etc., are called, data is pushed into the `bbqueue`. This is a "near-instant" memory write.
+2.  **Drain Task:** A low-priority Embassy task (`logger_task`) holds the `bbqueue::Consumer`. It polls the queue and uses the `esp-hal` async `write_all` method to send bytes to the physical transport.
+3.  **Transport Selection:** 
+    *   **Development:** Use the internal `UsbSerialJtag` (JTAG-Serial) for logs. Note that if this is also used for Artisan (CDC), you must ensure `defmt` framing is handled or use RTT.
+    *   **Production:** Log over `UART0` or use RTT (Real-Time Transfer) via `esp-println`'s RTT feature if a debugger is attached.
 
-### cargo-readme for README Generation
-For firmware projects with public crates, cargo-readme keeps your README synchronized with source code documentation:
-```bash
-cargo readme > README.md
-```
-This ensures the README on crates.io and GitHub matches the actual crate documentation. Works with no_std since it only processes doc comments, not runtime code.
+## defmt vs log: Decision Matrix
 
-### rustdoc for API Docs
-The built-in `cargo doc` command generates API documentation from `///` doc comments. For embedded projects:
-- Use `#[doc(hidden)]` for internal-only docs
-- Configure `docs.rs` metadata for proper hosting
-- Works with no_std when using `#![no_std]` attribute on crates
+| Criterion | `defmt` (Recommended) | `log` |
+|-----------|-----------------------|-------|
+| **Blocking** | **Non-blocking** (via `defmt-bbq`) | Typically blocking (formats strings on-chip) |
+| **Performance** | High (IDs only) | Low (String formatting is CPU intensive) |
+| **Flash Usage** | Minimal (Strings stored in ELF on PC) | Significant (Strings stored in Flash) |
+| **RAM Usage** | Low | Higher (Formatting buffers) |
+| **Best For** | Real-time control, async Embassy | General CLI tools, legacy compatibility |
 
-## Alternatives Considered
+## What NOT to Add
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|------------------------|
-| mdbook | GitHub Wiki | Only for trivial projects without CI/CD; lacks search, version control, and deployment automation |
-| cargo-readme | Manual README | For single-person projects with infrequent updates; manual is simpler initially but diverges over time |
-| mdbook | Docusaurus/other | For teams already using JS frameworks; adds maintenance burden without Rust ecosystem benefits |
-
-## What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| **GitBook** | Non-Rust tool, requires JS dependencies, adds maintenance overhead | mdbook - native Rust, no external dependencies |
-| **AsciiDoctor** | More complex setup, Ruby dependencies, less Rust integration | mdbook - Cargo integration, simpler workflow |
-| **Custom doc generators** | Maintenance burden, potential bitrot | rustdoc/cargo-doc - supported by Rust team |
+- **`esp-println` with default features:** Standard `esp-println` logging is synchronous and will block the Embassy executor, causing jitter in Artisan command parsing.
+- **`std::fmt` or `alloc`:** Keep the stack `no_std`. `defmt` handles complex structures without needing `format!`.
+- **Custom RingBuffers:** `bbqueue` is already optimized for `defmt`'s variable-length encoding and contiguous slice requirements.
 
 ## Installation
 
-```bash
-# mdbook - documentation site generator
-cargo install mdbook
-
-# cargo-readme - README generator from doc comments
-cargo install cargo-readme
-
-# cargo-generate - project templates
-cargo install cargo-generate
-
-# For ESP32-C3 peripheral docs (optional)
-cargo install svd2rust
-```
-
-### Optional Preprocessors
-
-```bash
-# Embed Rust docs in mdbook
-cargo install mdbook-rust-doc
-```
-
-## LibreRoaster-Specific Configuration
-
-### mdbook Configuration (book.toml)
-
 ```toml
-[book]
-title = "LibreRoaster Documentation"
-authors = ["Your Name"]
-description = "ESP32-C3 firmware with Artisan serial protocol compatibility"
+[dependencies]
+# Logging
+defmt = "0.3.10"
+defmt-bbq = "0.1.0"
+bbqueue = "0.5.1"
 
-[build]
-build-dir = "docs"
-```
-
-### cargo-readme Setup
-
-Add to `Cargo.toml`:
-```toml
-[package.metadata.cargo-readme]
-# Custom templates available
-```
-
-### GitHub Actions for Documentation
-
-```yaml
-name: Build Documentation
-on:
-  push:
-    branches: [main]
-    paths: ['**.md', 'book.toml', 'src/**']
-
-jobs:
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Build mdBook
-        run: |
-          cargo install mdbook
-          mdbook build docs/
-      - name: Deploy to Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/book
-```
-
-## Stack Patterns by Project Type
-
-**For single-crate embedded libraries:**
-- `cargo doc` for API docs
-- `cargo-readme` for README
-- No mdbook needed unless you have extensive tutorials
-
-**For firmware applications with documentation:**
-- `mdbook` for main documentation
-- `cargo doc` for API docs
-- `cargo-readme` for crate-level README
-- Deploy mdbook to GitHub Pages
-
-**For complex embedded projects (like LibreRoaster):**
-- `mdbook` for architecture, usage, and development guides
-- `cargo doc` for API reference
-- `svd2rust` for hardware register documentation if needed
-- Keep `internalDoc/` as supplementary markdown files that can be integrated into mdBook later
-
-## Version Compatibility
-
-| Tool | Rust Version | Notes |
-|------|--------------|-------|
-| mdbook 0.5.x | 1.56+ | Current stable, well-tested |
-| cargo-readme 3.3.x | 1.56+ | Works with all modern Rust |
-| svd2rust 0.37.x | 1.61+ (MSRV) | Check ESP32-C3 SVD compatibility |
-
-## LibreRoaster Documentation Structure Recommendation
-
-```
-LibreRoaster/
-├── README.md              # Auto-generated from lib crate docs
-├── CHANGELOG.md           # Manual, updated per release
-├── docs/                  # mdBook output (gitignored)
-├── book/                  # mdBook source
-│   ├── src/
-│   │   ├── README.md      # Project overview
-│   │   ├── architecture.md # System design
-│   │   ├── usage.md       # User guide
-│   │   └── development.md # Contributor guide
-│   └── book.toml          # mdBook config
-└── internalDoc/           # Legacy, migrate to book/ as needed
+# HAL (ensure async and chip features)
+esp-hal = { version = "1.0.0", features = ["esp32c3", "async"] }
+esp-hal-embassy = { version = "0.5.0", features = ["esp32c3", "integrated-timers"] }
 ```
 
 ## Sources
-
-- **mdBook Documentation** — https://rust-lang.github.io/mdBook/ — Official documentation, 7.7M+ downloads, industry standard
-- **cargo-readme on crates.io** — https://crates.io/crates/cargo-readme — 703K downloads, actively maintained
-- **Embedded Rust Bookshelf** — https://docs.rust-embedded.org/ — Uses mdbook for all documentation, validates approach for embedded projects
-- **Rustdoc Book** — https://doc.rust-lang.org/rustdoc/ — Built-in documentation system, part of Cargo
-- **mdbook-rust-doc** — https://github.com/mythmon/mdbook-rust-doc — For embedding Rust API docs in mdBook chapters
-
----
-
-*Stack research for: Rust Embedded Documentation Tools*
-*Researched: 2026-02-05*
+- [esp-hal 1.0.0 Release Notes](https://github.com/esp-rs/esp-hal/releases/tag/v1.0.0)
+- [Embassy Documentation: Logging Patterns](https://embassy.dev/book/dev/logging.html)
+- [defmt-bbq GitHub](https://github.com/knurling-rs/defmt-bbq)
+- [Espressif Rust Ecosystem - 2026 Update](https://docs.esp-rs.org/)
