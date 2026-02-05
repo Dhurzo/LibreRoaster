@@ -5,16 +5,16 @@
 ## Project Reference
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** v1.8 - Next milestone TBD
+**Current focus:** v1.8 - Flash & Test Documentation
 
 ## Current Position
 
-Phase: 25
-Plan: 25-01
-Status: Complete
-Last activity: 2026-02-05 — Phase 25 executed (UART logging with esp_println)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-05 — Milestone v1.8 started (documentation)
 
-Progress: ████████████████████████████████████████████████░░░░░░░ 73%
+Progress: ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 8%
 
 ## v1.7 Non-Blocking USB Logging ✅ COMPLETE
 
@@ -26,6 +26,16 @@ Progress: ███████████████████████�
 | 24 | Defmt + bbqueue Foundation | ✅ Complete |
 | 25 | UART Drain Task | ✅ Complete |
 
+## v1.8 Flash & Test Documentation 🚧 IN PROGRESS
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 26 | Flash Instructions | ○ Pending |
+| 27 | Artisan Connection Guide | ○ Pending |
+| 28 | Command Reference | ○ Pending |
+| 29 | UART Logging Guide | ○ Pending |
+| 30 | Troubleshooting & Quick Start | ○ Pending | |
+
 ## v1.7 Audit Results
 
 **Status:** ✅ COMPLETE (2026-02-05)
@@ -36,22 +46,13 @@ Progress: ███████████████████████�
 | drain_task.rs: UART transport missing | Critical | ✅ Closed |
 | LOG-03: [USB] prefix incomplete | Partial | ✅ Closed |
 
-## Hardware Verification Status
-
-**All verifications pending:**
-- UART0 output test (requires GPIO20 connection at 115200 baud)
-- Stability test with 1000+ messages
-- Artisan communication stability test
-- Artisan traffic logging (Phase 23)
-
 ## Next Steps
 
-1. v1.7 is complete - all phases executed
-2. Define v1.8 milestone based on core value:
-   - PID controller implementation
-   - Temperature reading/processing
-   - Fan/heater control
-   - Or hardware verification for v1.7
+1. Define v1.8 documentation requirements and roadmap
+2. Create flash instructions for ESP32-C3
+3. Document Artisan connection and command usage
+4. Add UART logging documentation (v1.7 features)
+5. Create troubleshooting guide
 
 ---
 
