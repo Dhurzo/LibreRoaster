@@ -1,6 +1,6 @@
 # LibreRoaster - OpenSource Coffee Bean Roaster Firmware ☕🔥
 
-LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-C3 (firmware & hardware). Built with modern embedded Rust using Embassy async framework, featuring temperature control, dual thermocouple monitoring, proportional-based heating, fan control, heat source detection, and **Artisan+ compatibility via UART communication**.
+LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-C3 (firmware & hardware). Built with modern embedded Rust using Embassy async framework, featuring dual thermocouple monitoring, PWM heater/fan control, and Artisan+ compatibility via USB or UART communication.
 
 ## Project Philosophy
 
@@ -12,7 +12,18 @@ The project is adaptable to both more expensive and more budget-friendly compone
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Supported Artisan Commands
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Dual-Channel Artisan Communication** | Connect via USB CDC (native) or UART0 (GPIO20/21) at 115200 baud |
+| **Dual Thermocouple Monitoring** | MAX31856-based ET (Environment) and BT (Bean) temperature sensing |
+| **PWM Output Control** | SSR heater and fan control via LEDC PWM (0-100%) |
+| **Rate of Rise (ROR)** | Automatic BT rate-of-change calculation for roasting metrics |
+| **Command Multiplexer** | Routes Artisan commands between USB and UART with 60s timeout |
+| **Initialization Handshake** | Supports CHAN→UNITS→FILT sequence with `#` acknowledgment |
+
+### Supported Artisan Commands
 
 | Command | Description |
 |---------|-------------|
