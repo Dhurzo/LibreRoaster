@@ -1,10 +1,10 @@
 pub mod parser;
 pub mod multiplexer;
-pub mod init_state;
+// NOTE: init_state module is commented out (handshake disabled for Artisan Scope)
+// pub mod init_state;
 
 pub use parser::parse_artisan_command;
-pub use multiplexer::{CommandMultiplexer, CommChannel};
-pub use init_state::{ArtisanInitState, InitState, InitEvent};
+pub use multiplexer::{CommandMultiplexer, CommChannel, InitState, InitEvent};
 
 use crate::config::ArtisanCommand;
 use crate::hardware::uart::{send_response, uart_reader_task, uart_writer_task, COMMAND_PIPE_SIZE};

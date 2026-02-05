@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use log::info;
 
 #[cfg(target_arch = "riscv32")]
@@ -22,7 +23,14 @@ impl Instant {
     }
 }
 
-use crate::input::init_state::{ArtisanInitState, InitEvent, InitState};
+// NOTE: Handshake (CHAN → UNITS → FILT) is DISABLED for Artisan Scope compatibility
+// Artisan Scope does not perform handshake - it simply sends and receives data
+// Placeholder types kept for potential future re-enabling
+#[allow(dead_code)]
+pub struct InitState;
+
+#[allow(dead_code)]
+pub struct InitEvent;
 
 pub const IDLE_TIMEOUT_SECS: u64 = 60;
 
@@ -36,7 +44,6 @@ pub enum CommChannel {
 pub struct CommandMultiplexer {
     active_channel: CommChannel,
     last_command_time: Option<Instant>,
-    init_state: ArtisanInitState,
 }
 
 impl CommandMultiplexer {
@@ -44,41 +51,47 @@ impl CommandMultiplexer {
         Self {
             active_channel: CommChannel::None,
             last_command_time: None,
-            init_state: ArtisanInitState::new(),
         }
     }
 
-    /// Get the current initialization state
+    /// NOTE: Handshake is disabled - Artisan Scope does not require initialization
+    /// Placeholder kept for backwards compatibility
+    #[allow(dead_code)]
     pub fn init_state(&self) -> InitState {
-        self.init_state.state()
+        InitState
     }
 
-    /// Check if initialization handshake is complete
+    /// NOTE: Always returns true since handshake is disabled
+    #[allow(dead_code)]
     pub fn is_init_complete(&self) -> bool {
-        self.init_state.is_ready()
+        true
     }
 
-    /// Get the configured channel value
+    /// NOTE: Handshake values not used (returns None)
+    #[allow(dead_code)]
     pub fn chan_value(&self) -> Option<u16> {
-        self.init_state.chan_value()
+        None
     }
 
-    /// Get the configured units value
+    /// NOTE: Handshake values not used (returns None)
+    #[allow(dead_code)]
     pub fn units_value(&self) -> Option<bool> {
-        self.init_state.units_value()
+        None
     }
 
-    /// Get the configured filter value
+    /// NOTE: Handshake values not used (returns None)
+    #[allow(dead_code)]
     pub fn filt_value(&self) -> Option<u8> {
-        self.init_state.filt_value()
+        None
     }
 
-    /// Process an initialization command through the state machine
+    /// NOTE: Handshake is disabled - commands are processed immediately
+    #[allow(dead_code)]
     pub fn on_init_command(
         &mut self,
-        command: crate::config::ArtisanCommand,
+        _command: crate::config::ArtisanCommand,
     ) -> Result<InitEvent, crate::input::parser::ParseError> {
-        self.init_state.on_command(command)
+        Ok(InitEvent)
     }
 
     pub fn on_command_received(&mut self, channel: CommChannel) -> bool {
@@ -101,7 +114,6 @@ impl CommandMultiplexer {
                     if elapsed.as_secs() >= IDLE_TIMEOUT_SECS {
                         self.active_channel = channel;
                         self.last_command_time = Some(now);
-                        self.init_state.reset();
                         log::info!(
                             "Idle timeout expired, artisan command received on {:?}, switching active channel to {:?}",
                             channel,
@@ -154,7 +166,6 @@ impl CommandMultiplexer {
         }
         self.active_channel = CommChannel::None;
         self.last_command_time = None;
-        self.init_state.reset();
     }
 }
 
@@ -164,6 +175,9 @@ impl Default for CommandMultiplexer {
     }
 }
 
+// NOTE: Handshake tests are disabled because Artisan Scope does not use handshake
+// The following tests verify that Artisan Scope compatible mode works correctly
+// (commands are processed immediately without initialization sequence)
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +225,28 @@ mod tests {
 
         let allowed = mux.on_command_received(CommChannel::Usb);
         assert!(allowed, "Same channel commands should be allowed");
+    }
+
+    #[test]
+    fn test_handshake_always_complete() {
+        // Verify that handshake is disabled and system is always "ready"
+        let mux = CommandMultiplexer::new();
+        assert!(mux.is_init_complete(), "Handshake disabled - always ready");
+        assert!(mux.chan_value().is_none(), "No channel value stored");
+        assert!(mux.units_value().is_none(), "No units value stored");
+        assert!(mux.filt_value().is_none(), "No filter value stored");
+    }
+
+    #[test]
+    fn test_commands_work_without_handshake() {
+        // Verify all Artisan commands work without handshake
+        let mut mux = CommandMultiplexer::new();
+
+        // First command should activate channel
+        let activated = mux.should_process_command(CommChannel::Usb);
+        assert!(activated, "First command should activate USB channel");
+
+        // Commands on same channel should work
+        assert!(mux.should_process_command(CommChannel::Usb));
     }
 }

@@ -1,7 +1,19 @@
 //! Artisan Initialization State Machine
 //!
+//! NOTE: This module is COMMENTED OUT because Artisan Scope does not perform
+//! a handshake sequence. Artisan simply sends and receives data without
+//! requiring CHAN → UNITS → FILT initialization.
+//!
+//! The handshake logic is preserved here for future reference or if needed
+//! for compatibility with other Artisan-compatible software that requires it.
+//!
+//! Original behavior:
 //! Tracks the handshake sequence: CHAN → UNITS → FILT
 //! States: Idle → ExpectingChan → ExpectingUnits → ExpectingFilt → Ready
+//!
+//! To re-enable: Remove the outer /* */ comments and uncomment the code below
+
+/*
 
 use crate::config::ArtisanCommand;
 use crate::input::parser::ParseError;
@@ -132,141 +144,36 @@ impl Default for ArtisanInitState {
     }
 }
 
+*/
+
+/// Placeholder for backwards compatibility - Artisan Scope does not use handshake
+/// To re-enable handshake tests, uncomment the handshake code above and this section
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::config::ArtisanCommand;
 
-    /// Helper to create a new state machine for testing
-    fn new_state() -> ArtisanInitState {
-        ArtisanInitState::new()
+    #[test]
+    fn test_handshake_disabled_operational_commands_work() {
+        // When handshake is disabled, all operational commands should work immediately
+        // This test verifies that ArtisanScope compatibility is maintained
+        // CHAN/UNITS/FILT are parsed but have no effect on command processing
+        use crate::input::parser::parse_artisan_command;
+
+        // These commands should parse successfully
+        assert!(parse_artisan_command("READ").is_ok());
+        assert!(parse_artisan_command("OT1 50").is_ok());
+        assert!(parse_artisan_command("IO3 75").is_ok());
+        assert!(parse_artisan_command("START").is_ok());
+        assert!(parse_artisan_command("STOP").is_ok());
     }
 
     #[test]
-    fn test_new_starts_expecting_chan() {
-        let state = new_state();
-        assert_eq!(state.state(), InitState::ExpectingChan);
-        assert!(!state.is_ready());
-    }
+    fn test_handshake_commands_parse_but_ignored() {
+        // CHAN/UNITS/FILT parse but are ignored since handshake is disabled
+        use crate::input::parser::parse_artisan_command;
 
-    #[test]
-    fn test_chan_transition_to_expecting_units() {
-        let mut state = new_state();
-
-        let event = state.on_command(ArtisanCommand::Chan(1200));
-
-        assert!(event.is_ok());
-        assert_eq!(event.unwrap(), InitEvent::ChanReceived);
-        assert_eq!(state.state(), InitState::ExpectingUnits);
-        assert_eq!(state.chan_value(), Some(1200));
-    }
-
-    #[test]
-    fn test_units_transition_to_expecting_filt() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-
-        let event = state.on_command(ArtisanCommand::Units(false));
-
-        assert!(event.is_ok());
-        assert_eq!(event.unwrap(), InitEvent::UnitsReceived);
-        assert_eq!(state.state(), InitState::ExpectingFilt);
-        assert_eq!(state.units_value(), Some(false));
-    }
-
-    #[test]
-    fn test_filt_transition_to_ready() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-        state.on_command(ArtisanCommand::Units(false)).unwrap();
-
-        let event = state.on_command(ArtisanCommand::Filt(5));
-
-        assert!(event.is_ok());
-        assert_eq!(event.unwrap(), InitEvent::FiltReceived);
-        assert!(state.is_ready());
-        assert_eq!(state.filt_value(), Some(5));
-    }
-
-    #[test]
-    fn test_full_handshake_sequence() {
-        let mut state = new_state();
-
-        assert_eq!(state.state(), InitState::ExpectingChan);
-        assert!(!state.is_ready());
-
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-        assert_eq!(state.state(), InitState::ExpectingUnits);
-
-        state.on_command(ArtisanCommand::Units(true)).unwrap();
-        assert_eq!(state.state(), InitState::ExpectingFilt);
-
-        state.on_command(ArtisanCommand::Filt(3)).unwrap();
-        assert!(state.is_ready());
-        assert_eq!(state.chan_value(), Some(1200));
-        assert_eq!(state.units_value(), Some(true));
-        assert_eq!(state.filt_value(), Some(3));
-    }
-
-    #[test]
-    fn test_wrong_command_returns_error() {
-        let mut state = new_state();
-
-        // Sending UNITS before CHAN should fail
-        let result = state.on_command(ArtisanCommand::Units(false));
-        assert!(matches!(result, Err(ParseError::UnknownCommand)));
-    }
-
-    #[test]
-    fn test_operational_command_before_ready_returns_error() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-
-        // READ command before initialization complete should fail
-        let result = state.on_command(ArtisanCommand::ReadStatus);
-        assert!(matches!(result, Err(ParseError::UnknownCommand)));
-    }
-
-    #[test]
-    fn test_operational_command_allowed_when_ready() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-        state.on_command(ArtisanCommand::Units(false)).unwrap();
-        state.on_command(ArtisanCommand::Filt(5)).unwrap();
-
-        // Now READ should be allowed
-        let event = state.on_command(ArtisanCommand::ReadStatus);
-        assert!(event.is_ok());
-        assert_eq!(event.unwrap(), InitEvent::OperationalCommand);
-    }
-
-    #[test]
-    fn test_reset_clears_all_state() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-        state.on_command(ArtisanCommand::Units(false)).unwrap();
-        state.on_command(ArtisanCommand::Filt(5)).unwrap();
-
-        assert!(state.is_ready());
-
-        state.reset();
-
-        assert_eq!(state.state(), InitState::ExpectingChan);
-        assert!(!state.is_ready());
-        assert_eq!(state.chan_value(), None);
-        assert_eq!(state.units_value(), None);
-        assert_eq!(state.filt_value(), None);
-    }
-
-    #[test]
-    fn test_all_operational_commands_allowed_when_ready() {
-        let mut state = new_state();
-        state.on_command(ArtisanCommand::Chan(1200)).unwrap();
-        state.on_command(ArtisanCommand::Units(false)).unwrap();
-        state.on_command(ArtisanCommand::Filt(5)).unwrap();
-
-        assert!(state.on_command(ArtisanCommand::StartRoast).is_ok());
-        assert!(state.on_command(ArtisanCommand::SetHeater(50)).is_ok());
-        assert!(state.on_command(ArtisanCommand::SetFan(75)).is_ok());
-        assert!(state.on_command(ArtisanCommand::EmergencyStop).is_ok());
+        assert!(parse_artisan_command("CHAN 1200").is_ok());
+        assert!(parse_artisan_command("UNITS;C").is_ok());
+        assert!(parse_artisan_command("FILT 5").is_ok());
     }
 }
