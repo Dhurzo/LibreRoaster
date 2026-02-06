@@ -14,7 +14,6 @@ pub struct RoasterControl {
     last_temp_read: Option<Instant>,
     last_pid_update: Option<Instant>,
 
-    // Dependencias de Hardware inyectadas (Dynamic Dispatch)
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
     bean_sensor: Box<dyn Thermometer + Send>,
@@ -52,15 +51,12 @@ impl RoasterControl {
         })
     }
 
-    /// Lee las temperaturas de los sensores reales y actualiza el estado interno
     pub fn read_sensors(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
 
-        // Leer sensores
         let raw_bt = self.bean_sensor.read_temperature()?;
         let raw_et = self.env_sensor.read_temperature()?;
 
-        // Usar update_temperatures para lógica de validación y offsets
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
@@ -78,7 +74,6 @@ impl RoasterControl {
         env_temp: f32,
         current_time: Instant,
     ) -> Result<(), RoasterError> {
-        // Validate temperature readings
         if !Self::is_temperature_valid(bean_temp) || !Self::is_temperature_valid(env_temp) {
             return Err(RoasterError::TemperatureOutOfRange);
         }
@@ -236,9 +231,8 @@ impl RoasterControl {
         self.status.state = crate::config::constants::RoasterState::Error;
         self.status.ssr_output = 0.0;
 
-        // Forzar apagado de hardware directamente
         let _ = self.heater.set_power(0.0);
-        let _ = self.fan.set_speed(100.0); // Cool down en emergencia? O apagado? Asumimos 100% para enfriar si es overtemp
+        let _ = self.fan.set_speed(100.0);
 
         Err(RoasterError::EmergencyShutdown)
     }
@@ -253,7 +247,6 @@ impl RoasterControl {
             }
         }
 
-        // Obtener estado real del hardware calefactor
         self.status.ssr_hardware_status = self.heater.get_status();
 
         let output = if self.safety_handler.is_emergency_active() {
@@ -281,16 +274,12 @@ impl RoasterControl {
             }
         };
 
-        // Aplicar salida al hardware calefactor
         self.heater
             .set_power(output)
             .map_err(|_| RoasterError::HardwareError)?;
 
         self.status.ssr_output = output.clamp(0.0, 100.0);
 
-        // Gestionar ventilador (Fan)
-        // Nota: En la versión anterior, el ventilador se controlaba indirectamente o era "manual"
-        // Ahora lo controlamos explícitamente desde aquí basado en el handler de Artisan
         let fan_output = self.artisan_handler.get_manual_fan();
         self.fan
             .set_speed(fan_output)
@@ -402,7 +391,6 @@ impl RoasterControl {
                 );
             }
 
-            // Initialization handshake commands - handled elsewhere, log and ignore here
             crate::config::ArtisanCommand::Chan(_) => {
                 debug!("Chan command received - initialization handled by multiplexer");
             }

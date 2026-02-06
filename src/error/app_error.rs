@@ -2,29 +2,34 @@ use core::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
-    /// Temperature-related errors
     Temperature {
         message: heapless::String<256>,
         source: TemperatureError,
     },
 
-    /// Control system errors
-    Control { source: ControlError },
+    Control {
+        source: ControlError,
+    },
 
-    /// Hardware communication errors
-    Hardware { source: HardwareError },
+    Hardware {
+        source: HardwareError,
+    },
 
-    /// Input/communication errors
-    Communication { source: CommunicationError },
+    Communication {
+        source: CommunicationError,
+    },
 
-    /// System initialization errors
-    Initialization { source: InitError },
+    Initialization {
+        source: InitError,
+    },
 
-    /// Safety system errors
-    Safety { severity: SafetyLevel },
+    Safety {
+        severity: SafetyLevel,
+    },
 
-    /// Configuration errors
-    Configuration { source: ConfigError },
+    Configuration {
+        source: ConfigError,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -51,8 +51,7 @@ where
                         bus.transfer_in_place(buf)?;
                     }
                     Operation::DelayNs(ns) => {
-                        // Simple busy-wait delay
-                        let cycles = (*ns as u64) / 10; // rough approximation
+                        let cycles = (*ns as u64) / 10;
                         for _ in 0..cycles {
                             core::hint::spin_loop();
                         }
@@ -75,7 +74,6 @@ where
     CS: OutputPin,
 {
     pub fn new(spi_bus: &'a Mutex<RefCell<T>>, mut cs: CS) -> Self {
-        // Ensure CS is high (deselected) on initialization
         let _ = cs.set_high();
         Self {
             spi: SharedSpiDevice::new(spi_bus),
@@ -97,13 +95,10 @@ where
     CS: OutputPin,
 {
     fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
-        // Assert CS (low = selected)
         let _ = self.cs.set_low();
 
-        // Execute transaction
         let result = self.spi.transaction(operations);
 
-        // Deassert CS (high = deselected)
         let _ = self.cs.set_high();
 
         result

@@ -1,8 +1,3 @@
-//! Stub USB CDC implementation for native testing
-//!
-//! This module provides stub implementations for USB CDC functionality
-//! when running on native (non-embedded) targets for testing purposes.
-
 #![cfg(target_arch = "x86_64")]
 
 use core::fmt;

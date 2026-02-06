@@ -81,7 +81,6 @@ impl FanController {
         })
     }
 
-    /// Convert percentage (0-100) to LEDC duty (0-255 for 8-bit)
     fn percentage_to_duty(percentage: f32) -> u8 {
         (percentage.clamp(0.0, 100.0) * 2.55) as u8
     }

@@ -270,46 +270,37 @@ mod tests {
 
     #[test]
     fn test_semicolon_with_space_fallback() {
-        // Semicolon commands should not fallback to space delimiter
         let result = parse_artisan_command("CHAN;1200");
         assert!(matches!(result, Ok(ArtisanCommand::Chan(1200))));
 
-        // Space-delimited should still work for existing commands
         let result = parse_artisan_command("OT1 75");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(75))));
     }
 
-    // Phase 18: Command & Response Protocol Tests
-
-    /// TEST-18-02a: Verify UP command parses correctly
     #[test]
     fn test_parse_up_command() {
         let result = parse_artisan_command("UP");
         assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
     }
 
-    /// TEST-18-02b: Verify UP command is case-insensitive
     #[test]
     fn test_parse_up_command_case_insensitive() {
         let result = parse_artisan_command("up");
         assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
     }
 
-    /// TEST-18-02c: Verify DOWN command parses correctly
     #[test]
     fn test_parse_down_command() {
         let result = parse_artisan_command("DOWN");
         assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
     }
 
-    /// TEST-18-02d: Verify DOWN command is case-insensitive
     #[test]
     fn test_parse_down_command_case_insensitive() {
         let result = parse_artisan_command("down");
         assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
     }
 
-    /// TEST-18-05a: Verify empty command returns EmptyCommand error
     #[test]
     fn test_empty_command_returns_empty_command_error() {
         let result = parse_artisan_command("");
@@ -323,63 +314,54 @@ mod tests {
         assert!(matches!(result, Err(ParseError::EmptyCommand)));
     }
 
-    /// TEST-18-05c: Verify partial OT1 command (no value) returns InvalidValue error
     #[test]
     fn test_partial_ot1_command_returns_invalid_value() {
         let result = parse_artisan_command("OT1");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 
-    /// TEST-18-05d: Verify partial IO3 command (no value) returns InvalidValue error
     #[test]
     fn test_partial_io3_command_returns_invalid_value() {
         let result = parse_artisan_command("IO3");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 
-    /// TEST-18-05e: Verify extra whitespace is handled correctly
     #[test]
     fn test_extra_whitespace_handled_correctly() {
         let result = parse_artisan_command("OT1  50");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(50))));
     }
 
-    /// TEST-18-05f: Verify OT1 with value zero parses correctly
     #[test]
     fn test_parse_ot1_zero_value() {
         let result = parse_artisan_command("OT1 0");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(0))));
     }
 
-    /// TEST-18-05g: Verify OT1 with value 100 parses correctly
     #[test]
     fn test_parse_ot1_max_value() {
         let result = parse_artisan_command("OT1 100");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(100))));
     }
 
-    /// TEST-18-05h: Verify OT1 with value > 100 returns OutOfRange error
     #[test]
     fn test_parse_ot1_out_of_range() {
         let result = parse_artisan_command("OT1 150");
         assert!(matches!(result, Err(ParseError::OutOfRange)));
     }
 
-    /// TEST-18-05i: Verify IO3 with value zero parses correctly
     #[test]
     fn test_parse_io3_zero_value() {
         let result = parse_artisan_command("IO3 0");
         assert!(matches!(result, Ok(ArtisanCommand::SetFan(0))));
     }
 
-    /// TEST-18-05j: Verify IO3 with value 100 parses correctly
     #[test]
     fn test_parse_io3_max_value() {
         let result = parse_artisan_command("IO3 100");
         assert!(matches!(result, Ok(ArtisanCommand::SetFan(100))));
     }
 
-    /// TEST-18-05k: Verify IO3 with value > 100 returns OutOfRange error
     #[test]
     fn test_parse_io3_out_of_range() {
         let result = parse_artisan_command("IO3 150");

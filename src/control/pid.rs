@@ -42,8 +42,7 @@ impl CoffeeRoasterPid {
             return 0.0;
         }
 
-        // Simple proportional control for now
         let error = self.target - current_temp;
-        (error * 2.0).clamp(0.0, 100.0) // Simple P controller
+        (error * 2.0).clamp(0.0, 100.0)
     }
 }

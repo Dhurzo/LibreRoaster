@@ -20,10 +20,7 @@ impl TemperatureCommandHandler {
         })
     }
 
-    // Nota: with_ssr ha sido eliminado. El hardware se inyecta en RoasterControl.
-
     pub fn get_pid_output(&mut self, bean_temp: f32, current_time: Instant) -> f32 {
-        // Solo calculamos, no aplicamos. RoasterControl aplica al hardware.
         self.pid_controller
             .compute_output(bean_temp, current_time.as_millis() as u32)
     }
@@ -61,7 +58,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::StartRoast(target_temp) => {
-                // Idempotent START: if PID/streaming already active, leave session intact
                 if self.output_manager.is_continuous_enabled() || status.pid_enabled {
                     info!("Artisan+ start requested but already active; keeping current session");
                     return Ok(());
@@ -72,7 +68,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 status.target_temp = target_temp;
                 status.pid_enabled = true;
                 status.artisan_control = false;
-                // status.ssr_hardware_status se actualiza en el bucle principal de RoasterControl
 
                 self.output_manager.enable_continuous_output();
 
@@ -419,11 +414,10 @@ mod artisan_command_handler_tests {
 
     #[test]
     fn test_up_down_boundary_values() {
-        // Test various boundary conditions
-        assert_eq!(ArtisanCommandHandler::apply_heater_delta(0.0, 1), 5.0); // 0 -> 5
-        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, 1), 10.0); // 5 -> 10
-        assert_eq!(ArtisanCommandHandler::apply_heater_delta(10.0, -1), 5.0); // 10 -> 5
-        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, -1), 0.0); // 5 -> 0
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(0.0, 1), 5.0);
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, 1), 10.0);
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(10.0, -1), 5.0);
+        assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, -1), 0.0);
     }
 
     #[test]

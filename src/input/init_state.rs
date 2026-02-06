@@ -139,12 +139,8 @@ mod tests {
 
     #[test]
     fn test_handshake_disabled_operational_commands_work() {
-        // When handshake is disabled, all operational commands should work immediately
-        // This test verifies that ArtisanScope compatibility is maintained
-        // CHAN/UNITS/FILT are parsed but have no effect on command processing
         use crate::input::parser::parse_artisan_command;
 
-        // These commands should parse successfully
         assert!(parse_artisan_command("READ").is_ok());
         assert!(parse_artisan_command("OT1 50").is_ok());
         assert!(parse_artisan_command("IO3 75").is_ok());
@@ -154,7 +150,6 @@ mod tests {
 
     #[test]
     fn test_handshake_commands_parse_but_ignored() {
-        // CHAN/UNITS/FILT parse but are ignored since handshake is disabled
         use crate::input::parser::parse_artisan_command;
 
         assert!(parse_artisan_command("CHAN 1200").is_ok());

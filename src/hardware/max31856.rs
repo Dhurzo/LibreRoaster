@@ -30,7 +30,6 @@ where
     pub fn new(spi: SPI) -> Result<Self, Max31856Error> {
         let mut max31856 = Max31856 { spi };
 
-        // Initialize MAX31856
         max31856.write_register(0x80, 0x00)?; // Config register 0
         max31856.write_register(0x81, 0x03)?; // Config register 1 - Type K thermocouple
         max31856.write_register(0x82, 0x00)?; // Fault mask register
@@ -38,31 +37,22 @@ where
         Ok(max31856)
     }
 
-    /// Configure for Type K thermocouple
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
-        self.write_register(0x81, 0x03)?; // Config register 1 - Type K thermocouple
+        self.write_register(0x81, 0x03)?;
         Ok(())
     }
 
-    /// Synchronous read temperature
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
-        // Start one-shot conversion
         self.write_register(0x80, 0x80)?; // Set one-shot bit
 
-        // Wait for conversion (160ms typical for MAX31856)
-        // Using busy wait for synchronous context
         const DELAY_MS: u64 = 160;
 
-        // Simple busy loop delay (approximate)
         for _ in 0..(DELAY_MS * 10000) {
-            // 10k cycles per ms approx
             core::hint::spin_loop();
         }
 
-        // Read temperature registers
         let temp_data = self.read_registers(0x0C, 3)?;
 
-        // Check for faults
         let fault = self.read_register(0x0F)?;
         if fault & 0x01 != 0 {
             return Err(Max31856Error::FaultDetected);
@@ -75,14 +65,12 @@ where
         // Convert from MAX31856 format (0.0078125°C LSB)
         let temperature = if (temp_raw & 0x800000) != 0 {
             // Negative temperature - two's complement
-            let temp_complement = !temp_raw & 0x7FFFFF; // Get magnitude
+            let temp_complement = !temp_raw & 0x7FFFFF;
             -(temp_complement as i32) as f32 * 0.0078125
         } else {
-            // Positive temperature
             temp_raw as f32 * 0.0078125
         };
 
-        // Validate temperature range
         if temperature < -200.0 || temperature > 1350.0 {
             return Err(Max31856Error::InvalidTemperature);
         }

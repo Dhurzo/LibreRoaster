@@ -177,6 +177,7 @@ impl MutableArtisanFormatter {
 mod tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
+    use alloc::vec;
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
@@ -200,18 +201,15 @@ mod tests {
 
         let output = ArtisanFormatter::format_read_response(&status, fan_speed);
 
-        // Expected format: "120.3,150.5,75.0,25.0" (ET,BT,Power,Fan)
         assert_eq!(output, "120.3,150.5,75.0,25.0");
 
-        // Verify all four comma-separated values are present
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 4);
 
-        // Verify each value matches expected
-        assert_eq!(parts[0], "120.3"); // ET
-        assert_eq!(parts[1], "150.5"); // BT
-        assert_eq!(parts[2], "75.0"); // Power
-        assert_eq!(parts[3], "25.0"); // Fan
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "75.0");
+        assert_eq!(parts[3], "25.0");
     }
 
     #[test]
@@ -242,20 +240,13 @@ mod tests {
             }
         };
 
-        // Verify all five comma-separated fields are present
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 5);
 
-        // Verify field order: time, ET, BT, ROR, Gas
-        // Time should start with digits and decimal
         assert!(parts[0].starts_with(|c: char| c.is_ascii_digit()));
-        // ET should be 120.3
         assert_eq!(parts[1], "120.3");
-        // BT should be 150.5
         assert_eq!(parts[2], "150.5");
-        // ROR should be 0.00 (two decimal places for rate of rise)
         assert_eq!(parts[3], "0.00");
-        // Gas should be 75.0
         assert_eq!(parts[4], "75.0");
     }
 
@@ -268,15 +259,13 @@ mod tests {
 
     #[test]
     fn test_ror_calculation_two_samples() {
-        let history = vec![100.0, 105.0]; // 5.0 change over 1 interval
+        let history = vec![100.0, 105.0];
         let ror = ArtisanFormatter::compute_ror_from_history(&history);
-        assert_eq!(ror, 5.0); // (105.0 - 100.0) / (2 - 1) = 5.0
+        assert_eq!(ror, 5.0);
     }
 
     #[test]
     fn test_ror_calculation_five_samples() {
-        // BT values: [100, 102, 104, 106, 108]
-        // Expected ROR: (108 - 100) / (5 - 1) = 8.0 / 4 = 2.0
         let history = vec![100.0, 102.0, 104.0, 106.0, 108.0];
         let ror = ArtisanFormatter::compute_ror_from_history(&history);
         assert_eq!(ror, 2.0);
@@ -286,7 +275,6 @@ mod tests {
     fn test_mutable_formatter_ror() {
         let mut formatter = MutableArtisanFormatter::new();
 
-        // First call - should have ROR = 0.0 (no history)
         let status1 = SystemStatus {
             bean_temp: 100.0,
             env_temp: 120.0,
@@ -303,9 +291,8 @@ mod tests {
             }
         };
         let parts1: Vec<&str> = output1.split(',').collect();
-        assert_eq!(parts1[3], "0.00"); // ROR should be 0.0 initially
+        assert_eq!(parts1[3], "0.00");
 
-        // Second call - ROR should be delta from first call
         let status2 = SystemStatus {
             bean_temp: 102.0,
             env_temp: 121.0,
@@ -314,7 +301,6 @@ mod tests {
         };
         let result2 = formatter.format(&status2);
         assert!(result2.is_ok());
-        // Note: With 2 samples, ROR = (102 - 100) / 1 = 2.0
     }
 
     #[test]
@@ -337,7 +323,6 @@ mod tests {
 
     #[test]
     fn test_time_format_capped_decimals() {
-        // 999ms / 10 = 99 (should cap at 99)
         let time = ArtisanFormatter::format_time(10, 999);
         assert_eq!(time, "10.99");
     }
@@ -376,14 +361,11 @@ mod tests {
         assert_eq!(ArtisanFormatter::format_err(0, "Success"), "ERR 0 Success");
     }
 
-    // Phase 18: Command & Response Protocol Tests
-
     #[test]
     fn test_format_read_response_seven_values() {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        // Response should contain 7 comma-separated values
         let parts: Vec<&str> = response.trim_end().split(',').collect();
         assert_eq!(parts.len(), 7, "READ response must have exactly 7 values");
     }
@@ -395,7 +377,6 @@ mod tests {
 
         let parts: Vec<&str> = response.trim_end().split(',').collect();
 
-        // ET2 (index 2), BT2 (index 3), ambient (index 4) should be -1
         assert_eq!(parts[2], "-1", "ET2 placeholder should be -1");
         assert_eq!(parts[3], "-1", "BT2 placeholder should be -1");
         assert_eq!(parts[4], "-1", "ambient placeholder should be -1");
@@ -406,7 +387,6 @@ mod tests {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        // Response must end with \r\n
         assert!(
             response.ends_with("\r\n"),
             "READ response must terminate with CRLF"
@@ -425,7 +405,6 @@ mod tests {
 
         let parts: Vec<&str> = response.trim_end().split(',').collect();
 
-        // Verify actual values are used
         assert_eq!(parts[0], "125.5", "ET should use env_temp");
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
         assert_eq!(parts[5], "60.0", "Fan should use fan_output");

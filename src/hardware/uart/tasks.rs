@@ -47,7 +47,6 @@ pub async fn uart_reader_task() {
 pub async fn uart_writer_task() {
     let mut wbuf: [u8; COMMAND_PIPE_SIZE] = [0u8; COMMAND_PIPE_SIZE];
 
-    // Wait for pipe to be initialized by uart_reader_task
     Timer::after(Duration::from_millis(20)).await;
 
     loop {

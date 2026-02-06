@@ -175,9 +175,6 @@ impl Default for CommandMultiplexer {
     }
 }
 
-// NOTE: Handshake tests are disabled because Artisan Scope does not use handshake
-// The following tests verify that Artisan Scope compatible mode works correctly
-// (commands are processed immediately without initialization sequence)
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,7 +226,6 @@ mod tests {
 
     #[test]
     fn test_handshake_always_complete() {
-        // Verify that handshake is disabled and system is always "ready"
         let mux = CommandMultiplexer::new();
         assert!(mux.is_init_complete(), "Handshake disabled - always ready");
         assert!(mux.chan_value().is_none(), "No channel value stored");
@@ -239,14 +235,11 @@ mod tests {
 
     #[test]
     fn test_commands_work_without_handshake() {
-        // Verify all Artisan commands work without handshake
         let mut mux = CommandMultiplexer::new();
 
-        // First command should activate channel
         let activated = mux.should_process_command(CommChannel::Usb);
         assert!(activated, "First command should activate USB channel");
 
-        // Commands on same channel should work
         assert!(mux.should_process_command(CommChannel::Usb));
     }
 }
