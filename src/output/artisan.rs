@@ -11,7 +11,6 @@ extern crate alloc;
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
 /// - Gas: SSR output percentage (0-100) as heater control
-
 use crate::config::SystemStatus;
 use crate::output::traits::{OutputError, OutputFormatter};
 use alloc::format;
@@ -235,7 +234,13 @@ mod tests {
         let result = formatter.format(&status);
 
         assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = match result {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
 
         // Verify all five comma-separated fields are present
         let parts: Vec<&str> = output.split(',').collect();
@@ -290,7 +295,13 @@ mod tests {
         };
         let result1 = formatter.format(&status1);
         assert!(result1.is_ok());
-        let output1 = result1.unwrap();
+        let output1 = match result1 {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result1): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
         let parts1: Vec<&str> = output1.split(',').collect();
         assert_eq!(parts1[3], "0.00"); // ROR should be 0.0 initially
 
