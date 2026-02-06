@@ -178,7 +178,6 @@ impl Default for FanController {
     }
 }
 
-/// A simple fan controller that takes an already configured LEDC channel
 pub struct SimpleLedcFan<'a, C>
 where
     C: ChannelIFace<'a, LowSpeed>,

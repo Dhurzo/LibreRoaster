@@ -3,7 +3,6 @@ use critical_section::Mutex;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::{ErrorType, Operation, SpiBus, SpiDevice};
 
-/// Error wrapper for SPI operations
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SpiError;
 
@@ -13,7 +12,6 @@ impl embedded_hal::spi::Error for SpiError {
     }
 }
 
-/// Shared SPI device using critical section for synchronization
 pub struct SharedSpiDevice<'a, T> {
     spi_bus: &'a Mutex<RefCell<T>>,
 }
@@ -66,7 +64,6 @@ where
     }
 }
 
-/// SPI device with dedicated chip select
 pub struct SpiDeviceWithCs<'a, T, CS> {
     spi: SharedSpiDevice<'a, T>,
     cs: CS,

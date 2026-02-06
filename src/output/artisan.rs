@@ -1,12 +1,5 @@
 extern crate alloc;
 
-use crate::config::SystemStatus;
-use crate::output::traits::{OutputError, OutputFormatter};
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-use embassy_time::Instant;
-
 /// Artisan standard CSV protocol formatter
 ///
 /// Implements the standard Artisan serial protocol format:
@@ -18,11 +11,19 @@ use embassy_time::Instant;
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
 /// - Gas: SSR output percentage (0-100) as heater control
+
+use crate::config::SystemStatus;
+use crate::output::traits::{OutputError, OutputFormatter};
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use embassy_time::Instant;
+
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Vec<f32>, // 5 samples for ROR calculation
+    bt_history: Vec<f32>,
 }
 
 impl ArtisanFormatter {
@@ -108,9 +109,6 @@ impl ArtisanFormatter {
         )
     }
 
-    /// Format full READ response per Artisan spec
-    /// Format: ET,BT,ET2,BT2,ambient,fan,heater\r\n
-    /// ET2, BT2, ambient return -1 as placeholders (unused channels)
     pub fn format_read_response_full(status: &SystemStatus) -> String {
         format!(
             "{:.1},{:.1},-1,-1,-1,{:.1},{:.1}\r\n",
@@ -121,20 +119,15 @@ impl ArtisanFormatter {
         )
     }
 
-    /// Format CHAN acknowledgment response per Artisan spec
-    /// Returns response starting with '#' prefix
     pub fn format_chan_ack(channel: u16) -> String {
         format!("#{}", channel)
     }
 
-    /// Format ERR response per Artisan spec
-    /// Format: "ERR code message"
     pub fn format_err(code: u8, message: &str) -> String {
         format!("ERR {} {}", code, message)
     }
 }
 
-/// Mutable version for proper ROR calculation
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
@@ -186,7 +179,6 @@ mod tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
 
-    /// Helper function to create a SystemStatus with known values for testing
     fn create_test_status() -> SystemStatus {
         SystemStatus {
             state: RoasterState::Stable,
@@ -202,8 +194,6 @@ mod tests {
         }
     }
 
-    /// TEST-07: Verify format_read_response produces correct CSV format
-    /// Format: "ET,BT,Power,Fan" (comma-separated with one decimal place)
     #[test]
     fn test_format_read_response() {
         let status = create_test_status();
@@ -225,7 +215,6 @@ mod tests {
         assert_eq!(parts[3], "25.0"); // Fan
     }
 
-    /// TEST-07b: Verify format_read_response does not clamp values
     #[test]
     fn test_format_read_response_out_of_range_values() {
         let mut status = create_test_status();
@@ -238,8 +227,6 @@ mod tests {
         assert_eq!(output.split(',').count(), 4);
     }
 
-    /// TEST-08: Verify format produces correct Artisan CSV line format
-    /// Format: "time,ET,BT,ROR,Gas"
     #[test]
     fn test_format_csv_output() {
         let formatter = ArtisanFormatter::new();
@@ -267,7 +254,6 @@ mod tests {
         assert_eq!(parts[4], "75.0");
     }
 
-    /// TEST-09a: Verify ROR calculation from BT history - empty history
     #[test]
     fn test_ror_calculation_empty_history() {
         let history: Vec<f32> = vec![];
@@ -275,7 +261,6 @@ mod tests {
         assert_eq!(ror, 0.0);
     }
 
-    /// TEST-09b: Verify ROR calculation from BT history - two samples
     #[test]
     fn test_ror_calculation_two_samples() {
         let history = vec![100.0, 105.0]; // 5.0 change over 1 interval
@@ -283,7 +268,6 @@ mod tests {
         assert_eq!(ror, 5.0); // (105.0 - 100.0) / (2 - 1) = 5.0
     }
 
-    /// TEST-09c: Verify ROR calculation from BT history - five samples
     #[test]
     fn test_ror_calculation_five_samples() {
         // BT values: [100, 102, 104, 106, 108]
@@ -293,7 +277,6 @@ mod tests {
         assert_eq!(ror, 2.0);
     }
 
-    /// TEST-09d: Verify MutableArtisanFormatter accumulates BT history for ROR
     #[test]
     fn test_mutable_formatter_ror() {
         let mut formatter = MutableArtisanFormatter::new();
@@ -323,28 +306,24 @@ mod tests {
         // Note: With 2 samples, ROR = (102 - 100) / 1 = 2.0
     }
 
-    /// TEST-10a: Verify time format - seconds only
     #[test]
     fn test_time_format_seconds_only() {
         let time = ArtisanFormatter::format_time(5, 0);
         assert_eq!(time, "5.00");
     }
 
-    /// TEST-10b: Verify time format - seconds with milliseconds
     #[test]
     fn test_time_format_with_milliseconds() {
         let time = ArtisanFormatter::format_time(5, 50);
         assert_eq!(time, "5.05");
     }
 
-    /// TEST-10c: Verify time format - zero seconds with milliseconds
     #[test]
     fn test_time_format_zero_seconds() {
         let time = ArtisanFormatter::format_time(0, 150);
         assert_eq!(time, "0.15");
     }
 
-    /// TEST-10d: Verify time format - capped at two decimal places
     #[test]
     fn test_time_format_capped_decimals() {
         // 999ms / 10 = 99 (should cap at 99)
@@ -352,21 +331,18 @@ mod tests {
         assert_eq!(time, "10.99");
     }
 
-    /// TEST-10e: Verify time format - typical value
     #[test]
     fn test_time_format_typical_value() {
         let time = ArtisanFormatter::format_time(123, 456);
         assert_eq!(time, "123.45");
     }
 
-    /// TEST-11a: Verify format_chan_ack produces correct output
     #[test]
     fn test_format_chan_ack() {
         let result = ArtisanFormatter::format_chan_ack(1200);
         assert_eq!(result, "#1200");
     }
 
-    /// TEST-11b: Verify format_chan_ack with different channel values
     #[test]
     fn test_format_chan_ack_various_values() {
         assert_eq!(ArtisanFormatter::format_chan_ack(1), "#1");
@@ -374,14 +350,12 @@ mod tests {
         assert_eq!(ArtisanFormatter::format_chan_ack(0), "#0");
     }
 
-    /// TEST-12a: Verify format_err produces correct output
     #[test]
     fn test_format_err() {
         let result = ArtisanFormatter::format_err(1, "Unknown command");
         assert_eq!(result, "ERR 1 Unknown command");
     }
 
-    /// TEST-12b: Verify format_err with various codes and messages
     #[test]
     fn test_format_err_various() {
         assert_eq!(
@@ -393,7 +367,6 @@ mod tests {
 
     // Phase 18: Command & Response Protocol Tests
 
-    /// TEST-18-01a: Verify format_read_response_full produces 7 comma-separated values
     #[test]
     fn test_format_read_response_seven_values() {
         let status = create_test_status();
@@ -404,7 +377,6 @@ mod tests {
         assert_eq!(parts.len(), 7, "READ response must have exactly 7 values");
     }
 
-    /// TEST-18-01b: Verify unused channels return -1 placeholders
     #[test]
     fn test_unused_channels_return_negative_one() {
         let status = create_test_status();
@@ -418,7 +390,6 @@ mod tests {
         assert_eq!(parts[4], "-1", "ambient placeholder should be -1");
     }
 
-    /// TEST-18-01c: Verify response terminates with CRLF
     #[test]
     fn test_response_terminates_with_crlf() {
         let status = create_test_status();
@@ -431,7 +402,6 @@ mod tests {
         );
     }
 
-    /// TEST-18-01d: Verify format_read_response_full uses actual status values
     #[test]
     fn test_format_read_response_full_uses_status_values() {
         let mut status = create_test_status();

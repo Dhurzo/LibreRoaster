@@ -5,7 +5,6 @@ use crate::control::OutputController;
 use embassy_time::Instant;
 use log::{info, warn};
 
-/// Maneja comandos relacionados con el control de temperatura (PID y manual)
 pub struct TemperatureCommandHandler {
     pid_controller: CoffeeRoasterPid,
     output_manager: OutputController,
@@ -238,10 +237,8 @@ impl ArtisanCommandHandler {
         self.manual_fan = 0.0;
     }
 
-    /// Constant for heater increment/decrement percentage
     const HEATER_DELTA: i8 = 5;
 
-    /// Apply 5% increment/decrement with clamping to 0-100 range
     fn apply_heater_delta(current_value: f32, direction: i8) -> f32 {
         let delta = direction * Self::HEATER_DELTA;
         let new_value = (current_value as i16 + delta as i16).clamp(0, 100);
@@ -328,7 +325,6 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
     }
 }
 
-/// Maneja comandos de sistema (reset, etc.)
 pub struct SystemCommandHandler;
 
 impl RoasterCommandHandler for SystemCommandHandler {
@@ -359,7 +355,6 @@ mod artisan_command_handler_tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
 
-    /// Helper function to create a SystemStatus with known values for testing
     fn create_test_status() -> SystemStatus {
         SystemStatus {
             state: RoasterState::Stable,
@@ -375,13 +370,11 @@ mod artisan_command_handler_tests {
         }
     }
 
-    /// TEST-18-03a: Verify HEATER_DELTA constant is 5
     #[test]
     fn test_heater_delta_constant() {
         assert_eq!(ArtisanCommandHandler::HEATER_DELTA, 5);
     }
 
-    /// TEST-18-03b: Verify UP increases heater by 5%
     #[test]
     fn test_up_increases_heater() {
         let current = 50.0;
@@ -389,7 +382,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 55.0);
     }
 
-    /// TEST-18-03c: Verify UP at 100% stays at 100% (clamped)
     #[test]
     fn test_up_at_max_clamped() {
         let current = 100.0;
@@ -397,7 +389,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 100.0);
     }
 
-    /// TEST-18-03d: Verify UP at 98% goes to 100% (clamped)
     #[test]
     fn test_up_near_max_clamped() {
         let current = 98.0;
@@ -405,7 +396,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 100.0);
     }
 
-    /// TEST-18-03e: Verify DOWN decreases heater by 5%
     #[test]
     fn test_down_decreases_heater() {
         let current = 50.0;
@@ -413,7 +403,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 45.0);
     }
 
-    /// TEST-18-03f: Verify DOWN at 0% stays at 0% (clamped)
     #[test]
     fn test_down_at_min_clamped() {
         let current = 0.0;
@@ -421,7 +410,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 0.0);
     }
 
-    /// TEST-18-03g: Verify DOWN at 3% goes to 0% (clamped)
     #[test]
     fn test_down_near_min_clamped() {
         let current = 3.0;
@@ -429,7 +417,6 @@ mod artisan_command_handler_tests {
         assert_eq!(result, 0.0);
     }
 
-    /// TEST-18-03h: Verify UP/DOWN with boundary values
     #[test]
     fn test_up_down_boundary_values() {
         // Test various boundary conditions
@@ -439,7 +426,6 @@ mod artisan_command_handler_tests {
         assert_eq!(ArtisanCommandHandler::apply_heater_delta(5.0, -1), 0.0); // 5 -> 0
     }
 
-    /// TEST-18-03i: Verify ArtisanCommandHandler::new initializes to zero
     #[test]
     fn test_handler_initialization() {
         let handler = ArtisanCommandHandler::new();
@@ -447,14 +433,12 @@ mod artisan_command_handler_tests {
         assert_eq!(handler.get_manual_fan(), 0.0);
     }
 
-    /// TEST-18-03j: Verify can_handle includes IncreaseHeater
     #[test]
     fn test_can_handle_increase_heater() {
         let handler = ArtisanCommandHandler::new();
         assert!(handler.can_handle(RoasterCommand::IncreaseHeater));
     }
 
-    /// TEST-18-03k: Verify can_handle includes DecreaseHeater
     #[test]
     fn test_can_handle_decrease_heater() {
         let handler = ArtisanCommandHandler::new();

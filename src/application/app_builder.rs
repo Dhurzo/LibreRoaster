@@ -49,7 +49,6 @@ impl<'a> AppBuilder<'a> {
         self
     }
 
-    /// Configura el elemento calefactor real.
     pub fn with_real_ssr<H>(mut self, ssr: H) -> Self
     where
         H: Heater + Send + 'static,
