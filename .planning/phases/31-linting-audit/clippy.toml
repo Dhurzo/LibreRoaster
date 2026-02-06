@@ -1,0 +1,17 @@
+# Clippy configuration for LibreRoaster ESP32-C3 firmware
+#
+# Embedded Rust constraints:
+# - Cloudflare November 2025 outage caused by unhandled unwrap() in production
+# - embassy-rs: panic in one task crashes entire executor
+# - No_std environment: cannot use standard panic handlers
+#
+# This configuration provides code complexity thresholds for embedded clarity.
+
+# Code complexity thresholds for embedded clarity
+type-complexity-threshold = 50
+cognitive-complexity-threshold = 20
+
+# Allow tests to use unwrap/panic (acceptable in test code)
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-expect-in-tests = true

@@ -1,5 +1,28 @@
 # Project Milestones: LibreRoaster
 
+## v2.0 Code Quality Audit (Shipped: 2026-02-05)
+
+**Delivered:** Comprehensive code quality audit with clippy and cargo-geiger configuration, baseline unsafe code inventory, and 31-issue severity-classified findings document.
+
+**Phases completed:** 31 (1 phase, 3 plans)
+
+**Key accomplishments:**
+- Clippy configuration for embedded Rust (dual config: Cargo.toml + clippy.toml)
+- cargo-geiger unsafe code baseline (22 blocks, 15 LOW/7 MEDIUM risk)
+- Code quality issues inventory (31 issues: 1 High, 7 Medium, 23 Low)
+- Severity classification and remediation priorities documentation
+
+**Stats:**
+- 5 files created/modified (clippy.toml, geiger-report.md, CODE_QUALITY_ISSUES.md, CODE_QUALITY_REMEDIATION.md)
+- 1 phase, 3 plans, 9 tasks
+- Same-day ship (2026-02-05)
+
+**Git range:** `feat(31-01)` → `docs(31): complete linting-audit phase`
+
+**What's next:** Ready for `/gsd-new-milestone` — refactoring deferred to future milestone
+
+---
+
 ## v1.8 Flash & Test Documentation (Shipped: 2026-02-05)
 
 **Delivered:** Comprehensive flash, connection, and usage documentation for roasters covering ESP32-C3 flashing, Artisan protocol commands, and v1.7 UART logging features.

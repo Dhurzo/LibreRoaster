@@ -121,3 +121,26 @@ incremental      = false
 lto              = 'fat'
 opt-level        = 's'
 overflow-checks  = false
+
+[lints.clippy]
+# Embedded Rust clippy configuration for LibreRoaster
+# See clippy.toml for detailed configuration
+
+# Critical: deny unwrap, expect, and panic in production code
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+# Additional embedded-specific restrictions
+dereference_copy_on_drop = "deny"
+drop_copy = "deny"
+dropping_references = "deny"
+fallible_impl_from = "deny"
+
+[lints.rust]
+# Unsafe code linting via cargo-geiger
+# Run: cargo geiger --all-targets
+# See: .planning/phases/31-linting-audit/geiger-report.md
+# Note: cargo-geiger doesn't integrate with [lints.rust] - use CLI instead
+
+

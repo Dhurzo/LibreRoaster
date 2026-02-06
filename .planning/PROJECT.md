@@ -8,19 +8,19 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v1.8 Flash & Test Documentation
+## Current Milestone: v2.0 Code Quality Audit
 
-**Goal:** Create comprehensive flash and test documentation for end users (roasters) covering current Artisan protocol features and v1.7 UART logging capabilities.
+**Goal:** Comprehensive code quality audit to inventory technical debt, safety issues, and code smells. No refactoring — just documentation.
 
-**Target features:**
-- Artisan protocol commands (READ, OT1, IO3, UP, DOWN, START, STOP)
-- UART logging documentation (esp_println + drain task)
-- USB CDC and UART0 communication channels
-- Quick start guide for roasters
+**Deliverables:**
+- Clippy configuration for embedded codebase
+- cargo-geiger unsafe code inventory
+- Code quality issues inventory with severity classification
+- Remediation priorities document
 
 ## Current State
 
-v1.7 Non-Blocking USB Logging — Complete. Non-blocking logging infrastructure with defmt and UART drain task implemented.
+v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 issues identified (1 High, 7 Medium, 23 Low).
 
 ## Requirements
 
@@ -60,10 +60,14 @@ v1.7 Non-Blocking USB Logging — Complete. Non-blocking logging infrastructure 
 - ✓ UART logging usage guide — v1.8
 - ✓ Troubleshooting common issues — v1.8
 - ✓ Quick start reference card — v1.8
+- ✓ Clippy configuration for embedded Rust — v2.0
+- ✓ cargo-geiger unsafe code baseline (22 blocks) — v2.0
+- ✓ Code quality issues inventory (31 issues) — v2.0
+- ✓ Severity classification and remediation priorities — v2.0
 
 ### Active
 
-(None — v1.8 complete, awaiting next milestone)
+(None — v2.0 complete, next milestone TBD)
 
 ### Out of Scope
 
@@ -86,7 +90,18 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 **v1.5 complete:** Full Artisan serial protocol with READ, OT1, IO3, UP, DOWN, START, STOP commands.
 
-**v1.6 complete:** Comprehensive documentation update with ARCHITECTURE, PROTOCOL, HARDWARE, and DEVELOPMENT guides.
+**v1.7 complete:** Non-blocking logging infrastructure with defmt + bbqueue + UART drain task.
+
+**v2.0 complete:** Code quality audit with clippy/geiger configuration and 31-issue inventory.
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| Dual clippy config (Cargo.toml + clippy.toml) | Portability + project-specific thresholds | ✓ Configured |
+| allow-unwrap-in-tests=true | Tests can use unwrap for test logic | ✓ Configured |
+| Grep-based unsafe analysis | cargo-geiger embedded feature complexity | ✓ Documented 22 blocks |
+| cargo unsafe-check alias | Avoid cargo-geiger shadowing | ✓ Working |
 
 ## Constraints
 
@@ -110,4 +125,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-05 after v1.8 milestone shipped*
+*Last updated: 2026-02-05 — v2.0 Code Quality Audit complete*

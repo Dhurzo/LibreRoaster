@@ -1,9 +1,14 @@
 [target.riscv32imc-unknown-none-elf]
 runner = "espflash flash --monitor --chip esp32c3"
 
+[alias]
+# Check unsafe Rust usage - cargo geiger --all-targets --output-format Utf8
+# Run: cargo unsafe-check
+unsafe-check = "geiger --all-targets --output-format Utf8"
+
 [env]
 ESP_LOG="info"
-TEST_ENV="1"
+TEST_ENV = "1"
 
 [build]
 rustflags = [
