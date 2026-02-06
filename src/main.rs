@@ -263,8 +263,4 @@ async fn main(spawner: Spawner) -> ! {
         })
         .unwrap();
 
-    loop {
-        delay.delay_ms(5000u32);
-        info!("Heartbeat - LibreRoaster running with Artisan+ control");
-    }
 }
