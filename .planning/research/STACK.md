@@ -4,7 +4,7 @@
 **Researched:** 2026-02-05
 **Focus:** Non-blocking logging for USB CDC communication in an Embassy/esp-hal environment.
 
-## Recommended Stack Additions
+### Core Documentation Tools
 
 For non-blocking logging on the ESP32-C3 with Embassy, the **`defmt` + `defmt-bbq`** pattern is the prescriptive choice. It separates the log-site execution from the hardware transmission, ensuring that logging high-frequency USB traffic does not stall the roaster's control loops.
 
