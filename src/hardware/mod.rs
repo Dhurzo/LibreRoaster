@@ -1,0 +1,16 @@
+#[cfg(target_arch = "riscv32")]
+pub mod fan;
+#[cfg(not(target_arch = "riscv32"))]
+#[path = "fan_host.rs"]
+pub mod fan;
+pub mod max31856;
+pub mod shared_spi;
+#[cfg(target_arch = "riscv32")]
+pub mod ssr;
+pub mod uart;
+#[cfg(target_arch = "riscv32")]
+#[path = "usb_cdc/mod.rs"]
+pub mod usb_cdc;
+#[cfg(not(target_arch = "riscv32"))]
+#[path = "usb_cdc/mod.rs"]
+pub mod usb_cdc;
