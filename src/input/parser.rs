@@ -75,6 +75,13 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             Ok(ArtisanCommand::SetFan(value))
         }
 
+        ["OT2" | "ot2"] => Ok(ArtisanCommand::SetFanSpeed(0, false)),
+
+        ["OT2" | "ot2", value_str] => {
+            let (value, was_clamped) = parse_ot2_value(value_str)?;
+            Ok(ArtisanCommand::SetFanSpeed(value, was_clamped))
+        }
+
         ["STOP"] => Ok(ArtisanCommand::EmergencyStop),
 
         ["UP" | "up"] => Ok(ArtisanCommand::IncreaseHeater),
@@ -98,6 +105,29 @@ fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
     } else {
         Err(ParseError::OutOfRange)
     }
+}
+
+/// Parse OT2 fan speed value with decimal support
+/// - Decimals are rounded to nearest integer
+/// - Values are silently clamped to 0-100 range
+/// - Negative values clamp to 0
+/// - Returns (clamped_value, was_clamped)
+fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
+    let value = value_str
+        .parse::<f32>()
+        .map_err(|_| ParseError::InvalidValue)?;
+
+    let was_clamped = value < 0.0 || value > 100.0;
+
+    // Round to nearest integer (0.5 rounds up)
+    let rounded = if value >= 0.0 {
+        (value + 0.5) as i32
+    } else {
+        (value - 0.5) as i32
+    };
+
+    let clamped = rounded.clamp(0, 100) as u8;
+    Ok((clamped, was_clamped))
 }
 
 #[cfg(test)]
@@ -366,5 +396,70 @@ mod tests {
     fn test_parse_io3_out_of_range() {
         let result = parse_artisan_command("IO3 150");
         assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    // OT2 Command Tests
+
+    #[test]
+    fn test_parse_ot2_command_basic() {
+        let result = parse_artisan_command("OT2 75");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(75, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_command_lowercase() {
+        let result = parse_artisan_command("ot2 50");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_up() {
+        let result = parse_artisan_command("OT2 50.5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(51, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_down() {
+        let result = parse_artisan_command("OT2 50.4");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_above_max() {
+        let result = parse_artisan_command("OT2 150");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(100, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_negative() {
+        let result = parse_artisan_command("OT2 -5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_zero() {
+        let result = parse_artisan_command("OT2 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_max() {
+        let result = parse_artisan_command("OT2 100");
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetFanSpeed(100, false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_ot2_invalid_value() {
+        let result = parse_artisan_command("OT2 abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_ot2_partial_command() {
+        let result = parse_artisan_command("OT2");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 }

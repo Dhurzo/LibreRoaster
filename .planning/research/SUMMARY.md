@@ -1,125 +1,172 @@
 # Project Research Summary
 
-**Project:** LibreRoaster (ESP32-C3)
-**Domain:** Non-Blocking USB Logging for Real-Time Control
-**Researched:** 2026-02-05
+**Project:** LibreRoaster ESP32-C3 Firmware
+**Domain:** Artisan Protocol Command Parsing — Embedded IoT
+**Researched:** February 7, 2026
 **Confidence:** HIGH
 
 ## Executive Summary
 
-LibreRoaster v1.7 requires a robust, non-blocking logging system to monitor USB communication without compromising the 100ms PID control loop. Standard synchronous logging (like `esp-println`) poses a critical risk: if the USB buffer fills or a serial monitor is disconnected, the entire firmware can stall, potentially leading to dangerous roasting conditions.
+LibreRoaster's Artisan protocol implementation for ESP32-C3 firmware requires **no stack additions** — the existing architecture using `embassy-rs`, `esp-hal`, and `heapless` fully supports the required OT2 (fan control), READ (telemetry), and UNITS (temperature scale) commands. The implementation work is purely extension of existing code patterns, not infrastructure expansion. The parser, ArtisanCommand enum, and ArtisanFormatter provide all necessary foundations; the gaps are in OT2 parser support, READ command wiring, and temperature unit state management.
 
-The recommended approach is to adopt a **Producer-Consumer architecture** using `defmt` for deferred formatting and `defmt-bbq` as a lock-free buffer. This setup ensures that log "writes" are near-instantaneous memory operations. A low-priority background task handles the actual hardware transmission, allowing the high-priority PID and serial parser tasks to proceed without interruption. To manage log volume, "Smart Filtering" will be implemented to suppress repetitive Artisan polling commands.
+The recommended approach follows a three-phase roadmap: Phase 1 implements OT2 command parsing and fan rate-limiting; Phase 2 wires READ telemetry responses through existing formatters; Phase 3 adds temperature unit conversion state. Critical risks include ESP32-C3 UART serial timing issues under load, temperature conversion accuracy bugs (the most reported Artisan integration issues in community forums), and fan speed control smoothness to avoid airflow fluctuations during roasting. All pitfalls are preventable with existing stack capabilities — no new dependencies required.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack moves away from synchronous blocking logs toward an async-native, deferred-formatting ecosystem.
+No changes to Cargo.toml or dependencies required. The existing LibreRoaster stack already provides:
 
-**Core technologies:**
-- **defmt (0.3.10):** Logging Interface — Minimizes CPU and binary size by deferring string formatting to the host PC.
-- **defmt-bbq (0.1.0):** Global Logger Shim — Decouples log sites from hardware by routing logs into a lock-free queue.
-- **bbqueue (0.5.1):** Lock-free Buffer — Provides the underlying SPSC queue for high-performance, non-blocking data transfer.
-- **esp-hal (1.0.0):** Peripheral Drivers — Utilizes the latest stable async drivers for non-blocking hardware I/O.
+| Category | Current Stack | Status |
+|----------|---------------|--------|
+| Async Runtime | `embassy-executor` 0.9.1 | ✅ Sufficient |
+| Hardware Access | `esp-hal` ~1.0 | ✅ Sufficient |
+| Command Parsing | `heapless` 0.8.0 | ✅ Sufficient |
+| Serial Communication | USB CDC + UART0 | ✅ Working |
+| Logging | `log` 0.4.27 | ✅ Sufficient |
+
+**Required implementation additions:**
+- OT2 parser pattern (~2 lines in `parser.rs`)
+- `SetFanRateLimited` enum variant (1 line in `constants.rs`)
+- Rate-limited fan handler (~15 lines in `handlers.rs`)
+- Temperature state field (`use_fahrenheit: bool` in `ArtisanFormatter`)
 
 ### Expected Features
 
 **Must have (table stakes):**
-- **Non-blocking Logging** — PID loop must never wait for logs; users expect roaster stability regardless of logging state.
-- **Log Level Control** — Standard Info/Debug/Error filtering to manage log verbosity.
-- **USB-Serial-JTAG Output** — Native support for the ESP32-C3's internal debug peripheral.
+- READ command — Returns `ET,BT,FAN,HEATER` CSV telemetry format (existing formatter, needs wiring)
+- OT2 command — Fan speed 0-100% with rate limiting (25 points/sec max per Artisan spec)
+- UNITS command — Temperature scale C/F switching (parsed but not applied — **critical gap**)
+- BT2/ET2 placeholders — Returns `-1` for disabled channels (correctly implemented)
 
 **Should have (competitive):**
-- **Smart Filtering** — Suppression of repetitive `READ` commands to keep logs focused on meaningful state changes.
-- **Millisecond Timestamps** — High-precision timing integrated with `embassy-time` for latency analysis.
+- Extended READ response format — Includes fan/heater output states (differentiator over standard Artisan)
+- Multiple fan control aliases — Support both OT2 and IO3 syntax (compatibility)
+- Hardware PWM at 25kHz — Quiet fan operation (already implemented)
 
 **Defer (v2+):**
-- **Remote Log Streaming** — Streaming logs over Wi-Fi/UDP is out of scope for the current USB-focused improvement.
+- Temperature unit conversion at sensor read (only convert at output formatting)
+- Command acknowledgment for output changes
+- Historical telemetry storage
 
 ### Architecture Approach
 
-The architecture follows a strictly decoupled Producer-Consumer pattern where the logging system is an observer of the serial traffic, not a participant in the critical path.
+LibreRoaster uses a well-designed command handler chain pattern that OT2, READ, and UNITS integrate into with minimal modifications. The flow is: Serial Input → Parser → Multiplexer → ArtisanInput Task → RoasterControl::process_artisan_command() → ArtisanCommandHandler → Hardware → ArtisanFormatter → Serial Output. The ArtisanFormatter already has READ response methods; the gap is wiring the ReadStatus command to trigger response formatting. Temperature unit state should be stored in ArtisanFormatter to avoid contaminating internal calculations with display-only conversions.
 
 **Major components:**
-1. **defmt Macros** — Fast log producers embedded in the Serial Reader/Writer tasks.
-2. **defmt-bbq (BBQueue)** — Centralized buffer managing the life-cycle of log data.
-3. **Async Logger Task** — A low-priority consumer that drains the queue and writes to the hardware transport async.
+1. **Parser** (`src/input/parser.rs`) — Parses ASCII commands to ArtisanCommand enum, needs OT2 pattern added
+2. **ArtisanCommandHandler** (`src/control/handlers.rs`) — Executes commands, routes SetFan to fan hardware
+3. **ArtisanFormatter** (`src/output/artisan.rs`) — Formats READ responses, needs use_fahrenheit state added
+4. **RoasterControl** — Central dispatch, maintains SystemStatus for telemetry
 
 ### Critical Pitfalls
 
-1. **Synchronous Blocking in `esp-println`** — Prevented by strictly using `defmt-bbq` and avoiding standard `println!`.
-2. **Shared Resource Conflict (UsbSerialJtag)** — Avoided by using a dedicated transport (UART0) or protocol-aware multiplexing to prevent interleaving logs with Artisan data.
-3. **BBQueue Overrun** — Mitigated by "Smart Filtering" and a "Drop-Oldest" policy to ensure the system remains responsive even under heavy log load.
+1. **READ Command Response Format Mismatch** — Artisan fails to recognize data with incorrect CSV formatting or line endings. Prevention: Use exact format `ET,BT,FAN,HEATER\r\n` with single decimal place.
+
+2. **Temperature Unit Conversion Accuracy** — Most reported Artisan integration bugs. Prevention: Store canonical temperatures in Celsius, convert only at READ output using formula F = (C × 9/5) + 32.
+
+3. **ESP32-C3 UART Serial Timing Issues** — USB CDC serial can freeze under high-traffic roasting scenarios. Prevention: Use 115200 baud, target <100ms response times, test under realistic load.
+
+4. **Fan Speed Control Smoothness** — Abrupt PWM changes cause airflow fluctuations affecting roast. Prevention: Implement ramping (5% step per 100ms) for fan transitions.
+
+5. **OT2 Command Parsing Edge Cases** — Various delimiter formats (comma, space, semicolon, equals) must all be handled. Prevention: Normalize input before parsing, test all delimiter variations.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on research, the suggested three-phase structure respects dependencies and avoids known pitfalls.
 
-### Phase 1: Logging Foundation
-**Rationale:** Establishing the non-blocking buffer and `defmt` integration is the prerequisite for all subsequent features.
-**Delivers:** Working `defmt` setup over `bbqueue` with a basic async drain task.
-**Addresses:** Non-blocking Logging.
-**Avoids:** Synchronous Blocking Pitfall.
+### Phase 1: OT2 Command Implementation
+**Rationale:** OT2 is the foundation for fan control and has no dependencies. It follows the existing OT1/IO3 pattern exactly, making it the lowest-risk starting point.
 
-### Phase 2: Transport Configuration
-**Rationale:** The ESP32-C3 has specific hardware constraints for USB-Serial-JTAG that must be handled before attaching real traffic sniffers.
-**Delivers:** Stable log output over a designated channel (USB-JTAG or UART0) without interfering with Artisan.
-**Uses:** `esp-hal` 1.0.0 async drivers.
-**Implements:** Async Logger Task.
+**Delivers:**
+- OT2 parser pattern in `parser.rs`
+- `SetFanRateLimited` enum variant
+- Rate-limited fan handler (25 points/sec per Artisan spec)
+- Integration test verifying fan actuation
 
-### Phase 3: Communication Sniffer Integration
-**Rationale:** Once the transport is safe, we can hook into the existing Artisan command multiplexer.
-**Delivers:** Real-time visibility into RX/TX bytes for Artisan commands.
-**Addresses:** Bi-directional Monitoring.
-**Implements:** `defmt` log sites in Reader/Writer tasks.
+**Addresses:**
+- Pitfall 1: OT2 parsing edge cases
+- Pitfall 5: Fan speed control smoothness
+- Feature: OT2 command fan control
 
-### Phase 4: Smart Filtering & Polish
-**Rationale:** High-frequency polling in Artisan will flood the logs; filtering is needed for usability.
-**Delivers:** Logic to suppress repetitive `READ` polling logs.
-**Addresses:** Smart Filtering.
-**Avoids:** BBQueue Overrun Pitfall.
+**Research Flags:** LOW — Standard parser extension pattern, well-documented in Artisan spec. Skip phase research.
+
+### Phase 2: READ Telemetry Wiring
+**Rationale:** READ depends on OT2 completion because fan state must be available in SystemStatus. The ArtisanFormatter already exists; this phase wires the command path.
+
+**Delivers:**
+- ReadStatus command triggers ArtisanFormatter response
+- BT2/ET2 comments clarifying disabled channels
+- Full 7-value response format: `ET,BT,-1,-1,-1,FAN,HEATER\r\n`
+
+**Addresses:**
+- Pitfall 2: READ response format mismatch
+- Feature: Extended READ response with output states
+
+**Research Flags:** MEDIUM — Response timing needs validation against actual Artisan version. Test format with live Artisan during implementation.
+
+### Phase 3: UNITS Temperature Conversion
+**Rationale:** UNITS is the final piece; it depends on READ being functional to verify temperature display. Temperature conversion is the highest-risk area (most community bug reports).
+
+**Delivers:**
+- `use_fahrenheit: bool` state in ArtisanFormatter
+- UNITS command updates formatter state
+- Temperature conversion in format_read_response()
+- Verification: C and F modes work correctly
+
+**Addresses:**
+- Pitfall 3: Temperature conversion accuracy
+- Pitfall 9: UNITS state persistence (consider NVS for power-cycle safety)
+
+**Research Flags:** HIGH — Conversion accuracy critical, needs validation during implementation. Test round-trip conversions.
 
 ### Phase Ordering Rationale
 
-- **Dependencies:** The async runtime and `bbqueue` must exist before any logging can happen safely.
-- **Grouping:** Transport setup is grouped separately because it involves hardware-specific configuration (C3 JTAG vs UART) which is distinct from the logical sniffer implementation.
-- **Safety:** By building the "Smart Filter" last, we ensure the system is already non-blocking and safe, even if it is "chatty" initially.
+- **OT2 → READ → UNITS** order respects data dependencies (fan state needed for READ, READ needed to verify UNITS conversion)
+- **Three phases** matches the natural component boundaries (parser, formatter, state)
+- **Phases 1-2 are low risk** (extend existing patterns), Phase 3 requires careful testing (conversion bugs are common)
+- Prevents **Pitfall 7** (command state machine conflicts) by sequencing integrations
 
-### Research Flags
+### Research Flags Summary
 
-Phases likely needing deeper research during planning:
-- **Phase 2:** Hardware multiplexing vs RTT. Need to confirm if Artisan and logs can coexist on one USB port via different frames or if a physical UART is required.
-
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** `defmt-bbq` setup is a well-documented embedded Rust pattern.
-- **Phase 3:** Adding log macros to existing tasks is straightforward instrumentation.
+| Phase | Research Level | Notes |
+|-------|----------------|-------|
+| Phase 1: OT2 | SKIP | Well-documented Artisan spec, existing parser pattern |
+| Phase 2: READ | LIGHT | Verify response timing, test format with live Artisan |
+| Phase 3: UNITS | DEEP | Conversion accuracy critical, community bug history |
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | `defmt` + `bbqueue` is the industry standard for this use case. |
-| Features | HIGH | Based on known pain points in the current blocking implementation. |
-| Architecture | HIGH | Producer-Consumer pattern is naturally suited for async logging. |
-| Pitfalls | HIGH | ESP32-C3 JTAG and blocking issues are well-documented. |
+| Stack | HIGH | Zero additions required, existing stack verified |
+| Features | HIGH | READ formatter exists, OT2/UNITS patterns clear |
+| Architecture | HIGH | Command flow well-designed, integration points identified |
+| Pitfalls | MEDIUM | Based on community experiences, some ESP32-C3 UART gaps |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Hardware Conflict:** Need to decide on the default log transport (UART vs USB) based on the user's hardware setup. This should be handled via a feature flag or config during implementation.
+- **Exact Artisan timeout values** — Varies by version. Validate during Phase 2 integration testing.
+- **USB CDC vs UART selection impact** — Both modes documented, tradeoffs may affect serial reliability. Test under realistic roast load.
+- **embassy-rs UART behaviors** — Limited documentation on interaction with Artisan protocol timing. Monitor response times during implementation.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [esp-hal 1.0.0 Release Notes](https://github.com/esp-rs/esp-hal/releases/tag/v1.0.0) — Stable async driver patterns.
-- [defmt Documentation](https://defmt.ferrous-systems.com/) — Logging framework specifics.
-- [defmt-bbq GitHub](https://github.com/knurling-rs/defmt-bbq) — Non-blocking bridge implementation.
+- **TC4-shield Artisan Protocol Specification** — https://github.com/greencardigan/TC4-shield/blob/master/applications/Artisan/aArtisan/trunk/src/aArtisan/commands.txt — Official command syntax, OT2 rate limiting (25 points/sec), READ response format
+- **LibreRoaster Current Implementation** — Direct code inspection of parser.rs, artisan.rs, constants.rs — Verified existing patterns and gaps
 
 ### Secondary (MEDIUM confidence)
-- [Artisan Protocol Documentation](https://artisan-roaster-scope.blogspot.com/) — Command structures for filtering.
+- **Artisan Scope Documentation** — https://artisan-scope.org/docs/setup/ — General configuration guidelines, version-specific behaviors need validation
+- **ESP32-C3 GitHub Issues** — UART timing documented but chip-specific, USB CDC freezing under load reported
+- **Homeroasters Community Forum** — User experiences with Skywalker roasters, common Fahrenheit conversion bugs documented
+
+### Tertiary (LOW confidence)
+- **Skywalker Roaster Firmware** — Similar hardware, pitfall patterns applicable but exact implementations differ
 
 ---
-*Research completed: 2026-02-05*
+
+*Research completed: 2026-02-07*
 *Ready for roadmap: yes*

@@ -1,5 +1,31 @@
 # Project Milestones: LibreRoaster
 
+## v2.2 Comandos de Entrada (Shipped: 2026-02-07)
+
+**Delivered:** Complete Artisan protocol support with OT2 fan control, READ telemetry response, and UNITS temperature scale parsing.
+
+**Phases completed:** 35-37 (3 phases, 3 plans)
+
+**Key accomplishments:**
+- OT2 command parsing with decimal rounding (50.5 → 51) and clamping 0-100
+- OT2 safety feature: heater stops when out-of-range values received
+- READ telemetry with CSV format ET,BT,-1,-1,-1,FAN,HEATER (one decimal place)
+- BT2/ET2 disabled channel comment: "store value for future et2 and bt2 support"
+- UNITS command parsing with TemperatureScale enum and TemperatureSettings storage
+- Default Celsius with no temperature conversion applied
+
+**Stats:**
+- 4 files modified (config/constants.rs, input/parser.rs, control/roaster_refactored.rs, output/artisan.rs)
+- 192 insertions, 3 deletions
+- 3 phases, 3 plans, 9 tasks
+- 1 day from start to ship (2026-02-07)
+
+**Git range:** `feat(35-01)` → `docs(audit): v2.2 milestone audit complete`
+
+**What's next:** Ready for `/gsd-new-milestone` — next features TBD
+
+---
+
 ## v2.0 Code Quality Audit (Shipped: 2026-02-05)
 
 **Delivered:** Comprehensive code quality audit with clippy and cargo-geiger configuration, baseline unsafe code inventory, and 31-issue severity-classified findings document.
@@ -133,4 +159,4 @@
 
 ---
 
-*Last updated: 2026-02-05 during v1.6 milestone shipped*
+*Last updated: 2026-02-07 — v2.2 Comandos de Entrada shipped*

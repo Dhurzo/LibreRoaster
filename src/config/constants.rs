@@ -58,6 +58,9 @@ pub enum ArtisanCommand {
     StartRoast,
     SetHeater(u8),
     SetFan(u8),
+    /// OT2 command with fan speed (0-100, decimals rounded, clamped silently)
+    /// bool indicates if original value was out of range (triggers heater stop)
+    SetFanSpeed(u8, bool),
     EmergencyStop,
     IncreaseHeater,
     DecreaseHeater,
@@ -85,6 +88,47 @@ pub enum SsrHardwareStatus {
     Available,
     NotDetected,
     Error,
+}
+
+/// Temperature scale preference for Artisan protocol
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TemperatureScale {
+    Celsius,
+    Fahrenheit,
+}
+
+impl Default for TemperatureScale {
+    fn default() -> Self {
+        TemperatureScale::Celsius
+    }
+}
+
+/// Temperature settings storage
+/// Tracks temperature scale preference without applying conversion
+#[derive(Debug, Clone, Copy)]
+pub struct TemperatureSettings {
+    scale: TemperatureScale,
+}
+
+impl TemperatureSettings {
+    pub fn new() -> Self {
+        Self {
+            scale: TemperatureScale::default(),
+        }
+    }
+
+    pub fn get_scale(&self) -> TemperatureScale {
+        self.scale
+    }
+
+    pub fn set_scale(&mut self, scale: TemperatureScale) {
+        self.scale = scale;
+    }
+
+    /// Check if scale is Fahrenheit
+    pub fn is_fahrenheit(&self) -> bool {
+        matches!(self.scale, TemperatureScale::Fahrenheit)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

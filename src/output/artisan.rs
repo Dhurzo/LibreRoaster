@@ -109,6 +109,9 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> String {
+        // NOTE: These values are placeholders for future ET2/BT2 thermocouple support.
+        // store value for future et2 and bt2 support
+        // When additional thermocouples are added, update these positions.
         format!(
             "{:.1},{:.1},-1,-1,-1,{:.1},{:.1}\r\n",
             status.env_temp,   // ET
@@ -409,5 +412,19 @@ mod tests {
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
         assert_eq!(parts[5], "60.0", "Fan should use fan_output");
         assert_eq!(parts[6], "80.0", "Heater should use ssr_output");
+    }
+
+    #[test]
+    fn test_format_read_response_full_one_decimal_format() {
+        let mut status = create_test_status();
+        status.fan_output = 75.0;
+        status.ssr_output = 100.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        let parts: Vec<&str> = response.trim_end().split(',').collect();
+
+        assert_eq!(parts[5], "75.0", "Fan must show one decimal (75.0)");
+        assert_eq!(parts[6], "100.0", "Heater must show one decimal (100.0)");
     }
 }

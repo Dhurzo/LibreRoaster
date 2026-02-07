@@ -24,6 +24,10 @@ pub struct RoasterControl {
     safety_handler: SafetyCommandHandler,
     artisan_handler: ArtisanCommandHandler,
     system_handler: SystemCommandHandler,
+
+    /// Temperature scale preference storage
+    /// Tracks UNITS command preference (Celsius/Fahrenheit) without conversion
+    temp_settings: TemperatureSettings,
 }
 
 impl RoasterControl {
@@ -48,6 +52,7 @@ impl RoasterControl {
             safety_handler: SafetyCommandHandler::new(),
             artisan_handler: ArtisanCommandHandler::new(),
             system_handler: SystemCommandHandler,
+            temp_settings: TemperatureSettings::new(),
         })
     }
 
@@ -366,6 +371,19 @@ impl RoasterControl {
                 info!("Artisan+ fan command processed: {}%", value);
             }
 
+            crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => {
+                let fan_command = crate::config::RoasterCommand::SetFanManual(value);
+                self.process_command(fan_command, current_time)?;
+
+                if was_clamped {
+                    // Out of range value - stop heater as safety measure
+                    let _ = self.heater.set_power(0.0);
+                    info!("Artisan+ OT2 out of range - heater stopped, fan set to {}%", value);
+                } else {
+                    info!("Artisan+ OT2 fan command processed: {}%", value);
+                }
+            }
+
             crate::config::ArtisanCommand::EmergencyStop => {
                 self.stop_streaming()?;
                 info!("Artisan+ stop requested - streaming disabled and outputs cleared");
@@ -385,8 +403,17 @@ impl RoasterControl {
 
             crate::config::ArtisanCommand::ReadStatus => {
                 self.status.ssr_hardware_status = self.heater.get_status();
+
+                let response = crate::output::artisan::ArtisanFormatter::format_read_response_full(&self.status);
+
+                if response.trim().is_empty() || !response.ends_with("\r\n") {
+                    error!("Malformed READ response: {:?}", response);
+                    let _ = self.heater.set_power(0.0);
+                    panic!("Malformed READ response from ArtisanFormatter");
+                }
+
                 debug!(
-                    "READ command - SSR status: {:?}",
+                    "READ command - SSR status: {:?}, response generated",
                     self.status.ssr_hardware_status
                 );
             }
@@ -394,8 +421,14 @@ impl RoasterControl {
             crate::config::ArtisanCommand::Chan(_) => {
                 debug!("Chan command received - initialization handled by multiplexer");
             }
-            crate::config::ArtisanCommand::Units(_) => {
-                debug!("Units command received - initialization handled by multiplexer");
+            crate::config::ArtisanCommand::Units(is_fahrenheit) => {
+                let scale = if is_fahrenheit {
+                    TemperatureScale::Fahrenheit
+                } else {
+                    TemperatureScale::Celsius
+                };
+                self.temp_settings.set_scale(scale);
+                debug!("Units command received - scale set to {:?}", scale);
             }
             crate::config::ArtisanCommand::Filt(_) => {
                 debug!("Filt command received - initialization handled by multiplexer");

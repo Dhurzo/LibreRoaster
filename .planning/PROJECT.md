@@ -8,16 +8,15 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v2.1 Comment Rationale Cleanup
+## Current State
 
-**Goal:** Remove comments that don't add relevant information. Keep only rationale comments (explaining WHY), not WHAT comments.
+**Last Shipped:** v2.2 Comandos de Entrada (2026-02-07)
 
-**Scope:** All Rust source files in src/
+v2.2 adds complete Artisan protocol support with OT2 fan control, READ telemetry, and UNITS temperature scale parsing. All 4 requirements satisfied.
 
-**Target:**
-- Remove obvious/verbose comments that duplicate code
-- Keep design rationale and non-obvious explanations
-- Reference documentation (internalDoc/*.md) for extended context
+## Next Milestone
+
+**Planning:** Next milestone goals to be defined
 
 ## Current State
 
@@ -65,11 +64,15 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ cargo-geiger unsafe code baseline (22 blocks) — v2.0
 - ✓ Code quality issues inventory (31 issues) — v2.0
 - ✓ Severity classification and remediation priorities — v2.0
-- ✓ Comment rationale cleanup — v2.1 (in progress)
+- ✓ Comment rationale cleanup — v2.1
+- ✓ OT2 command parsing with safety measures — v2.2
+- ✓ READ telemetry with CSV format — v2.2
+- ✓ BT2/ET2 disabled channel documentation — v2.2
+- ✓ UNITS temperature scale parsing — v2.2
 
 ### Active
 
-(None — v2.0 complete, next milestone TBD)
+- [ ] Next milestone planning in progress
 
 ### Out of Scope
 
@@ -124,7 +127,11 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | USB + UART dual support | Maximum flexibility for users | ✓ Implemented |
 | UP/DOWN clamping | No error at boundaries, just clamp | ✓ Implemented |
 | Unused READ channels = -1 | Per Artisan spec | ✓ Implemented |
+| OT2 decimal rounding | Round to nearest integer (50.5 → 51) | ✓ Implemented v2.2 |
+| OT2 heater stop on out-of-range | Safety measure for invalid fan values | ✓ Implemented v2.2 |
+| READ one-decimal format | Consistent with Artisan spec (75.0) | ✓ Implemented v2.2 |
+| UNITS parse only, no conversion | Temperatures stay Celsius internally | ✓ Implemented v2.2 |
 
 ---
 
-*Last updated: 2026-02-06 — v2.1 Comment Rationale Cleanup started*
+*Last updated: 2026-02-07 — v2.2 Comandos de Entrada shipped*
