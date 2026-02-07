@@ -406,10 +406,12 @@ impl RoasterControl {
 
                 let response = crate::output::artisan::ArtisanFormatter::format_read_response_full(&self.status);
 
-                if response.trim().is_empty() || !response.ends_with("\r\n") {
+                // Validate response has 4 comma-separated values
+                let parts: alloc::vec::Vec<&str> = response.split(',').collect();
+                if response.trim().is_empty() || parts.len() != 4 {
                     error!("Malformed READ response: {:?}", response);
                     let _ = self.heater.set_power(0.0);
-                    panic!("Malformed READ response from ArtisanFormatter");
+                    panic!("Malformed READ response from ArtisanFormatter: expected 4 values, got {}", parts.len());
                 }
 
                 debug!(

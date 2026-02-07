@@ -109,15 +109,13 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> String {
-        // NOTE: These values are placeholders for future ET2/BT2 thermocouple support.
-        // store value for future et2 and bt2 support
-        // When additional thermocouples are added, update these positions.
+        // 4-value format: ET, BT, HEATER, FAN
         format!(
-            "{:.1},{:.1},-1,-1,-1,{:.1},{:.1}\r\n",
+            "{:.1},{:.1},{:.1},{:.1}",
             status.env_temp,   // ET
             status.bean_temp,  // BT
-            status.fan_output, // Fan
-            status.ssr_output  // Heater
+            status.ssr_output, // Heater
+            status.fan_output  // Fan
         )
     }
 
@@ -365,35 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn test_format_read_response_seven_values() {
+    fn test_format_read_response_four_values() {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
-        assert_eq!(parts.len(), 7, "READ response must have exactly 7 values");
-    }
-
-    #[test]
-    fn test_unused_channels_return_negative_one() {
-        let status = create_test_status();
-        let response = ArtisanFormatter::format_read_response_full(&status);
-
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
-
-        assert_eq!(parts[2], "-1", "ET2 placeholder should be -1");
-        assert_eq!(parts[3], "-1", "BT2 placeholder should be -1");
-        assert_eq!(parts[4], "-1", "ambient placeholder should be -1");
-    }
-
-    #[test]
-    fn test_response_terminates_with_crlf() {
-        let status = create_test_status();
-        let response = ArtisanFormatter::format_read_response_full(&status);
-
-        assert!(
-            response.ends_with("\r\n"),
-            "READ response must terminate with CRLF"
-        );
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 4, "READ response must have exactly 4 values");
     }
 
     #[test]
@@ -406,12 +381,12 @@ mod tests {
 
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
+        let parts: Vec<&str> = response.split(',').collect();
 
         assert_eq!(parts[0], "125.5", "ET should use env_temp");
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
-        assert_eq!(parts[5], "60.0", "Fan should use fan_output");
-        assert_eq!(parts[6], "80.0", "Heater should use ssr_output");
+        assert_eq!(parts[2], "80.0", "Heater should use ssr_output");
+        assert_eq!(parts[3], "60.0", "Fan should use fan_output");
     }
 
     #[test]
@@ -422,9 +397,9 @@ mod tests {
 
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
+        let parts: Vec<&str> = response.split(',').collect();
 
-        assert_eq!(parts[5], "75.0", "Fan must show one decimal (75.0)");
-        assert_eq!(parts[6], "100.0", "Heater must show one decimal (100.0)");
+        assert_eq!(parts[2], "100.0", "Heater must show one decimal (100.0)");
+        assert_eq!(parts[3], "75.0", "Fan must show one decimal (75.0)");
     }
 }
