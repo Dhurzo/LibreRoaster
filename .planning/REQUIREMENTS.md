@@ -1,95 +1,52 @@
-# Requirements: LibreRoaster v2.3
+# Requirements: LibreRoaster v2.4
 
-**Defined:** 2026-02-07
-**Core Value:** Accurate internal documentation that reflects v2.2 implementation
+**Defined:** 2026-02-08
+**Core Value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## v1 Requirements (v2.3 Milestone)
+## v2.4 Requirements
 
-### ARCHITECTURE.md Updates
+### Logging Redirection
 
-- [x] **ARCH-01**: Document OT2 command handling flow (parser → handler → fan control)
-- [x] **ARCH-02**: Document READ telemetry generation (status → formatter → output)
-- [x] **ARCH-03**: Document UNITS command state management (parsing, storage, no conversion)
-- [x] **ARCH-04**: Verify task descriptions match v2.2 implementation (control_loop_task, dual_output_task)
-- [x] **ARCH-05**: Update command handler chain diagram if commands changed
+- [ ] **LOG-01**: All logging output redirected to UART0
+- [ ] **LOG-02**: USB Serial handles Artisan commands only (no log output)
+- [ ] **LOG-03**: No log interference on Artisan communication channel
+- [ ] **LOG-04**: UART logging at 115200 baud (same as Artisan communication)
 
-### PROTOCOL.md Creation
+### Architecture
 
-- [x] **PROT-01**: Document all supported Artisan commands with syntax
-- [x] **PROT-02**: Document READ response format (4-value CSV: ET,BT,HEATER,FAN)
-- [x] **PROT-03**: Document OT2 command with decimal rounding and clamping behavior
-- [x] **PROT-04**: Document UNITS command (parse only, Celsius stored internally)
-- [x] **PROT-05**: Document error responses (ERR format)
-- [x] **PROT-06**: Document BT2/ET2 placeholder behavior (-1 values)
+- [ ] **LOG-05**: Logging infrastructure uses UART0 peripheral
+- [ ] **LOG-06**: USB Serial dedicated to Artisan command/response traffic
+- [ ] **LOG-07**: Clean separation between debug output and protocol communication
 
-### CODE_QUALITY Updates
+## v3 Requirements (Future)
 
-- [ ] **QUAL-01**: Review CODE_QUALITY_ISSUES.md for v2.2 impact (new unsafe blocks?)
-- [ ] **QUAL-02**: Update CODE_QUALITY_REMEDIATION.md if v2.2 addressed any issues
-- [ ] **QUAL-03**: Verify unsafe block count still accurate (22 blocks baseline from v2.0)
+### Additional Features
 
-### hardware.md Review
-
-- [x] **HW-01**: Verify pin assignments still accurate after v2.2
-- [x] **HW-02**: Document any hardware implications of OT2/fan control
-- [x] **HW-03**: Check thermocouple configuration matches v2.2 (BT/ET only, no ET2/BT2)
-
-### Cross-Reference Validation
-
-- [x] **XREF-01**: Verify all internalDoc files reference correct milestone versions
-- [x] **XREF-02**: Ensure no stale references to pre-v2.2 features
-- [x] **XREF-03**: Add "Last updated" timestamps to all modified docs
-
-## v2 Requirements (Future)
-
-### Additional Documentation
-
-- **DOC-01**: Developer onboarding guide
-- **DOC-02**: Testing strategy document
-- **DOC-03**: Release checklist
+- **LOG-03**: Configurable logging levels (DEBUG, INFO, WARN, ERROR)
+- **LOG-04**: Remote logging via WiFi (future hardware)
+- **LOG-05**: Log buffering for UART underflow scenarios
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| README.md updates | End-user docs, separate from internalDoc |
-| Flash/connection guides | Already covered in v1.8 documentation |
-| Code changes | Pure documentation milestone |
-| New features | Only document what exists in v2.2 |
+| USB Serial removal | USB still needed for Artisan commands |
+| WiFi logging | Future hardware expansion |
+| Log persistence | Not required for basic operation |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ARCH-01 | Phase 38 | Complete |
-| ARCH-02 | Phase 38 | Complete |
-| ARCH-03 | Phase 38 | Complete |
-| ARCH-04 | Phase 38 | Complete |
-| ARCH-05 | Phase 38 | Complete |
-| PROT-01 | Phase 39 | Complete |
-| PROT-02 | Phase 39 | Complete |
-| PROT-03 | Phase 39 | Complete |
-| PROT-04 | Phase 39 | Complete |
-| PROT-05 | Phase 39 | Complete |
-| PROT-06 | Phase 39 | Complete |
-| QUAL-01 | Phase 40 | Pending |
-| QUAL-02 | Phase 40 | Pending |
-| QUAL-03 | Phase 40 | Pending |
-| HW-01 | Phase 41 | Complete |
-| HW-02 | Phase 41 | Complete |
-| HW-03 | Phase 41 | Complete |
-| XREF-01 | Phase 42 | Complete |
-| XREF-02 | Phase 42 | Complete |
-| XREF-03 | Phase 42 | Complete |
-| XREF-01 | Phase 42 | Pending |
-| XREF-02 | Phase 42 | Pending |
-| XREF-03 | Phase 42 | Pending |
-
-**Coverage:**
-- v1 requirements: 18 total
-- Mapped to phases: 18
-- Unmapped: 0 ✓
+| LOG-01 | 43 | Pending |
+| LOG-02 | 43 | Pending |
+| LOG-03 | 43 | Pending |
+| LOG-04 | 43 | Pending |
+| LOG-05 | 43 | Pending |
+| LOG-06 | 43 | Pending |
+| LOG-07 | 43 | Pending |
 
 ---
-*Requirements defined: 2026-02-07*
-*Last updated: 2026-02-07 after milestone initialization*
+
+*Requirements defined: 2026-02-08*
+*Last updated: 2026-02-08 after v2.4 milestone initialization*

@@ -8,13 +8,15 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v2.3 Documentation Update
+## Current Milestone: v2.4 UART Logging
 
-**Goal:** Audit and update all internalDoc files to accurately reflect v2.2 features (OT2, READ, UNITS)
+**Goal:** Redirect all logging to UART0, keep USB Serial for Artisan commands only
 
-**Status:** ✅ SHIPPED 2026-02-08
-
-**Delivered:** All documentation updated with v2.2 command flows, cross-references validated, timestamps added.
+**Target features:**
+- USB Serial handles Artisan commands only (READ, OT1, OT2, IO3, START, STOP, etc.)
+- UART0 receives all logging output (debug, status, telemetry logs)
+- Clean separation between user-facing commands and debug output
+- No log noise on Artisan communication channel
 
 ## Last Shipped: v2.2 Comandos de Entrada (2026-02-07)
 
@@ -81,9 +83,11 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ hardware.md v2.2 specifications verified — v2.3
 - ✓ Documentation cross-references validated — v2.3
 
-### Active (v2.3)
+### Active (v2.4)
 
-- [ ] (All complete - shipped 2026-02-08)
+- [ ] LOG-01: Redirect all logging to UART0
+- [ ] LOG-02: USB Serial handles Artisan commands only
+- [ ] LOG-03: No log output on USB Serial channel
 
 ### Out of Scope
 
@@ -145,4 +149,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-08 — v2.3 Documentation Update shipped*
+*Last updated: 2026-02-08 — v2.4 milestone started*

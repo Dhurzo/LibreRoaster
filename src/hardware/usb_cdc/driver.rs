@@ -45,11 +45,6 @@ impl UsbCdcDriver {
 
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
         let result = self.usb.read(buffer).map_err(|_| UsbCdcError::ReceptionError);
-        if let Ok(n) = result {
-            if n > 0 {
-                let _ = esp_println::println!("USB IN ({} bytes): {:?}", n, &buffer[..n]);
-            }
-        }
         result
     }
 
