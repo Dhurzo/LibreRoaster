@@ -1,5 +1,30 @@
 # Project Milestones: LibreRoaster
 
+## v2.3 Documentation Update (Shipped: 2026-02-08)
+
+**Delivered:** Comprehensive documentation update ensuring all internalDoc files accurately reflect v2.2 implementation. ARCHITECTURE.md updated with command flows, PROTOCOL.md created with complete Artisan specification, CODE_QUALITY files corrected, hardware.md verified, and all cross-references validated.
+
+**Phases completed:** 38-42 (6 plans total)
+
+**Key accomplishments:**
+- ARCHITECTURE.md updated with OT2, READ, UNITS command flows (4-value CSV format)
+- PROTOCOL.md created with 9 Artisan commands documented and ASCII sequence diagram
+- CODE_QUALITY_ISSUES.md corrected (24 unsafe blocks vs 22 documented)
+- hardware.md corrected to show ET,BT,HEATER,FAN format
+- All documentation cross-references validated with consistent v2.2/v2.3 versions
+- Timestamps added to all modified files
+
+**Stats:**
+- 18 v1 requirements satisfied
+- 6 plans, ~12+ tasks
+- 2 days from start to ship (2026-02-07 to 2026-02-08)
+
+**Git range:** `docs(v2.3-start)` → `docs(42-01): complete cross-reference validation`
+
+**What's next:** Ready for /gsd-new-milestone — next features TBD
+
+---
+
 ## v2.2 Comandos de Entrada (Shipped: 2026-02-07)
 
 **Delivered:** Complete Artisan protocol support with OT2 fan control, READ telemetry response, and UNITS temperature scale parsing.
@@ -159,4 +184,4 @@
 
 ---
 
-*Last updated: 2026-02-07 — v2.2 Comandos de Entrada shipped*
+*Last updated: 2026-02-08 — v2.3 Documentation Update shipped*

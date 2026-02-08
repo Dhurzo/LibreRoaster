@@ -1,28 +1,37 @@
 # STATE: LibreRoaster
 
-**Updated:** 2026-02-07
+**Updated:** 2026-02-08
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-02-08)
+
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** v2.2 Comandos de Entrada
+**Current focus:** v2.3 COMPLETE
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| **Milestone** | v2.2 Comandos de Entrada |
-| **Phase** | Not started (roadmap complete) |
-| **Plan** | See ROADMAP.md (3 phases: 35-37) |
-| **Status** | ◆ Ready for Planning |
+| **Milestone** | v2.3 Documentation Update |
+| **Phase** | — |
+| **Status** | ✅ Milestone complete |
 
 ### Milestone Summary
 
-| Phase | Status | Plans |
-|-------|--------|-------|
-| 35 - OT2 Command | ○ Ready | 0 planned |
-| 36 - READ Telemetry | ○ Ready | 0 planned |
-| 37 - UNITS Parsing | ○ Ready | 0 planned |
+| Phase | Goal | Status | Plans |
+|-------|------|--------|-------|
+| 38 | ARCHITECTURE.md Updates | ● | 1/1 |
+| 39 | PROTOCOL.md Creation | ● | 1/1 |
+| 40 | CODE_QUALITY Updates | ● | 2/2 |
+| 41 | hardware.md Review | ● | 1/1 |
+| 42 | Cross-Reference Validation | ● | 1/1 |
+
+### Progress
+
+```
+[██████████] 5/5 phases (100%)
+```
 
 ### Accumulated Decisions
 
@@ -34,53 +43,58 @@
 | 31-02 | cargo unsafe-check alias | Avoids shadowing cargo-geiger subcommand |
 | 33-01 | Comment classification rules | Noise vs rationale criteria defined |
 | v2.2 | OT2 → READ → UNITS phase order | Respects dependencies (fan state needed for READ, READ needed to verify UNITS) |
-
-## Performance Metrics
-
-| Metric | Current | Target |
-|--------|---------|--------|
-| v2.2 Requirements Coverage | 4/4 mapped | 100% |
-| v2.2 Phases Defined | 3 | 3 |
-| v2.2 Success Criteria | 12 total | 2-4 per phase |
-| Previous Milestone (v2.1) | Complete | - |
-
-## Research Context
-
-From research/SUMMARY.md:
-- No stack additions required—existing embassy-rs + esp-hal + heapless supports all features
-- Parser pattern extension is the primary implementation approach
-- ArtisanFormatter already exists; wiring needed for READ
-- Temperature conversion highest-risk (deferred to v2+)
-
-### Key Insights
-
-1. **OT2 Implementation:** Extends existing OT1/IO3 parser pattern (~2 lines in parser.rs)
-2. **READ Wiring:** Formatter exists, needs command routing (Phase 36)
-3. **UNITS Parsing:** No conversion applied per requirements (parse only)
-4. **BT2/ET2:** Returns -1 per Artisan spec, needs documentation comment
+| 38-01 | Document UNITS as parse-only | No temperature conversion applied - preference stored but all temps remain Celsius |
+| 38-01 | Code reference format | Use [file.rs:line-line] notation for traceability in architecture docs |
+| 38-01 | READ format is 4-value CSV | Corrected from 7-value: ET,BT,HEATER,FAN (not ET,BT,ET2,BT2,ambient,FAN,HEATER) |
+| 39-01 | Commands organized by workflow | Setup → Control → Monitoring structure for PROTOCOL.md |
+| 39-01 | ASCII sequence diagram for OT2 | Flow diagram showing parser → handler → fan control |
+| 39-01 | Quick-reference appendix pattern | Compact command table for rapid lookup |
+| 40-01 | Baseline comparison approach | Used Phase 31 baseline when cargo-geiger embedded scan unavailable |
+| 40-01 | Direct file verification | Grep-based inspection when tooling blocked by cross-compilation |
+| 40-02 | Documentation accuracy priority | Corrected unsafe block count from 22 to 24 despite gitignored status |
+| 40-02 | Pre-existing drift framing | Labeled discrepancy as "pre-existing documentation drift" to prevent false regression alarm |
 
 ## Session Continuity
 
 ### Last Session
 
-- v2.1 Comment Rationale Cleanup COMPLETED (Phases 32-34)
-- v2.2 milestone STARTED
-- Requirements defined: CMD-01, CMD-02, CMD-03, FMT-01
-- Research completed with HIGH confidence
-- Roadmap created: 3 phases (35-37)
+- v2.2 Comandos de Entrada COMPLETED
+- v2.3 milestone STARTED — Documentation update
+- Phase 38 (ARCHITECTURE.md Updates) COMPLETED
+- Updated ARCHITECTURE.md with OT2, READ, UNITS command flows
+- Corrected READ telemetry format (4-value CSV, not 7-value)
+- Verified task timing (100ms control_loop, 5ms dual_output with CRLF)
+- Phase 39 (PROTOCOL.md Creation) COMPLETED
+- Created comprehensive PROTOCOL.md with all 9 Artisan commands documented
+- ASCII sequence diagram for OT2 flow added
+- Quick-reference command appendix included
+
+### Current Session
+
+- Stopped at: Completed 40-02-PLAN.md (CODE_QUALITY_ISSUES.md count correction gap closure)
+- Timestamp: 2026-02-08T12:22:00Z
 
 ### Current State
 
-- ✅ Roadmap approved
-- ✅ 100% requirement coverage (4/4)
-- ✅ Success criteria defined (12 total, 4 per phase)
-- ✅ Ready for `/gsd-plan-phase 35`
+- ◆ Milestone v2.3 COMPLETE ✓
+- All 5 phases executed (38-42)
+- Documentation updated to reflect v2.2 implementation
+- ● Phase 38 (ARCHITECTURE.md Updates) complete
+- ● Phase 39 (PROTOCOL.md Creation) complete
+- ● Phase 40 (CODE_QUALITY Updates) complete (both plans executed)
+- ● Phase 42 (Cross-Reference Validation) complete (final phase)
 
 ### Next Actions
 
-1. Run `/gsd-plan-phase 35` to begin OT2 command implementation
-2. Execute phase plans sequentially (35 → 36 → 37)
-3. Complete all v2.2 requirements
+1. ~~Define v2.3 requirements~~ ✓
+2. ~~Create roadmap with phases~~ ✓
+3. ~~Execute Phase 38 (ARCHITECTURE.md Updates)~~ ✓
+4. ~~Execute Phase 39 (PROTOCOL.md Creation)~~ ✓
+5. ~~Execute Phase 40 (CODE_QUALITY Updates)~~ ✓
+6. ~~Plan Phase 41 (hardware.md Review)~~ ✓
+7. ~~Execute Phase 41 (/gsd-execute-phase 41)~~ ✓
+8. ~~Execute Phase 42 (/gsd-execute-phase 42)~~ ✓
+9. Start next milestone (/gsd-new-milestone)
 
 ## Blockers/Concerns
 
@@ -88,5 +102,6 @@ From research/SUMMARY.md:
 
 ---
 
-*Milestone v2.2 ready for planning (2026-02-07)*
-*Next: /gsd-plan-phase 35*
+*Milestone v2.3 completed: 2026-02-08*
+*See: .planning/milestones/v2.3-DOCUMENTATION_UPDATE.md for details*
+*Next: /gsd-new-milestone to start next milestone*
