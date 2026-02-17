@@ -1,6 +1,6 @@
 # Feature Research
 
-**Domain:** Artisan protocol edge-case fixes (embedded firmware)
+**Domain:** Embedded hardware reliability (SSR duty, FanController, async I/O)
 **Researched:** 2026-02-17
 **Confidence:** MEDIUM
 
@@ -12,10 +12,9 @@ Features users assume exist. Missing these = product feels incomplete.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| READ response terminates with single CRLF | Artisan expects a single line terminator per response; double CRLF creates blank lines and parsing issues | LOW | Ensure formatter outputs bare CSV; append one CRLF in transport layer only (USB CDC, UART, dual output). |
-| READ response stays 4-value CSV with one decimal | Current protocol spec uses 4-value CSV for READ and one-decimal precision | LOW | Keep `ET,BT,HEATER,FAN` with one decimal, no extra fields or embedded terminators. |
-| ROR becomes non-zero after second sample | ROR should reflect BT change over time, not stay at 0.00 once BT changes | MEDIUM | Update `last_bt` / history during formatting so delta_bt and ROR use fresh state; maintain `ROR` with two decimals in stream format. |
-| ROR resets when formatter resets | Start/stop cycles should not carry stale history | LOW | Reset `last_bt` and history on `reset()` and initial format call. |
+| SSR duty math tied to LEDC PWM | Heater control is driven by SSRs; users expect power level to follow commands precisely, or temperatures overshoot/undershoot | MEDIUM | Map Artisan duty requests to LEDC timers (freq+resolution) so 0‑100% maps to 0‑255 duty, then use PWM update cycle to avoid jitter. See ESP-IDF LEDC timing constraints for meaningful frequency/resolution choices. |
+| FanController LEDC updates | Fan speed adjustments must reach the hardware without jumps; fans tolerate steady PWM frequencies only | MEDIUM | Update the configured LEDC channel (timer 25 kHz/8-bit) any time FanController sees a new speed value; ensure `set_duty`/`update_duty` pairing is atomic so the PWM frequency stays constant. |
+| Non-blocking UART + USB I/O | Dual outputs already exist (USB CDC + UART multiplexer); blocking serial writes would stall command handling under load | HIGH | Install UART driver with event queues and keep USB CDC writes off the main control stack, borrowing the async UART task pattern from `peripherals/uart/uart_async_rxtxtasks`. |
 
 ### Differentiators (Competitive Advantage)
 
@@ -23,8 +22,9 @@ Features that set the product apart. Not required, but valuable.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Centralized line-termination policy | Prevents regressions across USB CDC, UART, and dual output paths | MEDIUM | Single function or boundary that appends CRLF; formatter and channel payloads stay terminator-free. |
-| Protocol-focused tests for CRLF + ROR | Faster verification of edge cases | MEDIUM | Add tests to assert exactly one CRLF at output boundary and non-zero ROR after BT changes. |
+| SSR duty validation loop | Detects mismatches between commanded and applied duty and recovers before temperature swings are visible | MEDIUM | Sample `current_duty` from the shared PWM state, compare to requested percentage, and re-issue LEDC updates until within tolerance; takes advantage of LEDC duty-resolution helpers to skip unsupported combo. |
+| LEDC fade-style fan ramps | Smooth fan transitions protect mechanical hardware and avoid audible noise spikes | MEDIUM | Use `ledc_set_fade`/`ledc_fade_start` when FanController requests large delta so the hardware interpolates; fall back to direct `set_duty` for small adjustments. |
+| Asynchronous I/O back-pressure handling | Keeps Artisan-formatting tests passing while avoiding dropped bytes even when serial output is busy | HIGH | Drive USB CDC and UART writers through RTOS-safe queues & callbacks instead of synchronous `write_bytes`; let transport tasks signal when FIFO drains so control tasks never await serial completions. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
@@ -32,29 +32,37 @@ Features that seem good but create problems.
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Embed CRLF in formatter output | “Make formatter output complete line” | Causes double CRLF when transport also appends terminator | Keep formatter pure; append CRLF in transport only. |
-| Restore legacy 7-value READ (time,ET,BT,ROR,Gas,...) | Some docs show legacy format | Breaks current spec and tests; incompatible with current parsing expectations | Keep 4-value CSV; document legacy as unsupported. |
-| Add ROR/time fields to READ response | “More telemetry in READ” | Changes protocol contract and can break Artisan expectations | Keep ROR in continuous stream only; READ remains 4 values. |
+| Polling delays between SSR adjustments | “Just wait and toggle the SSR again” | Blocks the control loop and still misses precise PWM timing, so temperature regulation oscillates | Update PWM duty once per control cycle with LEDC helpers; leverage LEDC timer resolution to respect frequency laws. |
+| Blocking UART/USB writes | “Simpler code; just write and wait” | Serial writes become serialization points that stall heating/fan tasks, leading to missed commands when Artisan floods the bus | Use interrupt-driven drivers with queues and event handlers so transport layers notify when ready. |
+| Excessive telemetry on UART while tuning | “More debug prints give confidence” | Floods UART/USB path, interferes with Artisan framing, and can corrupt commands | Emit telemetry only via dedicated debug channel or log level gating; keep operational command path minimal. |
 
 ## Feature Dependencies
 
 ```
-READ response single-CRLF
-    └──requires──> Output channel + transport writers (USB CDC, UART, dual output)
+SSR duty math
+    └──requires──> FanController LEDC timer config (25 kHz, 8-bit)
+                       └──requires──> LEDC global slow clock + duty resolution helpers
 
-ROR non-zero after second sample
-    └──requires──> BT sampling + formatter state (last_bt/history)
-                       └──requires──> control loop cadence (1s or fixed interval)
+FanController LEDC updates
+    └──requires──> GPIO pin (FAN_PWM_PIN) and LEDC channel ownership
 
-Protocol tests for CRLF + ROR
-    └──requires──> Host-friendly test harness + output channel visibility
+Non-blocking UART/USB I/O
+    └──requires──> uart_driver_install + USB CDC stack + dual-output multiplexer config
+
+LED fade-style ramp
+    └──enhances──> FanController LEDC updates
+
+Asynchronous transport queues
+    └──enhances──> Non-blocking UART/USB I/O
 ```
 
 ### Dependency Notes
 
-- **READ response single-CRLF requires output writers:** Terminator is appended in transport tasks, so the formatter must emit raw CSV only.
-- **ROR non-zero after second sample requires BT sampling:** Delta and history must update per format call to reflect temperature change.
-- **Protocol tests require harness visibility:** Tests should observe channel output or writer output to assert terminator behavior.
+- **SSR duty math requires LEDC timer config:** Duty updates only obey expected percentages when timers provide the frequency/resolution pair supported by the hardware (per LEDC doc). If the timer or clock source changes, the mapping must be recalculated.
+- **FanController LEDC updates need GPIO ownership:** The fan PWM pin must remain bound to a single LEDC channel; any reconfiguration (e.g., board variants without LEDC) means falling back to placeholder logic.
+- **Non-blocking I/O depends on driver install:** Both UART and USB CDC paths require event queues so that transport tasks can signal readiness without stopping the control/event loop.
+- **LED fade ramps enhance FanController updates:** Smoothing for large deltas reduces mechanical stress and audible noise without rewriting the base `set_duty` path.
+- **Async queues enhance blocking avoidance:** Queuing ensures that when one transport is busy (USB CDC with host unresponsive), the other channel and the control loop continue running.
 
 ## MVP Definition
 
@@ -62,32 +70,33 @@ Protocol tests for CRLF + ROR
 
 Minimum viable product — what's needed to validate the concept.
 
-- [ ] Single CRLF terminator for READ responses — fixes double-CRLF edge case
-- [ ] ROR updates correctly after BT changes — non-zero ROR once enough samples exist
-- [ ] Tests covering CRLF + ROR behaviors — prevents regression
+- [ ] SSR duty math mapped to LEDC timers — accurate 0–100% range with LEDC helper utilities
+- [ ] FanController LEDC updates for actual hardware fan control — harness existing LEDC channel and GPIO
+- [ ] Non-blocking UART + USB I/O transport tasks — driver event queues replace synchronous writes
 
 ### Add After Validation (v1.x)
 
 Features to add once core is working.
 
-- [ ] Centralized terminator utility — reduce code duplication and drift
-- [ ] Additional tests for dual output routing — verify channel-specific termination behavior
+- [ ] LEDC fade-based fan ramps for large deltas — use `ledc_set_fade` + callbacks when transitioning between extremes
+- [ ] SSR duty verification/guardrail task — monitor PWM state and re-issue updates when actual duty drifts
 
 ### Future Consideration (v2+)
 
 Features to defer until product-market fit is established.
 
-- [ ] Protocol fuzz tests for malformed command framing — useful, but out of scope for edge-case fixes
+- [ ] Telemetry channel that reports real‑time SSR duty vs Artisan commands — useful for field diagnostics but not required for control
+- [ ] Dynamic reconfiguration of PWM frequency per hardware variant — adds flexibility but complicates calibration across boards
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Single CRLF terminator for READ | HIGH | LOW | P1 |
-| ROR updates after BT changes | HIGH | MEDIUM | P1 |
-| Tests for CRLF + ROR | HIGH | MEDIUM | P1 |
-| Centralized terminator utility | MEDIUM | MEDIUM | P2 |
-| Dual output routing tests | MEDIUM | MEDIUM | P2 |
+| SSR duty math accuracy | HIGH | MEDIUM | P1 |
+| FanController LEDC updates | HIGH | MEDIUM | P1 |
+| Non-blocking UART/USB | HIGH | HIGH | P1 |
+| LEDC fade-style fan ramps | MEDIUM | MEDIUM | P2 |
+| SSR duty watchdog | MEDIUM | MEDIUM | P2 |
 
 **Priority key:**
 - P1: Must have for launch
@@ -98,17 +107,16 @@ Features to defer until product-market fit is established.
 
 | Feature | Competitor A | Competitor B | Our Approach |
 |---------|--------------|--------------|--------------|
-| READ terminator handling | N/A (protocol spec only) | N/A | Single CRLF at transport boundary |
-| ROR formatting | N/A (protocol spec only) | N/A | Two-decimal ROR in stream output only |
+| SSR duty control | Artisan host leaves SSR to controller with simple delays | Legacy roaster firmwares often use blocking timers and no smoothing | Map Artisan duty percentages to LEDC timers with helpers; keep PWM updates non-blocking and verify actual duty values. |
+| Fan speed PWM | Generic fans on USB controllers usually have fixed PWM frequency, causing noise when toggled | Raspberry Pi-based controllers toggle fans via GPIO without duty smoothing | Use LEDC with fixed 25 kHz/8-bit config plus optional fade helpers for smooth transitions. |
+| Serial transport behavior | Artisan USB driver is streaming but can block if host stalls | UART-only firmwares drop bytes when overrun due to poll loops | Install UART driver with event queues and drive USB CDC through asynchronous tasks so both paths stay responsive. |
 
 ## Sources
 
-- `internalDoc/PROTOCOL.md` (READ format, precision, protocol notes)
-- `src/output/artisan.rs` (ROR formatting, delta_bt/history usage, READ formatting)
-- `src/application/tasks.rs` (READ response wiring to output channel)
-- `src/hardware/usb_cdc/tasks.rs` (CRLF appended on USB CDC write)
-- `src/hardware/uart/tasks.rs` (CRLF appended on UART write)
+- ESP-IDF LED Control (LEDC) documentation, esp-idf v5.2: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/ledc.html
+- ESP-IDF UART driver overview (async queue pattern), esp-idf v5.2: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/uart.html
+- `src/hardware/fan.rs` (current FanController + LEDC wiring) for existing PWM configuration and placeholders
 
 ---
-*Feature research for: Artisan protocol edge-case fixes*
+*Feature research for: Embedded hardware reliability (SSR, fan, async serial)*
 *Researched: 2026-02-17*

@@ -1,6 +1,6 @@
 # Architecture Research
 
-**Domain:** Artisan protocol command/response handling in ESP32-C3 roaster firmware
+**Domain:** Embedded firmware reliability for LibreRoaster
 **Researched:** 2026-02-17
 **Confidence:** MEDIUM
 
@@ -9,160 +9,159 @@
 ### System Overview
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          Serial I/O Layer                              │
-├────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Serial Input │→ │ Parser      │→ │ Multiplexer │→ │ ArtisanInput │  │
-│  └──────────────┘  └─────────────┘  └──────────────┘  └──────────────┘  │
-├────────────────────────────────────────────────────────────────────────┤
-│                         Command/Control Layer                          │
-├────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────┐  ┌────────────────────────────────┐  │
-│  │ RoasterControl               │→ │ ArtisanCommandHandler           │  │
-│  │ (system status snapshot)     │  │ (interprets Artisan commands)   │  │
-│  └──────────────────────────────┘  └────────────────────────────────┘  │
-├────────────────────────────────────────────────────────────────────────┤
-│                          Formatting/Output Layer                       │
-│  ┌──────────────────────────────────────┐  ┌────────────────────────┐  │
-│  │ ArtisanFormatter                      │→ │ Serial Output          │  │
-│  │ (READ CSV, ROR/delta state)          │  │ (terminator correctness)│  │
-│  └──────────────────────────────────────┘  └────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       Execution Layer                        │
+├─────────────────────────────────────────────────────────────┤
+│  ┌────────────┐  ┌────────────┐  ┌──────────────┐  ┌──────┐│
+│  │ Control    │  │ Command    │  │ Output       │  │ Fans ││
+│  │ Tasks      │  │ Multiplexer│  │ Formatter    │  │ /Heats││
+│  └────┬───────┘  └────┬───────┘  └────┬────────┘  └──┬───┘│
+│       │              │              │              │      │
+├───────┴──────────────┴──────────────┴──────────────┴──────┤
+│                       Async Runtime Layer                   │
+├─────────────────────────────────────────────────────────────┤
+│  ┌───────────────────────────┐  ┌────────────────────────┐ │
+│  │ Embassy Executor (async) │  │ Shared State Snapshots │ │
+│  └───────────────────────────┘  └────────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                       Hardware Layer                        │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────┐         │
+│  │ SSR PWM    │  │ LEDC Timer │  │ USB/UART DMA │         │
+│  └────────────┘  └────────────┘  └──────────────┘         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Responsibilities
 
 | Component | Responsibility | Typical Implementation |
 |-----------|----------------|------------------------|
-| Serial Input | Receives bytes, frames lines | UART task + line buffer |
-| Parser | Converts ASCII to ArtisanCommand | tokenization + enum mapping |
-| Multiplexer | Routes commands to correct channel/task | channel send + filter/units handling |
-| ArtisanInput Task | Feeds command pipeline | queue reader + dispatch |
-| RoasterControl | Owns system status snapshot | state struct + control loop |
-| ArtisanCommandHandler | Applies commands to control/state | handler match + update state |
-| ArtisanFormatter | Builds READ response CSV + derived metrics | stateful formatter |
-| Serial Output | Writes response with correct terminator | UART write + flush |
+| Embassy Executor / CONTROL Tasks | Drive asynchronous sequences (SSR ramp, fan/ heater loops, telemetry) | `embassy::executor::Spawner` launching future-based tasks per controller with soft priorities |
+| Command Multiplexer | Buffer and serialize command outputs (USB/UART) | Shared queue + `Arc<Mutex<_>>` guard, sends to formatter trait implementations |
+| Formatter + Output Manager | Enforce CRLF, detect blocking I/O, emit status to USB/UART | trait `ArtisanFormatter` with `fmt::Write`-like API wrapping DMA transfers and `FormatterState` |
+| FanController / HeaterController | Interface hardware (LEDC, SSR) and publish telemetry snapshots | Controllers hold `Arc<Mutex<ControllerState>>` taking ingress from runtime tasks |
+| Shared State Snapshots | Provide consistent views for logging/telemetry without blocking (via `Arc<Mutex<_>>` clones) | Periodic `Arc::clone` with `Mutex` to share sensor/command states safely |
+| Hardware Drivers (LEDC, PWM, DMA) | Physical actuation and non-blocking I/O | `esp-hal` peripherals configured via embassy timers and DMA channels |
 
 ## Recommended Project Structure
 
 ```
 src/
-├── input/                 # Serial ingest + parsing
-│   ├── parser.rs          # Artisan command parsing
-│   └── multiplexer.rs     # Channel routing
-├── control/               # Control loop + handlers
-│   ├── roaster_refactored.rs  # status snapshot + dispatch
-│   └── handlers.rs        # ArtisanCommandHandler
-├── output/                # Protocol formatting
-│   └── artisan.rs         # READ response + ROR/delta metrics
-├── tasks/                 # RTOS tasks
-│   └── artisan_input.rs   # channel reader
-└── tests/                 # unit/integration tests
-    └── artisan_protocol.rs
+├── control/              # CONTROL task definitions and mission logic
+│   ├── ssr/              # SSR duty scheduler + reliability guards
+│   ├── fan/              # FanController task (LEDC updates)
+│   └── io/               # USB/UART output coordination + non-blocking loops
+├── state/                # Shared controller snapshots and telemetry buffers
+├── hardware/             # HAL wrappers: LEDC, PWM, DMA, analog sensors
+├── output/               # Formatter + command multiplexer abstractions
+└── main.rs               # Entrypoint wiring embassy executor and controllers
 ```
 
 ### Structure Rationale
 
-- **input/:** parser and multiplexer are the earliest integration points for command correctness.
-- **control/:** status updates must be centralized to keep READ responses consistent.
-- **output/:** terminator correctness and derived metrics belong in formatter.
+- **control/**: keeps hardware orchestration separate per subsystem (SSR, fan, output) so dependencies (timers, DMA) can be mocked or swapped independently.
+- **state/**: isolating snapshot management reduces contention and makes it explicit how non-blocking tasks read/write controller state.
+- **hardware/**: central place for HAL-specific wiring ensures new reliability fixes (timer precision, LEDC reconfiguration) stay close to peripheral configuration.
+- **output/**: keeps USB/UART formatting, multiplexing, and non-blocking DMA loops isolated for easier verification when enforcing CRLF or concurrency guarantees.
 
 ## Architectural Patterns
 
-### Pattern 1: Single-Source Formatter Policy
+### Pattern 1: Embassy-driven control loops
 
-**What:** One formatter owns CSV shape, units, and line termination.
-**When to use:** Protocol responses must be consistent across tasks.
-**Trade-offs:** Adds state to formatter; tests must validate both values and terminator.
-
-**Example:**
-```rust
-// Pseudocode
-fn format_read_response(status: &SystemStatus) -> String {
-    let csv = format!("{:.1},{:.1},{:.1},{:.1}", et, bt, fan, heater);
-    format!("{}\r\n", csv)
-}
-```
-
-### Pattern 2: Derived-Metric State in Formatter
-
-**What:** ROR/delta metrics are computed in formatter from prior samples.
-**When to use:** Derived metrics are output-only and should not affect control logic.
-**Trade-offs:** Requires explicit update cadence and tests for first-sample behavior.
+**What:** Each subsystem (SSR, fan, heater) runs as an async loop spawned by Embassy, scheduling hardware updates while yielding to others through `embassy::time::Timer`.
+**When to use:** when the system needs soft-real-time coordination across peripherals without blocking the executor.
+**Trade-offs:** non-blocking but still monotonic, requires careful state synchronization via `Arc<Mutex<_>>`.
 
 **Example:**
 ```rust
-// Pseudocode
-fn update_delta_bt(&mut self, bt: f32, now_ms: u64) {
-    let dt = now_ms - self.last_bt_ms;
-    self.delta_bt = if dt > 0 { (bt - self.last_bt) / dt as f32 } else { 0.0 };
-}
+embassy::executor::Spawner::new().spawn(async move {
+    let mut interval = Timer::interval(Duration::from_millis(50));
+    loop {
+        interval.next().await;
+        let duty = ssr_scheduler.next_duty();
+        pwm.set_duty(duty);
+        // snapshot is landed for telemetry
+    }
+})?;
 ```
 
-### Pattern 3: Snapshot-Then-Format
+### Pattern 2: Command multiplexer + formatter trait
 
-**What:** READ uses a single status snapshot to avoid mixed-timestamp fields.
-**When to use:** Commands return multi-field telemetry.
-**Trade-offs:** Requires explicit snapshot creation in RoasterControl or handler.
+**What:** Encapsulate USB and UART endpoints behind a trait that enforces identical output format (CRLF) and buffers to avoid blocking.
+**When to use:** when output channels share logical commands but have different physical constraints.
+**Trade-offs:** adds indirection but isolates DMA setup from business logic and allows injecting non-blocking wrappers for reliability fixes.
+
+**Example:**
+```rust
+trait ArtisanFormatter {
+    fn write(&mut self, cmd: &str);
+}
+
+struct UsbFormatter { dma: UsbDma, buffer: String }
+// ensures CLI command + telemetry happen via DMA transfers when idle
+```
+
+### Pattern 3: Snapshot-based shared state
+
+**What:** Controllers expose `Arc<Mutex<ControllerState>>`, tasks clone handles for reads/writes, so output or telemetry tasks operate on consistent views without long-held locks.
+**When to use:** when multiple async tasks need to read sensor values or actuator states simultaneously.
+**Trade-offs:** adds cloning overhead and stale reads if not refreshed, but avoids deadlocks.
 
 ## Data Flow
 
-### Request Flow (READ)
+### Request Flow
 
 ```
-READ command
+[Hardware sensor / scheduler input]
     ↓
-Parser → Multiplexer → ArtisanInput Task
+[Control task] → [State snapshot] → [Hardware driver (SSR/LEDC)]
+    ↓                               ↓
+[Command multiplexer] ←────────────┘
     ↓
-RoasterControl updates status snapshot
-    ↓
-ArtisanFormatter formats CSV + terminator
-    ↓
-Serial Output writes bytes
+[USB/UART DMA] → user / logging
 ```
 
 ### State Management
 
 ```
-SystemStatus snapshot
-    ↓ (read)
-ArtisanFormatter ←→ ROR/Delta state cache
-    ↓ (format)
-READ response string
+[ControllerState Arc<Mutex<_>>]
+     ↓ (lock per tick, clone handles to tasks)
+[Control Tasks (SSR, fan, heater)]
+     ↕
+[Output Task (formatter handles USB/UART concurrently)]
 ```
 
 ### Key Data Flows
 
-1. **READ response:** snapshot → formatter → CRLF-terminated CSV
-2. **Delta/ROR update:** status temperatures → formatter cache → derived values in output
+1. **SSR duty control:** CONTROL task updates duty scheduler → persists new duty in shared snapshot → PWM driver consumes duty on timer tick → telemetry watchdog revalidates actual SSR state for reliability.
+2. **Fan LEDC updates:** FanController obtains LEDC timer handle from hardware module, applies new brightness while also writing into snapshot so formatter can expose accurate state via logs.
+3. **Non-blocking I/O:** Command multiplexer aggregates strings, passes through `ArtisanFormatter` implementations that issue DMA writes; completion futures feed back readiness and optionally unblock CONTROL tasks waiting on ack.
 
 ## Scaling Considerations
 
 | Scale | Architecture Adjustments |
 |-------|--------------------------|
-| Single device | Current pipeline is sufficient |
-| Multiple devices | Extract per-device formatter state |
-| High-rate sampling | Decouple sample tick from READ commands |
+| 0-1 controllers | Current monolithic async executor with shared state is adequate; focus on reliability fixes rather than partitioning. |
+| 2-4 controllers | Ensure additional controllers (fans, heaters) reuse the shared snapshot pattern and keep new tasks low priority to avoid starving telemetry. |
+| 5+ controllers | Introduce executor priorities/affinity so reliability-critical loops (SSR duty, I/O) outrank new features; consider offloading telemetry formatting to dedicated low-priority tasks. |
 
 ### Scaling Priorities
 
-1. **First bottleneck:** formatter state drift if updates only on READ; fix by sampling cadence.
-2. **Second bottleneck:** inconsistent terminator when multiple outputs; fix by single formatter policy.
+1. **First bottleneck:** Blocking USB/UART writes — mitigate by confirming DMA-based non-blocking wrappers before adding more telemetry.
+2. **Second bottleneck:** SSR duty accuracy under load — guard with watchdog verifying duty vs hardware register after each update.
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Terminator Logic Split Across Tasks
+### Anti-Pattern 1: Blocking write in CONTROL task
 
-**What people do:** Append `\n` in formatter but `\r\n` in output task.
-**Why it's wrong:** Creates inconsistent framing and READ parsing failures.
-**Do this instead:** Keep terminator policy in `ArtisanFormatter` only.
+**What people do:** Directly drive `usb.write()` from CONTROL task, waiting for completion before proceeding.
+**Why it's wrong:** A stalled USB endpoint blocks the entire executor, sacrificing SSR duty accuracy and fan updates.
+**Do this instead:** Push formatted strings into the command multiplexer and use DMA-backed output futures; only yield to CONTROL after non-blocking confirmation.
 
-### Anti-Pattern 2: ROR/delta Computed in Control Loop
+### Anti-Pattern 2: Updating hardware and state in separate locks
 
-**What people do:** Update delta/ROR inside control logic alongside PID.
-**Why it's wrong:** Derived metrics leak into control responsibilities.
-**Do this instead:** Compute in formatter using status snapshot inputs.
+**What people do:** Write to controller state snapshot and hardware driver under different mutexes without order.
+**Why it's wrong:** Can lead to telemetry reporting stale SSR duty or LEDC brightness, undermining reliability.
+**Do this instead:** Bundle hardware write + snapshot update inside the CONTROL task’s tick loop, holding a single mutex briefly before releasing.
 
 ## Integration Points
 
@@ -170,41 +169,41 @@ READ response string
 
 | Service | Integration Pattern | Notes |
 |---------|---------------------|-------|
-| Artisan (host app) | ASCII serial protocol | Requires exact terminator and field order |
+| USB CDC, UART | DMA-backed non-blocking writer | Formatter enforces CRLF and exposes ready state so CONTROL tasks do not block while command multiplexer drains queues. |
+| LEDC/SSR hardware | `esp-hal` PWM via embassy timers | Controllers reconfigure timers through `FanController` and new SSR duty scheduler ensuring accurate duty cycle transitions. |
 
 ### Internal Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| Parser ↔ Multiplexer | enum + channel | Ensure READ path preserved for response triggering |
-| RoasterControl ↔ ArtisanCommandHandler | direct call | READ should update status snapshot only |
-| RoasterControl ↔ ArtisanFormatter | status snapshot | Single snapshot per READ |
-| ArtisanFormatter ↔ Serial Output | formatted string | Formatter owns terminator policy |
+| Control tasks ↔ Shared snapshots | `Arc<Mutex<ControllerState>>` clones | New reliability fixes keep SSR duty + LEDC settings synchronized before releasing lock. |
+| Command multiplexer ↔ Formatter trait | Async queue + DMA futures | Non-blocking I/O changes require the formatter to acknowledge completion before CONTROL tasks assume the message cleared. |
+| FanController ↔ LEDC hardware module | Interface exposing `set_brightness(duty)` | LEDC update now includes notification back to the controller state to confirm hardware acknowledgement. |
 
-## Integration Points for Edge-Case Fixes
+## New Components Needed
 
-### READ Response Terminator Correctness
+- **SSR Duty Reliability Scheduler:** abstraction that tracks target vs actual duty, exposes a simple API for CONTROL tasks to request updates, and signals when hardware register interplay requires retries.
+- **Non-blocking Output Driver:** wraps DMA/USB/UART writes in futures, exposes readiness to the command multiplexer so new hardware reliability fixes never block on slow endpoints.
+- **FanController LEDC Monitor:** extends the existing controller to verify LEDC updates succeed (via timer compare match) and publishes fail-safe status to shared snapshots.
 
-- **Where change lives:** `src/output/artisan.rs` (formatter) and tests.
-- **Integration point:** Formatter returns CRLF-terminated string; Serial Output sends as-is.
-- **Data flow change:** None, but enforce single source of truth for terminator.
+## Data Flow Changes
 
-### delta_bt / ROR State Update Behavior
-
-- **Where change lives:** `src/output/artisan.rs` (formatter state), optional helper in `control/` if snapshot timing needs to be centralized.
-- **Integration point:** Formatter updates derived metrics on each READ (or on sample tick if available), using the same status snapshot used for formatting.
-- **Data flow change:** Add explicit formatter update call before format if not already done.
+- SSR duty updates now pass through the reliability scheduler before reaching PWM hardware, ensuring the multiplier is clamped and retried if lost.
+- LEDC modifications include a confirmation step: after issuing a write, the monitor reads back timer state or uses callback to confirm the duty was accepted before publishing to telemetry.
+- Output flow now includes readiness futures so CONTROL tasks can enqueue messages and continue logic while DMA drains them asynchronously.
 
 ## Suggested Build Order
 
-1. **Define formatter contract:** Update formatter to own terminator and add tests for CRLF.
-2. **Stabilize delta/ROR update timing:** Ensure formatter updates derived metrics with a consistent cadence.
-3. **Wire integration tests:** End-to-end READ response includes correct terminator and stable ROR/delta.
+1. **Stabilize shared infrastructure:** extend `Arc<Mutex<_>>` snapshots and command multiplexer so they expose hooks for non-blocking drains and reliability status.
+2. **SSR reliability layer:** introduce duty scheduler/watcher, update CONTROL task loops to fold in scheduler, and verify telemetry publishes accurate duty.
+3. **FanController LEDC updates:** implement monitor, ensure new LEDC APIs feed back into snapshots, and align with PWM hardware wiring.
+4. **Non-blocking I/O:** rework formatter implementations to rely on DMA futures, update command multiplexer to await readiness, and ensure CONTROL tasks enqueue rather than blocking.
 
 ## Sources
 
-- LibreRoaster pipeline description from milestone context (unverified, no codebase review)
+- Project context describing Embassy executor, shared snapshots, and controllers (provided by orchestrator). 
+- Inferred constraints from ESP32-C3 + esp-hal usage (no external docs consulted).
 
 ---
-*Architecture research for: Artisan protocol edge-case fixes*  
+*Architecture research for: Hardware reliability fixes on LibreRoaster* 
 *Researched: 2026-02-17*
