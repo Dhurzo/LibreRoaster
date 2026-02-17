@@ -76,6 +76,14 @@ impl ArtisanFormatter {
     fn format_artisan_line(time_str: &str, et: f32, bt: f32, ror: f32, gas: f32) -> String {
         format!("{},{:.1},{:.1},{:.2},{:.1}", time_str, et, bt, ror, gas)
     }
+
+    fn normalize_read_value(value: f32) -> f32 {
+        if value.is_finite() {
+            value
+        } else {
+            0.0
+        }
+    }
 }
 
 impl OutputFormatter for ArtisanFormatter {
@@ -99,23 +107,31 @@ impl OutputFormatter for ArtisanFormatter {
 
 impl ArtisanFormatter {
     pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(fan_speed);
         format!(
             "{:.1},{:.1},{:.1},{:.1}",
-            status.env_temp,   // ET
-            status.bean_temp,  // BT
-            status.ssr_output, // Power (heater)
-            fan_speed          // Fan
+            et,     // ET
+            bt,     // BT
+            heater, // Power (heater)
+            fan     // Fan
         )
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> String {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(status.fan_output);
         // 4-value format: ET, BT, HEATER, FAN
         format!(
             "{:.1},{:.1},{:.1},{:.1}",
-            status.env_temp,   // ET
-            status.bean_temp,  // BT
-            status.ssr_output, // Heater
-            status.fan_output  // Fan
+            et,     // ET
+            bt,     // BT
+            heater, // Heater
+            fan     // Fan
         )
     }
 
@@ -157,9 +173,6 @@ impl MutableArtisanFormatter {
         let bt = status.bean_temp;
         let gas = status.ssr_output; // SSR output as gas control
 
-        let _delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
-        self.last_bt = bt;
-
         let ror = self.calculate_ror(bt);
 
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
@@ -169,6 +182,18 @@ impl MutableArtisanFormatter {
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
+        if self.last_bt == 0.0 {
+            self.last_bt = current_bt;
+            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+            return 0.0;
+        }
+
+        if current_bt == self.last_bt {
+            self.last_bt = current_bt;
+            return 0.0;
+        }
+
+        self.last_bt = current_bt;
         ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
         ArtisanFormatter::compute_ror_from_history(&self.bt_history)
     }
@@ -216,12 +241,25 @@ mod tests {
     #[test]
     fn test_format_read_response_out_of_range_values() {
         let mut status = create_test_status();
-        status.ssr_output = 123.45;
+        status.ssr_output = 123.46;
         let fan_speed = -7.6;
 
         let output = ArtisanFormatter::format_read_response(&status, fan_speed);
 
         assert_eq!(output, "120.3,150.5,123.5,-7.6");
+        assert_eq!(output.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_read_response_invalid_values() {
+        let mut status = create_test_status();
+        status.env_temp = f32::NAN;
+        status.ssr_output = f32::INFINITY;
+        let fan_speed = 25.0;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "0.0,150.5,0.0,25.0");
         assert_eq!(output.split(',').count(), 4);
     }
 
@@ -387,6 +425,18 @@ mod tests {
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
         assert_eq!(parts[2], "80.0", "Heater should use ssr_output");
         assert_eq!(parts[3], "60.0", "Fan should use fan_output");
+    }
+
+    #[test]
+    fn test_format_read_response_full_invalid_values() {
+        let mut status = create_test_status();
+        status.bean_temp = f32::NEG_INFINITY;
+        status.fan_output = f32::NAN;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        assert_eq!(response, "120.3,0.0,75.0,0.0");
+        assert_eq!(response.split(',').count(), 4);
     }
 
     #[test]

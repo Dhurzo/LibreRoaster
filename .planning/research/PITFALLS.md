@@ -1,549 +1,209 @@
-# Domain Pitfalls: Artisan Command Parsing for ESP32-C3
+# Pitfalls Research
 
-**Project:** LibreRoaster - ESP32-C3 Coffee Roaster Firmware
-**Research Date:** February 7, 2026
-**Domain:** Artisan Protocol Implementation (OT2, READ, UNITS commands)
-**Confidence Level:** MEDIUM - Based on community forum discussions, GitHub issues, and firmware documentation analysis
-
----
-
-## Executive Summary
-
-This document catalogs common pitfalls encountered when adding OT2 (fan control), READ (telemetry), and UNITS (temperature scale) commands to an existing ESP32-C3 Artisan protocol implementation. The research draws from community experiences with TC4-shield implementations, Artisan software discussions, and ESP32-C3 serial communication documentation. These pitfalls span command parsing, serial timing, temperature conversion accuracy, fan control smoothness, and state management.
-
----
+**Domain:** Embedded Artisan-like serial protocol fixes (READ terminators, delta_bt/ROR state)
+**Researched:** 2026-02-17
+**Confidence:** MEDIUM
 
 ## Critical Pitfalls
 
-### Pitfall 1: OT2 Fan Command Parsing Edge Cases
+### Pitfall 1: Terminator mismatch (CR/LF, missing EOL)
 
-**What Goes Wrong:**
-Fan speed commands fail to parse correctly when receiving unexpected input formats, causing the fan to remain at previous speed or default to 0%.
+**What goes wrong:**
+READ responses end with the wrong terminator (LF vs CRLF) or omit the terminator on some frames, causing Artisan to hang, skip frames, or mis-parse fields.
 
-**Why It Happens:**
-- Artisan sends OT2 commands with various delimiter formats (comma, space, semicolon, equals sign) that must all be handled
-- The first five characters of the command name are significant per Artisan spec, but implementations often assume exact matching
-- Fan speed values may arrive as integers (0-100) or floating point percentages requiring normalization
+**Why it happens:**
+The firmware formats strings in multiple places, or a buffer path trims or appends terminators inconsistently.
 
-**Consequences:**
-- Fan unresponsive to Artisan control commands
-- Unexpected fan behavior during roast profiles
-- Potential safety hazard if fan fails during high-temperature phases
+**How to avoid:**
+Define one canonical formatter for READ responses, including terminator, and unit-test the exact bytes. Add a golden-file test for CRLF/LF correctness.
 
-**Prevention:**
-```rust
-// Parse OT2 command with multiple delimiter support
-fn parse_ot2_command(input: &str) -> Result<u8, ParseError> {
-    // Normalize command by removing whitespace and handling delimiters
-    let normalized = input.trim();
-    
-    // Split on any supported delimiter
-    let parts: Vec<&str> = normalized
-        .split(|c| c == ',' || c == ' ' || c == ';' || c == '=')
-        .collect();
-    
-    // Extract and validate fan speed value
-    if parts.len() < 2 {
-        return Err(ParseError::InvalidFormat);
-    }
-    
-    let speed_str = parts[1].trim();
-    let speed: u8 = speed_str
-        .parse()
-        .map_err(|_| ParseError::InvalidValue)?;
-    
-    // Clamp to valid range
-    Ok(speed.clamp(0, 100))
-}
-```
+**Warning signs:**
+Host shows intermittent “No data” or “timeout,” but serial logs show data; packet captures reveal lines without the expected EOL.
 
-**Detection:**
-- Monitor parsed command success/failure rates during Artisan connection
-- Log malformed commands for debugging
-- Test with Artisan's command logger to verify format expectations
-
-**Phase to Address:** **Command Implementation Phase** - Add comprehensive parsing with error recovery
+**Phase to address:**
+Phase 1: Protocol contract + tests.
 
 ---
 
-### Pitfall 2: READ Command Response Format Mismatch
+### Pitfall 2: Terminator split or truncation across writes
 
-**What Goes Wrong:**
-Artisan fails to recognize temperature data due to incorrect response formatting, showing "uu" or stale readings.
+**What goes wrong:**
+The terminator is split across multiple writes or dropped due to buffer pressure, causing the host parser to stall until the next frame.
 
-**Why It Happens:**
-- Response format must exactly match: `READ,ET,BT,FAN,HEATER` with values separated by commas
-- Missing or extra delimiters cause parsing failures
-- Line ending expectations vary between Artisan versions (\r\n vs \n)
-- Response rate must align with Artisan's sampling interval
+**Why it happens:**
+Serial writes are chunked or non-blocking; ring buffer overflow drops tail bytes under load.
 
-**Consequences:**
-- Artisan shows "uu" (unavailable) for temperature channels
-- Temperature graphs fail to update
-- Roast profile data collection stops
+**How to avoid:**
+Write READ frames atomically when possible, or ensure write loop drains the entire buffer. Add tests simulating buffer limits.
 
-**Prevention:**
-```rust
-// Verify READ response format matches Artisan expectations
-fn format_read_response(et: f32, bt: f32, fan: u8, heater: u8) -> String {
-    format!("READ,{},{},{},{}\r\n", et, bt, fan, heater)
-}
+**Warning signs:**
+The last two bytes of frames are missing or delayed; decoding succeeds only every N frames.
 
-// Ensure consistent decimal precision (typically 1 decimal place)
-fn format_temperature(temp: f32) -> String {
-    format!("{:.1}", temp)
-}
-```
-
-**Critical Note:** The TC4-shield reference implementations show Artisan expects exactly this format. Deviation causes connection failures.
-
-**Detection:**
-- Capture serial traffic during Artisan connection to verify response format
-- Compare against known-working implementations
-- Monitor Artisan's connection status and channel indicators
-
-**Phase to Address:** **Telemetry Implementation Phase** - Validate response format with Artisan during integration testing
+**Phase to address:**
+Phase 2: Firmware implementation + serial IO tests.
 
 ---
 
-### Pitfall 3: Temperature Unit Conversion Accuracy
+### Pitfall 3: delta_bt/ROR computed from stale or out-of-order samples
 
-**What Goes Wrong:**
-UNITS command changes temperature scale but internal calculations or historical data don't convert correctly, causing profile inconsistencies.
+**What goes wrong:**
+delta_bt/ROR spikes or lags because the computation uses old BT values or the order of updates is reversed.
 
-**Why It Happens:**
-- Converting between Celsius and Fahrenheit requires precise formula: F = (C × 9/5) + 32
-- Rounding errors compound over multiple conversions
-- Historical roast data may not convert properly when switching units mid-session
-- Rate of rise (ROR) calculations fail when units change
+**Why it happens:**
+BT update and ROR update happen in separate tasks/ISR paths; timestamping is inconsistent.
 
-**Consequences:**
-- Inconsistent temperature readings between sessions
-- Incorrect first crack or development time references
-- Profile comparisons become meaningless across unit changes
+**How to avoid:**
+Centralize sampling and delta computation in a single time-step function that updates BT then ROR in a defined order. Store last-sample time and value together.
 
-**Prevention:**
-```rust
-// Use precise conversion with controlled rounding
-fn celsius_to_fahrenheit(c: f32) -> f32 {
-    (c * 9.0 / 5.0) + 32.0
-}
+**Warning signs:**
+ROR is non-zero during steady temperature; spikes at every other sample; ROR changes even when BT stays constant.
 
-fn fahrenheit_to_celsius(f: f32) -> f32 {
-    (f - 32.0) * 5.0 / 9.0
-}
-
-// Store all temperatures internally in a canonical unit (Celsius)
-// Convert only when responding to READ commands based on current UNITS state
-struct TemperatureState {
-    canonical_temp: f32,  // Always stored in Celsius
-    current_units: Units,  // Celsius or Fahrenheit
-}
-
-impl TemperatureState {
-    fn get_reading(&self) -> f32 {
-        match self.current_units {
-            Units::Celsius => self.canonical_temp,
-            Units::Fahrenheit => celsius_to_fahrenheit(self.canonical_temp),
-        }
-    }
-}
-```
-
-**Critical Note:** Community discussions reveal Fahrenheit conversion bugs are among the most reported Artisan integration issues, particularly with Skywalker roasters.
-
-**Phase to Address:** **UNITS Command Phase** - Implement canonical storage and consistent conversion
+**Phase to address:**
+Phase 2: Firmware implementation with unit tests for sample sequences.
 
 ---
 
-### Pitfall 4: ESP32-C3 UART Serial Timing Issues
+### Pitfall 4: State not reset across START/STOP or roast transitions
 
-**What Goes Wrong:**
-Serial communication becomes unreliable at higher baud rates or under load, causing dropped commands and corrupted responses.
+**What goes wrong:**
+delta_bt/ROR carry over from the previous roast, causing a big initial spike or incorrect negatives after reset.
 
-**Why It Happens:**
-- ESP32-C3 has documented UART frame error issues at higher baud rates
-- USB CDC serial on ESP32-C3 can stop responding under high traffic
-- Artisan polls at specific intervals that may conflict with firmware processing timing
-- Asynchronous embassy-rs framework may produce responses faster than Artisan expects
+**Why it happens:**
+State variables persist across protocol state changes and are not reset when a new roast begins.
 
-**Consequences:**
-- Intermittent Artisan connection failures
-- Data corruption in temperature readings
-- Fan/heater commands execute incorrectly or not at all
+**How to avoid:**
+Define explicit state transitions and reset delta/ROR accumulator on START, STOP, or ROAST_END. Add tests for transition sequences.
 
-**Prevention:**
-```rust
-// Use conservative baud rate (115200 is standard for Artisan)
-let uart_config = Config::new()
-    .baud_rate(Parity::NONE, BaudRate::Baud115200)
-    .stop_bits(StopBits::STOP1)
-    .data_bits(DataBits::Data8);
+**Warning signs:**
+First frame after START shows a large ROR; restarting the host without power-cycle produces invalid deltas.
 
-// Implement response timing to match Artisan expectations
-// Artisan typically expects responses within 50-100ms of command receipt
-
-// Add small delay if needed to prevent overwhelming Artisan
-// WARNING: Excessive delays cause timeout failures
-fn response_delay() {
-    embassy_time::Timer::after_millis(10).await;
-}
-```
-
-**Critical Note:** ESP32-C3 GitHub issues document USB CDC serial freezing under sustained high-traffic scenarios common during active roasting.
-
-**Phase to Address:** **Serial Communication Phase** - Test under realistic roast load conditions
+**Phase to address:**
+Phase 1: Protocol contract + tests; Phase 2: Implementation.
 
 ---
 
-### Pitfall 5: Fan Speed Control Smoothness
+### Pitfall 5: Unit/scale mismatch for delta_bt/ROR
 
-**What Goes Wrong:**
-Fan speed changes abruptly, causing airflow fluctuations that affect roast development and temperature stability.
+**What goes wrong:**
+ROR is scaled incorrectly (per-second vs per-minute), or integer division truncates values, producing flat or extreme ROR.
 
-**Why It Happens:**
-- Direct PWM changes without ramp-up/down cause mechanical stress
-- Fan doesn't respond linearly to PWM values
-- Large step changes in fan speed affect bean agitation unexpectedly
-- Artisan may send rapid successive fan commands during profile execution
+**Why it happens:**
+Mismatch between sampling interval and calculation formula, or inconsistent units across modules.
 
-**Consequences:**
-- Inconsistent roast profiles
-- Mechanical wear on fan assembly
-- Temperature instability during critical roast phases
+**How to avoid:**
+Document the units (e.g., degrees/minute). Use fixed-point or float consistently. Add tests with known input/output pairs.
 
-**Prevention:**
-```rust
-// Implement fan speed ramping for smooth transitions
-const FAN_RAMP_STEP: u8 = 5;  // Maximum step per update
-const FAN_RAMP_INTERVAL_MS: u64 = 100;  // Update interval
+**Warning signs:**
+ROR values are near zero for typical roasts or 60x larger than expected; changes when sampling interval changes.
 
-async fn set_fan_speed_ramped(target: u8, current: &mut u8) {
-    while *current != target {
-        let step = if target > *current {
-            (target - *current).min(FAN_RAMP_STEP)
-        } else {
-            (*current - target).min(FAN_RAMP_STEP)
-        };
-        *current += step;
-        set_fan_pwm(*current);
-        Timer::after_millis(FAN_RAMP_INTERVAL_MS).await;
-    }
-}
-
-// Alternative: Use Artisan's built-in fan ramp if available
-// Configure fan slider to use gradual transitions in Artisan settings
-```
-
-**Phase to Address:** **Fan Control Phase** - Implement smooth transitions before integration testing
+**Phase to address:**
+Phase 1: Protocol contract + tests.
 
 ---
 
-### Pitfall 6: OT1/OT2 Channel Multiplexing Conflicts
+### Pitfall 6: Concurrency races between sampling and formatting
 
-**What Goes Wrong:**
-OT1 (heater) and OT2 (fan) commands interfere with each other, or Artisan commands target wrong output channel.
+**What goes wrong:**
+READ response shows mixed values from different timestamps, or delta/ROR is computed mid-update.
 
-**Why It Happens:**
-- Both use similar command structures but different channels
-- Artisan configuration may map channels incorrectly
-- Internal state machine conflicts when both outputs active simultaneously
-- PWM channels may share hardware resources on ESP32-C3
+**Why it happens:**
+Sampling updates BT and delta in ISR or separate task while formatter reads without locks.
 
-**Consequences:**
-- Heater responds to fan commands or vice versa
-- Both outputs activate simultaneously causing thermal runaway
-- Artisan shows incorrect feedback for channel states
+**How to avoid:**
+Use a snapshot struct or critical section when copying values for serialization. Prefer single-writer, multi-reader patterns.
 
-**Prevention:**
-```rust
-// Explicit channel separation in command handler
-enum OutputChannel {
-    Heater,  // OT1
-    Fan,     // OT2
-}
+**Warning signs:**
+Occasional impossible combinations (e.g., ROR sign flips with unchanged BT) or non-deterministic test failures.
 
-struct OutputControl {
-    heater_pwm: u8,
-    fan_pwm: u8,
-}
+**Phase to address:**
+Phase 2: Firmware implementation + concurrency tests.
 
-impl OutputControl {
-    fn handle_ot_command(channel: OutputChannel, value: u8) {
-        match channel {
-            OutputChannel::Heater => {
-                // Validate heater limits
-                let safe_value = value.clamp(0, 100);
-                self.heater_pwm = safe_value;
-                self.update_heater_pwm();
-            }
-            OutputChannel::Fan => {
-                let safe_value = value.clamp(0, 100);
-                self.fan_pwm = safe_value;
-                self.update_fan_pwm();
-            }
-        }
-    }
-}
-```
+## Technical Debt Patterns
 
-**Phase to Address:** **Channel Integration Phase** - Verify channel isolation before testing with Artisan
+Shortcuts that seem reasonable but create long-term problems.
 
----
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Hardcode terminator in multiple modules | Quick patch | Inconsistent behavior, hard to audit | Never |
+| Compute delta/ROR in the formatter | Fewer files changed | Race conditions and hidden side effects | Never |
+| Skip sampling timestamp | Simpler math | Incorrect ROR when interval drifts | Only in throwaway spikes |
 
-### Pitfall 7: Command State Machine Conflicts
+## Integration Gotchas
 
-**What Goes Wrong:**
-Processing one Artisan command while another is in progress causes state corruption or missed commands.
+Common mistakes when connecting to external services.
 
-**Why It Happens:**
-- Artisan sends commands in rapid succession during profile execution
-- Asynchronous embassy-rs framework may interleave command processing
-- Long-running operations (like fan ramping) block command responses
-- Buffer overflow from accumulated commands during high-activity periods
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| Artisan client | Assuming LF is acceptable everywhere | Confirm and test exact terminator (CRLF vs LF) expected by Artisan profile |
+| Host sampling loop | Changing sample interval without updating ROR formula | Tie ROR computation to actual delta time, not constant |
+| Serial bridge/USB | Ignoring line ending translation | Disable or account for any host-side line-ending conversion |
 
-**Consequences:**
-- Commands execute out of order
-- Some commands silently fail
-- Firmware becomes unresponsive
+## Performance Traps
 
-**Prevention:**
-```rust
-// Use command queue with atomic processing
-use embassy_sync::pipe::Pipe;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+Patterns that work at small scale but fail as usage grows.
 
-static COMMAND_PIPE: Pipe<CriticalSectionRawMutex, 32, 256> = Pipe::new();
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Excessive float formatting per frame | Jittery sampling, missed frames | Use fixed-point or preformatted buffers | At higher sample rates (>=10 Hz) |
+| Serial buffer overrun under load | Missing terminators or truncated frames | Throttle output or increase buffer; measure worst-case latency | When Wi-Fi or logging adds latency |
+| Heavy logging in ISR | Timing drift, ROR instability | Keep ISR minimal; offload formatting to main loop | On small MCUs like ESP32-C3 |
 
-async fn process_commands() {
-    loop {
-        if let Some(cmd) = COMMAND_PIPE.read().await {
-            match cmd {
-                Command::OT1(value) => handle_ot1(value).await,
-                Command::OT2(value) => handle_ot2(value).await,
-                Command::READ => handle_read().await,
-                Command::UNITS(unit) => handle_units(unit).await,
-            }
-            // Signal Artisan we're ready (if using sync protocol)
-        }
-    }
-}
+## Security Mistakes
 
-// Ensure each handler completes quickly (< 50ms preferred)
-async fn handle_ot2(value: u8) {
-    // Don't block here - queue fan ramp as separate task
-    spawn_fan_ramp(value).await;
-}
-```
+Domain-specific security issues beyond general web security.
 
-**Phase to Address:** **Command Processing Phase** - Implement proper concurrency model
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Trusting inbound serial commands without bounds | Memory overwrite or unexpected state transitions | Validate input length and command set before parsing |
+| Echoing raw inbound data into READ output | Protocol injection or desync | Sanitize or separate inbound/outbound buffers |
 
----
+## UX Pitfalls
 
-## Moderate Pitfalls
+Common user experience mistakes in this domain.
 
-### Pitfall 8: Temperature Sensor Reading Consistency
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| ROR jitter caused by noisy sampling | Roasting decisions feel unreliable | Apply minimal smoothing with explicit window size |
+| ROR not reset on new roast | Confusing first readings | Reset state on START/STOP transitions |
+| Delayed READ responses | Artisan graphs lag | Measure end-to-end latency and cap response time |
 
-**What Goes Wrong:**
-BT (Bean Temperature) and ET (Environmental Temperature) readings fluctuate wildly or show impossible values.
+## "Looks Done But Isn't" Checklist
 
-**Why It Happens:**
-- Thermocouple cold-junction compensation errors
-- ADC noise on ESP32-C3 analog inputs
-- Thermocouple probe degradation over time
-- Electrical noise from heater PWM affecting sensor readings
+Things that appear complete but are missing critical pieces.
 
-**Prevention:**
-```rust
-// Implement rolling average filter
-const FILTER_WINDOW: usize = 8;
+- [ ] **READ terminator:** Often missing the last CR/LF on buffer pressure — verify with a byte-level capture.
+- [ ] **ROR unit:** Often mis-scaled after changing sample interval — verify with known input sequence.
+- [ ] **State reset:** Often missing on START/STOP — verify first frame after transition.
+- [ ] **Concurrency:** Often missing snapshot/lock — verify with stress test and random delays.
 
-struct TemperatureFilter {
-    readings: [f32; FILTER_WINDOW],
-    index: usize,
-}
+## Recovery Strategies
 
-impl TemperatureFilter {
-    fn add_reading(&mut self, raw: f32) -> f32 {
-        self.readings[self.index] = raw;
-        self.index = (self.index + 1) % FILTER_WINDOW;
-        
-        // Calculate average
-        self.readings.iter().sum::<f32>() / FILTER_WINDOW as f32
-    }
-}
+When pitfalls occur despite prevention, how to recover.
 
-// Add sensor validation
-fn validate_temperature_reading(temp: f32) -> Option<f32> {
-    match temp {
-        t if t < -50.0 => None,  // Impossible cold
-        t if t > 500.0 => None,  // Impossible hot for coffee roasting
-        t if t.is_nan() => None,
-        t if t.is_infinite() => None,
-        _ => Some(temp),
-    }
-}
-```
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Terminator mismatch | LOW | Align terminator in formatter, update tests, reflash firmware |
+| ROR spikes from stale state | MEDIUM | Add state reset and sample order fixes; recalibrate with known sequence |
+| Concurrency mismatch | MEDIUM | Add snapshot copy and re-run stress tests |
 
-**Phase to Address:** **Sensor Integration Phase** - Before telemetry implementation
+## Pitfall-to-Phase Mapping
 
----
+How roadmap phases should address these pitfalls.
 
-### Pitfall 9: UNITS State Persistence
-
-**What Goes Wrong:**
-Temperature units reset to default after power cycle or Artisan reconnection, causing confusion.
-
-**Why It Happens:**
-- UNITS setting stored only in RAM, not persistent storage
-- Artisan may reset unit state on reconnection
-- Multiple Artisan instances with different unit preferences
-
-**Prevention:**
-```rust
-// Store in NVS for persistence across power cycles
-fn save_units_setting(units: Units) {
-    // embassy_nvs::Nvs::set(...)
-}
-
-fn load_units_setting() -> Units {
-    // embassy_nvs::Nvs::get(...)
-        // Default to Celsius if not set
-}
-```
-
-**Phase to Address:** **Configuration Phase** - Implement persistent settings
-
----
-
-### Pitfall 10: Command Response Timing Expectations
-
-**What Goes Wrong:**
-Artisan times out waiting for command responses, showing communication errors.
-
-**Why It Happens:**
-- Artisan has strict timeout expectations (typically 2-5 seconds for most commands)
-- Slow sensor readings delay READ command responses
-- Fan ramp functions block command handler
-- Debug logging slows response times
-
-**Prevention:**
-```rust
-// Keep command handlers fast
-// Target < 100ms response time for all commands
-
-async fn handle_read() {
-    // Quick sensor reads only
-    // Defer processing to separate task if needed
-}
-
-// Monitor response times in production
-fn check_response_time() {
-    let elapsed = start.elapsed();
-    if elapsed > Duration::from_millis(2000) {
-        // Log warning - approaching Artisan timeout
-    }
-}
-```
-
-**Phase to Address:** **Performance Phase** - Optimize before integration testing
-
----
-
-## Minor Pitfalls
-
-### Pitfall 11: Delimiter Handling Inconsistencies
-
-**What Goes Wrong:**
-Commands work with some delimiter formats but fail with others, causing intermittent issues.
-
-**Prevention:**
-- Test all delimiter variations during development
-- Document supported formats for debugging
-
-### Pitfall 12: Error Response Format
-
-**What Goes Wrong:**
-Returning errors in wrong format causes Artisan to hang or crash.
-
-**Prevention:**
-- Return "ERROR" or "BAD" followed by explanation for invalid commands
-- Always end error responses with newline
-
-### Pitfall 13: Float Formatting Variations
-
-**What Goes Wrong:**
-Temperature values formatted differently between implementations cause parsing issues.
-
-**Prevention:**
-- Use consistent decimal places (1 decimal is standard)
-- Avoid scientific notation
-- Handle negative temperatures correctly
-
----
-
-## Phase-Specific Warnings
-
-| Phase | Likely Pitfall | Mitigation |
-|-------|---------------|------------|
-| **OT2 Command Implementation** | PWM hardware conflict with OT1 | Verify GPIO pin assignments before implementation |
-| **READ Command Implementation** | Response format mismatch | Capture traffic from working Artisan setup for comparison |
-| **UNITS Command Implementation** | Conversion accuracy | Use canonical storage, test round-trip conversions |
-| **Serial Communication** | UART timing issues | Test at realistic baud rates with Artisan load |
-| **Integration Testing** | State machine conflicts | Use command queue, test rapid command sequences |
-
----
-
-## Testing Recommendations
-
-Before completing each phase, test these scenarios:
-
-### OT2 Testing:
-- [ ] Commands with all delimiter formats
-- [ ] Out-of-range values (negative, >100)
-- [ ] Rapid successive commands
-- [ ] Fan ramp behavior during transitions
-
-### READ Testing:
-- [ ] Response format validation
-- [ ] Temperature sensor failure scenarios
-- [ ] Response timing under load
-- [ ] Artisan reconnection handling
-
-### UNITS Testing:
-- [ ] Round-trip conversion accuracy
-- [ ] Mid-roast unit changes
-- [ ] Historical data conversion
-- [ ] Persistence across power cycles
-
----
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| Terminator mismatch | Phase 1: Protocol contract + tests | Byte-level fixture tests for READ frames |
+| Terminator split/truncation | Phase 2: Serial IO implementation | Stress tests with buffer limits |
+| Stale/out-of-order delta/ROR | Phase 2: Sampling logic | Unit tests on sample sequences |
+| Missing state reset | Phase 1-2: Protocol transitions | Integration test: START/STOP sequence |
+| Unit/scale mismatch | Phase 1: Definitions | Golden expected outputs with known deltas |
+| Concurrency race | Phase 2: Concurrency | Randomized timing tests |
 
 ## Sources
 
-**Confidence Assessment:**
-
-| Source Type | Confidence Level | Notes |
-|-------------|------------------|-------|
-| TC4-shield GitHub Repository | HIGH | Reference implementation for Artisan protocol |
-| Artisan Scope Documentation | HIGH | Official software documentation |
-| ESP32-C3 GitHub Issues | MEDIUM | UART timing documented but may be chip-specific |
-| Homeroasters Community Forum | MEDIUM | User experiences with various implementations |
-| Skywalker Roaster Firmware | MEDIUM | Similar hardware, common pitfalls documented |
-
-**Key References:**
-- TC4-shield commands.txt specification: https://github.com/greencardigan/TC4-shield
-- Artisan official documentation: https://artisan-scope.org/docs/
-- ESP32-C3 UART troubleshooting: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/
+- Prior embedded serial protocol experience (unpublished)
+- Common issues observed in Artisan-like device integrations (anecdotal)
 
 ---
-
-## Research Gaps
-
-The following areas could not be fully verified and may require phase-specific research:
-
-1. **embassy-rs specific UART behaviors** - Limited documentation on interaction with Artisan protocol
-2. **Exact Artisan timeout values** - Varies by version, need to verify with target version
-3. **OT2 PWM frequency requirements** - May vary by fan type, hardware-specific
-4. **USB CDC vs UART selection impact** - Both modes documented with different tradeoffs
-
-**Recommendation:** Validate these gaps during the actual implementation phase with live testing against the target Artisan version.
+*Pitfalls research for: Embedded Artisan protocol edge-case fixes*
+*Researched: 2026-02-17*

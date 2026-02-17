@@ -23,6 +23,13 @@ impl core::fmt::Display for Channel {
 #[macro_export]
 macro_rules! log_channel {
     ($channel:expr, $($arg:tt)*) => {
-        esp_println::println!("[{}] {}", $channel, format_args!($($arg)*))
+        #[cfg(any(test, feature = "test"))]
+        {
+            println!("[{}] {}", $channel, format_args!($($arg)*));
+        }
+        #[cfg(not(any(test, feature = "test")))]
+        {
+            esp_println::println!("[{}] {}", $channel, format_args!($($arg)*));
+        }
     };
 }

@@ -7,7 +7,7 @@ pub use parser::parse_artisan_command;
 pub use multiplexer::{CommandMultiplexer, CommChannel, InitState, InitEvent};
 
 use crate::config::ArtisanCommand;
-use crate::hardware::uart::{send_response, uart_reader_task, uart_writer_task, COMMAND_PIPE_SIZE};
+use crate::hardware::uart::{send_response, uart_reader_task, COMMAND_PIPE_SIZE};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
@@ -78,9 +78,6 @@ pub fn start_uart_tasks(spawner: &embassy_executor::Spawner) -> Result<(), Input
 
     spawner
         .spawn(uart_reader_task())
-        .map_err(|_| InputError::UartError)?;
-    spawner
-        .spawn(uart_writer_task())
         .map_err(|_| InputError::UartError)?;
     Ok(())
 }

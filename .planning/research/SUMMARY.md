@@ -1,172 +1,132 @@
 # Project Research Summary
 
-**Project:** LibreRoaster ESP32-C3 Firmware
-**Domain:** Artisan Protocol Command Parsing — Embedded IoT
-**Researched:** February 7, 2026
-**Confidence:** HIGH
+**Project:** LibreRoaster
+**Domain:** ESP32-C3 Rust firmware Artisan protocol edge-case fixes
+**Researched:** 2026-02-17
+**Confidence:** MEDIUM
 
 ## Executive Summary
 
-LibreRoaster's Artisan protocol implementation for ESP32-C3 firmware requires **no stack additions** — the existing architecture using `embassy-rs`, `esp-hal`, and `heapless` fully supports the required OT2 (fan control), READ (telemetry), and UNITS (temperature scale) commands. The implementation work is purely extension of existing code patterns, not infrastructure expansion. The parser, ArtisanCommand enum, and ArtisanFormatter provide all necessary foundations; the gaps are in OT2 parser support, READ command wiring, and temperature unit state management.
+LibreRoaster is an embedded ESP32-C3 firmware project that must interoperate with Artisan via a strict ASCII serial protocol. Experts treat this as a protocol-compatibility problem: preserve the current stack, enforce exact line termination and CSV shape, and validate behavior with host-side tests so regressions are caught quickly.
 
-The recommended approach follows a three-phase roadmap: Phase 1 implements OT2 command parsing and fan rate-limiting; Phase 2 wires READ telemetry responses through existing formatters; Phase 3 adds temperature unit conversion state. Critical risks include ESP32-C3 UART serial timing issues under load, temperature conversion accuracy bugs (the most reported Artisan integration issues in community forums), and fan speed control smoothness to avoid airflow fluctuations during roasting. All pitfalls are preventable with existing stack capabilities — no new dependencies required.
+The recommended approach is to keep the existing Rust 1.88 + esp-hal + embassy-time baseline, focus changes in the Artisan formatter and output boundary, and add tests that assert byte-accurate CRLF handling plus correct delta_bt/ROR state updates. The work should be phased as protocol contract + tests first, then firmware implementation details that ensure atomic writes and consistent state updates.
+
+Key risks are terminator inconsistencies, truncated line endings under buffer pressure, and stale/out-of-order delta_bt updates. Mitigate these by having a single terminator policy, snapshot-then-format semantics, and deterministic sample sequencing with explicit reset behavior across START/STOP.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No changes to Cargo.toml or dependencies required. The existing LibreRoaster stack already provides:
+No stack changes are required for this milestone. The current Rust 1.88 toolchain, esp-hal 1.0.0, and embassy-time 0.5.0 are already validated and suitable for protocol edge-case fixes. Host-side tests under `--features test` are the preferred verification path for CRLF and ROR logic.
 
-| Category | Current Stack | Status |
-|----------|---------------|--------|
-| Async Runtime | `embassy-executor` 0.9.1 | ✅ Sufficient |
-| Hardware Access | `esp-hal` ~1.0 | ✅ Sufficient |
-| Command Parsing | `heapless` 0.8.0 | ✅ Sufficient |
-| Serial Communication | USB CDC + UART0 | ✅ Working |
-| Logging | `log` 0.4.27 | ✅ Sufficient |
-
-**Required implementation additions:**
-- OT2 parser pattern (~2 lines in `parser.rs`)
-- `SetFanRateLimited` enum variant (1 line in `constants.rs`)
-- Rate-limited fan handler (~15 lines in `handlers.rs`)
-- Temperature state field (`use_fahrenheit: bool` in `ArtisanFormatter`)
+**Core technologies:**
+- Rust toolchain 1.88: build/test harness — already pinned and validated
+- esp-hal 1.0.0: ESP32-C3 HAL — stable baseline for I/O paths
+- embassy-time 0.5.0: timing utilities — used for ROR/delta timing logic
 
 ### Expected Features
 
+The MVP is narrowly scoped to Artisan protocol correctness: a single CRLF terminator for READ, a 4-value CSV with one-decimal precision, and ROR that becomes non-zero after the second BT sample with resets on formatter reset. Differentiators focus on reducing regressions via centralized terminator policy and tests.
+
 **Must have (table stakes):**
-- READ command — Returns `ET,BT,FAN,HEATER` CSV telemetry format (existing formatter, needs wiring)
-- OT2 command — Fan speed 0-100% with rate limiting (25 points/sec max per Artisan spec)
-- UNITS command — Temperature scale C/F switching (parsed but not applied — **critical gap**)
-- BT2/ET2 placeholders — Returns `-1` for disabled channels (correctly implemented)
+- Single CRLF terminator for READ responses — exact Artisan framing
+- READ stays 4-value CSV with one-decimal precision — protocol contract
+- ROR updates after BT changes with proper reset — correct derived metrics
+- Tests covering CRLF + ROR behaviors — regression prevention
 
 **Should have (competitive):**
-- Extended READ response format — Includes fan/heater output states (differentiator over standard Artisan)
-- Multiple fan control aliases — Support both OT2 and IO3 syntax (compatibility)
-- Hardware PWM at 25kHz — Quiet fan operation (already implemented)
+- Centralized line-termination policy — prevents USB/UART drift
+- Protocol-focused tests for CRLF + ROR — faster verification
 
 **Defer (v2+):**
-- Temperature unit conversion at sensor read (only convert at output formatting)
-- Command acknowledgment for output changes
-- Historical telemetry storage
+- Protocol fuzz tests for malformed command framing — useful but out of scope
 
 ### Architecture Approach
 
-LibreRoaster uses a well-designed command handler chain pattern that OT2, READ, and UNITS integrate into with minimal modifications. The flow is: Serial Input → Parser → Multiplexer → ArtisanInput Task → RoasterControl::process_artisan_command() → ArtisanCommandHandler → Hardware → ArtisanFormatter → Serial Output. The ArtisanFormatter already has READ response methods; the gap is wiring the ReadStatus command to trigger response formatting. Temperature unit state should be stored in ArtisanFormatter to avoid contaminating internal calculations with display-only conversions.
+The architecture emphasizes a clear pipeline: parser and multiplexer feed an Artisan command handler, which updates a status snapshot used by a stateful formatter to produce READ responses. Terminator policy should be owned by a single formatter boundary, and derived metrics (delta_bt/ROR) should update in the formatter based on a consistent cadence or snapshot.
 
 **Major components:**
-1. **Parser** (`src/input/parser.rs`) — Parses ASCII commands to ArtisanCommand enum, needs OT2 pattern added
-2. **ArtisanCommandHandler** (`src/control/handlers.rs`) — Executes commands, routes SetFan to fan hardware
-3. **ArtisanFormatter** (`src/output/artisan.rs`) — Formats READ responses, needs use_fahrenheit state added
-4. **RoasterControl** — Central dispatch, maintains SystemStatus for telemetry
+1. Serial input + parser — turn ASCII into Artisan commands
+2. RoasterControl + command handler — create status snapshot per READ
+3. ArtisanFormatter + serial output — format CSV and enforce terminator
 
 ### Critical Pitfalls
 
-1. **READ Command Response Format Mismatch** — Artisan fails to recognize data with incorrect CSV formatting or line endings. Prevention: Use exact format `ET,BT,FAN,HEATER\r\n` with single decimal place.
-
-2. **Temperature Unit Conversion Accuracy** — Most reported Artisan integration bugs. Prevention: Store canonical temperatures in Celsius, convert only at READ output using formula F = (C × 9/5) + 32.
-
-3. **ESP32-C3 UART Serial Timing Issues** — USB CDC serial can freeze under high-traffic roasting scenarios. Prevention: Use 115200 baud, target <100ms response times, test under realistic load.
-
-4. **Fan Speed Control Smoothness** — Abrupt PWM changes cause airflow fluctuations affecting roast. Prevention: Implement ramping (5% step per 100ms) for fan transitions.
-
-5. **OT2 Command Parsing Edge Cases** — Various delimiter formats (comma, space, semicolon, equals) must all be handled. Prevention: Normalize input before parsing, test all delimiter variations.
+1. **Terminator mismatch or missing EOL** — enforce a single terminator policy and unit-test exact bytes.
+2. **Terminator split/truncation across writes** — write frames atomically or drain buffers fully; add stress tests.
+3. **Stale/out-of-order delta_bt/ROR** — update in a single ordered step with timestamps.
+4. **State not reset on START/STOP** — reset history on transitions and test the first frame.
+5. **Unit/scale mismatch for ROR** — document units and validate with known sequences.
 
 ## Implications for Roadmap
 
-Based on research, the suggested three-phase structure respects dependencies and avoids known pitfalls.
+Based on research, suggested phase structure:
 
-### Phase 1: OT2 Command Implementation
-**Rationale:** OT2 is the foundation for fan control and has no dependencies. It follows the existing OT1/IO3 pattern exactly, making it the lowest-risk starting point.
+### Phase 1: Protocol Contract + Tests
+**Rationale:** Lock down the exact protocol behavior first to prevent regressions.
+**Delivers:** Byte-accurate CRLF termination tests, ROR/delta behavior tests, documented terminator ownership.
+**Addresses:** Single CRLF terminator, ROR non-zero after BT changes, tests covering edge cases.
+**Avoids:** Terminator mismatch, unit/scale errors, missing reset behavior.
 
-**Delivers:**
-- OT2 parser pattern in `parser.rs`
-- `SetFanRateLimited` enum variant
-- Rate-limited fan handler (25 points/sec per Artisan spec)
-- Integration test verifying fan actuation
+### Phase 2: Formatter + Output Implementation
+**Rationale:** Implement deterministic formatter state updates and safe output paths once the contract is defined.
+**Delivers:** Updated formatter state handling, atomic/consistent output writes, START/STOP reset logic.
+**Uses:** Rust 1.88 + esp-hal + embassy-time (no stack changes).
+**Implements:** Snapshot-then-format, derived-metric state in formatter, single terminator policy.
 
-**Addresses:**
-- Pitfall 1: OT2 parsing edge cases
-- Pitfall 5: Fan speed control smoothness
-- Feature: OT2 command fan control
-
-**Research Flags:** LOW — Standard parser extension pattern, well-documented in Artisan spec. Skip phase research.
-
-### Phase 2: READ Telemetry Wiring
-**Rationale:** READ depends on OT2 completion because fan state must be available in SystemStatus. The ArtisanFormatter already exists; this phase wires the command path.
-
-**Delivers:**
-- ReadStatus command triggers ArtisanFormatter response
-- BT2/ET2 comments clarifying disabled channels
-- Full 7-value response format: `ET,BT,-1,-1,-1,FAN,HEATER\r\n`
-
-**Addresses:**
-- Pitfall 2: READ response format mismatch
-- Feature: Extended READ response with output states
-
-**Research Flags:** MEDIUM — Response timing needs validation against actual Artisan version. Test format with live Artisan during implementation.
-
-### Phase 3: UNITS Temperature Conversion
-**Rationale:** UNITS is the final piece; it depends on READ being functional to verify temperature display. Temperature conversion is the highest-risk area (most community bug reports).
-
-**Delivers:**
-- `use_fahrenheit: bool` state in ArtisanFormatter
-- UNITS command updates formatter state
-- Temperature conversion in format_read_response()
-- Verification: C and F modes work correctly
-
-**Addresses:**
-- Pitfall 3: Temperature conversion accuracy
-- Pitfall 9: UNITS state persistence (consider NVS for power-cycle safety)
-
-**Research Flags:** HIGH — Conversion accuracy critical, needs validation during implementation. Test round-trip conversions.
+### Phase 3: Integration Hardening
+**Rationale:** Validate end-to-end behavior across USB CDC/UART and dual output paths.
+**Delivers:** Integration tests for dual output routing and buffer pressure scenarios.
 
 ### Phase Ordering Rationale
 
-- **OT2 → READ → UNITS** order respects data dependencies (fan state needed for READ, READ needed to verify UNITS conversion)
-- **Three phases** matches the natural component boundaries (parser, formatter, state)
-- **Phases 1-2 are low risk** (extend existing patterns), Phase 3 requires careful testing (conversion bugs are common)
-- Prevents **Pitfall 7** (command state machine conflicts) by sequencing integrations
+- The protocol contract must be defined and tested before implementation changes to avoid partial fixes.
+- Formatter changes depend on a consistent snapshot and terminator policy, which the tests enforce.
+- Integration hardening follows once core behavior is correct to ensure I/O paths do not reintroduce regressions.
 
-### Research Flags Summary
+### Research Flags
 
-| Phase | Research Level | Notes |
-|-------|----------------|-------|
-| Phase 1: OT2 | SKIP | Well-documented Artisan spec, existing parser pattern |
-| Phase 2: READ | LIGHT | Verify response timing, test format with live Artisan |
-| Phase 3: UNITS | DEEP | Conversion accuracy critical, community bug history |
+Phases likely needing deeper research during planning:
+- **Phase 2:** Serial write behavior under buffer pressure and task scheduling specifics
+
+Phases with standard patterns (skip research-phase):
+- **Phase 1:** Protocol tests and CRLF contract are well-defined and documented
+- **Phase 3:** Standard integration testing patterns apply once I/O paths are known
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Zero additions required, existing stack verified |
-| Features | HIGH | READ formatter exists, OT2/UNITS patterns clear |
-| Architecture | HIGH | Command flow well-designed, integration points identified |
-| Pitfalls | MEDIUM | Based on community experiences, some ESP32-C3 UART gaps |
+| Stack | HIGH | Official docs and existing project pinning; no changes needed |
+| Features | MEDIUM | Based on internal docs and code references; verify against current implementation |
+| Architecture | MEDIUM | Based on project context; limited codebase validation |
+| Pitfalls | MEDIUM | Domain experience and common issues; needs validation in project context |
 
-**Overall confidence:** HIGH
+**Overall confidence:** MEDIUM
 
 ### Gaps to Address
 
-- **Exact Artisan timeout values** — Varies by version. Validate during Phase 2 integration testing.
-- **USB CDC vs UART selection impact** — Both modes documented, tradeoffs may affect serial reliability. Test under realistic roast load.
-- **embassy-rs UART behaviors** — Limited documentation on interaction with Artisan protocol timing. Monitor response times during implementation.
+- Confirm current formatter/output ownership of terminator in code — adjust if multiple paths append CRLF.
+- Validate delta_bt/ROR update cadence against actual sampling interval — ensure correct units.
+- Verify USB CDC/UART write buffering behavior for terminator truncation risk.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- **TC4-shield Artisan Protocol Specification** — https://github.com/greencardigan/TC4-shield/blob/master/applications/Artisan/aArtisan/trunk/src/aArtisan/commands.txt — Official command syntax, OT2 rate limiting (25 points/sec), READ response format
-- **LibreRoaster Current Implementation** — Direct code inspection of parser.rs, artisan.rs, constants.rs — Verified existing patterns and gaps
+- https://docs.rs/esp-hal/latest/esp_hal/ — HAL version and usage
+- https://docs.rs/embassy-time/latest/embassy_time/ — timing utilities
+- https://docs.rs/embedded-hal/latest/embedded_hal/ — trait compatibility
 
 ### Secondary (MEDIUM confidence)
-- **Artisan Scope Documentation** — https://artisan-scope.org/docs/setup/ — General configuration guidelines, version-specific behaviors need validation
-- **ESP32-C3 GitHub Issues** — UART timing documented but chip-specific, USB CDC freezing under load reported
-- **Homeroasters Community Forum** — User experiences with Skywalker roasters, common Fahrenheit conversion bugs documented
+- `internalDoc/PROTOCOL.md` — READ format and precision
+- `src/output/artisan.rs` — formatter and ROR formatting
+- `src/application/tasks.rs` — READ response wiring
+- `src/hardware/usb_cdc/tasks.rs` — CRLF behavior on USB CDC
+- `src/hardware/uart/tasks.rs` — CRLF behavior on UART
 
 ### Tertiary (LOW confidence)
-- **Skywalker Roaster Firmware** — Similar hardware, pitfall patterns applicable but exact implementations differ
+- Prior embedded serial protocol experience — pitfalls and mitigations
 
 ---
-
-*Research completed: 2026-02-07*
+*Research completed: 2026-02-17*
 *Ready for roadmap: yes*

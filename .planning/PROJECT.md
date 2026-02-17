@@ -8,27 +8,35 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v2.4 UART Logging
+## Current Milestone: Planning Next Milestone
 
-**Goal:** Redirect all logging to UART0, keep USB Serial for Artisan commands only
+**Goal:** Define v2.6 requirements and roadmap
 
-**Target features:**
-- USB Serial handles Artisan commands only (READ, OT1, OT2, IO3, START, STOP, etc.)
-- UART0 receives all logging output (debug, status, telemetry logs)
-- Clean separation between user-facing commands and debug output
-- No log noise on Artisan communication channel
+## Last Shipped: v2.5 Artisan Edge Cases (2026-02-17)
 
-## Last Shipped: v2.2 Comandos de Entrada (2026-02-07)
-
-v2.2 adds complete Artisan protocol support with OT2 fan control, READ telemetry, and UNITS temperature scale parsing. All 4 requirements satisfied.
+v2.5 fixes Artisan READ framing edge cases, corrects ROR timing/reset behavior, and adds regression coverage for both.
 
 ## Next Milestone
 
-TBD after v2.3 documentation complete
+TBD (define in next milestone planning)
+
+## Next Milestone Goals
+
+- ROR resets cleanly on START/STOP and formatter reset (ROR-02)
+- Dual output routing tests validate terminator behavior across USB CDC and UART (TEST-02)
+- Protocol fuzz tests for malformed command framing (TEST-03)
 
 ## Current State
 
+v2.5 shipped: exact READ framing with single CRLF, ROR timing stabilized, and regression tests added.
+Tech debt: integration tests still call format_read_response instead of runtime format_read_response_full.
+
+<details>
+<summary>Previous State</summary>
+
 v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 issues identified (1 High, 7 Medium, 23 Low).
+
+</details>
 
 ## Requirements
 
@@ -82,12 +90,17 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ CODE_QUALITY_ISSUES.md corrected (24 unsafe blocks) — v2.3
 - ✓ hardware.md v2.2 specifications verified — v2.3
 - ✓ Documentation cross-references validated — v2.3
+- ✓ PROT-01: READ response terminates with exactly one CRLF — v2.5
+- ✓ PROT-02: READ response is a 4-value CSV with one-decimal precision — v2.5
+- ✓ ROR-01: delta_bt updates last_bt so ROR becomes non-zero after the second BT sample — v2.5
+- ✓ ARCH-01: A centralized terminator policy appends CRLF at a single output boundary — v2.5
+- ✓ TEST-01: Tests cover READ terminator and ROR update behavior — v2.5
 
-### Active (v2.4)
+### Active (Next Milestone TBD)
 
-- [ ] LOG-01: Redirect all logging to UART0
-- [ ] LOG-02: USB Serial handles Artisan commands only
-- [ ] LOG-03: No log output on USB Serial channel
+- [ ] ROR-02: ROR resets cleanly on START/STOP and formatter reset
+- [ ] TEST-02: Dual output routing tests validate terminator behavior across USB CDC and UART
+- [ ] TEST-03: Protocol fuzz tests for malformed command framing
 
 ### Out of Scope
 
@@ -146,7 +159,9 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | OT2 heater stop on out-of-range | Safety measure for invalid fan values | ✓ Implemented v2.2 |
 | READ one-decimal format | Consistent with Artisan spec (75.0) | ✓ Implemented v2.2 |
 | UNITS parse only, no conversion | Temperatures stay Celsius internally | ✓ Implemented v2.2 |
+| Centralized CRLF termination at output boundary | Prevent double terminators across USB CDC/UART | ✓ Implemented v2.5 |
+| Reset formatter on START/STOP transitions | Avoid stale ROR state across sessions | ✓ Implemented v2.5 |
 
 ---
 
-*Last updated: 2026-02-08 — v2.4 milestone started*
+*Last updated: 2026-02-17 — v2.5 milestone complete*

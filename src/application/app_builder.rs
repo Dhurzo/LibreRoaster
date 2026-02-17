@@ -165,8 +165,8 @@ impl Application {
     }
 
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
-        use crate::hardware::uart::tasks::{uart_reader_task, uart_writer_task};
-        use crate::hardware::usb_cdc::tasks::{usb_reader_task, usb_writer_task};
+        use crate::hardware::uart::tasks::uart_reader_task;
+        use crate::hardware::usb_cdc::tasks::usb_reader_task;
 
         self.verify_initialization()
             .map_err(|e| TaskError::VerificationFailed(e))?;
@@ -175,14 +175,7 @@ impl Application {
             .spawn(uart_reader_task())
             .map_err(|e| TaskError::SpawnFailed(e))?;
         spawner
-            .spawn(uart_writer_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
-
-        spawner
             .spawn(usb_reader_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
-        spawner
-            .spawn(usb_writer_task())
             .map_err(|e| TaskError::SpawnFailed(e))?;
 
         spawner

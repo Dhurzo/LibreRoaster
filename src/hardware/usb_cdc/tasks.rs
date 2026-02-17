@@ -41,8 +41,7 @@ pub async fn usb_writer_task() {
     loop {
         if let Ok(data) = output_channel.try_receive() {
             if let Some(usb) = get_usb_cdc_driver() {
-                let mut bytes = data.as_bytes().to_vec();
-                bytes.extend_from_slice(b"\r\n");
+                let bytes = data.as_bytes().to_vec();
                 log_channel!(Channel::Usb, "TX: {}", data);
                 if let Err(e) = usb.write_bytes(&bytes).await {
                     warn!("USB CDC write error: {:?}", e);

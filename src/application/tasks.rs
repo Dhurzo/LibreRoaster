@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::output::artisan::ArtisanFormatter;
@@ -16,6 +18,7 @@ pub async fn control_loop_task() {
     let _start_time = Instant::now();
     let cmd_channel = ServiceContainer::get_artisan_channel();
     let output_channel = ServiceContainer::get_output_channel();
+    let mut was_continuous = false;
 
     loop {
         let current_time = Instant::now();
@@ -80,22 +83,34 @@ pub async fn control_loop_task() {
             info!("Service container error in control loop: {:?}", e);
         }
 
-        let _ = ServiceContainer::with_roaster(|roaster: &mut crate::control::RoasterControl| {
-            if roaster.get_output_manager().is_continuous_enabled() {
-                let status = roaster.get_status();
-                let line = formatter.format(&status);
+        let mut is_continuous_now = false;
+        let mut status_for_output = None;
 
-                match line {
-                    Ok(formatted_line) => {
-                        let _ = heapless::String::try_from(formatted_line.as_str())
-                            .and_then(|s| output_channel.try_send(s).map_err(|_| ()));
-                    }
-                    Err(e) => {
-                        debug!("Formatter error: {:?}", e);
-                    }
-                }
+        let _ = ServiceContainer::with_roaster(|roaster: &mut crate::control::RoasterControl| {
+            is_continuous_now = roaster.get_output_manager().is_continuous_enabled();
+            if is_continuous_now {
+                status_for_output = Some(roaster.get_status());
             }
         });
+
+        if is_continuous_now != was_continuous {
+            formatter.reset();
+            was_continuous = is_continuous_now;
+        }
+
+        if let Some(status) = status_for_output {
+            let line = formatter.format(&status);
+
+            match line {
+                Ok(formatted_line) => {
+                    let _ = heapless::String::try_from(formatted_line.as_str())
+                        .and_then(|s| output_channel.try_send(s).map_err(|_| ()));
+                }
+                Err(e) => {
+                    debug!("Formatter error: {:?}", e);
+                }
+            }
+        }
 
         Timer::after(Duration::from_millis(100)).await;
     }
@@ -129,8 +144,7 @@ pub async fn dual_output_task() {
                 let mut guard = multiplexer.borrow(cs).borrow_mut();
                 if let Some(mux) = guard.as_mut() {
                     let active_channel = mux.get_active_channel();
-                    let mut bytes = data.as_bytes().to_vec();
-                    bytes.extend_from_slice(b"\r\n");
+                    let bytes = append_crlf(data.as_str());
                     (active_channel, Some(bytes))
                 } else {
                     (CommChannel::None, None)
@@ -156,5 +170,25 @@ pub async fn dual_output_task() {
         }
 
         Timer::after(Duration::from_millis(5)).await;
+    }
+}
+
+fn append_crlf(payload: &str) -> alloc::vec::Vec<u8> {
+    let mut bytes = payload.as_bytes().to_vec();
+    bytes.extend_from_slice(b"\r\n");
+    bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_crlf;
+
+    #[test]
+    fn test_append_crlf_appends_single_terminator() {
+        let payload = "READ,120.3,150.5,75.0,25.0";
+        let bytes = append_crlf(payload);
+
+        let output = core::str::from_utf8(&bytes).expect("Output should be valid UTF-8");
+        assert_eq!(output, "READ,120.3,150.5,75.0,25.0\r\n");
     }
 }

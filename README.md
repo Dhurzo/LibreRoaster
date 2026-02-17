@@ -60,7 +60,8 @@ See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed conn
 | Component | Description |
 |-----------|-------------|
 | ESP32-C3 | RISC-V development board |
-| 2x MAX31856 | Thermocouple amplifier boards |
+| 2x MAX31856 | Ther
+mocouple amplifier boards |
 | 2x Type-K Thermocouples | Bean Temp and Environment Temp |
 | SSR | Solid State Relay for heater control |
 | Fan | Variable speed fan (PWM controlled) |

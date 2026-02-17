@@ -1,5 +1,29 @@
 # Project Milestones: LibreRoaster
 
+## v2.5 Artisan Edge Cases (Shipped: 2026-02-17)
+
+**Delivered:** Fixed Artisan READ framing edge cases, corrected ROR timing/reset behavior, and added regression tests.
+
+**Phases completed:** 44-45 (3 plans total)
+
+**Key accomplishments:**
+- Normalized READ CSV output and added invalid-value regression coverage
+- Centralized CRLF termination at the dual output boundary (USB CDC/UART)
+- Routed raw response payloads through the shared output channel to prevent double terminators
+- Added regression tests for ROR timing/reset and READ framing with host test stubs
+
+**Stats:**
+- 21 files created/modified
+- 71,036 lines of Rust (repo total)
+- 2 phases, 3 plans, 6 tasks
+- 0 days from start to ship (2026-02-17)
+
+**Git range:** `96ff8eb` → `dd575e7`
+
+**What's next:** Define v2.6 requirements (ROR reset, dual output routing tests, protocol fuzzing)
+
+---
+
 ## v2.3 Documentation Update (Shipped: 2026-02-08)
 
 **Delivered:** Comprehensive documentation update ensuring all internalDoc files accurately reflect v2.2 implementation. ARCHITECTURE.md updated with command flows, PROTOCOL.md created with complete Artisan specification, CODE_QUALITY files corrected, hardware.md verified, and all cross-references validated.

@@ -65,25 +65,18 @@ pub async fn uart_writer_task() {
 }
 
 pub async fn send_response(response: &str) -> Result<(), crate::input::InputError> {
-    if let Some(uart) = get_uart_driver() {
-        let mut bytes = response.as_bytes().to_vec();
-        bytes.extend_from_slice(b"\r\n");
-
-        uart.write_bytes(&bytes)
-            .await
-            .map_err(|_| crate::input::InputError::UartError)?;
-    }
-
+    let output_channel = ServiceContainer::get_output_channel();
+    let line = String::<128>::try_from(response)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
+    let _ = output_channel.try_send(line);
     Ok(())
 }
 
 pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
-    #[allow(static_mut_refs)]
-    if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
-        let mut bytes = data.as_bytes().to_vec();
-        bytes.extend_from_slice(b"\r\n");
-        pipe.write_all(&bytes).await;
-    }
+    let output_channel = ServiceContainer::get_output_channel();
+    let line = String::<128>::try_from(data)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
+    let _ = output_channel.try_send(line);
     Ok(())
 }
 
