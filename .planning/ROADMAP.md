@@ -151,6 +151,11 @@
 - src/hardware/ledc_bus.rs
 - Various files with warnings
 
+**Plans:**
+- [x] 54-01-PLAN.md — Remove dead code (fields and functions)
+- [x] 54-02-PLAN.md — Fix compilation warnings
+- [x] 54-03-PLAN.md — Fix integration tests with std feature
+
 ---
 
 ## Traceability
