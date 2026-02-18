@@ -90,7 +90,22 @@ async fn main(spawner: Spawner) -> ! {
 
     let ledc = Ledc::new(peripherals.LEDC);
 
-    let mut fan_timer = ledc.timer(timer::Number::Timer0);
+    // Configure Timer0 for SSR (~1Hz for zero-crossing control)
+    let mut ssr_timer = ledc.timer(timer::Number::Timer0);
+    ssr_timer
+        .configure(TimerConfig {
+            duty: timer::config::Duty::Duty8Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: esp_hal::time::Rate::from_hz(libreroaster::config::SSR_PWM_FREQUENCY_HZ),
+        })
+        .map_err(|e| {
+            log::error!("Failed to configure SSR timer: {:?}", e);
+            panic!("SSR timer configuration failed");
+        })
+        .unwrap();
+
+    // Configure Timer1 for Fan (25kHz for silent operation)
+    let mut fan_timer = ledc.timer(timer::Number::Timer1);
     fan_timer
         .configure(TimerConfig {
             duty: timer::config::Duty::Duty8Bit,
@@ -106,13 +121,9 @@ async fn main(spawner: Spawner) -> ! {
     let gpio9 = peripherals.GPIO9;
     let mut fan_channel = ledc.channel::<LowSpeed>(channel::Number::Channel0, gpio9);
 
-    // SAFETY: Extending the timer lifetime to static to satisfying the borrow checker for static initialization.
-    let timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> =
-        unsafe { &mut *(&mut fan_timer as *mut _ as *mut _) };
-
     fan_channel
         .configure(ChannelConfig {
-            timer: timer_ref,
+            timer: &mut fan_timer,
             duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
@@ -127,7 +138,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut ssr_channel = ledc.channel::<LowSpeed>(channel::Number::Channel1, ssr_pin_for_pwm);
     ssr_channel
         .configure(ChannelConfig {
-            timer: timer_ref,
+            timer: &mut ssr_timer,
             duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
