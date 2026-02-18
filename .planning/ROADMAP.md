@@ -127,8 +127,9 @@
 - src/hardware/max31856.rs (if trait changes needed)
 
 **Plans:**
-- [ ] 53-01-PLAN.md — Wire async temperature into control loop
-- [ ] 53-02-PLAN.md — Gap closure: Fix control loop call site
+- [x] 53-01-PLAN.md — Wire async temperature into control loop
+- [x] 53-02-PLAN.md — Gap closure: Fix control loop call site (not executed)
+- [ ] 53-03-PLAN.md — Gap closure: Use concrete sensor types for true async
 
 ---
 
