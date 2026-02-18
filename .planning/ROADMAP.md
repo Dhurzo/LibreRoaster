@@ -58,6 +58,9 @@
 **Files to Modify:**
 - src/input/parser.rs (OT2 pattern matching)
 
+**Plans:**
+- [ ] 50-01-PLAN.md — Fix OT2 pattern to return InvalidValue (TEST-01)
+
 ---
 
 ## Phase 51: Documentation
