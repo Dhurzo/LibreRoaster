@@ -79,7 +79,7 @@
 - README.md
 
 **Plans:**
-- [ ] 51-01-PLAN.md — Update README Protocol section to 4-value format
+- [x] 51-01-PLAN.md — Update README Protocol section to 4-value format
 
 ---
 
@@ -100,6 +100,10 @@
 **Files to Modify:**
 - src/hardware/max31856.rs (blocking read)
 - src/main.rs (LEDC timer configuration)
+
+**Plans:**
+- [ ] 52-01-PLAN.md — Async MAX31856 temperature reading (PERF-01)
+- [ ] 52-02-PLAN.md — Separate LEDC timers for SSR and Fan (PERF-02)
 
 ---
 
