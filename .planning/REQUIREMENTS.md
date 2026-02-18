@@ -20,7 +20,7 @@ Critical safety fixes for embedded reliability.
 
 ### Documentation
 
-- [ ] **DOCS-01**: Update README.md to reflect PROTOCOL.md format (4 values: ET,BT,HEATER,FAN instead of 7)
+- [x] **DOCS-01**: Update README.md to reflect PROTOCOL.md format (4 values: ET,BT,HEATER,FAN instead of 7)
 
 ### Performance
 
@@ -46,7 +46,7 @@ Critical safety fixes for embedded reliability.
 | SAFE-03 | Phase 49 | Complete |
 | SAFE-04 | Phase 49 | Complete |
 | TEST-01 | Phase 50 | Complete |
-| DOCS-01 | Phase 51 | Pending |
+| DOCS-01 | Phase 51 | Complete |
 | PERF-01 | Phase 52 | Pending |
 | PERF-02 | Phase 52 | Pending |
 
