@@ -126,6 +126,9 @@
 - src/control/tasks.rs or src/control/roaster_refactored.rs (control loop)
 - src/hardware/max31856.rs (if trait changes needed)
 
+**Plans:**
+- [ ] 53-01-PLAN.md — Wire async temperature into control loop
+
 ---
 
 ## Phase 54: Clean Up Tech Debt
