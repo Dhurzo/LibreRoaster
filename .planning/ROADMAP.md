@@ -12,8 +12,10 @@
 | 50 | Test Fix | Fix parser test failure | TEST-01 | 1 |
 | 51 | Documentation | Update README to match PROTOCOL | DOCS-01 | 1 |
 | 52 | Performance Fixes | Async temp read, separate LEDC timers | PERF-01, PERF-02 | 2 |
+| 53 | Integrate Async Temp | Wire async temperature into control loop | PERF-01 (integration) | 1 |
+| 54 | Clean Up Tech Debt | Remove dead code, fix warnings | DEBT-01, DEBT-02, DEBT-03 | 3 |
 
-**Total:** 4 phases | 8 requirements | All milestone requirements covered ✓
+**Total:** 6 phases | 11 requirements | All milestone requirements covered ✓
 
 ---
 
@@ -107,6 +109,45 @@
 
 ---
 
+## Phase 53: Integrate Async Temperature Reading
+
+**Goal:** Wire async temperature reading into control loop (PERF-01 integration)
+
+**Requirements:**
+- PERF-01 (integration): Use async temperature methods in control loop
+
+**Gap Closure:** Closes integration gap from audit - async methods exist but not called
+
+**Success Criteria:**
+1. Control loop uses `read_temperature_async()` or `read_with_retry()` instead of blocking `read_temperature()`
+2. Temperature reading no longer blocks async executor
+
+**Files to Modify:**
+- src/control/tasks.rs or src/control/roaster_refactored.rs (control loop)
+- src/hardware/max31856.rs (if trait changes needed)
+
+---
+
+## Phase 54: Clean Up Tech Debt
+
+**Goal:** Remove dead code and fix compilation issues
+
+**Requirements:**
+- DEBT-01: Remove unused fan_timer, ssr_timer fields in ledc_bus.rs
+- DEBT-02: Fix 12+ compilation warnings
+- DEBT-03: Fix integration tests compilation with std feature
+
+**Success Criteria:**
+1. No dead code in ledc_bus.rs
+2. Zero or minimal compiler warnings
+3. Integration tests compile with --features std
+
+**Files to Modify:**
+- src/hardware/ledc_bus.rs
+- Various files with warnings
+
+---
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -117,8 +158,12 @@
 | SAFE-04 | Phase 49 | Complete |
 | TEST-01 | Phase 50 | Complete |
 | DOCS-01 | Phase 51 | Complete |
-| PERF-01 | Phase 52 | Complete |
+| PERF-01 | Phase 52 | Complete (not integrated) |
 | PERF-02 | Phase 52 | Complete |
+| PERF-01 | Phase 53 | Pending (integration) |
+| DEBT-01 | Phase 54 | Pending |
+| DEBT-02 | Phase 54 | Pending |
+| DEBT-03 | Phase 54 | Pending |
 
 ---
 
