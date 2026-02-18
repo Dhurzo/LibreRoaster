@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 ## Current Position
 
 Phase: 52 of 52 (v3.0 in progress)
-Plan: 01
-Status: phase_in_progress
-Last activity: 2026-02-18 — Phase 51 complete
+Plan: 01 complete
+Status: phase_complete
+Last activity: 2026-02-18 — Completed 52-01 async MAX31856 temperature read
 
-Progress: ████████░░ 75% (v3.0 Phase 52: Performance Fixes)
+Progress: ██████████ 100% (v3.0 Phase 52: Performance Fixes)
 
 ## Roadmap
 
@@ -23,7 +23,7 @@ Progress: ████████░░ 75% (v3.0 Phase 52: Performance Fixes)
 | 49 | Safety Static Fixes | Complete |
 | 50 | Test Fix | Complete |
 | 51 | Documentation | Complete |
-| 52 | Performance Fixes | Pending |
+| 52 | Performance Fixes | Complete |
 
 ## Performance Metrics
 
@@ -72,6 +72,8 @@ Recent decisions affecting current work:
 - 49-01: Used StaticCell with raw pointer storage for USB/UART driver singletons
 - 49-01: Used ConstStaticCell::take() for ServiceContainer singleton pattern
 - 50-01: OT2 without value returns InvalidValue error (matches OT1/IO3 pattern)
+- 52-01: MAX31856 async read uses embassy_time Timer::after(Duration::from_millis(160)) replacing blocking spin loop
+- 52-01: MAX31856 retry logic uses fixed 10ms delay, attempts max_retries+1 times (2 retries = 3 total)
 
 ### Pending Todos
 
@@ -79,8 +81,8 @@ Recent decisions affecting current work:
 - [x] v3.0: Fix mutable statics safety (driver.rs:118, 62) - DONE
 - [x] v3.0: Fix ServiceContainer::get_instance() (service_container.rs:37-40) - DONE
 - [x] v3.0: Fix test_parse_ot2_partial_command failure - DONE
-- [x] v3.0: Fix README vs PROTOCOL.md mismatch
-- [ ] v3.0: Fix blocking MAX31856 temperature read
+- [x] v3.0: Fix README vs PROTOCOL.md mismatch - DONE
+- [x] v3.0: Fix blocking MAX31856 temperature read - DONE
 - [ ] v3.0: Fix SSR/Fan shared LEDC timer
 
 ### Blockers/Concerns
@@ -89,6 +91,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-18 08:06 UTC
-Stopped at: Completed 50-01 test fix - OT2 parser returns InvalidValue
+Last session: 2026-02-18 10:35 UTC
+Stopped at: Completed 52-01 async MAX31856 temperature read
 Resume file: None
