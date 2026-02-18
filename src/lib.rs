@@ -5,7 +5,9 @@ extern crate alloc;
 #[cfg(any(test, feature = "test"))]
 extern crate std;
 
-#[cfg(all(any(test, feature = "test"), not(target_arch = "riscv32")))]
+// Custom embassy-time driver only for riscv32 embedded tests
+// When using --features std, embassy-time provides its own driver via std feature
+#[cfg(all(any(test, feature = "test"), target_arch = "riscv32"))]
 #[no_mangle]
 fn _embassy_time_now() -> u64 {
     0

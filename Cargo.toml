@@ -30,9 +30,9 @@ embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", optional = true
 embedded-hal-bus = "0.2.0"
 embedded-io       = "0.7.1"
 embedded-io-async = "0.6.1"
-embassy-time     = "0.5.0"
+embassy-time     = { version = "0.5.0", features = ["std"] }
 embassy-usb     = "0.5.0"
-critical-section = "1.2.0"
+critical-section = { version = "1.2.0", features = ["std"] }
 static_cell = "2.1.1"
 log              = "0.4.27"
 embassy-sync     = "0.6.1"
@@ -97,15 +97,14 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 ] }
 
 critical-section = "1.2.0"
-static_cell = "2.1.1"
-embassy-sync     = "0.6.1"
+static_cell = "1.1.1"
 
 
 
 [dev-dependencies]
 # Test dependencies
 log = "0.4.27"
-critical-section = "1.2.0"
+critical-section = { version = "1.2.0", features = ["std"] }
 static_cell = "2.1.1"
 embassy-sync = "0.6.1"
 

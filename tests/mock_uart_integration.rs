@@ -26,21 +26,13 @@ critical_section::set_impl!(TestCriticalSection);
 
 unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn acquire() -> RawRestoreState {
-        ()
+        false
     }
 
     unsafe fn release(_restore_state: RawRestoreState) {}
 }
 
 static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
-
-#[no_mangle]
-fn _embassy_time_now() -> u64 {
-    TEST_TIME_TICKS.fetch_add(1, Ordering::Relaxed)
-}
-
-#[no_mangle]
-fn _embassy_time_schedule_wake(_at: u64, _waker: &core::task::Waker) {}
 
 struct StubHeater {
     power: f32,
