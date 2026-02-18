@@ -1,6 +1,7 @@
 use crate::application::service_container::ServiceContainer;
-use crate::control::traits::{Fan, Heater, Thermometer};
+use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterControl;
+use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
@@ -16,8 +17,8 @@ pub struct AppBuilder<'a> {
     formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
-    bean_sensor: Option<Box<dyn Thermometer + Send>>,
-    env_sensor: Option<Box<dyn Thermometer + Send>>,
+    bean_sensor: Option<Max31856<BtSpi>>,
+    env_sensor: Option<Max31856<EtSpi>>,
 }
 
 impl<'a> AppBuilder<'a> {
@@ -53,13 +54,13 @@ impl<'a> AppBuilder<'a> {
         self
     }
 
-    pub fn with_temperature_sensors<B, E>(mut self, bean_sensor: B, env_sensor: E) -> Self
-    where
-        B: Thermometer + Send + 'static,
-        E: Thermometer + Send + 'static,
-    {
-        self.bean_sensor = Some(Box::new(bean_sensor));
-        self.env_sensor = Some(Box::new(env_sensor));
+    pub fn with_temperature_sensors(
+        mut self,
+        bean_sensor: Max31856<BtSpi>,
+        env_sensor: Max31856<EtSpi>,
+    ) -> Self {
+        self.bean_sensor = Some(bean_sensor);
+        self.env_sensor = Some(env_sensor);
         self
     }
 

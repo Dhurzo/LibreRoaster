@@ -3,6 +3,22 @@ use crate::control::RoasterError;
 use embassy_time::{Duration, Timer};
 use embedded_hal::spi::SpiDevice;
 
+/// Type aliases for concrete SPI device types used in this application
+/// These allow storing Max31856 with concrete types to enable async methods
+#[allow(dead_code)]
+pub mod bt_spi {
+    use crate::hardware::shared_spi::SpiDeviceWithCs;
+    // Bean Temperature SPI type - using 'static for simplicity
+    pub type BtSpi = SpiDeviceWithCs<'static, esp_hal::spi::master::Spi<'static, esp_hal::Blocking>, esp_hal::gpio::Output<'static>>;
+}
+
+#[allow(dead_code)]
+pub mod et_spi {
+    use crate::hardware::shared_spi::SpiDeviceWithCs;
+    // Environment Temperature SPI type - using 'static for simplicity
+    pub type EtSpi = SpiDeviceWithCs<'static, esp_hal::spi::master::Spi<'static, esp_hal::Blocking>, esp_hal::gpio::Output<'static>>;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Max31856Error {
     CommunicationError,

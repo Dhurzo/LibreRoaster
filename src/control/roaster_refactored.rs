@@ -3,14 +3,15 @@ use crate::config::*;
 use crate::control::handlers::{
     ArtisanCommandHandler, SafetyCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
 };
-use crate::control::traits::{AsyncThermometer, Fan, Heater, Thermometer};
+use crate::control::traits::{Fan, Heater};
 use crate::control::SsrCycleGuard;
+use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
 
-/// RoasterControl - uses Box<dyn Thermometer> for sensor storage
-/// The async read_sensors() method handles async internally
+/// RoasterControl - uses concrete Max31856 types for sensor storage
+/// This enables calling async temperature methods without blocking the executor
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
@@ -20,9 +21,9 @@ pub struct RoasterControl {
 
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
-    /// Sensors stored as Thermometer - async methods accessed through inner mutability
-    bean_sensor: Box<dyn Thermometer + Send>,
-    env_sensor: Box<dyn Thermometer + Send>,
+    /// Sensors stored as concrete Max31856 types - enables async temperature reading
+    bean_sensor: Max31856<BtSpi>,
+    env_sensor: Max31856<EtSpi>,
 
     temp_handler: TemperatureCommandHandler,
 
@@ -39,8 +40,8 @@ impl RoasterControl {
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
-        bean_sensor: Box<dyn Thermometer + Send>,
-        env_sensor: Box<dyn Thermometer + Send>,
+        bean_sensor: Max31856<BtSpi>,
+        env_sensor: Max31856<EtSpi>,
     ) -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
 
@@ -62,23 +63,21 @@ impl RoasterControl {
         })
     }
 
-    /// Async sensor reading - prepared for async temperature reading
-    /// Note: Currently uses sync calls due to Box<dyn Thermometer> storage pattern.
-    /// Full async integration requires using concrete sensor types instead of trait objects.
-    /// The AsyncThermometer trait and MAX31856 implementation exist for when
-    /// storage pattern is changed to support async.
+    /// Async sensor reading - uses async MAX31856 methods to avoid blocking executor
+    /// This is the gap closure: storing concrete Max31856 types enables async calls
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
 
-        // Currently using sync reads - async version would require
-        // changing sensor storage to concrete types instead of Box<dyn Thermometer>
-        let raw_bt = self.bean_sensor.read_temperature()?;
-        let raw_et = self.env_sensor.read_temperature()?;
+        // Using async temperature reads - no longer blocks the async executor
+        // The concrete Max31856 type gives us access to read_temperature_async()
+        let raw_bt = self.bean_sensor.read_temperature_async().await?;
+        let raw_et = self.env_sensor.read_temperature_async().await?;
 
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
     /// Sync sensor reading - kept for backwards compatibility
+    /// Note: This now uses the concrete Max31856 types but calls sync methods
     pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
         let raw_bt = self.bean_sensor.read_temperature()?;
