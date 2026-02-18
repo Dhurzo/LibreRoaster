@@ -40,13 +40,9 @@ use static_cell::StaticCell;
 #[cfg(target_arch = "riscv32")]
 extern crate alloc;
 
-/// SAFETY: The caller must ensure that the returned reference is only used
-/// for the lifetime of the program, and that `value` is not dropped while the reference is in use.
-#[cfg(target_arch = "riscv32")]
-unsafe fn make_static<T>(mut value: T) -> &'static mut T {
-    let ptr = &mut value as *mut T;
-    &mut *ptr
-}
+// StaticCells for safe static initialization (replaces unsafe make_static)
+static SSR_CELL: StaticCell<SsrControlSimple> = StaticCell::new();
+static FAN_CELL: StaticCell<FanController> = StaticCell::new();
 
 #[cfg(target_arch = "riscv32")]
 use libreroaster::application::AppBuilder;
@@ -216,8 +212,10 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("SSR configured with REAL GPIO hardware (GPIO10) - simple mode");
 
-    let static_ssr = unsafe { make_static(real_ssr) };
-    let static_fan = unsafe { make_static(fan_controller) };
+    // SAFETY: StaticCell::init() provides compile-time memory reservation,
+    // preventing use-after-free. Called once during initialization before async tasks start.
+    let static_ssr: &'static mut SsrControlSimple = SSR_CELL.init(real_ssr);
+    let static_fan: &'static mut FanController = FAN_CELL.init(fan_controller);
 
     info!("Drivers initialized and moved to static memory");
 
