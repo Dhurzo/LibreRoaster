@@ -1,5 +1,6 @@
 use crate::control::traits::Thermometer;
 use crate::control::RoasterError;
+use embassy_time::{Duration, Timer};
 use embedded_hal::spi::SpiDevice;
 
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +77,63 @@ where
         }
 
         Ok(temperature)
+    }
+
+    /// Async temperature read using embassy-time Timer instead of blocking spin loop.
+    /// This prevents blocking the async executor during the 160ms conversion delay.
+    pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
+        self.write_register(0x80, 0x80)?; // Set one-shot bit
+
+        // Use async Timer instead of blocking spin loop - allows executor to run other tasks
+        Timer::after(Duration::from_millis(160)).await;
+
+        let temp_data = self.read_registers(0x0C, 3)?;
+
+        let fault = self.read_register(0x0F)?;
+        if fault & 0x01 != 0 {
+            return Err(Max31856Error::FaultDetected);
+        }
+
+        // Convert 24-bit temperature to Celsius
+        let temp_raw =
+            ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
+
+        // Convert from MAX31856 format (0.0078125°C LSB)
+        let temperature = if (temp_raw & 0x800000) != 0 {
+            // Negative temperature - two's complement
+            let temp_complement = !temp_raw & 0x7FFFFF;
+            -(temp_complement as i32) as f32 * 0.0078125
+        } else {
+            temp_raw as f32 * 0.0078125
+        };
+
+        if temperature < -200.0 || temperature > 1350.0 {
+            return Err(Max31856Error::InvalidTemperature);
+        }
+
+        Ok(temperature)
+    }
+
+    /// Async temperature read with retry logic.
+    /// Attempts up to max_retries + 1 times (so max_retries=2 means 3 total attempts).
+    /// Waits fixed 10ms between retries using embassy-time Timer.
+    pub async fn read_with_retry(&mut self, max_retries: u8) -> Result<f32, Max31856Error> {
+        let mut last_error = Max31856Error::CommunicationError;
+
+        for attempt in 0..=max_retries {
+            match self.read_temperature_async().await {
+                Ok(temp) => return Ok(temp),
+                Err(e) => {
+                    last_error = e;
+                    // Wait 10ms before retry (not on last attempt)
+                    if attempt < max_retries {
+                        Timer::after(Duration::from_millis(10)).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error)
     }
 
     fn write_register(&mut self, address: u8, value: u8) -> Result<(), Max31856Error> {
