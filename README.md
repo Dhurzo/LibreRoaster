@@ -27,7 +27,7 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 | Command | Description |
 |---------|-------------|
-| `READ` | Request telemetry (ET, BT, ambient, fan%, heater%) |
+| `READ` | Request telemetry (ET, BT, heater%, fan%) |
 | `OT1 [0-100]` | Set heater power percentage |
 | `IO3 [0-100]` | Set fan speed percentage |
 | `UP` | Increase heater by 5% |
@@ -98,21 +98,16 @@ LibreRoaster supports two connection methods to Artisan:
 
 ### READ Response Format
 
-```
-ET,BT,ET2,BT2,ambient,fan,heater
-```
+4-value CSV: ET,BT,HEATER,FAN
 
-Example: `185.2,192.3,-1,-1,24.5,45,75`
+| Field | Type | Unit | Description |
+|-------|------|------|-------------|
+| ET | Decimal | °C | Exhaust Temperature |
+| BT | Decimal | °C | Bean Temperature |
+| HEATER | Decimal | % | Heater PWM percentage |
+| FAN | Decimal | % | Fan PWM percentage |
 
-| Field | Description |
-|-------|-------------|
-| ET | Environment temperature (°C) |
-| BT | Bean temperature (°C) |
-| ET2 | Extra channel (-1 if unused) |
-| BT2 | Extra channel (-1 if unused) |
-| ambient | Ambient temperature |
-| fan | Fan output % |
-| heater | Heater output % |
+Example: `185.3,201.4,45,80`
 
 ### Initialization
 
