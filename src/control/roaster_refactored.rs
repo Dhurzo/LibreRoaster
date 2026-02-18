@@ -6,6 +6,7 @@ use crate::control::handlers::{
 use crate::control::traits::{Fan, Heater};
 use crate::control::SsrCycleGuard;
 use alloc::boxed::Box;
+#[cfg(not(target_arch = "riscv32"))]
 use core::marker::PhantomData;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
