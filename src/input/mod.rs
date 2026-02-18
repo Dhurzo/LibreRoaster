@@ -7,7 +7,10 @@ pub use multiplexer::{CommChannel, CommandMultiplexer, InitEvent, InitState};
 pub use parser::parse_artisan_command;
 
 use crate::config::ArtisanCommand;
+#[cfg(target_arch = "riscv32")]
 use crate::hardware::uart::{send_response, uart_reader_task, COMMAND_PIPE_SIZE};
+#[cfg(not(target_arch = "riscv32"))]
+use crate::hardware::uart::{send_response, COMMAND_PIPE_SIZE};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
