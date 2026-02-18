@@ -68,19 +68,27 @@ pub struct LedcBus<'a> {
     guard: LedcGuard,
     fan: ChannelEntry<'a>,
     ssr: ChannelEntry<'a>,
+    /// Timer number used by Fan channel (Timer1 = 25kHz)
+    fan_timer: u8,
+    /// Timer number used by SSR channel (Timer0 = 1Hz)
+    ssr_timer: u8,
 }
 
 impl<'a> LedcBus<'a> {
     pub fn new(
         fan_channel: channel::Channel<'a, LowSpeed>,
         fan_number: channel::Number,
+        fan_timer: u8,
         ssr_channel: channel::Channel<'a, LowSpeed>,
         ssr_number: channel::Number,
+        ssr_timer: u8,
     ) -> Self {
         Self {
             guard: LedcGuard::new(),
             fan: ChannelEntry::new(fan_channel, fan_number, "fan"),
             ssr: ChannelEntry::new(ssr_channel, ssr_number, "ssr"),
+            fan_timer,
+            ssr_timer,
         }
     }
 
