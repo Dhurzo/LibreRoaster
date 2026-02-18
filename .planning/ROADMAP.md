@@ -171,8 +171,8 @@
 | PERF-01 | Phase 52 | Complete (not integrated) |
 | PERF-02 | Phase 52 | Complete |
 | PERF-01 | Phase 53 | Complete |
-| DEBT-01 | Phase 54 | Pending |
-| DEBT-02 | Phase 54 | Pending |
+| DEBT-01 | Phase 54 | Complete |
+| DEBT-02 | Phase 54 | Complete (2 warnings fixed, 9 static_mut_refs left as-is) |
 | DEBT-03 | Phase 54 | Pending |
 
 ---
