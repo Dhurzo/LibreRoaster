@@ -7,6 +7,7 @@ use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use heapless::String;
+use static_cell::ConstStaticCell;
 
 pub struct ServiceContainer {
     pub roaster: Mutex<RefCell<Option<RoasterControl>>>,
@@ -29,6 +30,11 @@ static ARTISAN_OUTPUT_CHANNEL: Channel<
 static ARTISAN_MULTIPLEXER: Mutex<RefCell<Option<CommandMultiplexer>>> =
     Mutex::new(RefCell::new(None));
 
+// ConstStaticCell for singleton ServiceContainer - initialized at compile time
+// SAFETY: take() can only be called once during application initialization.
+// The returned reference lives for the duration of the program.
+static INSTANCE: ConstStaticCell<ServiceContainer> = ConstStaticCell::new(ServiceContainer::new());
+
 impl ServiceContainer {
     pub const fn new() -> Self {
         Self {
@@ -39,8 +45,10 @@ impl ServiceContainer {
     }
 
     pub fn get_instance() -> &'static mut Self {
-        static mut INSTANCE: ServiceContainer = ServiceContainer::new();
-        unsafe { &mut *core::ptr::addr_of_mut!(INSTANCE) }
+        // SAFETY: ConstStaticCell::take() can only be called once.
+        // This is called during application initialization before any async tasks start.
+        // The returned reference lives for the duration of the program.
+        INSTANCE.take()
     }
 
     pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
