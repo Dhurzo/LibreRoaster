@@ -24,8 +24,8 @@ Critical safety fixes for embedded reliability.
 
 ### Performance
 
-- [ ] **PERF-01**: Replace blocking MAX31856 temperature read (~160ms busy-wait) with embassy-time::Timer async delay
-- [ ] **PERF-02**: Separate SSR and Fan LEDC timers (SSR needs ~1Hz, Fan needs 25kHz) - use Timer0 and Timer1 separately
+- [x] **PERF-01**: Replace blocking MAX31856 temperature read (~160ms busy-wait) with embassy-time::Timer async delay
+- [x] **PERF-02**: Separate SSR and Fan LEDC timers (SSR needs ~1Hz, Fan needs 25kHz) - use Timer0 and Timer1 separately
 
 ## Out of Scope
 
@@ -47,8 +47,8 @@ Critical safety fixes for embedded reliability.
 | SAFE-04 | Phase 49 | Complete |
 | TEST-01 | Phase 50 | Complete |
 | DOCS-01 | Phase 51 | Complete |
-| PERF-01 | Phase 52 | Pending |
-| PERF-02 | Phase 52 | Pending |
+| PERF-01 | Phase 52 | Complete |
+| PERF-02 | Phase 52 | Complete |
 
 **Coverage:**
 - v3.0 requirements: 8 total
