@@ -151,10 +151,8 @@ async fn main(spawner: Spawner) -> ! {
     let ledc_bus = LEDC_BUS.init(LedcBus::new(
         fan_channel,
         channel::Number::Channel0,
-        libreroaster::config::FAN_LEDC_TIMER,
         ssr_channel,
         channel::Number::Channel1,
-        libreroaster::config::SSR_LEDC_TIMER,
     ));
 
     let fan_handle = ledc_bus.fan_handle();
