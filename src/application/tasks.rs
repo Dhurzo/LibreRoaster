@@ -103,8 +103,9 @@ pub async fn control_loop_task() {
 
             match line {
                 Ok(formatted_line) => {
-                    let _ = heapless::String::try_from(formatted_line.as_str())
-                        .and_then(|s| output_channel.try_send(s).map_err(|_| ()));
+                    if let Ok(s) = heapless::String::try_from(formatted_line.as_str()) {
+                        let _ = output_channel.try_send(s);
+                    }
                 }
                 Err(e) => {
                     debug!("Formatter error: {:?}", e);
@@ -163,8 +164,7 @@ pub async fn dual_output_task() {
                             let _ = uart.write_bytes(&bytes).await;
                         }
                     }
-                    CommChannel::None => {
-                    }
+                    CommChannel::None => {}
                 }
             }
         }

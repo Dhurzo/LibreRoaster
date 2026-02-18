@@ -6,27 +6,26 @@
     holding buffers for duration of a data transfer."
 )]
 #[cfg(target_arch = "riscv32")]
-
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 #[cfg(target_arch = "riscv32")]
+use embedded_hal::delay::DelayNs;
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::clock::CpuClock;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
+use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::config::Config as TimerConfig;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::TimerIFace;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::{channel, timer, Ledc, LowSpeed};
-#[cfg(target_arch = "riscv32")]
-use embedded_hal::delay::DelayNs;
-use esp_hal::ledc::channel::{ChannelIFace, config::Config as ChannelConfig};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::spi::master::Spi;
 
@@ -52,13 +51,15 @@ unsafe fn make_static<T>(mut value: T) -> &'static mut T {
 #[cfg(target_arch = "riscv32")]
 use libreroaster::application::AppBuilder;
 #[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::fan::SimpleLedcFan;
+use libreroaster::hardware::fan::FanController;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::ssr::SsrControlSimple;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::ledc_bus::LedcBus;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
 
@@ -110,9 +111,8 @@ async fn main(spawner: Spawner) -> ! {
     let mut fan_channel = ledc.channel::<LowSpeed>(channel::Number::Channel0, gpio9);
 
     // SAFETY: Extending the timer lifetime to static to satisfying the borrow checker for static initialization.
-    let timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> = unsafe {
-        &mut *(&mut fan_timer as *mut _ as *mut _)
-    };
+    let timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> =
+        unsafe { &mut *(&mut fan_timer as *mut _ as *mut _) };
 
     fan_channel
         .configure(ChannelConfig {
@@ -125,9 +125,38 @@ async fn main(spawner: Spawner) -> ! {
             panic!("Fan channel configuration failed");
         })
         .unwrap();
-    let mut fan_impl = SimpleLedcFan::new(fan_channel);
 
-    let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_impl, 0.0);
+    let ssr_pin_for_pwm = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
+
+    let mut ssr_channel = ledc.channel::<LowSpeed>(channel::Number::Channel1, ssr_pin_for_pwm);
+    ssr_channel
+        .configure(ChannelConfig {
+            timer: timer_ref,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .map_err(|e| {
+            log::error!("Failed to configure SSR channel: {:?}", e);
+            panic!("SSR channel configuration failed");
+        })
+        .unwrap();
+
+    let ledc_bus = LEDC_BUS.init(LedcBus::new(
+        fan_channel,
+        channel::Number::Channel0,
+        ssr_channel,
+        channel::Number::Channel1,
+    ));
+
+    let fan_handle = ledc_bus.fan_handle();
+    let ssr_handle = ledc_bus.ssr_handle();
+
+    let mut fan_controller = FanController::with_handle(fan_handle).unwrap_or_else(|e| {
+        log::error!("Failed to initialize fan controller: {:?}", e);
+        panic!("Fan controller initialization failed");
+    });
+
+    let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_controller, 0.0);
 
     use esp_hal::spi::master::Config;
 
@@ -143,6 +172,7 @@ async fn main(spawner: Spawner) -> ! {
 
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<esp_hal::Blocking>>>> =
         StaticCell::new();
+    static LEDC_BUS: StaticCell<LedcBus<'static>> = StaticCell::new();
     let spi_mutex = SPI_BUS.init(critical_section::Mutex::new(RefCell::new(spi)));
 
     // Create devices
@@ -177,22 +207,7 @@ async fn main(spawner: Spawner) -> ! {
         }
     );
 
-    let ssr_pin_for_pwm = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
-
-    let mut ssr_channel = ledc.channel::<LowSpeed>(channel::Number::Channel1, ssr_pin_for_pwm);
-    ssr_channel
-        .configure(ChannelConfig {
-            timer: timer_ref,
-            duty_pct: 0,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .map_err(|e| {
-            log::error!("Failed to configure SSR channel: {:?}", e);
-            panic!("SSR channel configuration failed");
-        })
-        .unwrap();
-
-    let real_ssr = SsrControlSimple::new(heat_detection_pin, ssr_channel)
+    let real_ssr = SsrControlSimple::new(heat_detection_pin, ssr_handle)
         .map_err(|e| {
             log::error!("Failed to initialize SSR control: {:?}", e);
             panic!("SSR control initialization failed");
@@ -202,7 +217,7 @@ async fn main(spawner: Spawner) -> ! {
     info!("SSR configured with REAL GPIO hardware (GPIO10) - simple mode");
 
     let static_ssr = unsafe { make_static(real_ssr) };
-    let static_fan = unsafe { make_static(fan_impl) };
+    let static_fan = unsafe { make_static(fan_controller) };
 
     info!("Drivers initialized and moved to static memory");
 
@@ -233,5 +248,4 @@ async fn main(spawner: Spawner) -> ! {
             panic!("Application tasks start failed");
         })
         .unwrap();
-
 }

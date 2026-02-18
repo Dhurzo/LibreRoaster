@@ -1,8 +1,65 @@
+use crate::config::constants::{
+    SsrHardwareStatus as GlobalSsrStatus, SSR_DUTY_TOLERANCE_TICKS, SSR_PWM_RESOLUTION,
+};
+use crate::control::{traits::Heater, RoasterError};
 use core::marker::PhantomData;
 use embedded_hal::digital::{InputPin, OutputPin};
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::LowSpeed;
 use log::{debug, error, info, warn};
+
+pub trait LedcDutyReader {
+    fn read_duty_ticks(&self) -> u16;
+}
+
+#[cfg(target_arch = "riscv32")]
+mod ssr_ledc;
+
+#[cfg(target_arch = "riscv32")]
+pub use ssr_ledc::LedcChannelMonitor;
+
+fn monitor_ledc_after_set<'a, PWM>(
+    pwm_channel: &mut PWM,
+    commanded: u8,
+    retry_count: &mut u8,
+    last_delta: &mut i16,
+) -> Result<(), SsrError>
+where
+    PWM: LedcDutyReader + ChannelIFace<'a, LowSpeed>,
+{
+    let readback = pwm_channel.read_duty_ticks();
+    let delta = readback as i16 - commanded as i16;
+    *last_delta = delta;
+
+    let tolerance = SSR_DUTY_TOLERANCE_TICKS as i16;
+    if delta.abs() <= tolerance {
+        return Ok(());
+    }
+
+    warn!(
+        "LEDC duty drift detected: commanded {} ticks vs actual {} ticks (delta {} ticks) - retrying once",
+        commanded, readback, delta
+    );
+    *retry_count = retry_count.saturating_add(1);
+
+    pwm_channel
+        .set_duty(commanded)
+        .map_err(|_| SsrError::PwmError)?;
+
+    let rechecked = pwm_channel.read_duty_ticks();
+    let new_delta = rechecked as i16 - commanded as i16;
+    *last_delta = new_delta;
+
+    if new_delta.abs() > tolerance {
+        error!(
+            "LEDC duty mismatch persists after retry: commanded {} ticks vs actual {} ticks (delta {} ticks)",
+            commanded, rechecked, new_delta
+        );
+        return Err(SsrError::PwmError);
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SsrError {
@@ -29,7 +86,7 @@ pub struct SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     #[allow(dead_code)]
     // Stored for ownership - pin is set low during initialization and kept alive
@@ -39,16 +96,26 @@ where
     pwm_channel: PWM,
     hardware_status: SsrHardwareStatus,
     current_duty: u16,
+    last_duty_delta_ticks: i16,
+    retry_count: u8,
     last_detection_check: Option<u32>,
     is_pwm_enabled: bool,
     _phantom: PhantomData<&'a ()>,
+}
+
+pub fn percentage_to_ledc_duty(percentage: f32) -> u8 {
+    let clamped = percentage.clamp(0.0, 100.0);
+    let max_duty = (1u32 << SSR_PWM_RESOLUTION) - 1;
+    let scaled = ((clamped / 100.0) * max_duty as f32 + 0.5) as u32;
+    let scaled = scaled.min(max_duty);
+    scaled as u8
 }
 
 impl<'a, PIN, DETECT, PWM> SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     pub fn new_with_pwm_and_detection(
         mut pin: PIN,
@@ -64,6 +131,8 @@ where
             pwm_channel,
             hardware_status: SsrHardwareStatus::NotDetected,
             current_duty: 0,
+            last_duty_delta_ticks: 0,
+            retry_count: 0,
             last_detection_check: None,
             is_pwm_enabled: true,
             _phantom: PhantomData,
@@ -137,18 +206,27 @@ where
 
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
-        let max_duty = 255; // Assuming 8-bit PWM resolution (0-255)
-        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
+        let ledc_duty = percentage_to_ledc_duty(clamped);
+
+        self.current_duty = ledc_duty as u16;
+        self.last_duty_delta_ticks = 0;
+        self.retry_count = 0;
 
         self.pwm_channel
-            .set_duty((duty / 100) as u8)
+            .set_duty(ledc_duty)
             .map_err(|_| SsrError::PwmError)?;
-        self.current_duty = duty as u16;
+
+        monitor_ledc_after_set(
+            &mut self.pwm_channel,
+            ledc_duty,
+            &mut self.retry_count,
+            &mut self.last_duty_delta_ticks,
+        )?;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",
             clamped,
-            duty,
+            ledc_duty,
             self.is_heating_available()
         );
 
@@ -162,17 +240,27 @@ where
     pub fn is_pwm_enabled(&self) -> bool {
         self.is_pwm_enabled
     }
+
+    pub fn last_lead_delta_ticks(&self) -> i16 {
+        self.last_duty_delta_ticks
+    }
+
+    pub fn last_retry_count(&self) -> u8 {
+        self.retry_count
+    }
 }
 
 pub struct SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     detection_pin: DETECT,
     pwm_channel: PWM,
     hardware_status: SsrHardwareStatus,
     current_duty: u16,
+    last_duty_delta_ticks: i16,
+    retry_count: u8,
     last_detection_check: Option<u32>,
     is_pwm_enabled: bool,
     _phantom: PhantomData<&'a ()>,
@@ -181,7 +269,7 @@ where
 impl<'a, DETECT, PWM> SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     pub fn new(detection_pin: DETECT, pwm_channel: PWM) -> Result<Self, SsrError> {
         pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError)?;
@@ -191,6 +279,8 @@ where
             pwm_channel,
             hardware_status: SsrHardwareStatus::NotDetected,
             current_duty: 0,
+            last_duty_delta_ticks: 0,
+            retry_count: 0,
             last_detection_check: None,
             is_pwm_enabled: true,
             _phantom: PhantomData,
@@ -264,18 +354,27 @@ where
 
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
-        let max_duty = 255;
-        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
+        let ledc_duty = percentage_to_ledc_duty(clamped);
+
+        self.current_duty = ledc_duty as u16;
+        self.last_duty_delta_ticks = 0;
+        self.retry_count = 0;
 
         self.pwm_channel
-            .set_duty((duty / 100) as u8)
+            .set_duty(ledc_duty)
             .map_err(|_| SsrError::PwmError)?;
-        self.current_duty = duty as u16;
+
+        monitor_ledc_after_set(
+            &mut self.pwm_channel,
+            ledc_duty,
+            &mut self.retry_count,
+            &mut self.last_duty_delta_ticks,
+        )?;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",
             clamped,
-            duty,
+            ledc_duty,
             self.is_heating_available()
         );
 
@@ -289,12 +388,20 @@ where
     pub fn is_pwm_enabled(&self) -> bool {
         self.is_pwm_enabled
     }
+
+    pub fn last_lead_delta_ticks(&self) -> i16 {
+        self.last_duty_delta_ticks
+    }
+
+    pub fn last_retry_count(&self) -> u8 {
+        self.retry_count
+    }
 }
 
 impl<'a, DETECT, PWM> Heater for SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_percentage(duty)
@@ -307,25 +414,29 @@ where
             SsrHardwareStatus::NotDetected => GlobalSsrStatus::NotDetected,
             SsrHardwareStatus::Error => GlobalSsrStatus::Error,
         }
+    }
+
+    fn last_duty_delta_ticks(&self) -> i16 {
+        self.last_duty_delta_ticks
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        self.retry_count
     }
 }
 
 unsafe impl<'a, DETECT, PWM> Send for SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
 }
-
-use crate::config::constants::SsrHardwareStatus as GlobalSsrStatus;
-use crate::control::traits::Heater;
-use crate::control::RoasterError;
 
 impl<'a, PIN, DETECT, PWM> Heater for SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_percentage(duty)
@@ -338,6 +449,14 @@ where
             SsrHardwareStatus::NotDetected => GlobalSsrStatus::NotDetected,
             SsrHardwareStatus::Error => GlobalSsrStatus::Error,
         }
+    }
+
+    fn last_duty_delta_ticks(&self) -> i16 {
+        self.last_duty_delta_ticks
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        self.retry_count
     }
 }
 
@@ -349,6 +468,39 @@ unsafe impl<'a, PIN, DETECT, PWM> Send for SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
     DETECT: InputPin,
-    PWM: ChannelIFace<'a, LowSpeed>,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percentage_to_ledc_duty;
+    use crate::config::constants::{
+        SSR_CYCLE_GUARD_MS, SSR_DUTY_TOLERANCE_TICKS, SSR_PWM_RESOLUTION,
+    };
+
+    const fn max_duty() -> u8 {
+        ((1u32 << SSR_PWM_RESOLUTION) - 1) as u8
+    }
+
+    #[test]
+    fn percentage_to_ledc_duty_handles_bounds() {
+        assert_eq!(percentage_to_ledc_duty(0.0), 0);
+        assert_eq!(percentage_to_ledc_duty(100.0), max_duty());
+        assert_eq!(percentage_to_ledc_duty(-50.0), 0);
+        assert_eq!(percentage_to_ledc_duty(150.0), max_duty());
+    }
+
+    #[test]
+    fn percentage_to_ledc_duty_rounds_midpoints() {
+        let max_duty = ((1u32 << SSR_PWM_RESOLUTION) - 1) as f32;
+        let expected = (max_duty * 0.5).round() as u8;
+        assert_eq!(percentage_to_ledc_duty(50.0), expected);
+    }
+
+    #[test]
+    fn guard_constants_are_locked() {
+        assert_eq!(SSR_CYCLE_GUARD_MS, 1000);
+        assert_eq!(SSR_DUTY_TOLERANCE_TICKS, 2);
+    }
 }

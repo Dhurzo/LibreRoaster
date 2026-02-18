@@ -20,7 +20,37 @@
 
 **Git range:** `96ff8eb` → `dd575e7`
 
-**What's next:** Define v2.6 requirements (ROR reset, dual output routing tests, protocol fuzzing)
+**What's next:** Define v2.6 hardware reliability roadmap (phases 46-48) while requirements are still being documented
+
+---
+
+## v2.6 Problemas que impiden funcionamiento real en hardware (Shipped: 2026-02-18)
+
+**Delivered:** Fixed SSR duty scaling, made FanController drive physical LEDC channels, and implemented async UART/USB CDC transports with back-pressure handling so hardware stays responsive under load.
+
+**Phases completed:** 46-48 (10 plans total)
+
+**Key accomplishments:**
+- SSR saturating duty math (0-100% → LEDC 0-255) with cycle guard (≥1s) and ±2 tick drift monitoring
+- FanController wired to shared LEDC bus with serialization, telemetry reflects applied duty
+- Async UART with embassy embedded_io_async and buffered event queues
+- USB CDC back-pressure handling with exponential backoff (1ms→10ms)
+- CommandQueue with FIFO reject-on-full semantics
+- Queue processor tasks wired to artisan_channel for full E2E command flow
+- Transport flood tests proving no executor stalls
+
+**Stats:**
+- 43+ files created/modified
+- 3 phases, 10 plans, ~25 tasks
+- 1 day from start to ship (2026-02-17 to 2026-02-18)
+
+**Git range:** `8776cee` → `2f19685`
+
+**What's next:** v2.7 TBD — hardware reliability verified, ready for next features
+
+---
+
+## v2.7 (Planning)
 
 ---
 
@@ -208,4 +238,4 @@
 
 ---
 
-*Last updated: 2026-02-08 — v2.3 Documentation Update shipped*
+*Last updated: 2026-02-18 — v2.6 milestone shipped*

@@ -18,6 +18,8 @@ pub const SSR_PWM_FREQUENCY_HZ: u32 = 1;
 pub const FAN_LEDC_CHANNEL: u8 = 0;
 pub const SSR_LEDC_CHANNEL: u8 = 1;
 pub const SSR_PWM_RESOLUTION: u8 = 8;
+pub const SSR_CYCLE_GUARD_MS: u32 = 1000;
+pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
 
 pub const PWM_FREQUENCY: u32 = 1000;
 
@@ -143,6 +145,9 @@ pub struct SystemStatus {
     pub artisan_control: bool,
     pub fault_condition: bool,
     pub ssr_hardware_status: SsrHardwareStatus,
+    pub ssr_last_duty_delta_ticks: i16,
+    pub ssr_retry_count: u8,
+    pub ssr_cycle_guard_busy_until_ms: u64,
 }
 
 impl Default for SystemStatus {
@@ -158,6 +163,9 @@ impl Default for SystemStatus {
             artisan_control: false,
             fault_condition: false,
             ssr_hardware_status: SsrHardwareStatus::NotDetected,
+            ssr_last_duty_delta_ticks: 0,
+            ssr_retry_count: 0,
+            ssr_cycle_guard_busy_until_ms: 0,
         }
     }
 }

@@ -217,6 +217,9 @@ mod tests {
             artisan_control: false,
             fault_condition: false,
             ssr_hardware_status: SsrHardwareStatus::Available,
+            ssr_last_duty_delta_ticks: 0,
+            ssr_retry_count: 0,
+            ssr_cycle_guard_busy_until_ms: 0,
         }
     }
 

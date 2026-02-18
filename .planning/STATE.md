@@ -2,37 +2,35 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-17)
+See: .planning/PROJECT.md (updated 2026-02-18)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Planning next milestone
+**Current focus:** v2.6 shipped, ready for next milestone
 
 ## Current Position
 
-Phase: Planning next milestone (TBD)
+Phase: 49 of 49 (v2.6 complete)
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-02-17 — v2.5 milestone complete
+Status: milestone_complete
+Last activity: 2026-02-18 — v2.6 milestone shipped
 
-Progress: [----------] 0%
+Progress: [██████████] 100% (v2.6 shipped)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3 (v2.5)
-- Average duration: 2 min
-- Total execution time: 0.1 hours
+- Total plans completed: 10 (v2.6)
+- Average duration: ~2-7 min
+- Total execution time: ~30 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 44 | 2 | 2 | 1 min |
-| 45 | 1 | 1 | 4 min |
+| 46-48 | 10 | 10 | ~3 min |
 
 **Recent Trend:**
-- Last 5 plans: 44-01, 44-02, 45-01
-- Trend: Stabilizing
+- v2.6 milestone shipped (2026-02-18)
+- Ready for next milestone
 
 ## Accumulated Context
 
@@ -43,18 +41,35 @@ Recent decisions affecting current work:
 
 - 38-01: READ format is 4-value CSV (ET,BT,HEATER,FAN)
 - 38-01: READ format uses one-decimal precision
+- 46-01: Focus on SSR/LED PWM reliability and async UART/USB I/O for v2.6
+- 46-01: Share SSR guard/tolerance knobs via `config::constants` and lock them with tests so scheduler/monitor helpers stay aligned.
+- 46-02: Guard busy windows now live in `ssr_cycle_guard_busy_until_ms` so telemetry reports when SSR commands are rejected.
+- 46-02: `log_channel!` routes non-riscv builds through `log::info!` while keeping `esp_println` for hardware.
+- 46-02: SSR duty rounding now uses integer math to avoid pulling in `FloatCore` when compiling in `no_std`.
+- 46-03: Gated LEDC register reads behind `LedcDutyReader` so monitor helpers stay testable on host builds.
+- 46-03: RoasterControl telemetry now exposes `ssr_last_duty_delta_ticks` and `ssr_retry_count` immediately after heater writes.
+- 47-01: FanController now depends on LedcChannelHandle so fan writes use the shared mask and report applied duty.
+- 47-01: AppBuilder now requires a supplied fan implementation instead of configuring LEDC itself, keeping wiring centralized.
+- 47-02: SSR wired through LedcBus handle, RoasterControl reads actual applied fan duty post-write
+- 48-01: UART converted to async using embedded_io_async traits with esp-hal's into_async()
+- 48-01: Event queue uses heapless::Deque (256 bytes) with ring buffer behavior for burst handling
+- 48-02: USB CDC uses WouldBlock error variant for back-pressure detection instead of busy-waiting
+- 48-02: USB writer yields with exponential backoff (1ms → 10ms) during congestion
+- 48-03: CommandQueue uses heapless::Deque for no_std compatibility with 32-command capacity
+- 48-03: On queue full: silently drop command (Artisan times out) - reject-on-full behavior
+- 48-04: Integration flood tests use host target (x86_64) since embedded target lacks std
+- 48-05: Queue processor tasks wired to consume CommandQueue and send to artisan_channel
 
 ### Pending Todos
 
-- Integration tests should cover runtime READ formatting path (format_read_response_full).
-- `cargo test` verification requires `--target x86_64-unknown-linux-gnu`; embedded target still lacks std/test harness.
+- None - v2.6 hardware reliability milestone complete
 
 ### Blockers/Concerns
 
-None yet.
+- `cargo test --test ssr_monitor` cannot run on the default `riscv32imc-unknown-none-elf` target because it lacks `std`/`test`; use a host target to verify the suite.
 
 ## Session Continuity
 
-Last session: 2026-02-17 08:10 UTC
-Stopped at: Completed 45-01-PLAN.md
+Last session: 2026-02-18 07:47 UTC
+Stopped at: v2.6 milestone shipped
 Resume file: None

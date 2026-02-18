@@ -13,6 +13,7 @@ pub enum UsbCdcError {
     BufferOverflow,
     NotInitialized,
     NotSupported,
+    WouldBlock,
 }
 
 impl fmt::Display for UsbCdcError {
@@ -23,6 +24,7 @@ impl fmt::Display for UsbCdcError {
             UsbCdcError::BufferOverflow => write!(f, "USB CDC buffer overflow"),
             UsbCdcError::NotInitialized => write!(f, "USB CDC not initialized"),
             UsbCdcError::NotSupported => write!(f, "USB CDC not supported in this configuration"),
+            UsbCdcError::WouldBlock => write!(f, "USB CDC write blocked - back-pressure"),
         }
     }
 }
@@ -38,13 +40,63 @@ impl UsbCdcDriver {
         Self { usb }
     }
 
+    /// Check if the USB TX buffer can accept more data.
+    /// Returns true if ready to write, false if congested (back-pressure).
+    pub fn is_write_ready(&self) -> bool {
+        // USB Serial JTAG has a 64-byte TX FIFO
+        // We can't directly check FIFO status in blocking mode,
+        // but we can use this as a hook for future implementation
+        // Currently returns true - actual back-pressure handled in writer task
+        true
+    }
+
+    /// Write bytes with back-pressure awareness.
+    /// Returns WouldBlock if the write cannot complete immediately.
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UsbCdcError> {
-        self.usb.write(data).map_err(|_| UsbCdcError::TransmissionError)?;
+        // Try to write - if it fails, return WouldBlock to trigger back-pressure
+        match self.usb.write(data) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(UsbCdcError::WouldBlock),
+        }
+    }
+
+    /// Write bytes with timeout for back-pressure detection.
+    /// If write takes longer than expected, treats as congestion.
+    pub async fn write_bytes_with_timeout(&mut self, data: &[u8], timeout_ticks: u64) -> Result<(), UsbCdcError> {
+        use embassy_time::{Duration, Timer};
+
+        // Try write with polling for back-pressure
+        let mut remaining = data.len();
+        let mut offset = 0;
+
+        while remaining > 0 {
+            // Check if we should yield due to potential congestion
+            if !self.is_write_ready() {
+                return Err(UsbCdcError::WouldBlock);
+            }
+
+            match self.usb.write(&data[offset..offset + 1]) {
+                Ok(()) => {
+                    offset += 1;
+                    remaining -= 1;
+                }
+                Err(_) => {
+                    // Brief yield to allow USB hardware to process
+                    Timer::after(Duration::from_ticks(timeout_ticks)).await;
+                    // After timeout, treat as congestion
+                    return Err(UsbCdcError::WouldBlock);
+                }
+            }
+        }
+
         Ok(())
     }
 
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
-        let result = self.usb.read(buffer).map_err(|_| UsbCdcError::ReceptionError);
+        let result = self
+            .usb
+            .read(buffer)
+            .map_err(|_| UsbCdcError::ReceptionError);
         result
     }
 
@@ -60,6 +112,12 @@ pub struct UsbCdcDriver;
 impl UsbCdcDriver {
     pub fn new() -> Result<Self, UsbCdcError> {
         Ok(Self)
+    }
+
+    /// Check if the USB TX buffer can accept more data.
+    /// Always returns true for non-riscv32 targets.
+    pub fn is_write_ready(&self) -> bool {
+        true
     }
 
     pub async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), UsbCdcError> {

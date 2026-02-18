@@ -1,6 +1,6 @@
-pub mod service_container;
 #[cfg(target_arch = "riscv32")]
 pub mod app_builder;
+pub mod service_container;
 #[cfg(target_arch = "riscv32")]
 pub mod tasks;
 

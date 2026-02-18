@@ -23,11 +23,11 @@ impl core::fmt::Display for Channel {
 #[macro_export]
 macro_rules! log_channel {
     ($channel:expr, $($arg:tt)*) => {
-        #[cfg(any(test, feature = "test"))]
+        #[cfg(any(test, feature = "test", not(target_arch = "riscv32")))]
         {
-            println!("[{}] {}", $channel, format_args!($($arg)*));
+            log::info!("[{}] {}", $channel, format_args!($($arg)*));
         }
-        #[cfg(not(any(test, feature = "test")))]
+        #[cfg(all(not(any(test, feature = "test")), target_arch = "riscv32"))]
         {
             esp_println::println!("[{}] {}", $channel, format_args!($($arg)*));
         }

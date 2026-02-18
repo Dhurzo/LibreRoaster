@@ -1,13 +1,11 @@
 use crate::application::service_container::ServiceContainer;
-use crate::config::FAN_PWM_PIN;
 use crate::control::traits::{Fan, Heater, Thermometer};
 use crate::control::RoasterControl;
-use crate::hardware::fan::FanController;
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
 use embassy_executor::Spawner;
-use esp_hal::peripherals::{GPIO9, LEDC, UART0};
+use esp_hal::peripherals::UART0;
 
 use alloc::boxed::Box;
 use critical_section;
@@ -15,8 +13,6 @@ use log::info;
 
 pub struct AppBuilder<'a> {
     uart0: Option<UART0<'a>>,
-    ledc: Option<LEDC<'a>>,
-    gpio9: Option<GPIO9<'a>>,
     formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
@@ -28,8 +24,6 @@ impl<'a> AppBuilder<'a> {
     pub fn new() -> Self {
         Self {
             uart0: None,
-            ledc: None,
-            gpio9: None,
             formatter: None,
             heater: None,
             fan: None,
@@ -40,12 +34,6 @@ impl<'a> AppBuilder<'a> {
 
     pub fn with_uart(mut self, uart0: UART0<'a>) -> Self {
         self.uart0 = Some(uart0);
-        self
-    }
-
-    pub fn with_ledc(mut self, ledc: LEDC<'a>, gpio9: GPIO9<'a>) -> Self {
-        self.ledc = Some(ledc);
-        self.gpio9 = Some(gpio9);
         self
     }
 
@@ -85,21 +73,9 @@ impl<'a> AppBuilder<'a> {
             initialize_uart_system(uart0).map_err(|e| BuildError::UartInit(e))?;
         }
 
-        let fan: Box<dyn Fan + Send> = if let Some(fan) = self.fan {
-            fan
-        } else if let (Some(ledc), Some(gpio9)) = (self.ledc, self.gpio9) {
-            let fan_controller =
-                FanController::with_ledc(ledc, gpio9).map_err(|e| BuildError::FanInit(e))?;
-            info!(
-                "Fan controller initialized with LEDC PWM on GPIO{}",
-                FAN_PWM_PIN
-            );
-            Box::new(fan_controller)
-        } else {
-            let fan_controller = FanController::new().map_err(|e| BuildError::FanInit(e))?;
-            info!("Fan control not available - no LEDC hardware");
-            Box::new(fan_controller)
-        };
+        let fan: Box<dyn Fan + Send> = self
+            .fan
+            .ok_or(BuildError::MissingPeripheral("Fan Controller"))?;
 
         let heater = self
             .heater
@@ -165,8 +141,8 @@ impl Application {
     }
 
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
-        use crate::hardware::uart::tasks::uart_reader_task;
-        use crate::hardware::usb_cdc::tasks::usb_reader_task;
+        use crate::hardware::uart::tasks::{uart_reader_task, queue_processor_task};
+        use crate::hardware::usb_cdc::tasks::{usb_reader_task, usb_queue_processor_task};
 
         self.verify_initialization()
             .map_err(|e| TaskError::VerificationFailed(e))?;
@@ -176,6 +152,14 @@ impl Application {
             .map_err(|e| TaskError::SpawnFailed(e))?;
         spawner
             .spawn(usb_reader_task())
+            .map_err(|e| TaskError::SpawnFailed(e))?;
+
+        // Spawn queue processor tasks to consume commands from queues
+        spawner
+            .spawn(queue_processor_task())
+            .map_err(|e| TaskError::SpawnFailed(e))?;
+        spawner
+            .spawn(usb_queue_processor_task())
             .map_err(|e| TaskError::SpawnFailed(e))?;
 
         spawner

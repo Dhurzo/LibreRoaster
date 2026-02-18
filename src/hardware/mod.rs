@@ -3,6 +3,8 @@ pub mod fan;
 #[cfg(not(target_arch = "riscv32"))]
 #[path = "fan_host.rs"]
 pub mod fan;
+#[cfg(target_arch = "riscv32")]
+pub mod ledc_bus;
 pub mod max31856;
 pub mod shared_spi;
 #[cfg(target_arch = "riscv32")]

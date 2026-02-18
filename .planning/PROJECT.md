@@ -8,28 +8,21 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: Planning Next Milestone
+## Current Milestone: v2.7 TBD
 
-**Goal:** Define v2.6 requirements and roadmap
+**Goal:** To be defined
 
-## Last Shipped: v2.5 Artisan Edge Cases (2026-02-17)
+## Last Shipped: v2.6 Hardware Reliability (2026-02-18)
 
-v2.5 fixes Artisan READ framing edge cases, corrects ROR timing/reset behavior, and adds regression coverage for both.
+v2.6 fixes SSR duty scaling, makes FanController drive physical LEDC channels, and implements async UART/USB CDC transports with back-pressure handling.
 
 ## Next Milestone
 
-TBD (define in next milestone planning)
-
-## Next Milestone Goals
-
-- ROR resets cleanly on START/STOP and formatter reset (ROR-02)
-- Dual output routing tests validate terminator behavior across USB CDC and UART (TEST-02)
-- Protocol fuzz tests for malformed command framing (TEST-03)
+TBD (run /gsd-new-milestone to define)
 
 ## Current State
 
-v2.5 shipped: exact READ framing with single CRLF, ROR timing stabilized, and regression tests added.
-Tech debt: integration tests still call format_read_response instead of runtime format_read_response_full.
+v2.6 shipped: SSR duty scaling fixed, FanController drives LEDC channels, async UART/USB with back-pressure. Ready for next milestone.
 
 <details>
 <summary>Previous State</summary>
@@ -73,7 +66,6 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ Flash instructions for ESP32-C3 — v1.8
 - ✓ Artisan connection setup guide — v1.8
 - ✓ Command reference for end users — v1.8
-- ✓ UART logging usage guide — v1.8
 - ✓ Troubleshooting common issues — v1.8
 - ✓ Quick start reference card — v1.8
 - ✓ Clippy configuration for embedded Rust — v2.0
@@ -95,12 +87,28 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ ROR-01: delta_bt updates last_bt so ROR becomes non-zero after the second BT sample — v2.5
 - ✓ ARCH-01: A centralized terminator policy appends CRLF at a single output boundary — v2.5
 - ✓ TEST-01: Tests cover READ terminator and ROR update behavior — v2.5
+- ✓ SSR-01: Saturating SSR duty conversion 0-100 → LEDC 0-255 — v2.6
+- ✓ SSR-02: SSR cycle guard (≥1s) enforcement — v2.6
+- ✓ SSR-03: LEDC drift monitoring (±2 ticks) with retry — v2.6
+- ✓ FAN-01: FanController writes LEDC duty directly — v2.6
+- ✓ FAN-02: Fan/SSR LEDC writes serialized via LedcBus — v2.6
+- ✓ IO-01: Async UART with embassy traits and event queues — v2.6
+- ✓ IO-02: USB CDC back-pressure handling — v2.6
+- ✓ IO-03: CommandQueue FIFO with reject-on-full — v2.6
+- ✓ TEST-02: Transport flood tests — v2.6
 
-### Active (Next Milestone TBD)
+### Active (v2.7 TBD)
 
-- [ ] ROR-02: ROR resets cleanly on START/STOP and formatter reset
-- [ ] TEST-02: Dual output routing tests validate terminator behavior across USB CDC and UART
-- [ ] TEST-03: Protocol fuzz tests for malformed command framing
+- [ ] SSR-01: 100% Artisan SSR commands clamp to LEDC duty 255 after saturating conversion and minimum guardrails.
+- [ ] SSR-02: SSR scheduler enforces the datasheet cycle time, rejects commands if the previous cycle is still saturating, and retries when the hardware is busy.
+- [ ] SSR-03: SSR monitor validates that the LEDC channel reflects the commanded duty within ±2 ticks and retries/alerts if it does not.
+- [ ] FAN-01: FanController writes LEDC duty via `set_duty`/`update_duty` so the hardware channel is updated immediately instead of only storing target values.
+- [ ] FAN-02: Fan updates serialize LEDC writes (including optional fades) to avoid timer collisions and to provide audible-friendly ramps.
+- [ ] IO-01: UART transport uses embassy async UART traits with event queues so reads and writes never block the executor.
+- [ ] IO-02: USB CDC transport (embassy-usb + Synopsys OTG) exposes DMA-aware futures with back-pressure so the formatter yields whenever the endpoint is busy.
+- [ ] IO-03: Integration tests flood the UART and USB transports while SSR/fan loops run to confirm no executor stalls.
+- [ ] TEST-01: Hardware watchdogs or logs verify SSR updates respect minimum cycle times and LEDC duty accuracy.
+- [ ] TEST-02: Async transport regression tests assert the command multiplexer stays responsive even when SSR/fan tasks are saturated.
 
 ### Out of Scope
 
@@ -108,6 +116,8 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - PID control implementation
 - Roast profile automation
 - WiFi/Web UI
+- Telemetry channel for SSR/fan duty versus Artisan commands — deferred until hardware reliability proves stable
+- Dynamic PWM frequency reconfiguration across board variants — future milestone
 
 ## Context
 
@@ -127,6 +137,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 **v2.0 complete:** Code quality audit with clippy/geiger configuration and 31-issue inventory.
 
+**v2.6 focus:** Fix SSR duty math (no double division), FanController LEDC updates, and asynchronous UART/USB CDC transports so hardware output is deterministically driven.
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
@@ -135,19 +147,6 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | allow-unwrap-in-tests=true | Tests can use unwrap for test logic | ✓ Configured |
 | Grep-based unsafe analysis | cargo-geiger embedded feature complexity | ✓ Documented 22 blocks |
 | cargo unsafe-check alias | Avoid cargo-geiger shadowing | ✓ Working |
-
-## Constraints
-
-- **Protocol**: ARTISAN+ standard serial protocol
-- **Baud rate**: 115200 (typical for Artisan)
-- **Pins**: UART_TX=20, UART_RX=21
-- **Commands**: READ, START, STOP, OT1 (0-100), IO3 (0-100), UP, DOWN
-- **USB**: Native USB CDC (USB Serial JTAG)
-
-## Key Decisions
-
-| Decision | Rationale | Outcome |
-|----------|-----------|---------|
 | UART for Artisan communication | Standard approach for ESP32 artisan integration | ✓ Verified |
 | USB CDC as primary channel | Native USB, no external adapter needed | ✓ Implemented |
 | Multiplexer with timeout | Graceful channel switching | ✓ Implemented |
@@ -161,7 +160,19 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | UNITS parse only, no conversion | Temperatures stay Celsius internally | ✓ Implemented v2.2 |
 | Centralized CRLF termination at output boundary | Prevent double terminators across USB CDC/UART | ✓ Implemented v2.5 |
 | Reset formatter on START/STOP transitions | Avoid stale ROR state across sessions | ✓ Implemented v2.5 |
+| Saturating SSR duty conversion | Fix double-division, clamp to LEDC 0-255 | ✓ Implemented v2.6 |
+| Shared LedcBus with serialization | SSR and Fan share timer via atomic guard | ✓ Implemented v2.6 |
+| Embassy async UART/USB transports | Non-blocking with back-pressure | ✓ Implemented v2.6 |
+
+## Constraints
+
+- **Protocol**: ARTISAN+ standard serial protocol
+- **Baud rate**: 115200 (typical for Artisan)
+- **Pins**: UART_TX=20, UART_RX=21
+- **Commands**: READ, START, STOP, OT1 (0-100), IO3 (0-100), UP, DOWN
+- **USB**: Native USB CDC (USB Serial JTAG)
+- **LEDC**: 25 kHz, 8-bit timers shared between SSR and fan with serialized access
 
 ---
 
-*Last updated: 2026-02-17 — v2.5 milestone complete*
+*Last updated: 2026-02-18 — v2.6 milestone shipped*

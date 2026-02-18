@@ -1,20 +1,35 @@
 use crate::application::service_container::ServiceContainer;
-use crate::input::parser::ParseError;
 use crate::input::multiplexer::CommChannel;
+use crate::input::parser::ParseError;
+use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use crate::log_channel;
 use crate::logging::channel::Channel;
 use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
 use log::warn;
+use log::debug;
 
-use super::driver::get_usb_cdc_driver;
+use super::driver::{get_usb_cdc_driver, UsbCdcError};
 
 pub const USB_COMMAND_PIPE_SIZE: usize = 256;
+
+/// Back-pressure configuration for USB writer
+const BACK_PRESSURE_INITIAL_DELAY_MS: u64 = 1;
+const BACK_PRESSURE_MAX_DELAY_MS: u64 = 10;
+const BACK_PRESSURE_LOG_THRESHOLD_MS: u64 = 100;
+
+/// Command queue for USB FIFO processing - reject-on-full behavior
+static mut USB_COMMAND_QUEUE: Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>> = None;
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_reader_task() {
     let mut rbuf: [u8; 64] = [0u8; 64];
+
+    // Initialize the USB command queue for FIFO processing
+    critical_section::with(|_| unsafe {
+        USB_COMMAND_QUEUE = Some(CommandQueue::new());
+    });
 
     Timer::after(Duration::from_millis(100)).await;
 
@@ -37,19 +52,69 @@ pub async fn usb_reader_task() {
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_writer_task() {
     let output_channel = ServiceContainer::get_output_channel();
+    let mut back_pressure_start: Option<u64> = None;
+    let mut current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
 
     loop {
         if let Ok(data) = output_channel.try_receive() {
             if let Some(usb) = get_usb_cdc_driver() {
                 let bytes = data.as_bytes().to_vec();
                 log_channel!(Channel::Usb, "TX: {}", data);
-                if let Err(e) = usb.write_bytes(&bytes).await {
-                    warn!("USB CDC write error: {:?}", e);
+
+                let write_result = usb.write_bytes(&bytes).await;
+
+                match write_result {
+                    Ok(()) => {
+                        // Write successful - reset back-pressure state
+                        back_pressure_start = None;
+                        current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
+                    }
+                    Err(UsbCdcError::WouldBlock) => {
+                        // Back-pressure detected - yield and retry with backoff
+                        back_pressure_start = Some(
+                            back_pressure_start.unwrap_or_else(|| {
+                                // First time back-pressure detected
+                                embassy_time::Instant::now().as_ticks()
+                            })
+                        );
+
+                        // Log warning if prolonged back-pressure
+                        let now = embassy_time::Instant::now().as_ticks();
+                        if let Some(start) = back_pressure_start {
+                            let duration_ms = now.saturating_sub(start);
+                            if duration_ms > BACK_PRESSURE_LOG_THRESHOLD_MS {
+                                warn!(
+                                    "USB CDC back-pressure: {}ms congestion detected",
+                                    duration_ms
+                                );
+                            }
+                        }
+
+                        // Yield with exponential backoff
+                        Timer::after(Duration::from_millis(current_delay)).await;
+
+                        // Increase delay for next retry (up to max)
+                        current_delay = (current_delay * 2).min(BACK_PRESSURE_MAX_DELAY_MS);
+
+                        // Put data back to output channel for retry (try_send doesn't block)
+                        let _ = output_channel.try_send(data);
+                    }
+                    Err(e) => {
+                        // Other error - log and continue
+                        warn!("USB CDC write error: {:?}", e);
+                        back_pressure_start = None;
+                        current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
+                    }
                 }
             }
+        } else {
+            // No data to send - reset back-pressure state
+            back_pressure_start = None;
+            current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
         }
 
-        Timer::after(Duration::from_millis(5)).await;
+        // Brief yield to allow other tasks to run
+        Timer::after(Duration::from_millis(1)).await;
     }
 }
 
@@ -105,10 +170,18 @@ fn handle_complete_usb_command(command: &[u8]) {
                     let should_process = mux.should_process_command(CommChannel::Usb);
 
                     if should_process {
-                        let channel = ServiceContainer::get_artisan_channel();
-                        if let Err(err) = channel.try_send(cmd) {
-                            warn!("Failed to enqueue Artisan command from USB: {:?}", err);
-                            send_usb_parse_error(ParseError::InvalidValue);
+                        // Push to USB command queue for FIFO processing
+                        // On queue full: silently drop command (no response sent - Artisan times out)
+                        if let Some(queue) = unsafe { USB_COMMAND_QUEUE.as_mut() } {
+                            match queue.try_push(cmd) {
+                                Ok(()) => {
+                                    // Command queued successfully - will be processed by queue processor
+                                }
+                                Err(QueueError::Full) => {
+                                    // Queue full - reject silently (no response sent)
+                                    debug!("USB command queue full, rejecting command");
+                                }
+                            }
                         }
                     }
                 }
@@ -138,4 +211,32 @@ fn send_usb_parse_error(error: ParseError) {
             }
         }
     });
+}
+
+/// USB Queue processor task - consumes commands from USB_COMMAND_QUEUE and sends to artisan_channel
+/// This task bridges the command queue to the control loop, ensuring USB commands are processed
+#[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
+pub async fn usb_queue_processor_task() {
+    // Small delay to allow other tasks to initialize
+    Timer::after(Duration::from_millis(50)).await;
+
+    loop {
+        // Try to pop a command from the USB queue and send to artisan_channel
+        let cmd_opt = critical_section::with(|_| {
+            unsafe {
+                USB_COMMAND_QUEUE.as_mut().and_then(|queue| queue.pop())
+            }
+        });
+
+        if let Some(cmd) = cmd_opt {
+            let channel = ServiceContainer::get_artisan_channel();
+            if let Err(err) = channel.try_send(cmd) {
+                // Log but don't block - command will be reprocessed by Artisan timeout
+                debug!("USB queue processor: failed to send to artisan_channel: {:?}", err);
+            }
+        }
+
+        // Small delay to yield to other tasks and prevent tight looping
+        Timer::after(Duration::from_millis(5)).await;
+    }
 }
