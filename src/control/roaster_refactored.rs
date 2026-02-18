@@ -3,7 +3,7 @@ use crate::config::*;
 use crate::control::handlers::{
     ArtisanCommandHandler, SafetyCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
 };
-use crate::control::traits::{Fan, Heater, Thermometer};
+use crate::control::traits::{AsyncThermometer, Fan, Heater, Thermometer};
 use crate::control::SsrCycleGuard;
 use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
@@ -64,6 +64,24 @@ impl RoasterControl {
 
         let raw_bt = self.bean_sensor.read_temperature()?;
         let raw_et = self.env_sensor.read_temperature()?;
+
+        self.update_temperatures(raw_bt, raw_et, current_time)
+    }
+
+    /// Async sensor reading - takes sensors as parameters to avoid storage issues with dyn traits
+    pub async fn read_sensors_async<BT, ET>(
+        &mut self,
+        bean_sensor: &mut BT,
+        env_sensor: &mut ET,
+    ) -> Result<(), RoasterError>
+    where
+        BT: AsyncThermometer,
+        ET: AsyncThermometer,
+    {
+        let current_time = Instant::now();
+
+        let raw_bt = bean_sensor.read_temperature_async().await?;
+        let raw_et = env_sensor.read_temperature_async().await?;
 
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
