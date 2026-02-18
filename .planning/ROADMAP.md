@@ -78,6 +78,9 @@
 **Files to Modify:**
 - README.md
 
+**Plans:**
+- [ ] 51-01-PLAN.md — Update README Protocol section to 4-value format
+
 ---
 
 ## Phase 52: Performance Fixes
