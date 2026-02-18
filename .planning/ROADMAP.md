@@ -155,7 +155,8 @@
 - [x] 54-01-PLAN.md — Remove dead code (fields and functions)
 - [x] 54-02-PLAN.md — Fix compilation warnings
 - [x] 54-03-PLAN.md — Fix integration tests with std feature
-- [ ] 54-04-PLAN.md — Gap closure: Fix remaining warnings and linker errors
+- [x] 54-04-PLAN.md — Gap closure: Fix remaining warnings and linker errors
+- [ ] 54-05-PLAN.md — Gap closure: Fix uart_reader_task unused import
 
 ---
 
