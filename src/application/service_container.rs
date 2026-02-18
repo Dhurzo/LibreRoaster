@@ -105,6 +105,32 @@ impl ServiceContainer {
         Self::with_roaster(|roaster| Ok(roaster.get_status().env_temp)).unwrap_or(Ok(0.0))
     }
 
+    /// Perform async sensor read by taking roaster out, calling async methods, then putting back
+    /// This pattern allows async operations on RoasterControl which is normally behind a sync mutex
+    pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+        // Take roaster out of the container
+        let mut roaster: RoasterControl = critical_section::with(|cs| {
+            let container = Self::get_instance();
+            container.roaster.borrow(cs).borrow_mut().take()
+                .expect("Roaster not initialized")
+        });
+
+        // Now we can call async methods - this is the gap closure!
+        // The concrete Max31856 type enables async temperature reading
+        roaster.read_sensors().await.map_err(|_| ContainerError::NotInitialized)?;
+
+        // Also do the control update (sync)
+        let _ = roaster.update_control(embassy_time::Instant::now());
+
+        // Put roaster back
+        critical_section::with(|cs| {
+            let container = Self::get_instance();
+            container.roaster.borrow(cs).borrow_mut().replace(roaster);
+        });
+
+        Ok(())
+    }
+
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut ArtisanInput) -> R,

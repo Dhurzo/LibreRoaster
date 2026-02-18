@@ -49,25 +49,23 @@ pub async fn control_loop_task() {
             });
         }
 
-        // Gap closure: Use async read_sensors() instead of blocking sync version
-        // The async method exists - full async integration requires changing sensor storage
-        // from Box<dyn Thermometer> to concrete types (blocked by dyn + async limitation in Rust)
-        let control_result = ServiceContainer::with_roaster(
+        // Control loop now uses async read_sensors() - no longer blocks executor
+        // Using the roaster_async_sensor_read method that takes ownership, calls async, returns it
+        let sensor_err = ServiceContainer::roaster_async_sensor_read().await.err();
+
+        if sensor_err.is_none() {
+            debug!(
+                "Sensors: BT: {:.1}°C, ET: {:.1}°C",
+                ServiceContainer::read_bean_temperature().unwrap_or(0.0),
+                ServiceContainer::read_env_temperature().unwrap_or(0.0)
+            );
+        } else {
+            warn!("Sensor read error: {:?}", sensor_err);
+        }
+
+        // Do sync control update separately
+        let update_result = ServiceContainer::with_roaster(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| -> Result<(), ()> {
-                // Using sync version for now - the async read_sensors() is ready
-                // but Box<dyn Thermometer> storage prevents async calls
-                match roaster.read_sensors_sync() {
-                    Ok(()) => {
-                        debug!(
-                            "Sensors: BT: {:.1}°C, ET: {:.1}°C",
-                            roaster.get_status().bean_temp,
-                            roaster.get_status().env_temp
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Sensor read error: {:?}", e);
-                    }
-                }
                 match roaster.update_control(current_time) {
                     Ok(output) => {
                         debug!(
@@ -84,7 +82,7 @@ pub async fn control_loop_task() {
             },
         );
 
-        if let Err(e) = control_result {
+        if let Some(e) = sensor_err {
             info!("Service container error in control loop: {:?}", e);
         }
 
