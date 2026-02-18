@@ -1,6 +1,9 @@
 use core::fmt;
 
 #[cfg(target_arch = "riscv32")]
+use static_cell::StaticCell;
+
+#[cfg(target_arch = "riscv32")]
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
 #[cfg(target_arch = "riscv32")]
@@ -133,13 +136,23 @@ impl UsbCdcDriver {
     }
 }
 
-static mut USB_CDC_INSTANCE: Option<UsbCdcDriver> = None;
+// SAFETY: StaticCell provides compile-time memory reservation, preventing use-after-free.
+// Initialized once during early boot in single-threaded context before any async tasks start.
+static USB_CDC_INSTANCE: StaticCell<Option<UsbCdcDriver>> = StaticCell::new();
+// Store a raw pointer to the Option<UsbCdcDriver> after initialization for later access
+// SAFETY: Only written once during init, safe for single-threaded embedded context
+static mut USB_CDC_PTR: core::ptr::NonNull<Option<UsbCdcDriver>> =
+    core::ptr::NonNull::dangling();
 
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
-    critical_section::with(|_| unsafe {
-        USB_CDC_INSTANCE = Some(UsbCdcDriver::new(usb));
-    });
+    // SAFETY: init() called once during early USB initialization.
+    // Stored pointer lives for the duration of the program.
+    let value = USB_CDC_INSTANCE.init(Some(UsbCdcDriver::new(usb)));
+    // Store the pointer for later retrieval
+    // SAFETY: value is &'static mut Option<UsbCdcDriver>, converting to NonNull is safe.
+    // Only called once during early boot in single-threaded context.
+    unsafe { USB_CDC_PTR = core::ptr::NonNull::new_unchecked(value) };
     Ok(())
 }
 
@@ -150,10 +163,10 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
 
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
-    #[allow(static_mut_refs)]
-    unsafe {
-        USB_CDC_INSTANCE.as_mut()
-    }
+    // SAFETY: USB_CDC_PTR is set once during init_usb_cdc() before any async tasks run.
+    // The StaticCell guarantees the memory is valid for the program duration.
+    // Only called after USB initialization in single-threaded context.
+    unsafe { USB_CDC_PTR.as_mut().as_mut() }
 }
 
 #[cfg(not(target_arch = "riscv32"))]
