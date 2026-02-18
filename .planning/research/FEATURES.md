@@ -1,122 +1,516 @@
-# Feature Research
+# Bug Fix Research: ESP32-C3 Safety Issues
 
-**Domain:** Embedded hardware reliability (SSR duty, FanController, async I/O)
-**Researched:** 2026-02-17
-**Confidence:** MEDIUM
+**Project:** LibreRoaster v3.0 Critical Safety Fixes  
+**Domain:** Embedded Rust / ESP32-C3 Firmware  
+**Researched:** 2026-02-18  
+**Confidence:** HIGH
 
-## Feature Landscape
+## Summary
 
-### Table Stakes (Users Expect These)
-
-Features users assume exist. Missing these = product feels incomplete.
-
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| SSR duty math tied to LEDC PWM | Heater control is driven by SSRs; users expect power level to follow commands precisely, or temperatures overshoot/undershoot | MEDIUM | Map Artisan duty requests to LEDC timers (freq+resolution) so 0‑100% maps to 0‑255 duty, then use PWM update cycle to avoid jitter. See ESP-IDF LEDC timing constraints for meaningful frequency/resolution choices. |
-| FanController LEDC updates | Fan speed adjustments must reach the hardware without jumps; fans tolerate steady PWM frequencies only | MEDIUM | Update the configured LEDC channel (timer 25 kHz/8-bit) any time FanController sees a new speed value; ensure `set_duty`/`update_duty` pairing is atomic so the PWM frequency stays constant. |
-| Non-blocking UART + USB I/O | Dual outputs already exist (USB CDC + UART multiplexer); blocking serial writes would stall command handling under load | HIGH | Install UART driver with event queues and keep USB CDC writes off the main control stack, borrowing the async UART task pattern from `peripherals/uart/uart_async_rxtxtasks`. |
-
-### Differentiators (Competitive Advantage)
-
-Features that set the product apart. Not required, but valuable.
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| SSR duty validation loop | Detects mismatches between commanded and applied duty and recovers before temperature swings are visible | MEDIUM | Sample `current_duty` from the shared PWM state, compare to requested percentage, and re-issue LEDC updates until within tolerance; takes advantage of LEDC duty-resolution helpers to skip unsupported combo. |
-| LEDC fade-style fan ramps | Smooth fan transitions protect mechanical hardware and avoid audible noise spikes | MEDIUM | Use `ledc_set_fade`/`ledc_fade_start` when FanController requests large delta so the hardware interpolates; fall back to direct `set_duty` for small adjustments. |
-| Asynchronous I/O back-pressure handling | Keeps Artisan-formatting tests passing while avoiding dropped bytes even when serial output is busy | HIGH | Drive USB CDC and UART writers through RTOS-safe queues & callbacks instead of synchronous `write_bytes`; let transport tasks signal when FIFO drains so control tasks never await serial completions. |
-
-### Anti-Features (Commonly Requested, Often Problematic)
-
-Features that seem good but create problems.
-
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Polling delays between SSR adjustments | “Just wait and toggle the SSR again” | Blocks the control loop and still misses precise PWM timing, so temperature regulation oscillates | Update PWM duty once per control cycle with LEDC helpers; leverage LEDC timer resolution to respect frequency laws. |
-| Blocking UART/USB writes | “Simpler code; just write and wait” | Serial writes become serialization points that stall heating/fan tasks, leading to missed commands when Artisan floods the bus | Use interrupt-driven drivers with queues and event handlers so transport layers notify when ready. |
-| Excessive telemetry on UART while tuning | “More debug prints give confidence” | Floods UART/USB path, interferes with Artisan framing, and can corrupt commands | Emit telemetry only via dedicated debug channel or log level gating; keep operational command path minimal. |
-
-## Feature Dependencies
-
-```
-SSR duty math
-    └──requires──> FanController LEDC timer config (25 kHz, 8-bit)
-                       └──requires──> LEDC global slow clock + duty resolution helpers
-
-FanController LEDC updates
-    └──requires──> GPIO pin (FAN_PWM_PIN) and LEDC channel ownership
-
-Non-blocking UART/USB I/O
-    └──requires──> uart_driver_install + USB CDC stack + dual-output multiplexer config
-
-LED fade-style ramp
-    └──enhances──> FanController LEDC updates
-
-Asynchronous transport queues
-    └──enhances──> Non-blocking UART/USB I/O
-```
-
-### Dependency Notes
-
-- **SSR duty math requires LEDC timer config:** Duty updates only obey expected percentages when timers provide the frequency/resolution pair supported by the hardware (per LEDC doc). If the timer or clock source changes, the mapping must be recalculated.
-- **FanController LEDC updates need GPIO ownership:** The fan PWM pin must remain bound to a single LEDC channel; any reconfiguration (e.g., board variants without LEDC) means falling back to placeholder logic.
-- **Non-blocking I/O depends on driver install:** Both UART and USB CDC paths require event queues so that transport tasks can signal readiness without stopping the control/event loop.
-- **LED fade ramps enhance FanController updates:** Smoothing for large deltas reduces mechanical stress and audible noise without rewriting the base `set_duty` path.
-- **Async queues enhance blocking avoidance:** Queuing ensures that when one transport is busy (USB CDC with host unresponsive), the other channel and the control loop continue running.
-
-## MVP Definition
-
-### Launch With (v1)
-
-Minimum viable product — what's needed to validate the concept.
-
-- [ ] SSR duty math mapped to LEDC timers — accurate 0–100% range with LEDC helper utilities
-- [ ] FanController LEDC updates for actual hardware fan control — harness existing LEDC channel and GPIO
-- [ ] Non-blocking UART + USB I/O transport tasks — driver event queues replace synchronous writes
-
-### Add After Validation (v1.x)
-
-Features to add once core is working.
-
-- [ ] LEDC fade-based fan ramps for large deltas — use `ledc_set_fade` + callbacks when transitioning between extremes
-- [ ] SSR duty verification/guardrail task — monitor PWM state and re-issue updates when actual duty drifts
-
-### Future Consideration (v2+)
-
-Features to defer until product-market fit is established.
-
-- [ ] Telemetry channel that reports real‑time SSR duty vs Artisan commands — useful for field diagnostics but not required for control
-- [ ] Dynamic reconfiguration of PWM frequency per hardware variant — adds flexibility but complicates calibration across boards
-
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| SSR duty math accuracy | HIGH | MEDIUM | P1 |
-| FanController LEDC updates | HIGH | MEDIUM | P1 |
-| Non-blocking UART/USB | HIGH | HIGH | P1 |
-| LEDC fade-style fan ramps | MEDIUM | MEDIUM | P2 |
-| SSR duty watchdog | MEDIUM | MEDIUM | P2 |
-
-**Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
-
-## Competitor Feature Analysis
-
-| Feature | Competitor A | Competitor B | Our Approach |
-|---------|--------------|--------------|--------------|
-| SSR duty control | Artisan host leaves SSR to controller with simple delays | Legacy roaster firmwares often use blocking timers and no smoothing | Map Artisan duty percentages to LEDC timers with helpers; keep PWM updates non-blocking and verify actual duty values. |
-| Fan speed PWM | Generic fans on USB controllers usually have fixed PWM frequency, causing noise when toggled | Raspberry Pi-based controllers toggle fans via GPIO without duty smoothing | Use LEDC with fixed 25 kHz/8-bit config plus optional fade helpers for smooth transitions. |
-| Serial transport behavior | Artisan USB driver is streaming but can block if host stalls | UART-only firmwares drop bytes when overrun due to poll loops | Install UART driver with event queues and drive USB CDC through asynchronous tasks so both paths stay responsive. |
-
-## Sources
-
-- ESP-IDF LED Control (LEDC) documentation, esp-idf v5.2: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/ledc.html
-- ESP-IDF UART driver overview (async queue pattern), esp-idf v5.2: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/uart.html
-- `src/hardware/fan.rs` (current FanController + LEDC wiring) for existing PWM configuration and placeholders
+This document researches the correct fix approaches for 8 critical safety bugs in the ESP32-C3 firmware. Each bug is analyzed for root cause, expected fix approach, and verification strategy.
 
 ---
-*Feature research for: Embedded hardware reliability (SSR, fan, async serial)*
-*Researched: 2026-02-17*
+
+## Bug A: make_static Use-After-Free in main.rs
+
+### Current Problem
+
+The `make_static` function at line 46-49 of `main.rs`:
+
+```rust
+#[cfg(target_arch = "riscv32")]
+unsafe fn make_static<T>(mut value: T) -> &'static mut T {
+    let ptr = &mut value as *mut T;
+    &mut *ptr
+}
+```
+
+**Issue:** This function takes ownership of `value`, creates a pointer to it, then returns a reference. However, `value` is dropped when it goes out of scope at the end of the function, leaving the returned reference as a dangling pointer (Use-After-Free).
+
+The function is used at lines 219-220:
+
+```rust
+let static_ssr = unsafe { make_static(real_ssr) };
+let static_fan = unsafe { make_static(fan_controller) };
+```
+
+### Root Cause
+
+The `make_static` pattern is fundamentally broken because:
+
+1. The local variable `value` is moved into the function
+2. A pointer to `value` is created
+3. `value` is dropped when the function returns
+4. The returned reference points to freed memory
+
+This is undefined behavior that may cause immediate crashes, memory corruption, or silent data corruption.
+
+### Correct Fix Approach
+
+**Option 1: Use StaticCell (Recommended)**
+
+The `static_cell` crate provides a safe way to create static references:
+
+```rust
+use static_cell::StaticCell;
+
+static SSR_CONTROLLER: StaticCell<SsrControlSimple> = StaticCell::new();
+static FAN_CONTROLLER: StaticCell<FanController> = StaticCell::new();
+
+// In main():
+let static_ssr: &'static mut SsrControlSimple = SSR_CONTROLLER.init(real_ssr);
+let static_fan: &'static mut FanController = FAN_CONTROLLER.init(fan_controller);
+```
+
+**Option 2: Use `mk_static` macro**
+
+The `static_cell` crate provides a convenience macro:
+
+```rust
+use static_cell::make_static;
+
+let static_ssr = make_static!(SsrControlSimple, real_ssr);
+let static_fan = make_static!(FanController, fan_controller);
+```
+
+### Expected Behavior After Fix
+
+- SSR and FanController are properly stored in static memory
+- References remain valid for the program's lifetime
+- No memory corruption or use-after-free
+- StaticCell can only be initialized once (panics on double init)
+
+---
+
+## Bug C: test_parse_ot2_partial_command Failure
+
+### Current Problem
+
+The test at `src/input/parser.rs:461-464`:
+
+```rust
+#[test]
+fn test_parse_ot2_partial_command() {
+    let result = parse_artisan_command("OT2");
+    assert!(matches!(result, Err(ParseError::InvalidValue)));
+}
+```
+
+Looking at the parsing logic at lines 78-80:
+
+```rust
+["OT2" | "ot2"] => Ok(ArtisanCommand::SetFanSpeed(0, false)),
+["OT2" | "ot2", value_str] => {
+    // ... parse value
+```
+
+**Issue:** When `"OT2"` is parsed without a value, it matches the first pattern and returns `Ok(ArtisanCommand::SetFanSpeed(0, false))` — not an error!
+
+### Root Cause
+
+The parser incorrectly treats `"OT2"` (without value) as a valid command that sets fan to 0%, rather than rejecting it as malformed.
+
+### Correct Fix Approach
+
+The test expectation is correct: `"OT2"` without a value should return `InvalidValue`. The fix is in the parser:
+
+```rust
+// Change from:
+["OT2" | "ot2"] => Ok(ArtisanCommand::SetFanSpeed(0, false)),
+
+// To require a value - the second pattern already handles valid values
+// Simply remove or comment out the first pattern, or change to:
+["OT2" | "ot2"] => Err(ParseError::InvalidValue),  // Require value
+["OT2" | "ot2", value_str] => {
+    // Existing parsing logic
+}
+```
+
+### Expected Behavior After Fix
+
+- `parse_artisan_command("OT2")` returns `Err(ParseError::InvalidValue)`
+- `parse_artisan_command("OT2 50")` returns `Ok(SetFanSpeed(50))`
+- Test passes
+
+---
+
+## Bug D: Mutable Statics Without Protection in driver.rs
+
+### Current Problem
+
+At `src/hardware/uart/driver.rs:57`:
+
+```rust
+static mut UART_INSTANCE: Option<UartDriver> = None;
+```
+
+This is a mutable static without any synchronization. The code does use `critical_section::with` for access (line 78-80), but:
+
+1. The raw `static mut` is deprecated/disallowed in Rust 2024
+2. Direct mutable static access without synchronization is undefined behavior
+3. The `#[allow(static_mut_refs)]` at line 87 is a code smell
+
+### Root Cause
+
+Using `static mut` directly violates Rust's aliasing rules and is being phased out.
+
+### Correct Fix Approach
+
+**Option 1: Use StaticCell (Recommended)**
+
+```rust
+use static_cell::StaticCell;
+
+static UART_INSTANCE: StaticCell<Option<UartDriver>> = StaticCell::new();
+
+pub fn init_uart(...) -> Result<(), UartError> {
+    // ... create driver ...
+    UART_INSTANCE.init(Some(driver));
+    Ok(())
+}
+
+pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
+    unsafe { UART_INSTANCE.as_mut()?.as_mut() }
+}
+```
+
+**Option 2: Use Mutex (If Reinitialization Needed)**
+
+```rust
+use critical_section::Mutex;
+use core::cell::RefCell;
+
+static UART_INSTANCE: Mutex<RefCell<Option<UartDriver>>> = 
+    Mutex::new(RefCell::new(None));
+
+pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
+    critical_section::with(|cs| {
+        UART_INSTANCE.borrow(cs).borrow_mut().as_mut()
+    })
+}
+```
+
+### Expected Behavior After Fix
+
+- Code compiles without `static_mut_refs` warnings
+- No data races during concurrent access
+- Existing functionality preserved
+
+---
+
+## Bug E: ServiceContainer::get_instance() Unsafe
+
+### Current Problem
+
+At `src/application/service_container.rs:41-44`:
+
+```rust
+pub fn get_instance() -> &'static mut Self {
+    static mut INSTANCE: ServiceContainer = ServiceContainer::new();
+    unsafe { &mut *core::ptr::addr_of_mut!(INSTANCE) }
+}
+```
+
+**Issues:**
+
+1. Uses `static mut` which is deprecated
+2. Returns `&'static mut` without synchronization
+3. Multiple callers can get mutable aliasing access (violates Rust's aliasing rules)
+4. The `unsafe` block doesn't provide any safety documentation
+
+### Root Cause
+
+The singleton pattern is implemented incorrectly for Rust's memory safety guarantees.
+
+### Correct Fix Approach
+
+**Option 1: Use StaticCell (Simplest)**
+
+```rust
+use static_cell::StaticCell;
+
+static INSTANCE: StaticCell<ServiceContainer> = StaticCell::new();
+
+impl ServiceContainer {
+    pub fn get_instance() -> &'static mut Self {
+        // Initialize once - panics if called again
+        INSTANCE.init(ServiceContainer::new())
+    }
+}
+```
+
+### Expected Behavior After Fix
+
+- StaticCell ensures single initialization
+- No mutable aliasing possible
+- Code compiles cleanly without unsafe
+
+---
+
+## Bug F: README vs PROTOCOL.md Mismatch
+
+### Current Problem
+
+The README.md documents the Artisan+ protocol but may not match the actual implementation. Need to verify:
+
+1. **Command support**: README says OT1, OT2, IO3, UP, DOWN, START, STOP, READ
+2. **Initialization**: README mentions CHAN→UNITS→FILT sequence
+3. **Response format**: README shows `ET,BT,ET2,BT2,ambient,fan,heater`
+
+### Root Cause
+
+Documentation drift - the code may have evolved without updating docs.
+
+### Correct Fix Approach
+
+1. **Audit actual implementation** in:
+
+   - `src/input/parser.rs` - command parsing
+   - `src/output/artisan.rs` - response formatting
+   - `src/control/roaster_refactored.rs` - command handling
+
+2. **Update README.md** to match actual behavior:
+
+   - List exactly supported commands
+   - Document actual response format
+   - Clarify initialization requirements (if any)
+
+### Expected Behavior After Fix
+
+- README accurately reflects implementation
+- All documented commands work as described
+- Response format matches documentation
+
+---
+
+## Bug G: Blocking MAX31856 Temperature Read
+
+### Current Problem
+
+At `src/hardware/max31856.rs:45-53`:
+
+```rust
+pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
+    self.write_register(0x80, 0x80)?; // Set one-shot bit
+
+    const DELAY_MS: u64 = 160;
+
+    // BLOCKING SPIN LOOP - wastes CPU!
+    for _ in 0..(DELAY_MS * 10000) {
+        core::hint::spin_loop();
+    }
+    // ...
+}
+```
+
+**Issue:** The 160ms delay uses a busy-wait spin loop that blocks the CPU completely. In an async Embassy system, this prevents other tasks from running.
+
+### Root Cause
+
+Using synchronous blocking delay instead of async delay in an async runtime environment.
+
+### Correct Fix Approach
+
+**Option 1: Use embassy_time::Timer (Recommended)**
+
+```rust
+use embassy_time::Timer;
+
+pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
+    self.write_register(0x80, 0x80)?; // Set one-shot bit
+
+    // Non-blocking async delay - yields to other tasks
+    Timer::after_millis(160).await;
+    
+    // ... rest of reading logic
+}
+```
+
+**Option 2: Use Proper Blocking Delay**
+
+If blocking is required in sync context:
+
+```rust
+use esp_hal::delay::Delay;
+
+let mut delay = Delay::new();
+delay.delay_ms(160);
+```
+
+**Option 3: Poll-Based Wait**
+
+For true async SPI, poll status register instead of fixed delay:
+
+```rust
+use embassy_time::Timer;
+
+pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
+    self.write_register(0x80, 0x80)?; // Set one-shot bit
+    
+    // Wait for conversion complete (poll status register)
+    for _ in 0..160 {
+        let status = self.read_register(0x0F)?;
+        if status & 0x01 == 0 {  // Not fault
+            break;
+        }
+        Timer::after_millis(1).await;
+    }
+    
+    // ... read temperature
+}
+```
+
+### Expected Behavior After Fix
+
+- CPU is not busy-waiting during temperature conversion
+- Other async tasks can run while waiting
+- Temperature readings still complete correctly
+
+---
+
+## Bug H: SSR and Fan Share Same LEDC Timer
+
+### Current Problem
+
+In `main.rs:114-142`, both fan and SSR channels share the same timer:
+
+```rust
+let timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> =
+    unsafe { &mut *(&mut fan_timer as *mut _ as *mut _) };
+
+// Fan channel uses timer_ref
+fan_channel.configure(ChannelConfig {
+    timer: timer_ref,
+    // ...
+}).unwrap();
+
+// SSR channel ALSO uses same timer_ref
+ssr_channel.configure(ChannelConfig {
+    timer: timer_ref,  // SAME TIMER!
+    // ...
+}).unwrap();
+```
+
+**Issue:** This is undefined behavior - the same mutable timer reference is used for two channels. Additionally, ESP32 LEDC timers have specific constraints:
+
+- Only 4 LEDC timers (0-3) on ESP32-C3
+- Channels share timers unless explicitly separated
+- Sharing a timer between channels requires same frequency
+
+### Root Cause
+
+Incorrect assumption that timer references can be safely shared. The code uses unsafe transmute to extend lifetime, then shares the mutable reference.
+
+### Correct Fix Approach
+
+**Option 1: Use Separate Timers (Recommended)**
+
+```rust
+// Fan timer on Timer0
+let mut fan_timer = ledc.timer(timer::Number::Timer0);
+fan_timer.configure(TimerConfig {
+    duty: timer::config::Duty::Duty8Bit,
+    clock_source: timer::LSClockSource::APBClk,
+    frequency: esp_hal::time::Rate::from_hz(FAN_PWM_FREQUENCY_HZ),
+})?;
+
+// SSR timer on Timer1 
+let mut ssr_timer = ledc.timer(timer::Number::Timer1);
+ssr_timer.configure(TimerConfig {
+    duty: timer::config::Duty::Duty8Bit,
+    clock_source: timer::LSClockSource::APBClk,
+    frequency: esp_hal::time::Rate::from_hz(SSR_PWM_FREQUENCY_HZ),  // Can be different!
+})?;
+
+let fan_timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> = /* ... */;
+let ssr_timer_ref: &'static mut dyn timer::TimerIFace<LowSpeed> = /* ... */;
+
+// Configure channels with their own timers
+fan_channel.configure(ChannelConfig {
+    timer: fan_timer_ref,
+    // ...
+})?;
+
+ssr_channel.configure(ChannelConfig {
+    timer: ssr_timer_ref,
+    // ...
+})?;
+```
+
+### Additional Consideration
+
+The ESP32-C3 has limited LEDC timers:
+
+- 4 low-speed timers (Timer0-3)
+- 6 channels (Channel0-5)
+- Timer conflict errors occur if misconfigured
+
+### Expected Behavior After Fix
+
+- Each PWM output has independent timer
+- No timer conflict errors at runtime
+- Both fan and SSR operate at correct frequencies
+
+---
+
+## Fix Prioritization Summary
+
+| Bug | Severity | Fix Complexity | Priority |
+|-----|----------|----------------|----------|
+| A: make_static UAF | **Critical** | Low (StaticCell) | P0 |
+| D: Mutable static | High | Medium | P0 |
+| E: ServiceContainer | High | Low (StaticCell) | P0 |
+| G: Blocking delay | Medium | Medium (async) | P1 |
+| H: Shared timer | **Critical** | Medium | P0 |
+| C: Test failure | Low | Low | P1 |
+| F: Doc mismatch | Low | Low | P2 |
+
+---
+
+## Dependencies Between Fixes
+
+```
+Bug A (make_static)
+    └── Requires: StaticCell crate (already in use elsewhere)
+    
+Bug D (mutable static)
+    └── Can use: Same StaticCell approach as Bug A
+    
+Bug E (ServiceContainer)
+    └── Can use: Same StaticCell approach as Bug A
+    └── After fix: Remove unsafe from callers
+    
+Bug G (blocking delay)
+    └── Requires: embassy-time (async)
+    └── May need: embedded_hal_async traits
+    
+Bug H (shared timer)
+    └── Requires: Understanding of ESP32 LEDC hardware
+    └── Changes: main.rs timer initialization
+```
+
+---
+
+## Recommended Fix Order
+
+1. **Phase 1 (P0 - Safety Critical)**
+   - Bug A: Fix make_static with StaticCell
+   - Bug H: Separate LEDC timers
+   - Bug D: Fix mutable static
+   - Bug E: Fix ServiceContainer singleton
+
+2. **Phase 2 (P1 - Functionality)**
+   - Bug G: Convert blocking delay to async
+   - Bug C: Fix OT2 parser test
+
+3. **Phase 3 (P2 - Documentation)**
+   - Bug F: Update README vs implementation
+
+---
+
+## References
+
+- [static_cell crate](https://docs.rs/static_cell) - Safe static initialization
+- [ESP32 LEDC Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/ledc.html) - Timer/channel constraints
+- [Embassy async delay](https://docs.embassy.dev/embassy-time/) - Non-blocking delays
+- [Rust static_mut RFC](https://github.com/rust-lang/rfcs/pull/2404) - Deprecation rationale

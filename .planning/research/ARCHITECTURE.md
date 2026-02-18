@@ -1,74 +1,212 @@
-# Architecture Research
+# Architecture Research: Safety Fix Integration
 
-**Domain:** Embedded firmware reliability for LibreRoaster
-**Researched:** 2026-02-17
-**Confidence:** MEDIUM
+**Domain:** Embedded firmware reliability and safety-critical control for LibreRoaster  
+**Researched:** 2026-02-18  
+**Focus:** How v3.0 Critical Safety Fixes integrate with existing architecture  
+**Confidence:** HIGH
 
-## Standard Architecture
+---
 
-### System Overview
+## Executive Summary
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Execution Layer                        │
-├─────────────────────────────────────────────────────────────┤
-│  ┌────────────┐  ┌────────────┐  ┌──────────────┐  ┌──────┐│
-│  │ Control    │  │ Command    │  │ Output       │  │ Fans ││
-│  │ Tasks      │  │ Multiplexer│  │ Formatter    │  │ /Heats││
-│  └────┬───────┘  └────┬───────┘  └────┬────────┘  └──┬───┘│
-│       │              │              │              │      │
-├───────┴──────────────┴──────────────┴──────────────┴──────┤
-│                       Async Runtime Layer                   │
-├─────────────────────────────────────────────────────────────┤
-│  ┌───────────────────────────┐  ┌────────────────────────┐ │
-│  │ Embassy Executor (async) │  │ Shared State Snapshots │ │
-│  └───────────────────────────┘  └────────────────────────┘ │
-├─────────────────────────────────────────────────────────────┤
-│                       Hardware Layer                        │
-│  ┌────────────┐  ┌────────────┐  ┌──────────────┐         │
-│  │ SSR PWM    │  │ LEDC Timer │  │ USB/UART DMA │         │
-│  └────────────┘  └────────────┘  └──────────────┘         │
-└─────────────────────────────────────────────────────────────┘
-```
+This architecture research maps how safety fixes for the v3.0 milestone integrate with the existing LibreRoaster ESP32-C3 firmware. The system implements a layered async architecture using embassy-rs with distributed safety mechanisms rather than a centralized safety component. Safety fixes must work within this existing handler chain pattern, using the ServiceContainer's critical_section for atomic state updates, and extending the dual-verification pattern already present at control-hardware boundaries.
 
-### Component Responsibilities
+---
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| Embassy Executor / CONTROL Tasks | Drive asynchronous sequences (SSR ramp, fan/ heater loops, telemetry) | `embassy::executor::Spawner` launching future-based tasks per controller with soft priorities |
-| Command Multiplexer | Buffer and serialize command outputs (USB/UART) | Shared queue + `Arc<Mutex<_>>` guard, sends to formatter trait implementations |
-| Formatter + Output Manager | Enforce CRLF, detect blocking I/O, emit status to USB/UART | trait `ArtisanFormatter` with `fmt::Write`-like API wrapping DMA transfers and `FormatterState` |
-| FanController / HeaterController | Interface hardware (LEDC, SSR) and publish telemetry snapshots | Controllers hold `Arc<Mutex<ControllerState>>` taking ingress from runtime tasks |
-| Shared State Snapshots | Provide consistent views for logging/telemetry without blocking (via `Arc<Mutex<_>>` clones) | Periodic `Arc::clone` with `Mutex` to share sensor/command states safely |
-| Hardware Drivers (LEDC, PWM, DMA) | Physical actuation and non-blocking I/O | `esp-hal` peripherals configured via embassy timers and DMA channels |
-
-## Recommended Project Structure
+## System Overview
 
 ```
-src/
-├── control/              # CONTROL task definitions and mission logic
-│   ├── ssr/              # SSR duty scheduler + reliability guards
-│   ├── fan/              # FanController task (LEDC updates)
-│   └── io/               # USB/UART output coordination + non-blocking loops
-├── state/                # Shared controller snapshots and telemetry buffers
-├── hardware/             # HAL wrappers: LEDC, PWM, DMA, analog sensors
-├── output/               # Formatter + command multiplexer abstractions
-└── main.rs               # Entrypoint wiring embassy executor and controllers
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Application Layer                            │
+│  ┌─────────────────────┐  ┌──────────────────────────────────────┐ │
+│  │   control_loop_task │  │         dual_output_task             │ │
+│  │   - Command dispatch│  │   - USB CDC / UART output            │ │
+│  │   - Control update  │  │   - Channel multiplexing             │ │
+│  └─────────┬───────────┘  └──────────────────┬───────────────────┘ │
+│            │                                   │                     │
+│  ┌─────────▼──────────────────────────────────▼───────────────────┐ │
+│  │              ServiceContainer (critical_section)                │ │
+│  │  - RoasterControl access                                        │ │
+│  │  - ArtisanInput access                                          │ │
+│  │  - CommandMultiplexer access                                    │ │
+│  └─────────────────────────┬─────────────────────────────────────┘ │
+└────────────────────────────┼────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│                        Control Layer                                │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                    RoasterControl                              │  │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐ │  │
+│  │  │ Safety       │ │ Temperature  │ │ ArtisanCommandHandler │ │  │
+│  │  │ Command      │ │ Command      │ │                       │ │  │
+│  │  │ Handler      │ │ Handler      │ │ - Manual heater/fan  │ │  │
+│  │  │              │ │ - PID ctrl   │ │ - UP/DOWN commands   │ │  │
+│  │  │ - Emergency  │ │ - Output     │ │                       │ │  │
+│  │  │   Stop       │ │   Manager    │ │                       │ │  │
+│  │  └──────┬───────┘ └──────────────┘ └───────────────────────┘ │  │
+│  │         │                                                       │  │
+│  │  ┌──────▼───────────────────────────────────────────────────┐  │  │
+│  │  │           SsrCycleGuard                                  │  │  │
+│  │  │  - Enforces SSR datasheet minimum interval (1000ms)     │  │  │
+│  │  │  - Prevents command flooding                             │  │  │
+│  │  └──────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│                     Hardware Abstraction Layer                      │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────┐  │
+│  │ SSR (LEDC)     │  │ Fan (LEDC)     │  │ MAX31856               │  │
+│  │ - PWM output   │  │ - PWM output   │  │ - SPI thermocouple    │  │
+│  │ - Duty verify │  │ - Speed read   │  │ - BT/ET sensors       │  │
+│  │ - Heat detect │  │                │  │                        │  │
+│  └───────┬────────┘  └───────┬────────┘  └───────────┬────────────┘  │
+│          │                   │                        │              │
+│  ┌───────▼───────────────────▼────────────────────────▼────────────┐  │
+│  │                    esp_hal Drivers                              │  │
+│  │  LEDC │ SPI2 │ UART0 │ USB_DEVICE │ GPIO                      │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Structure Rationale
+---
 
-- **control/**: keeps hardware orchestration separate per subsystem (SSR, fan, output) so dependencies (timers, DMA) can be mocked or swapped independently.
-- **state/**: isolating snapshot management reduces contention and makes it explicit how non-blocking tasks read/write controller state.
-- **hardware/**: central place for HAL-specific wiring ensures new reliability fixes (timer precision, LEDC reconfiguration) stay close to peripheral configuration.
-- **output/**: keeps USB/UART formatting, multiplexing, and non-blocking DMA loops isolated for easier verification when enforcing CRLF or concurrency guarantees.
+## Component Boundaries
+
+### Safety-Critical Components
+
+| Component | Responsibility | Safety Role | Communicates With |
+|-----------|---------------|-------------|-------------------|
+| `RoasterControl` | Main control orchestrator | **Central safety coordinator** — validates all commands, enforces limits, triggers emergency shutdown | All handlers, hardware drivers |
+| `SafetyCommandHandler` | Emergency stop processing | **First in command chain** — intercepts emergency commands before other handlers | `RoasterControl` via handler chain |
+| `SsrCycleGuard` | SSR timing enforcement | **Hardware protection** — enforces 1000ms minimum cycle time per SSR datasheet | `RoasterControl::apply_guarded_heater()` |
+| `RoasterControl::emergency_shutdown()` | Full system shutdown | **Final safety measure** — zero-heating, full-fan, error state | All hardware drivers |
+| `ServiceContainer` | Shared state management | **Concurrency safety** — critical_section mutexes protect shared state | All tasks via channels |
+
+### Input/Output Components
+
+| Component | Responsibility | Safety Relevance | Communicates With |
+|-----------|---------------|------------------|-------------------|
+| `ArtisanInput` (input/) | Command parsing | **Input validation** — validates ranges before passing to control | Parser → Multiplexer → RoasterControl |
+| `CommandMultiplexer` (input/) | Channel switching | **Protocol isolation** — routes commands to correct handler | ArtisanInput ↔ RoasterControl |
+| `ArtisanFormatter` (output/) | Response formatting | **Output validation** — validates response format before sending | RoasterControl → dual_output_task |
+| `dual_output_task` | USB CDC / UART dispatch | **Transport safety** — handles write failures gracefully | ArtisanFormatter → USB/UART drivers |
+
+---
+
+## Data Flow: Safety-Critical Paths
+
+### Path 1: Emergency Stop Command
+
+```
+Artisan Command (EmergencyStop)
+         │
+         ▼
+┌─────────────────────────┐
+│ ArtisanInput::parse()   │── Validates command syntax
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ CommandMultiplexer      │── Routes to correct channel
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ ServiceContainer        │── critical_section protect
+│ ::with_roaster()       │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ RoasterControl          │
+│ ::process_artisan_      │── Safety check FIRST in handler chain
+│    command(EmergencyStop│
+└───────────┬─────────────┘
+            │
+     ┌──────┴──────┐
+     │             │
+     ▼             ▼
+┌─────────┐  ┌──────────────────┐
+│Safety   │  │RoasterControl   │
+│Command  │  │::stop_streaming()│
+│Handler  │  │  - SSR → 0%     │
+│         │  │  - Fan → 100%   │
+│flag=true│  │  - PID disabled │
+└────┬────┘  └────────┬─────────┘
+     │                │
+     └───────┬────────┘
+             │
+             ▼
+    ┌────────────────┐
+    │ Heater::       │
+    │ set_power(0)  │── Hardware write
+    └────────────────┘
+```
+
+### Path 2: Temperature Safety Check (Every Control Loop)
+
+```
+control_loop_task (every 100ms)
+         │
+         ▼
+┌─────────────────────────┐
+│ RoasterControl         │
+│ ::read_sensors()        │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ MAX31856 sensors        │── SPI read BT, ET
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ RoasterControl         │
+│ ::update_temperatures() │
+│                         │
+│ if bean_temp >= 260°C  │── OVERTEMP_THRESHOLD check
+│     emergency_shutdown()│
+└─────────────────────────┘
+```
+
+### Path 3: SSR Output with Cycle Guard
+
+```
+RoasterControl::update_control()
+         │
+         ▼
+┌─────────────────────────┐
+│ SsrCycleGuard           │
+│ ::next_cycle_allowed()  │
+│                         │
+│ if now < busy_until     │── 1000ms window check
+│     reject/retry        │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ SsrControlSimple        │
+│ ::set_percentage()      │
+│                         │
+│ 1. Set LEDC duty        │
+│ 2. Read back duty      │
+│ 3. Verify within        │── SSR_DUTY_TOLERANCE_TICKS (±2)
+│    tolerance           │
+│ 4. Retry if needed     │
+└─────────────────────────┘
+```
+
+---
 
 ## Architectural Patterns
 
 ### Pattern 1: Embassy-driven control loops
 
 **What:** Each subsystem (SSR, fan, heater) runs as an async loop spawned by Embassy, scheduling hardware updates while yielding to others through `embassy::time::Timer`.
+
 **When to use:** when the system needs soft-real-time coordination across peripherals without blocking the executor.
+
 **Trade-offs:** non-blocking but still monotonic, requires careful state synchronization via `Arc<Mutex<_>>`.
 
 **Example:**
@@ -87,7 +225,9 @@ embassy::executor::Spawner::new().spawn(async move {
 ### Pattern 2: Command multiplexer + formatter trait
 
 **What:** Encapsulate USB and UART endpoints behind a trait that enforces identical output format (CRLF) and buffers to avoid blocking.
+
 **When to use:** when output channels share logical commands but have different physical constraints.
+
 **Trade-offs:** adds indirection but isolates DMA setup from business logic and allows injecting non-blocking wrappers for reliability fixes.
 
 **Example:**
@@ -103,40 +243,253 @@ struct UsbFormatter { dma: UsbDma, buffer: String }
 ### Pattern 3: Snapshot-based shared state
 
 **What:** Controllers expose `Arc<Mutex<ControllerState>>`, tasks clone handles for reads/writes, so output or telemetry tasks operate on consistent views without long-held locks.
+
 **When to use:** when multiple async tasks need to read sensor values or actuator states simultaneously.
+
 **Trade-offs:** adds cloning overhead and stale reads if not refreshed, but avoids deadlocks.
 
-## Data Flow
+### Pattern 4: Handler Chain with Safety First
 
-### Request Flow
+The architecture processes commands through a handler chain. Safety handlers must be positioned first in this chain to intercept dangerous commands before they reach other handlers.
 
-```
-[Hardware sensor / scheduler input]
-    ↓
-[Control task] → [State snapshot] → [Hardware driver (SSR/LEDC)]
-    ↓                               ↓
-[Command multiplexer] ←────────────┘
-    ↓
-[USB/UART DMA] → user / logging
-```
+```rust
+// In RoasterControl::process_command()
+let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
+    &mut self.safety_handler,      // ← SAFETY FIRST
+    &mut self.temp_handler,
+    &mut self.artisan_handler,
+    &mut self.system_handler,
+];
 
-### State Management
-
-```
-[ControllerState Arc<Mutex<_>>]
-     ↓ (lock per tick, clone handles to tasks)
-[Control Tasks (SSR, fan, heater)]
-     ↕
-[Output Task (formatter handles USB/UART concurrently)]
+for handler in &mut handlers {
+    if handler.can_handle(command) {
+        // Safety handler processes EmergencyStop
+        // before other handlers see it
+        return handler.handle_command(command, current_time, &mut self.status);
+    }
+}
 ```
 
-### Key Data Flows
+**When to use:** Any new command type that affects heating, cooling, or system state must have a corresponding handler in this chain, with safety-relevant handlers first.
 
-1. **SSR duty control:** CONTROL task updates duty scheduler → persists new duty in shared snapshot → PWM driver consumes duty on timer tick → telemetry watchdog revalidates actual SSR state for reliability.
-2. **Fan LEDC updates:** FanController obtains LEDC timer handle from hardware module, applies new brightness while also writing into snapshot so formatter can expose accurate state via logs.
-3. **Non-blocking I/O:** Command multiplexer aggregates strings, passes through `ArtisanFormatter` implementations that issue DMA writes; completion futures feed back readiness and optionally unblock CONTROL tasks waiting on ack.
+### Pattern 5: Dual Verification at Control Boundaries
+
+Safety-critical hardware operations require dual verification: the command-level check AND the hardware-level check.
+
+```rust
+// Command-level (in handler)
+if value > 100 {
+    return Err(RoasterError::InvalidState);  // First check
+}
+
+// Hardware-level (in driver)
+fn percentage_to_ledc_duty(percentage: f32) -> u8 {
+    let clamped = percentage.clamp(0.0, 100.0);  // Second check
+    // ...
+}
+```
+
+**When to use:** Any fix that involves range validation, bounds checking, or hardware limits should implement dual verification at both the control layer and the hardware abstraction layer.
+
+### Pattern 6: Fail-Safe Defaults with Explicit State
+
+SystemStatus initializes with fail-safe defaults. Any new safety-related field must follow this pattern:
+
+```rust
+// From SystemStatus::default()
+impl Default for SystemStatus {
+    fn default() -> Self {
+        Self {
+            state: RoasterState::Idle,         // Safe state
+            ssr_output: 0.0,                   // Heating OFF
+            fan_output: 0.0,                   // Fan OFF
+            pid_enabled: false,                 // PID disabled
+            fault_condition: false,            // No fault
+            ssr_hardware_status: SsrHardwareStatus::NotDetected,
+            // ...
+        }
+    }
+}
+```
+
+**When to use:** Adding new state fields for safety monitoring must initialize to fail-safe values (0%, OFF, disabled, error state).
+
+### Pattern 7: Graceful Degradation with Hardware Status
+
+The SSR driver monitors hardware status and reports availability. Control logic must check this status before enabling heating:
+
+```rust
+// In RoasterControl::update_control()
+let desired_output = if self.safety_handler.is_emergency_active() {
+    0.0  // Safety override
+} else if self.status.pid_enabled {
+    if self.status.ssr_hardware_status == SsrHardwareStatus::Available {
+        self.update_pid_control(current_time)
+    } else {
+        warn!("PID enabled but SSR not available");
+        0.0  // Graceful degradation
+    }
+} else {
+    0.0
+};
+```
+
+**When to use:** Any new safety feature that depends on hardware availability must implement graceful degradation rather than forcing operation or panicking.
+
+### Pattern 8: Atomic Safety State Updates
+
+Safety state changes must use critical_section to ensure atomic updates across the entire state:
+
+```rust
+// Using ServiceContainer for atomic access
+ServiceContainer::with_roaster(|roaster| {
+    // This closure runs atomically within critical_section
+    roaster.status.fault_condition = true;
+    roaster.status.ssr_output = 0.0;
+    // Both updates happen together without interruption
+    Ok(())
+});
+```
+
+**When to use:** Any fix that modifies multiple safety-related status fields must use the ServiceContainer's critical_section to ensure atomicity.
+
+---
+
+## Anti-Patterns
+
+### Anti-Pattern 1: Blocking write in CONTROL task
+
+**What:** Directly drive `usb.write()` from CONTROL task, waiting for completion before proceeding.
+
+**Why it's wrong:** A stalled USB endpoint blocks the entire executor, sacrificing SSR duty accuracy and fan updates.
+
+**Do this instead:** Push formatted strings into the command multiplexer and use DMA-backed output futures; only yield to CONTROL after non-blocking confirmation.
+
+### Anti-Pattern 2: Updating hardware and state in separate locks
+
+**What:** Write to controller state snapshot and hardware driver under different mutexes without order.
+
+**Why it's wrong:** Can lead to telemetry reporting stale SSR duty or LEDC brightness, undermining reliability.
+
+**Do this instead:** Bundle hardware write + snapshot update inside the CONTROL task's tick loop, holding a single mutex briefly before releasing.
+
+### Anti-Pattern 3: Bypassing the Handler Chain
+
+**What:** Directly calling hardware methods without going through RoasterControl and its handler chain.
+
+**Why bad:** Bypasses safety checks, validation, cycle guards, and logging. Could cause hardware damage or safety violations.
+
+**Instead:** All heating/fan commands must route through `RoasterControl::process_command()` or `RoasterControl::process_artisan_command()`.
+
+```rust
+// BAD: Direct hardware call
+heater.set_power(100.0);  // Bypasses ALL safety checks
+
+// GOOD: Through handler chain
+roaster.process_command(RoasterCommand::SetHeaterManual(100), now);
+```
+
+### Anti-Pattern 4: Non-Atomic Safety State Updates
+
+**What:** Updating safety-critical state fields individually without protection.
+
+**Why bad:** Control loop could read partial state between updates, causing incorrect safety decisions.
+
+```rust
+// BAD: Non-atomic update
+status.fault_condition = true;
+// Control loop could run here!
+status.ssr_output = 0.0;
+
+// GOOD: Atomic update via ServiceContainer
+ServiceContainer::with_roaster(|roaster| {
+    roaster.status.fault_condition = true;
+    roaster.status.ssr_output = 0.0;
+    Ok(())
+});
+```
+
+### Anti-Pattern 5: Ignoring Hardware Status
+
+**What:** Setting heating output without checking if SSR hardware is available.
+
+**Why bad:** Could command heating when heat source is not detected, leading to confusion about actual system state.
+
+```rust
+// BAD: Ignores hardware status
+self.status.ssr_output = desired;
+heater.set_power(desired);
+
+// GOOD: Checks and handles unavailability
+if self.status.ssr_hardware_status == SsrHardwareStatus::Available {
+    heater.set_power(desired)?;
+    self.status.ssr_output = desired;
+} else {
+    warn!("SSR not available, output suppressed");
+    self.status.ssr_output = 0.0;
+}
+```
+
+### Anti-Pattern 6: Swallowing Safety Errors
+
+**What:** Catching safety-related errors without appropriate action.
+
+**Why bad:** Safety errors indicate dangerous conditions that require immediate response.
+
+```rust
+// BAD: Swallows error
+if let Err(e) = self.read_sensors() {
+    debug!("Sensor error: {:?}", e);  // No action!
+}
+
+// GOOD: Triggers safety response
+if let Err(e) = self.read_sensors() {
+    warn!("Sensor error: {:?}", e);
+    self.emergency_shutdown("Temperature sensor failure")?;
+}
+```
+
+---
+
+## Integration Points for v3.0 Safety Fixes
+
+Based on the architecture analysis, safety fixes for v3.0 should integrate at these specific points:
+
+### 1. Handler Chain Extension
+
+- **Location:** `RoasterControl::process_command()` in `src/control/roaster_refactored.rs`
+- **Pattern:** Add new handlers to the chain, ensuring safety handlers remain first
+- **Considerations:** New safety features may require new `RoasterCommand` variants
+
+### 2. SystemStatus Extension
+
+- **Location:** `SystemStatus` struct in `src/config/constants.rs`
+- **Pattern:** Add new safety-related fields with fail-safe defaults
+- **Considerations:** Any new field affects serialization for Artisan responses
+
+### 3. Emergency Shutdown Enhancement
+
+- **Location:** `RoasterControl::emergency_shutdown()` in `src/control/roaster_refactored.rs`
+- **Pattern:** Extend shutdown sequence to cover additional hardware/sensors
+- **Considerations:** Must maintain existing behavior for backward compatibility
+
+### 4. Temperature Validation Enhancement
+
+- **Location:** `RoasterControl::update_temperatures()` in `src/control/roaster_refactored.rs`
+- **Pattern:** Add additional temperature safety checks (rate-of-change, differential)
+- **Considerations:** Balance safety responsiveness with false-positive avoidance
+
+### 5. SSR Monitor Enhancement
+
+- **Location:** `SsrControlSimple` in `src/hardware/ssr.rs`
+- **Pattern:** Extend duty verification, add retry logic, enhance status reporting
+- **Considerations:** Must work within existing cycle guard timing
+
+---
 
 ## Scaling Considerations
+
+For an ESP32-C3 embedded system, scalability is limited by hardware constraints:
 
 | Scale | Architecture Adjustments |
 |-------|--------------------------|
@@ -149,30 +502,16 @@ struct UsbFormatter { dma: UsbDma, buffer: String }
 1. **First bottleneck:** Blocking USB/UART writes — mitigate by confirming DMA-based non-blocking wrappers before adding more telemetry.
 2. **Second bottleneck:** SSR duty accuracy under load — guard with watchdog verifying duty vs hardware register after each update.
 
-## Anti-Patterns
+| Concern | At Current Scale | Mitigation for Growth |
+|---------|------------------|---------------------|
+| **Memory** | 320KB SRAM | Use static allocation, avoid heap in safety paths |
+| **Stack depth** | Embassy tasks limited | Keep handler chains shallow, inline small functions |
+| **Channel depth** | 8-16 messages | Monitor overflow in testing, increase if needed |
+| **Control loop jitter** | Target 100ms | Keep async operations short, use spawn for long work |
 
-### Anti-Pattern 1: Blocking write in CONTROL task
+---
 
-**What people do:** Directly drive `usb.write()` from CONTROL task, waiting for completion before proceeding.
-**Why it's wrong:** A stalled USB endpoint blocks the entire executor, sacrificing SSR duty accuracy and fan updates.
-**Do this instead:** Push formatted strings into the command multiplexer and use DMA-backed output futures; only yield to CONTROL after non-blocking confirmation.
-
-### Anti-Pattern 2: Updating hardware and state in separate locks
-
-**What people do:** Write to controller state snapshot and hardware driver under different mutexes without order.
-**Why it's wrong:** Can lead to telemetry reporting stale SSR duty or LEDC brightness, undermining reliability.
-**Do this instead:** Bundle hardware write + snapshot update inside the CONTROL task’s tick loop, holding a single mutex briefly before releasing.
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| USB CDC, UART | DMA-backed non-blocking writer | Formatter enforces CRLF and exposes ready state so CONTROL tasks do not block while command multiplexer drains queues. |
-| LEDC/SSR hardware | `esp-hal` PWM via embassy timers | Controllers reconfigure timers through `FanController` and new SSR duty scheduler ensuring accurate duty cycle transitions. |
-
-### Internal Boundaries
+## Internal Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
@@ -180,30 +519,37 @@ struct UsbFormatter { dma: UsbDma, buffer: String }
 | Command multiplexer ↔ Formatter trait | Async queue + DMA futures | Non-blocking I/O changes require the formatter to acknowledge completion before CONTROL tasks assume the message cleared. |
 | FanController ↔ LEDC hardware module | Interface exposing `set_brightness(duty)` | LEDC update now includes notification back to the controller state to confirm hardware acknowledgement. |
 
-## New Components Needed
+---
 
-- **SSR Duty Reliability Scheduler:** abstraction that tracks target vs actual duty, exposes a simple API for CONTROL tasks to request updates, and signals when hardware register interplay requires retries.
-- **Non-blocking Output Driver:** wraps DMA/USB/UART writes in futures, exposes readiness to the command multiplexer so new hardware reliability fixes never block on slow endpoints.
-- **FanController LEDC Monitor:** extends the existing controller to verify LEDC updates succeed (via timer compare match) and publishes fail-safe status to shared snapshots.
+## External Services
 
-## Data Flow Changes
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| USB CDC, UART | DMA-backed non-blocking writer | Formatter enforces CRLF and exposes ready state so CONTROL tasks do not block while command multiplexer drains queues. |
+| LEDC/SSR hardware | `esp-hal` PWM via embassy timers | Controllers reconfigure timers through `FanController` and new SSR duty scheduler ensuring accurate duty cycle transitions. |
 
-- SSR duty updates now pass through the reliability scheduler before reaching PWM hardware, ensuring the multiplier is clamped and retried if lost.
-- LEDC modifications include a confirmation step: after issuing a write, the monitor reads back timer state or uses callback to confirm the duty was accepted before publishing to telemetry.
-- Output flow now includes readiness futures so CONTROL tasks can enqueue messages and continue logic while DMA drains them asynchronously.
-
-## Suggested Build Order
-
-1. **Stabilize shared infrastructure:** extend `Arc<Mutex<_>>` snapshots and command multiplexer so they expose hooks for non-blocking drains and reliability status.
-2. **SSR reliability layer:** introduce duty scheduler/watcher, update CONTROL task loops to fold in scheduler, and verify telemetry publishes accurate duty.
-3. **FanController LEDC updates:** implement monitor, ensure new LEDC APIs feed back into snapshots, and align with PWM hardware wiring.
-4. **Non-blocking I/O:** rework formatter implementations to rely on DMA futures, update command multiplexer to await readiness, and ensure CONTROL tasks enqueue rather than blocking.
+---
 
 ## Sources
 
-- Project context describing Embassy executor, shared snapshots, and controllers (provided by orchestrator). 
-- Inferred constraints from ESP32-C3 + esp-hal usage (no external docs consulted).
+- LibreRoaster source code analysis (`src/control/roaster_refactored.rs`, `src/control/handlers.rs`, `src/hardware/ssr.rs`, `src/config/constants.rs`)
+- ESP-IDF Watchdog Timer documentation (https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/wdts.html)
+- Embassy-rs async framework (https://github.com/embassy-rs/embassy)
+- Embedded safety design principles (https://incompliancemag.com/implementing-robust-watchdog-timers-for-embedded-systems/)
 
 ---
-*Architecture research for: Hardware reliability fixes on LibreRoaster* 
-*Researched: 2026-02-17*
+
+## Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| Component boundaries | HIGH | Direct code analysis of existing architecture |
+| Data flow patterns | HIGH | Traced through actual code paths |
+| Handler chain safety | HIGH | Verified in RoasterControl::process_command() |
+| Anti-pattern identification | HIGH | Based on existing codebase patterns and embedded best practices |
+| v3.0 integration points | HIGH | Direct mapping from architecture to suggested fix locations |
+
+---
+
+*Architecture research for: LibreRoaster v3.0 Critical Safety Fixes*  
+*Researched: 2026-02-18*

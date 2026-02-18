@@ -84,5 +84,242 @@ cargo add embassy-usb@0.5.1 embassy-usb-synopsys-otg@0.3.1 embedded-io-async@0.6
 - https://docs.rs/heapless/latest/heapless/ — Static data structures for `spsc::Queue` command buffering (MEDIUM)
 
 ---
-*Stack research for: LibreRoaster SSR/Fan/USB reliability milestone*
-*Researched: 2026-02-17*
+
+# Stack Research: v3.0 Safety Fixes
+
+**Focus:** StaticCell patterns, async I/O safety, LEDC configuration for Use-After-Free, unsafe statics, blocking I/O fixes
+
+**Researched:** 2026-02-18  
+**Confidence:** HIGH
+
+---
+
+## Existing Validated Stack (DO NOT Change)
+
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| esp-hal | ~1.0 | LEDC, UART, USB CDC peripherals |
+| embassy-rs | 0.9.1 | Async executor |
+| embedded-io-async | 0.6.1 | Async I/O traits |
+| StaticCell | 2.1.1 | Static initialization (partially used) |
+
+---
+
+## Recommended Changes for Safety Fixes
+
+### 1. StaticCell Pattern (REPLACE unsafe code)
+
+The codebase already has `static_cell = "2.1.1"` in Cargo.toml. Use it consistently instead of unsafe patterns.
+
+#### Current Problem (main.rs:46-49)
+
+```rust
+// UNSAFE - causes Use-After-Free
+unsafe fn make_static<T>(mut value: T) -> &'static mut T {
+    let ptr = &mut value as *mut T;
+    &mut *ptr
+}
+```
+
+**Issue:** This creates a dangling pointer. The local `value` goes out of scope, but the returned reference still points to that memory.
+
+#### Fix: Use StaticCell consistently
+
+```rust
+// Already used correctly elsewhere in codebase:
+static LEDC_BUS: StaticCell<LedcBus<'static>> = StaticCell::new();
+
+// Use same pattern for SSR and Fan:
+static SSR_CONTROLLER: StaticCell<SsrControlSimple> = StaticCell::new();
+static FAN_CONTROLLER: StaticCell<FanController> = StaticCell::new();
+
+// In initialization code:
+let static_ssr = SSR_CONTROLLER.init(real_ssr);
+let static_fan = FAN_CONTROLLER.init(fan_controller);
+```
+
+**Sources:**
+- [static_cell crate documentation](https://docs.rs/static_cell/2.1.1) - HIGH confidence
+- [embassy-rs/static-cell GitHub](https://github.com/embassy-rs/static-cell) - HIGH confidence
+
+---
+
+### 2. ServiceContainer Singleton Pattern (REPLACE unsafe static mut)
+
+#### Current Problem (service_container.rs:41-44)
+
+```rust
+// UNSAFE - violates Rust's aliasing rules
+pub fn get_instance() -> &'static mut Self {
+    static mut INSTANCE: ServiceContainer = ServiceContainer::new();
+    unsafe { &mut *core::ptr::addr_of_mut!(INSTANCE) }
+}
+```
+
+**Issue:** Multiple mutable references can exist simultaneously, causing data races.
+
+#### Fix: Use StaticCell
+
+```rust
+// In service_container.rs
+static SERVICE_CONTAINER: StaticCell<ServiceContainer> = StaticCell::new();
+
+pub fn get_instance() -> &'static ServiceContainer {
+    SERVICE_CONTAINER.init(ServiceContainer::new())
+}
+```
+
+**Key insight:** The existing code already uses `Mutex<RefCell<Option<T>>>` for interior mutability. The fix is to make the container itself statically initialized safely.
+
+---
+
+### 3. UART Driver Transmute (REPLACE unsafe transmute)
+
+#### Current Problem (uart/driver.rs:70-76)
+
+```rust
+// UNSAFE lifetime extension via transmute
+let tx_static = unsafe {
+    core::mem::transmute::<UartTx<esp_hal::Async>, UartTx<'static, esp_hal::Async>>(tx)
+};
+```
+
+**Issue:** Transmuting lifetime without proper ownership transfer can cause use-after-free.
+
+#### Fix: Use StaticCell for UART driver
+
+```rust
+// In driver.rs:
+static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
+
+pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
+    let config = Config::default().with_baudrate(115200);
+    let uart = Uart::new(uart0, config).map_err(|_| UartError::TransmissionError)?;
+    let uart = uart.into_async();
+    let (rx, tx) = uart.split();
+    
+    // Safe: StaticCell owns the data, we get 'static reference
+    let driver = UartDriver::new(
+        UartTx::<'static, esp_hal::Async>::new(tx),
+        UartRx::<'static, esp_hal::Async>::new(rx),
+    );
+    
+    UART_DRIVER.init(driver);
+    Ok(())
+}
+```
+
+**Note:** The underlying issue is that esp-hal's `UartTx::new()` requires a lifetime parameter. The proper fix may require checking esp-hal's latest API for `'static` support or using the `into_async` method differently.
+
+---
+
+### 4. LEDC Timer Configuration (VALIDATED - No Changes Needed)
+
+The current LEDC configuration in main.rs is appropriate:
+
+```rust
+let mut fan_timer = ledc.timer(timer::Number::Timer0);
+fan_timer.configure(TimerConfig {
+    duty: timer::config::Duty::Duty8Bit,        // 8-bit = 0-255 range
+    clock_source: timer::LSClockSource::APBClk,  // 80MHz APB clock
+    frequency: Rate::from_hz(FAN_PWM_FREQUENCY_HZ), // 25kHz
+})?;
+```
+
+**Validation:**
+- **Frequency:** 25kHz is appropriate for PC fans (avoids audible noise)
+- **Resolution:** 8-bit provides 256 duty cycle steps (sufficient for fan control)
+- **Clock source:** APBClk (80MHz) is correct for ESP32-C3
+- **LowSpeed:** Correct for ESP32-C3 (no HighSpeed available)
+
+**Sources:**
+- [ESP32 LEDC maximum frequencies](https://gist.github.com/benpeoples/3aa57bffc0f26ede6623ca520f26628c) - HIGH confidence
+- [esp-hal LEDC timer docs](https://docs.rs/esp-hal/latest/src/esp_hal/ledc/timer.rs.html) - HIGH confidence
+
+---
+
+## What NOT to Change
+
+| Area | Recommendation | Reason |
+|------|---------------|--------|
+| esp-hal version | Keep ~1.0 | Already validated, breaking changes unlikely worth it |
+| embassy-rs executor | Keep 0.9.1 | Works correctly with current async patterns |
+| embedded-io-async | Keep 0.6.1 | Provides correct async traits |
+| LEDC timer config | Keep current | Already optimal for fan control |
+| LedcBus abstraction | Keep | Provides safe channel access |
+
+---
+
+## Integration Points
+
+### Phase 1: Replace make_static in main.rs
+
+```rust
+// BEFORE (unsafe):
+let static_ssr = unsafe { make_static(real_ssr) };
+let static_fan = unsafe { make_static(fan_controller) };
+
+// AFTER (safe):
+static SSR: StaticCell<SsrControlSimple> = StaticCell::new();
+static FAN: StaticCell<FanController> = StaticCell::new();
+
+let static_ssr = SSR.init(real_ssr);
+let static_fan = FAN.init(fan_controller);
+```
+
+### Phase 2: Fix ServiceContainer singleton
+
+```rust
+// BEFORE (unsafe):
+pub fn get_instance() -> &'static mut Self {
+    static mut INSTANCE: ServiceContainer = ServiceContainer::new();
+    unsafe { &mut *core::ptr::addr_of_mut!(INSTANCE) }
+}
+
+// AFTER (safe):
+static SERVICE_CONTAINER: StaticCell<ServiceContainer> = StaticCell::new();
+
+pub fn get_instance() -> &'static ServiceContainer {
+    SERVICE_CONTAINER.init(ServiceContainer::new())
+}
+```
+
+### Phase 3: Fix UART driver transmute
+
+Replace the unsafe lifetime transmute with proper static cell initialization or updated esp-hal API.
+
+---
+
+## Dependencies Summary
+
+**No new dependencies needed.** The existing stack already includes:
+
+- `static_cell = "2.1.1"` - For safe static initialization
+- `critical-section = "1.2.0"` - For interrupt-safe interior mutability
+- `embassy-sync = "0.6.1"` - For channels and mutexes
+- `embedded-io-async = "0.6.1"` - For async I/O traits
+
+---
+
+## Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| StaticCell pattern | HIGH | Well-documented, already partially used in codebase |
+| ServiceContainer fix | HIGH | Pattern is clear, matches existing interior mutability |
+| UART transmute fix | MEDIUM | May need esp-hal API adjustment |
+| LEDC config | HIGH | Current config is optimal for application |
+
+---
+
+## Sources
+
+- [static_cell crate docs](https://docs.rs/static_cell/2.1.1/static_cell/) - HIGH
+- [embassy-rs static-cell](https://github.com/embassy-rs/static-cell) - HIGH
+- [esp-hal LEDC timer](https://docs.rs/esp-hal/latest/src/esp_hal/ledc/timer.rs.html) - HIGH
+- [ESP32 LEDC frequency table](https://gist.github.com/benpeoples/3aa57bffc0f26ede6623ca520f26628c) - HIGH
+
+---
+
+*Stack research for: LibreRoaster v3.0 Safety Fixes*
+*Researched: 2026-02-18*
