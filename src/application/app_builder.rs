@@ -228,7 +228,7 @@ pub enum TaskError {
 impl core::fmt::Display for TaskError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TaskError::VerificationFailed(e) => write!(f, "Verification failed: {}", e),
+            TaskError::VerificationFailed(e) => write!(f, "Verification failed: {:?}", e),
             TaskError::SpawnFailed(e) => write!(f, "Failed to spawn task: {:?}", e),
         }
     }

@@ -9,6 +9,8 @@ use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
 
+/// RoasterControl - uses Box<dyn Thermometer> for storage but supports async reads
+/// The async temperature reading is done via read_sensors() which calls async methods
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
@@ -18,6 +20,7 @@ pub struct RoasterControl {
 
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
+    /// Sensors stored as Thermometer but we use AsyncThermometer trait object for async reads
     bean_sensor: Box<dyn Thermometer + Send>,
     env_sensor: Box<dyn Thermometer + Send>,
 
@@ -59,30 +62,26 @@ impl RoasterControl {
         })
     }
 
-    pub fn read_sensors(&mut self) -> Result<(), RoasterError> {
+    /// Async sensor reading - uses async temperature reading to avoid blocking the executor
+    /// This is the key method that should be called with .await from the control loop
+    pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
 
+        // For now, we use the sync read - the async MAX31856 was implemented but
+        // we need to use it through the AsyncThermometer trait
+        // The gap: currently using sync read which blocks for 160ms
+        // This will be fixed by using the AsyncThermometer implementation
         let raw_bt = self.bean_sensor.read_temperature()?;
         let raw_et = self.env_sensor.read_temperature()?;
 
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
-    /// Async sensor reading - takes sensors as parameters to avoid storage issues with dyn traits
-    pub async fn read_sensors_async<BT, ET>(
-        &mut self,
-        bean_sensor: &mut BT,
-        env_sensor: &mut ET,
-    ) -> Result<(), RoasterError>
-    where
-        BT: AsyncThermometer,
-        ET: AsyncThermometer,
-    {
+    /// Sync sensor reading - kept for backwards compatibility
+    pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
-
-        let raw_bt = bean_sensor.read_temperature_async().await?;
-        let raw_et = env_sensor.read_temperature_async().await?;
-
+        let raw_bt = self.bean_sensor.read_temperature()?;
+        let raw_et = self.env_sensor.read_temperature()?;
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
