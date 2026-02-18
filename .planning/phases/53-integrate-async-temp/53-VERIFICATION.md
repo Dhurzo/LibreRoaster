@@ -1,57 +1,26 @@
 ---
 phase: 53-integrate-async-temp
-verified: 2026-02-18T15:30:00Z
-status: gaps_found
-score: 0/3 must-haves verified
-re_verification:
+verified: 2026-02-18T16:45:00Z
+status: passed
+score: 3/3 must-haves verified
+re_verification: 
   previous_status: gaps_found
   previous_score: 0/3
-  gaps_closed: []
-  gaps_remaining:
+  gaps_closed:
     - "Control loop uses async temperature reading"
     - "Temperature read no longer blocks async executor"
     - "read_sensors is async and awaited properly"
+  gaps_remaining: []
   regressions: []
-gaps:
-  - truth: "Control loop uses async temperature reading"
-    status: failed
-    reason: "tasks.rs line 59 still calls synchronous read_sensors_sync() instead of async read_sensors().await"
-    artifacts:
-      - path: "src/application/tasks.rs"
-        issue: "Line 59: match roaster.read_sensors_sync() - uses sync version in async context"
-    missing:
-      - "await roaster.read_sensors().await call in control loop"
-      - "Async-compatible closure pattern in ServiceContainer::with_roaster"
-  - truth: "Temperature read no longer blocks async executor"
-    status: failed
-    reason: "Control loop still uses blocking read_sensors_sync() which contains blocking sensor reads"
-    artifacts:
-      - path: "src/application/tasks.rs"
-        issue: "Line 59: read_sensors_sync() blocks the async executor during temperature conversion"
-    missing:
-      - "Switch to async read_sensors().await in control loop"
-  - truth: "read_sensors is async and awaited properly"
-    status: failed
-    reason: "The method signature is async (line 70) BUT it internally calls synchronous read_temperature() methods (lines 75-76). Sensors are stored as Box<dyn Thermometer + Send> (lines 24-25), NOT as AsyncThermometer. Control loop does NOT call this method."
-    artifacts:
-      - path: "src/control/roaster_refactored.rs"
-        issue: "NOT_TRULY_ASYNC: read_sensors() is marked async but calls sync read_temperature() internally"
-      - path: "src/control/roaster_refactored.rs"
-        issue: "NOT_ASYNC_THERMOMETER: sensors stored as Box<dyn Thermometer + Send> (lines 24-25), not Box<dyn AsyncThermometer + Send>"
-      - path: "src/application/tasks.rs"
-        issue: "NOT_WIRED: control loop still calls read_sensors_sync(), not read_sensors().await"
-    missing:
-      - "Change sensor storage from Box<dyn Thermometer> to Box<dyn AsyncThermometer>"
-      - "Implement read_sensors() to actually await async thermometer reads"
-      - "Call await roaster.read_sensors().await in tasks.rs control loop"
+gaps: []
 ---
 
 # Phase 53: Integrate Async Temperature Reading Verification Report
 
 **Phase Goal:** Wire async temperature reading into control loop (PERF-01 integration)
 **Verified:** 2026-02-18
-**Status:** gaps_found
-**Re-verification:** Yes — after gap closure attempt (NO CHANGES)
+**Status:** passed
+**Re-verification:** Yes — all 3 gaps from previous verification are now CLOSED
 
 ## Goal Achievement
 
@@ -59,84 +28,61 @@ gaps:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Control loop uses async temperature reading | ✗ FAILED | tasks.rs line 59: `roaster.read_sensors_sync()` - sync call, not async |
-| 2 | Temperature read no longer blocks async executor | ✗ FAILED | Still using blocking sync call (read_sensors_sync) in control loop |
-| 3 | read_sensors is async and awaited properly | ✗ FAILED | Method signature is async but calls sync methods internally; sensors stored as dyn Thermometer, not AsyncThermometer; control loop doesn't use it |
+| 1 | Control loop uses async temperature reading | ✓ VERIFIED | tasks.rs line 54: `ServiceContainer::roaster_async_sensor_read().await` - async call present |
+| 2 | Temperature read no longer blocks async executor | ✓ VERIFIED | max31856.rs lines 100-104: uses `Timer::after(Duration::from_millis(160)).await` instead of spin loop |
+| 3 | read_sensors is async and awaited properly | ✓ VERIFIED | roaster_refactored.rs line 68: async fn + lines 73-74 call `read_temperature_async().await` |
 
-**Score:** 0/3 truths verified
+**Score:** 3/3 truths verified ✓
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `src/control/roaster_refactored.rs` | RoasterControl with async read_sensors | ✗ NOT_TRULY_ASYNC | Line 70: `pub async fn read_sensors()` exists BUT calls sync `read_temperature()` (lines 75-76) |
-| `src/control/roaster_refactored.rs` | Sensors as AsyncThermometer | ✗ FAILED | Lines 24-25: `Box<dyn Thermometer + Send>` - NOT AsyncThermometer |
-| `src/application/tasks.rs` | await roaster.read_sensors().await | ✗ NOT_WIRED | Line 59: calls `read_sensors_sync()` instead |
+| `src/control/roaster_refactored.rs` | RoasterControl with concrete Max31856 types | ✓ VERIFIED | Lines 25-26: `Max31856<BtSpi>` and `Max31856<EtSpi>` stored |
+| `src/control/roaster_refactored.rs` | Async read_sensors() | ✓ VERIFIED | Line 68: `pub async fn read_sensors()` calls async methods (lines 73-74) |
+| `src/application/tasks.rs` | await roaster.read_sensors().await | ✓ VERIFIED | Line 54 calls `ServiceContainer::roaster_async_sensor_read().await` |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|------|-----|--------|---------|
-| `tasks.rs` | `roaster_refactored.rs` | `await roaster.read_sensors().await` | ✗ NOT_WIRED | Line 59: uses sync `read_sensors_sync()` - no `.await` call exists anywhere |
-| `roaster_refactored.rs` | `max31856.rs` | AsyncThermometer trait | ✗ NOT_USED | AsyncThermometer exists but sensors stored as dyn Thermometer |
+| `tasks.rs` | `service_container.rs` | `roaster_async_sensor_read().await` | ✓ WIRED | Line 54: async call present |
+| `service_container.rs` | `roaster_refactored.rs` | `roaster.read_sensors().await` | ✓ WIRED | Line 120: calls `.await` on read_sensors |
+| `roaster_refactored.rs` | `max31856.rs` | `read_temperature_async().await` | ✓ WIRED | Lines 73-74: async calls to concrete sensor types |
+| `max31856.rs` | executor | `Timer::after().await` | ✓ WIRED | Line 104: uses embassy-time Timer, not blocking |
 
-### Re-verification Analysis
+### Gap Closure Analysis
 
-**Changes since previous verification:** NONE
+All 3 gaps from previous verification are now CLOSED:
 
-All gaps remain as previously identified:
+1. **Control loop now uses async temperature reading**
+   - Previous: `roaster.read_sensors_sync()` at tasks.rs line 59
+   - Now: `ServiceContainer::roaster_async_sensor_read().await` at line 54 ✓
 
-1. **Control loop still uses sync temperature reading**
-   - tasks.rs line 59: `roaster.read_sensors_sync()` unchanged
-   - No `await roaster.read_sensors().await` call added
+2. **Temperature read no longer blocks async executor**
+   - Previous: Using blocking sync calls in control loop
+   - Now: Uses `Timer::after(Duration::from_millis(160)).await` - truly async ✓
 
-2. **Async executor still blocked**
-   - Control loop uses blocking sync call
-   - No restructuring of ServiceContainer::with_roaster for async
+3. **read_sensors is now truly async**
+   - Previous: Marked async but called sync methods internally; sensors stored as `Box<dyn Thermometer + Send>`
+   - Now: Sensors stored as concrete `Max31856<BtSpi>` and `Max31856<EtSpi>`; calls `read_temperature_async().await` internally ✓
 
-3. **Async infrastructure still NOT in place**
-   - `read_sensors()` method exists but is NOT truly async
-   - It internally calls synchronous `read_temperature()` methods
-   - Sensors are stored as `Box<dyn Thermometer + Send>`, NOT `Box<dyn AsyncThermometer + Send>`
+### Anti-Patterns Found
 
-### Root Cause Analysis
+None. No TODO/FIXME/placeholder comments in verified files.
 
-The fundamental issue is a storage pattern mismatch:
+### Summary
 
-```
-Wanted: Box<dyn AsyncThermometer + Send>
-Have:  Box<dyn Thermometer + Send>
+**Phase goal ACHIEVED.** The async temperature reading is fully integrated into the control loop:
 
-Because async methods in Rust trait objects require nightly #![feature(async_fn_in_trait)]
-the current implementation uses sync Thermometer trait and wraps it in an async fn
-signature, but the implementation is NOT actually async.
-```
+- Control loop calls `ServiceContainer::roaster_async_sensor_read().await` (async)
+- ServiceContainer takes roaster out, calls `roaster.read_sensors().await` (async)
+- RoasterControl calls `read_temperature_async().await` on concrete Max31856 types (async)
+- Max31856 uses `Timer::after()` for non-blocking delay (async)
 
-To achieve the phase goal, the implementation needs to either:
-
-1. **Use concrete sensor types** (not dyn Trait) to enable true async calls
-2. **Use nightly async fn in trait** feature
-3. **Change the sensor storage to AsyncThermometer** and implement proper async reads
-
-### Gaps Summary
-
-**3 gaps blocking goal achievement - UNCHANGED:**
-
-1. **Control loop uses sync temperature reading**
-   - Missing: `await roaster.read_sensors().await` call in tasks.rs
-   - Current: Uses `read_sensors_sync()` at line 59
-
-2. **Async executor still blocked**
-   - Control loop uses blocking `read_sensors_sync()` which performs sync I/O
-   - This blocks the entire async executor during temperature conversion
-
-3. **Async infrastructure incomplete**
-   - AsyncThermometer trait: ✓ exists but NOT USED
-   - Sensors as AsyncThermometer: ✗ stored as Thermometer
-   - Async read_sensors(): ✗ NOT truly async (calls sync internally)
-   - Control loop integration: ✗ NOT connected
+PERF-01 integration is complete: temperature conversion no longer blocks the async executor.
 
 ---
 
-_Verified: 2026-02-18T15:30:00Z_
+_Verified: 2026-02-18T16:45:00Z_
 _Verifier: Claude (gsd-verifier)_
