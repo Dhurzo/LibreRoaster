@@ -128,6 +128,7 @@
 
 **Plans:**
 - [ ] 53-01-PLAN.md — Wire async temperature into control loop
+- [ ] 53-02-PLAN.md — Gap closure: Fix control loop call site
 
 ---
 
