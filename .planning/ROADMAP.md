@@ -101,10 +101,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SAFE-01 | Phase 49 | Pending |
-| SAFE-02 | Phase 49 | Pending |
-| SAFE-03 | Phase 49 | Pending |
-| SAFE-04 | Phase 49 | Pending |
+| SAFE-01 | Phase 49 | Complete |
+| SAFE-02 | Phase 49 | Complete |
+| SAFE-03 | Phase 49 | Complete |
+| SAFE-04 | Phase 49 | Complete |
 | TEST-01 | Phase 50 | Pending |
 | DOCS-01 | Phase 51 | Pending |
 | PERF-01 | Phase 52 | Pending |

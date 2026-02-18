@@ -9,10 +9,10 @@ Critical safety fixes for embedded reliability.
 
 ### Safety
 
-- [ ] **SAFE-01**: Replace make_static Use-After-Free in main.rs with StaticCell pattern (already used elsewhere in codebase)
-- [ ] **SAFE-02**: Replace mutable static in driver.rs get_usb_cdc_driver() with StaticCell (or add safety documentation if acceptable)
-- [ ] **SAFE-03**: Replace mutable static in driver.rs get_uart_driver() with StaticCell (or add safety documentation if acceptable)
-- [ ] **SAFE-04**: Replace ServiceContainer::get_instance() unsafe static mut with StaticCell pattern
+- [x] **SAFE-01**: Replace make_static Use-After-Free in main.rs with StaticCell pattern (already used elsewhere in codebase)
+- [x] **SAFE-02**: Replace mutable static in driver.rs get_usb_cdc_driver() with StaticCell (or add safety documentation if acceptable)
+- [x] **SAFE-03**: Replace mutable static in driver.rs get_uart_driver() with StaticCell (or add safety documentation if acceptable)
+- [x] **SAFE-04**: Replace ServiceContainer::get_instance() unsafe static mut with StaticCell pattern
 
 ### Test Fixes
 
@@ -41,14 +41,14 @@ Critical safety fixes for embedded reliability.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SAFE-01 | Phase 50 | Pending |
-| SAFE-02 | Phase 50 | Pending |
-| SAFE-03 | Phase 50 | Pending |
-| SAFE-04 | Phase 50 | Pending |
-| TEST-01 | Phase 51 | Pending |
-| DOCS-01 | Phase 52 | Pending |
-| PERF-01 | Phase 53 | Pending |
-| PERF-02 | Phase 53 | Pending |
+| SAFE-01 | Phase 49 | Complete |
+| SAFE-02 | Phase 49 | Complete |
+| SAFE-03 | Phase 49 | Complete |
+| SAFE-04 | Phase 49 | Complete |
+| TEST-01 | Phase 50 | Pending |
+| DOCS-01 | Phase 51 | Pending |
+| PERF-01 | Phase 52 | Pending |
+| PERF-02 | Phase 52 | Pending |
 
 **Coverage:**
 - v3.0 requirements: 8 total
