@@ -196,6 +196,9 @@
 **Files to Modify:**
 - src/hardware/fan.rs
 
+**Plans:**
+- [ ] 55-01-PLAN.md — Add get_speed() override to FanController Fan implementations
+
 ---
 
 ## Phase 56: Complete Phase 51 Verification
