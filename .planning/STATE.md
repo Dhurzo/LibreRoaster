@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 
 ## Current Position
 
-Phase: 49 of 49 (v2.6 complete)
-Plan: Not started
-Status: milestone_complete
-Last activity: 2026-02-18 — v2.6 milestone shipped
+Phase: 50 of 50 (v3.0 started)
+Plan: —
+Status: milestone_started
+Last activity: 2026-02-18 — v3.0 milestone started
 
-Progress: [██████████] 100% (v2.6 shipped)
+Progress: [░░░░░░░░░░░] 0% (v3.0 defining requirements)
 
 ## Performance Metrics
 
@@ -62,7 +62,13 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- None - v2.6 hardware reliability milestone complete
+- [ ] v3.0: Fix make_static Use-After-Free (main.rs:40-43)
+- [ ] v3.0: Fix mutable statics safety (driver.rs:118, 62)
+- [ ] v3.0: Fix ServiceContainer::get_instance() (service_container.rs:37-40)
+- [ ] v3.0: Fix test_parse_ot2_partial_command failure
+- [ ] v3.0: Fix README vs PROTOCOL.md mismatch
+- [ ] v3.0: Fix blocking MAX31856 temperature read
+- [ ] v3.0: Fix SSR/Fan shared LEDC timer
 
 ### Blockers/Concerns
 
@@ -70,6 +76,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-18 07:47 UTC
-Stopped at: v2.6 milestone shipped
+Last session: 2026-02-18 08:XX UTC
+Stopped at: v3.0 milestone started
 Resume file: None

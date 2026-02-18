@@ -8,9 +8,18 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v2.7 TBD
+## Current Milestone: v3.0 Critical Safety Fixes
 
-**Goal:** To be defined
+**Goal:** Fix critical safety issues (Use-After-Free, unsafe statics), test failures, documentation inconsistencies, and blocking I/O that prevent reliable hardware operation.
+
+**Target fixes:**
+- A. Fix make_static Use-After-Free in main.rs (replace with StaticCell)
+- C. Fix test_parse_ot2_partial_command test failure
+- D. Fix mutable statics without protection in driver.rs
+- E. Fix ServiceContainer::get_instance() unsafe static mut
+- F. Fix README vs PROTOCOL.md documentation mismatch
+- G. Fix blocking temperature reading in MAX31856 (~160ms busy-wait)
+- H. Fix SSR and Fan sharing same LEDC timer
 
 ## Last Shipped: v2.6 Hardware Reliability (2026-02-18)
 
@@ -96,19 +105,23 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ IO-02: USB CDC back-pressure handling — v2.6
 - ✓ IO-03: CommandQueue FIFO with reject-on-full — v2.6
 - ✓ TEST-02: Transport flood tests — v2.6
+- ✓ SSR-01: Saturating SSR duty conversion 0-100 → LEDC 0-255 — v2.6
+- ✓ SSR-02: SSR cycle guard (≥1s) enforcement — v2.6
+- ✓ SSR-03: LEDC drift monitoring (±2 ticks) with retry — v2.6
+- ✓ FAN-01: FanController writes LEDC duty directly — v2.6
+- ✓ FAN-02: Fan/SSR LEDC writes serialized via LedcBus — v2.6
+- ✓ IO-01: Async UART with embassy traits and event queues — v2.6
+- ✓ IO-02: USB CDC back-pressure handling — v2.6
 
-### Active (v2.7 TBD)
+### Active (v3.0 Critical Safety)
 
-- [ ] SSR-01: 100% Artisan SSR commands clamp to LEDC duty 255 after saturating conversion and minimum guardrails.
-- [ ] SSR-02: SSR scheduler enforces the datasheet cycle time, rejects commands if the previous cycle is still saturating, and retries when the hardware is busy.
-- [ ] SSR-03: SSR monitor validates that the LEDC channel reflects the commanded duty within ±2 ticks and retries/alerts if it does not.
-- [ ] FAN-01: FanController writes LEDC duty via `set_duty`/`update_duty` so the hardware channel is updated immediately instead of only storing target values.
-- [ ] FAN-02: Fan updates serialize LEDC writes (including optional fades) to avoid timer collisions and to provide audible-friendly ramps.
-- [ ] IO-01: UART transport uses embassy async UART traits with event queues so reads and writes never block the executor.
-- [ ] IO-02: USB CDC transport (embassy-usb + Synopsys OTG) exposes DMA-aware futures with back-pressure so the formatter yields whenever the endpoint is busy.
-- [ ] IO-03: Integration tests flood the UART and USB transports while SSR/fan loops run to confirm no executor stalls.
-- [ ] TEST-01: Hardware watchdogs or logs verify SSR updates respect minimum cycle times and LEDC duty accuracy.
-- [ ] TEST-02: Async transport regression tests assert the command multiplexer stays responsive even when SSR/fan tasks are saturated.
+- [ ] SAFE-01: Replace make_static Use-After-Free in main.rs with StaticCell (already used elsewhere)
+- [ ] SAFE-02: Add proper safety documentation to get_usb_cdc_driver() and get_uart_driver()
+- [ ] SAFE-03: Replace ServiceContainer::get_instance() static mut with StaticCell pattern
+- [ ] TEST-01: Fix test_parse_ot2_partial_command - should return Err(ParseError::InvalidValue) not Ok(SetFanSpeed(0))
+- [ ] DOCS-01: Update README.md to reflect PROTOCOL.md (4 values: ET,BT,HEATER,FAN)
+- [ ] PERF-01: Replace blocking MAX31856 temperature read (~160ms busy-wait) with async/driver approach
+- [ ] PERF-02: Separate SSR and Fan LEDC timers (SSR needs ~1Hz, Fan needs 25kHz)
 
 ### Out of Scope
 
@@ -138,6 +151,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 **v2.0 complete:** Code quality audit with clippy/geiger configuration and 31-issue inventory.
 
 **v2.6 focus:** Fix SSR duty math (no double division), FanController LEDC updates, and asynchronous UART/USB CDC transports so hardware output is deterministically driven.
+
+**v3.0 focus:** Critical safety fixes - Use-After-Free, unsafe statics, test failures, documentation fixes, blocking I/O fixes.
 
 ## Key Decisions
 
@@ -175,4 +190,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-18 — v2.6 milestone shipped*
+*Last updated: 2026-02-18 — v3.0 milestone started (critical safety fixes)*
