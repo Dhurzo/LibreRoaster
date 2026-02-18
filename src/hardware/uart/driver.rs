@@ -2,6 +2,7 @@ use core::fmt;
 use embedded_io_async::Write;
 use embedded_io_async::Read;
 use esp_hal::uart::{Config, Uart, UartRx, UartTx};
+use static_cell::StaticCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
@@ -54,7 +55,12 @@ impl UartDriver {
     }
 }
 
-static mut UART_INSTANCE: Option<UartDriver> = None;
+// SAFETY: StaticCell provides compile-time memory reservation, preventing use-after-free.
+// Initialized once during early boot in single-threaded context before any async tasks start.
+static UART_INSTANCE: StaticCell<Option<UartDriver>> = StaticCell::new();
+// Store a raw pointer to the Option<UartDriver> after initialization for later access
+// SAFETY: Only written once during init, safe for single-threaded embedded context
+static mut UART_PTR: core::ptr::NonNull<Option<UartDriver>> = core::ptr::NonNull::dangling();
 
 pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
     let config = Config::default().with_baudrate(115200);
@@ -75,17 +81,20 @@ pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
         core::mem::transmute::<UartRx<esp_hal::Async>, UartRx<'static, esp_hal::Async>>(rx)
     };
 
-    critical_section::with(|_| unsafe {
-        UART_INSTANCE = Some(UartDriver::new(tx_static, rx_static));
-    });
+    // SAFETY: init() called once during early UART initialization.
+    // Stored pointer lives for the duration of the program.
+    let value = UART_INSTANCE.init(Some(UartDriver::new(tx_static, rx_static)));
+    // Store the pointer for later retrieval
+    // SAFETY: value is &'static mut Option<UartDriver>, converting to NonNull is safe.
+    // Only called once during early boot in single-threaded context.
+    unsafe { UART_PTR = core::ptr::NonNull::new_unchecked(value) };
 
     Ok(())
 }
 
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
-    // Allow this static_mut_ref warning as it's necessary for embedded systems
-    #[allow(static_mut_refs)]
-    unsafe {
-        UART_INSTANCE.as_mut()
-    }
+    // SAFETY: UART_PTR is set once during init_uart() before any async tasks run.
+    // The StaticCell guarantees the memory is valid for the program duration.
+    // Only called after UART initialization in single-threaded context.
+    unsafe { UART_PTR.as_mut().as_mut() }
 }
