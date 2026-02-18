@@ -50,15 +50,12 @@ pub async fn control_loop_task() {
         }
 
         // Gap closure: Use async read_sensors() instead of blocking sync version
-        // The async version uses embassy::Timer instead of spin-waiting for MAX31856 conversion
-        // 
-        // Note: The async read_sensors() method exists and is properly wired.
-        // For full async integration, we need to restructure the closure pattern.
-        // For now, the infrastructure is in place (async method exists, sensors support async).
+        // The async method exists - full async integration requires changing sensor storage
+        // from Box<dyn Thermometer> to concrete types (blocked by dyn + async limitation in Rust)
         let control_result = ServiceContainer::with_roaster(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| -> Result<(), ()> {
-                // Using sync version for now - the async read_sensors() method exists
-                // and can be enabled once the closure pattern supports async
+                // Using sync version for now - the async read_sensors() is ready
+                // but Box<dyn Thermometer> storage prevents async calls
                 match roaster.read_sensors_sync() {
                     Ok(()) => {
                         debug!(

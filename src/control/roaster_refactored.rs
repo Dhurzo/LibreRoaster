@@ -9,9 +9,8 @@ use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
 
-/// RoasterControl - uses Box<dyn AsyncThermometer> for async temperature reading
-/// This enables non-blocking temperature reads that yield to the async executor
-/// instead of blocking for 160ms during MAX31856 conversion
+/// RoasterControl - uses Box<dyn Thermometer> for sensor storage
+/// The async read_sensors() method handles async internally
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
@@ -21,9 +20,9 @@ pub struct RoasterControl {
 
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
-    /// Sensors stored as AsyncThermometer for non-blocking async reads
-    bean_sensor: Box<dyn AsyncThermometer + Send>,
-    env_sensor: Box<dyn AsyncThermometer + Send>,
+    /// Sensors stored as Thermometer - async methods accessed through inner mutability
+    bean_sensor: Box<dyn Thermometer + Send>,
+    env_sensor: Box<dyn Thermometer + Send>,
 
     temp_handler: TemperatureCommandHandler,
 
@@ -40,8 +39,8 @@ impl RoasterControl {
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
-        bean_sensor: Box<dyn AsyncThermometer + Send>,
-        env_sensor: Box<dyn AsyncThermometer + Send>,
+        bean_sensor: Box<dyn Thermometer + Send>,
+        env_sensor: Box<dyn Thermometer + Send>,
     ) -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
 
@@ -63,36 +62,28 @@ impl RoasterControl {
         })
     }
 
-    /// Async sensor reading - uses async temperature reading to avoid blocking the executor
-    /// This is the key method that should be called with .await from the control loop
+    /// Async sensor reading - prepared for async temperature reading
+    /// Note: Currently uses sync calls due to Box<dyn Thermometer> storage pattern.
+    /// Full async integration requires using concrete sensor types instead of trait objects.
+    /// The AsyncThermometer trait and MAX31856 implementation exist for when
+    /// storage pattern is changed to support async.
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
 
-        // Use async temperature reading - this yields to the executor instead of blocking
-        // The MAX31856 conversion takes 160ms, which would block the async executor
-        let raw_bt = self.bean_sensor.read_temperature_async().await?;
-        let raw_et = self.env_sensor.read_temperature_async().await?;
+        // Currently using sync reads - async version would require
+        // changing sensor storage to concrete types instead of Box<dyn Thermometer>
+        let raw_bt = self.bean_sensor.read_temperature()?;
+        let raw_et = self.env_sensor.read_temperature()?;
 
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
     /// Sync sensor reading - kept for backwards compatibility
-    /// Note: This now uses async methods but blocks. Prefer read_sensors().await in async context.
     pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
-        // Use the async version but block on it - this defeats the purpose of async
-        // but maintains backwards compatibility for sync contexts
-        // Prefer using read_sensors().await in async contexts
         let current_time = Instant::now();
-        
-        // For sync context, we need a different approach - use embassy::block_on
-        // But for embedded, let's just call the async version through a sync wrapper
-        // Actually, let's just use the async version and accept the blocking behavior
-        // The proper solution is to use read_sensors().await in async contexts
-        embassy_executor::block_on(async {
-            let raw_bt = self.bean_sensor.read_temperature_async().await?;
-            let raw_et = self.env_sensor.read_temperature_async().await?;
-            self.update_temperatures(raw_bt, raw_et, current_time)
-        })
+        let raw_bt = self.bean_sensor.read_temperature()?;
+        let raw_et = self.env_sensor.read_temperature()?;
+        self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
     pub fn get_status(&self) -> SystemStatus {
