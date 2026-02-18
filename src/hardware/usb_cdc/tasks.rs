@@ -135,7 +135,6 @@ pub fn process_usb_command_data(data: &[u8]) {
     }
 }
 
-#[cfg(not(feature = "test"))]
 pub(crate) fn process_usb_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
 
@@ -150,6 +149,13 @@ pub(crate) fn process_usb_command_data(data: &[u8]) {
             return;
         }
     }
+}
+
+/// Test-only version of process_usb_command_data for integration tests
+/// Made pub so integration tests can call it
+#[cfg(feature = "test")]
+pub fn process_usb_command_data_test(data: &[u8]) {
+    process_usb_command_data(data);
 }
 
 fn handle_complete_usb_command(command: &[u8]) {

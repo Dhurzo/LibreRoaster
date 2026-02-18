@@ -88,8 +88,6 @@ fn build_control_with_tracking_fan() -> RoasterControl {
             status: SsrHardwareStatus::Available,
         }),
         Box::new(StubFanWithTracking::new()),
-        Box::new(StubThermometer { temp: 25.0 }),
-        Box::new(StubThermometer { temp: 30.0 }),
     )
     .expect("RoasterControl should build with stubs")
 }

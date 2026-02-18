@@ -94,6 +94,12 @@ pub enum SsrHardwareStatus {
     Error,
 }
 
+impl Default for SsrHardwareStatus {
+    fn default() -> Self {
+        Self::NotDetected
+    }
+}
+
 /// Temperature scale preference for Artisan protocol
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TemperatureScale {

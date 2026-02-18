@@ -136,11 +136,13 @@ impl UsbCdcDriver {
     }
 }
 
+#[cfg(target_arch = "riscv32")]
 // SAFETY: StaticCell provides compile-time memory reservation, preventing use-after-free.
 // Initialized once during early boot in single-threaded context before any async tasks start.
 static USB_CDC_INSTANCE: StaticCell<Option<UsbCdcDriver>> = StaticCell::new();
-// Store a raw pointer to the Option<UsbCdcDriver> after initialization for later access
+
 // SAFETY: Only written once during init, safe for single-threaded embedded context
+#[cfg(target_arch = "riscv32")]
 static mut USB_CDC_PTR: core::ptr::NonNull<Option<UsbCdcDriver>> =
     core::ptr::NonNull::dangling();
 

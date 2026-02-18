@@ -5,10 +5,13 @@ use crate::control::handlers::{
 };
 use crate::control::traits::{Fan, Heater};
 use crate::control::SsrCycleGuard;
-use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use alloc::boxed::Box;
+use core::marker::PhantomData;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
+
+#[cfg(target_arch = "riscv32")]
+use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 
 /// RoasterControl - uses concrete Max31856 types for sensor storage
 /// This enables calling async temperature methods without blocking the executor
@@ -22,8 +25,16 @@ pub struct RoasterControl {
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
     /// Sensors stored as concrete Max31856 types - enables async temperature reading
+    #[cfg(target_arch = "riscv32")]
     bean_sensor: Max31856<BtSpi>,
+    #[cfg(target_arch = "riscv32")]
     env_sensor: Max31856<EtSpi>,
+    /// PhantomData for non-riscv32 targets to maintain type consistency
+    /// Using fn() -> () which is Send + Sync
+    #[cfg(not(target_arch = "riscv32"))]
+    _bean_sensor: PhantomData<fn() -> ()>,
+    #[cfg(not(target_arch = "riscv32"))]
+    _env_sensor: PhantomData<fn() -> ()>,
 
     temp_handler: TemperatureCommandHandler,
 
@@ -37,6 +48,7 @@ pub struct RoasterControl {
 }
 
 impl RoasterControl {
+    #[cfg(target_arch = "riscv32")]
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
@@ -63,8 +75,34 @@ impl RoasterControl {
         })
     }
 
+    #[cfg(not(target_arch = "riscv32"))]
+    pub fn new(
+        heater: Box<dyn Heater + Send>,
+        fan: Box<dyn Fan + Send>,
+    ) -> Result<Self, RoasterError> {
+        let temp_handler = TemperatureCommandHandler::new()?;
+
+        Ok(RoasterControl {
+            state: RoasterState::Idle,
+            status: SystemStatus::default(),
+            ssr_guard: SsrCycleGuard::new(),
+            last_temp_read: None,
+            last_pid_update: None,
+            heater,
+            fan,
+            _bean_sensor: PhantomData,
+            _env_sensor: PhantomData,
+            temp_handler,
+            safety_handler: SafetyCommandHandler::new(),
+            artisan_handler: ArtisanCommandHandler::new(),
+            system_handler: SystemCommandHandler,
+            temp_settings: TemperatureSettings::new(),
+        })
+    }
+
     /// Async sensor reading - uses async MAX31856 methods to avoid blocking executor
     /// This is the gap closure: storing concrete Max31856 types enables async calls
+    #[cfg(target_arch = "riscv32")]
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
 
@@ -76,13 +114,28 @@ impl RoasterControl {
         self.update_temperatures(raw_bt, raw_et, current_time)
     }
 
+    /// Async sensor reading - stub for non-riscv32 targets
+    #[cfg(not(target_arch = "riscv32"))]
+    pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
+        // Stub for host target - actual sensor reading not available
+        Ok(())
+    }
+
     /// Sync sensor reading - kept for backwards compatibility
     /// Note: This now uses the concrete Max31856 types but calls sync methods
+    #[cfg(target_arch = "riscv32")]
     pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
         let current_time = Instant::now();
         let raw_bt = self.bean_sensor.read_temperature()?;
         let raw_et = self.env_sensor.read_temperature()?;
         self.update_temperatures(raw_bt, raw_et, current_time)
+    }
+
+    /// Sync sensor reading - stub for non-riscv32 targets
+    #[cfg(not(target_arch = "riscv32"))]
+    pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
+        // Stub for host target - actual sensor reading not available
+        Ok(())
     }
 
     pub fn get_status(&self) -> SystemStatus {

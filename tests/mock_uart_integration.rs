@@ -97,8 +97,6 @@ fn build_control() -> RoasterControl {
             status: SsrHardwareStatus::Available,
         }),
         Box::new(StubFan::default()),
-        Box::new(StubThermometer { temp: 25.0 }),
-        Box::new(StubThermometer { temp: 30.0 }),
     )
     .expect("RoasterControl should build with stubs")
 }

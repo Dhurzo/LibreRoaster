@@ -1,3 +1,6 @@
+// This test requires ESP-specific hardware (esp_hal) and can only run on riscv32 target
+#![cfg(target_arch = "riscv32")]
+
 use core::cell::{Cell, RefCell};
 use core::convert::Infallible;
 use std::collections::VecDeque;
