@@ -8,7 +8,6 @@ use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
 use heapless::Deque;
-use log::warn;
 use log::debug;
 
 use super::buffer::CircularBuffer;
