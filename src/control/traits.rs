@@ -5,6 +5,13 @@ pub trait Thermometer: Send {
     fn read_temperature(&mut self) -> Result<f32, RoasterError>;
 }
 
+/// Async thermometer trait for non-blocking temperature reads.
+/// Must be implemented separately from Thermometer because async methods
+/// make a trait not dyn-compatible.
+pub trait AsyncThermometer: Send {
+    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError>;
+}
+
 pub trait Heater: Send {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError>;
 
@@ -50,5 +57,11 @@ impl<T: Fan + ?Sized> Fan for &mut T {
 impl<T: Thermometer + ?Sized> Thermometer for &mut T {
     fn read_temperature(&mut self) -> Result<f32, RoasterError> {
         (**self).read_temperature()
+    }
+}
+
+impl<T: AsyncThermometer + ?Sized> AsyncThermometer for &mut T {
+    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError> {
+        (**self).read_temperature_async().await
     }
 }

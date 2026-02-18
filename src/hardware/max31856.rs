@@ -1,4 +1,4 @@
-use crate::control::traits::Thermometer;
+use crate::control::traits::{AsyncThermometer, Thermometer};
 use crate::control::RoasterError;
 use embassy_time::{Duration, Timer};
 use embedded_hal::spi::SpiDevice;
@@ -186,5 +186,15 @@ where
 {
     fn read_temperature(&mut self) -> Result<f32, RoasterError> {
         Self::read_temperature(self).map_err(|e| e.into())
+    }
+}
+
+impl<SPI> AsyncThermometer for Max31856<SPI>
+where
+    SPI: SpiDevice + Send,
+{
+    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError> {
+        // Use read_with_retry for reliability (max_retries=2 = 3 attempts)
+        Self::read_with_retry(self, 2).await.map_err(|e| e.into())
     }
 }
