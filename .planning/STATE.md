@@ -10,17 +10,17 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 ## Current Position
 
 Phase: 49 of 52 (v3.0 started)
-Plan: —
+Plan: 49-01 complete
 Status: milestone_in_progress
-Last activity: 2026-02-18 — v3.0 roadmap created
+Last activity: 2026-02-18 — Completed 49-01 safety static fixes
 
-Progress: [░░░░░░░░░░░] 0% (v3.0 Phase 49: Safety Static Fixes)
+Progress: [░░░░░░░░░░] 2% (v3.0 Phase 49: Safety Static Fixes)
 
 ## Roadmap
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| 49 | Safety Static Fixes | Pending |
+| 49 | Safety Static Fixes | In Progress (1/1 plan) |
 | 50 | Test Fix | Pending |
 | 51 | Documentation | Pending |
 | 52 | Performance Fixes | Pending |
@@ -68,12 +68,15 @@ Recent decisions affecting current work:
 - 48-03: On queue full: silently drop command (Artisan times out) - reject-on-full behavior
 - 48-04: Integration flood tests use host target (x86_64) since embedded target lacks std
 - 48-05: Queue processor tasks wired to consume CommandQueue and send to artisan_channel
+- 49-01: Replaced unsafe make_static with StaticCell::init() pattern
+- 49-01: Used StaticCell with raw pointer storage for USB/UART driver singletons
+- 49-01: Used ConstStaticCell::take() for ServiceContainer singleton pattern
 
 ### Pending Todos
 
-- [ ] v3.0: Fix make_static Use-After-Free (main.rs:40-43)
-- [ ] v3.0: Fix mutable statics safety (driver.rs:118, 62)
-- [ ] v3.0: Fix ServiceContainer::get_instance() (service_container.rs:37-40)
+- [x] v3.0: Fix make_static Use-After-Free (main.rs:40-43) - DONE
+- [x] v3.0: Fix mutable statics safety (driver.rs:118, 62) - DONE
+- [x] v3.0: Fix ServiceContainer::get_instance() (service_container.rs:37-40) - DONE
 - [ ] v3.0: Fix test_parse_ot2_partial_command failure
 - [ ] v3.0: Fix README vs PROTOCOL.md mismatch
 - [ ] v3.0: Fix blocking MAX31856 temperature read
@@ -85,6 +88,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-02-18 08:XX UTC
-Stopped at: v3.0 milestone started
+Last session: 2026-02-18 08:05 UTC
+Stopped at: Completed 49-01 safety static fixes
 Resume file: None
