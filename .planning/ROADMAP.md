@@ -39,7 +39,7 @@
 - src/service_container.rs (get_instance)
 
 **Plans:**
-- [ ] 49-01-PLAN.md — Replace 4 unsafe static patterns with StaticCell (SAFE-01 to SAFE-04)
+- [x] 49-01-PLAN.md — Replace 4 unsafe static patterns with StaticCell (SAFE-01 to SAFE-04)
 
 ---
 
