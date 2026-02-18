@@ -97,40 +97,6 @@ impl ServiceContainer {
         })
     }
 
-    /// Async version of with_roaster for calling async methods on RoasterControl
-    /// This allows calling async methods like read_sensors() from async context
-    pub async fn with_roaster_async<R, F, Fut>(f: F) -> Result<R, ContainerError>
-    where
-        F: FnOnce(&mut RoasterControl) -> Fut,
-        Fut: core::future::Future<Output = R>,
-    {
-        // We need to get mutable access within critical_section, then run async
-        // This is a bit tricky - we borrow the roaster, run the async function, then return
-        // The critical_section protects access during the borrow
-        let result = critical_section::with(|cs| {
-            let container = Self::get_instance();
-            match container.roaster.borrow(cs).borrow_mut().as_mut() {
-                Some(_roaster) => {
-                    // For async operations, we need a different approach
-                    // The issue is we can't hold the RefCell borrow across an await point
-                    // Solution: Use a custom future that manages the borrow
-                    Some(())
-                }
-                None => None,
-            }
-        });
-
-        if result.is_none() {
-            return Err(ContainerError::NotInitialized);
-        }
-
-        // For now, we can't easily mix critical_section with async
-        // The workaround is to use the sync version for async methods
-        // by accepting the limitation that we can't await in the closure
-        // A proper solution would require restructuring the critical_section usage
-        Err(ContainerError::NotInitialized)
-    }
-
     pub fn read_bean_temperature() -> Result<f32, ContainerError> {
         Self::with_roaster(|roaster| Ok(roaster.get_status().bean_temp)).unwrap_or(Ok(0.0))
     }
