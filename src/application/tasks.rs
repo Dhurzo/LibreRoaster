@@ -64,7 +64,7 @@ pub async fn control_loop_task() {
         }
 
         // Do sync control update separately
-        let update_result = ServiceContainer::with_roaster(
+        let _update_result = ServiceContainer::with_roaster(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| -> Result<(), ()> {
                 match roaster.update_control(current_time) {
                     Ok(output) => {

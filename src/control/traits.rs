@@ -8,6 +8,7 @@ pub trait Thermometer: Send {
 /// Async thermometer trait for non-blocking temperature reads.
 /// Must be implemented separately from Thermometer because async methods
 /// make a trait not dyn-compatible.
+#[allow(async_fn_in_trait)]
 pub trait AsyncThermometer: Send {
     async fn read_temperature_async(&mut self) -> Result<f32, RoasterError>;
 }
