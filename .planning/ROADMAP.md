@@ -59,7 +59,7 @@
 - src/input/parser.rs (OT2 pattern matching)
 
 **Plans:**
-- [ ] 50-01-PLAN.md — Fix OT2 pattern to return InvalidValue (TEST-01)
+- [x] 50-01-PLAN.md — Fix OT2 pattern to return InvalidValue (TEST-01)
 
 ---
 
@@ -108,7 +108,7 @@
 | SAFE-02 | Phase 49 | Complete |
 | SAFE-03 | Phase 49 | Complete |
 | SAFE-04 | Phase 49 | Complete |
-| TEST-01 | Phase 50 | Pending |
+| TEST-01 | Phase 50 | Complete |
 | DOCS-01 | Phase 51 | Pending |
 | PERF-01 | Phase 52 | Pending |
 | PERF-02 | Phase 52 | Pending |

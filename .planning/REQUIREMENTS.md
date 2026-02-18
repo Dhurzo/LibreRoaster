@@ -16,7 +16,7 @@ Critical safety fixes for embedded reliability.
 
 ### Test Fixes
 
-- [ ] **TEST-01**: Fix test_parse_ot2_partial_command - parser should return Err(ParseError::InvalidValue) for "OT2" without value, not Ok(SetFanSpeed(0, false))
+- [x] **TEST-01**: Fix test_parse_ot2_partial_command - parser should return Err(ParseError::InvalidValue) for "OT2" without value, not Ok(SetFanSpeed(0, false))
 
 ### Documentation
 
@@ -45,7 +45,7 @@ Critical safety fixes for embedded reliability.
 | SAFE-02 | Phase 49 | Complete |
 | SAFE-03 | Phase 49 | Complete |
 | SAFE-04 | Phase 49 | Complete |
-| TEST-01 | Phase 50 | Pending |
+| TEST-01 | Phase 50 | Complete |
 | DOCS-01 | Phase 51 | Pending |
 | PERF-01 | Phase 52 | Pending |
 | PERF-02 | Phase 52 | Pending |
