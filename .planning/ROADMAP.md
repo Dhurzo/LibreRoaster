@@ -14,8 +14,11 @@
 | 52 | Performance Fixes | Async temp read, separate LEDC timers | PERF-01, PERF-02 | 2 |
 | 53 | Integrate Async Temp | Wire async temperature into control loop | PERF-01 (integration) | 1 |
 | 54 | Clean Up Tech Debt | Remove dead code, fix warnings | DEBT-01, DEBT-02, DEBT-03 | 3 |
+| 55 | Fix Fan Telemetry | Add get_speed override for proper fan readout | Integration gap | 1 |
+| 56 | Complete Phase 51 Verification | Create VERIFICATION.md for documentation phase | Tech debt | 1 |
+| 57 | Update Protocol References | Fix stale line references in PROTOCOL.md | Tech debt | 1 |
 
-**Total:** 6 phases | 11 requirements | All milestone requirements covered ✓
+**Total:** 9 phases | 11 requirements | All milestone requirements covered ✓
 
 ---
 
@@ -179,4 +182,50 @@
 
 ---
 
+## Phase 55: Fix Fan Telemetry
+
+**Goal:** Add get_speed() override to FanController to fix fan telemetry
+
+**Gap Closure:** Closes integration gap from audit - Fan::get_speed() not overridden
+
+**Success Criteria:**
+1. FanController implements get_speed() returning current_speed
+2. READ response shows actual fan speed (not always 0.0)
+3. Artisan telemetry displays correct fan value
+
+**Files to Modify:**
+- src/hardware/fan.rs
+
+---
+
+## Phase 56: Complete Phase 51 Verification
+
+**Goal:** Create VERIFICATION.md for Phase 51 documentation phase
+
+**Gap Closure:** Closes tech debt - Phase 51 missing verification file
+
+**Success Criteria:**
+1. VERIFICATION.md exists for Phase 51
+2. Documents DOCS-01 verification (README matches PROTOCOL.md)
+
+**Files to Create:**
+- .planning/phases/51-documentation/VERIFICATION.md
+
+---
+
+## Phase 57: Update Protocol References
+
+**Goal:** Fix stale line references in PROTOCOL.md
+
+**Gap Closure:** Closes tech debt - 3 outdated line references
+
+**Success Criteria:**
+1. PROTOCOL.md line references accurate (3 locations fixed)
+
+**Files to Modify:**
+- PROTOCOL.md
+
+---
+
 *Roadmap created: 2026-02-18*
+*Gap closure phases added: 2026-02-18*
