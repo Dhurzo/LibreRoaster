@@ -78,6 +78,8 @@ Recent decisions affecting current work:
 - 52-01: MAX31856 retry logic uses fixed 10ms delay, attempts max_retries+1 times (2 retries = 3 total)
 - 53-02: RoasterControl has async read_sensors() method with infrastructure ready for async integration
 - 53-03: Concrete Max31856 types enable async temperature reads without blocking executor
+- 54-01: All identified dead code removed entirely (fan_timer, ssr_timer, handle_complete_command, send_parse_error)
+- 54-01: Timer configuration handled internally by Channel implementation
 
 ### Pending Todos
 
