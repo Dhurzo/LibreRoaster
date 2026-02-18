@@ -75,7 +75,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             Ok(ArtisanCommand::SetFan(value))
         }
 
-        ["OT2" | "ot2"] => Ok(ArtisanCommand::SetFanSpeed(0, false)),
+        // Partial command - OT2 requires a value
+        ["OT2" | "ot2"] => Err(ParseError::InvalidValue),
 
         ["OT2" | "ot2", value_str] => {
             let (value, was_clamped) = parse_ot2_value(value_str)?;
