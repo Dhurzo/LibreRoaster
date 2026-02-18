@@ -155,6 +155,7 @@
 - [x] 54-01-PLAN.md — Remove dead code (fields and functions)
 - [x] 54-02-PLAN.md — Fix compilation warnings
 - [x] 54-03-PLAN.md — Fix integration tests with std feature
+- [ ] 54-04-PLAN.md — Gap closure: Fix remaining warnings and linker errors
 
 ---
 
@@ -172,8 +173,8 @@
 | PERF-02 | Phase 52 | Complete |
 | PERF-01 | Phase 53 | Complete |
 | DEBT-01 | Phase 54 | Complete |
-| DEBT-02 | Phase 54 | Complete (2 warnings fixed, 9 static_mut_refs left as-is) |
-| DEBT-03 | Phase 54 | Pending |
+| DEBT-02 | Phase 54 | Partial (2 warnings fixed, 9 static_mut_refs left, 2 new) |
+| DEBT-03 | Phase 54 | Partial (library compiles, tests don't link) |
 
 ---
 
