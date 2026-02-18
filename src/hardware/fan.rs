@@ -117,6 +117,10 @@ impl<'a> Fan for FanController<'a> {
         self.set_speed(duty)
             .map_err(|_| RoasterError::HardwareError)
     }
+
+    fn get_speed(&self) -> f32 {
+        self.current_speed
+    }
 }
 
 impl<'a> Default for FanController<'a> {
