@@ -221,13 +221,16 @@
 
 **Goal:** Fix stale line references in PROTOCOL.md
 
-**Gap Closure:** Closes tech debt - 3 outdated line references
+**Gap Closure:** Closes tech debt - 4 outdated line references
 
 **Success Criteria:**
-1. PROTOCOL.md line references accurate (3 locations fixed)
+1. PROTOCOL.md line references accurate (4 locations fixed)
 
 **Files to Modify:**
 - PROTOCOL.md
+
+**Plans:**
+- [x] 57-01-PLAN.md — Update 4 stale line references in PROTOCOL.md
 
 ---
 
