@@ -264,7 +264,7 @@ The UNITS command stores the temperature scale preference but does NOT apply any
 - READ responses always return Celsius values
 - Conversion must be performed by Artisan if needed
 
-**Implementation Reference:** See `roaster_refactored.rs:426-434`
+**Implementation Reference:** See `constants.rs:119-142`
 
 ### Placeholder Values for Unused Channels
 
@@ -300,10 +300,10 @@ ET2 and BT2 (second thermocouple channels) are not supported:
 ## References
 
 - **Code References:**
-  - READ format: `artisan.rs:111-119`
-  - OT2 parsing: `parser.rs:115-131`
-  - UNITS implementation: `roaster_refactored.rs:426-434`
-  - OT2 safety: `roaster_refactored.rs:374-385`
+  - READ format: `artisan.rs:109-121`
+  - OT2 parsing: `parser.rs:116-132`
+  - UNITS implementation: `constants.rs:119-142`
+  - OT2 safety: `roaster_refactored.rs:521-528`
 
 - **Related Documentation:**
   - ARCHITECTURE.md (internal implementation details)
