@@ -9,6 +9,7 @@ use embassy_time::Timer;
 use heapless::{String, Vec};
 use log::warn;
 use log::debug;
+use core::cell::UnsafeCell;
 
 use super::driver::{get_usb_cdc_driver, UsbCdcError};
 
@@ -19,8 +20,22 @@ const BACK_PRESSURE_INITIAL_DELAY_MS: u64 = 1;
 const BACK_PRESSURE_MAX_DELAY_MS: u64 = 10;
 const BACK_PRESSURE_LOG_THRESHOLD_MS: u64 = 100;
 
+struct SyncCell<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for SyncCell<T> {}
+
+impl<T> SyncCell<T> {
+    const fn new(val: T) -> Self {
+        Self(UnsafeCell::new(val))
+    }
+
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
 /// Command queue for USB FIFO processing - reject-on-full behavior
-static mut USB_COMMAND_QUEUE: Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>> = None;
+static USB_COMMAND_QUEUE: SyncCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>> = SyncCell::new(None);
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_reader_task() {
@@ -28,7 +43,7 @@ pub async fn usb_reader_task() {
 
     // Initialize the USB command queue for FIFO processing
     critical_section::with(|_| unsafe {
-        USB_COMMAND_QUEUE = Some(CommandQueue::new());
+        *USB_COMMAND_QUEUE.get() = Some(CommandQueue::new());
     });
 
     Timer::after(Duration::from_millis(100)).await;
@@ -178,7 +193,7 @@ fn handle_complete_usb_command(command: &[u8]) {
                     if should_process {
                         // Push to USB command queue for FIFO processing
                         // On queue full: silently drop command (no response sent - Artisan times out)
-                        if let Some(queue) = unsafe { USB_COMMAND_QUEUE.as_mut() } {
+                        if let Some(queue) = unsafe { (*USB_COMMAND_QUEUE.get()).as_mut() } {
                             match queue.try_push(cmd) {
                                 Ok(()) => {
                                     // Command queued successfully - will be processed by queue processor
@@ -230,7 +245,7 @@ pub async fn usb_queue_processor_task() {
         // Try to pop a command from the USB queue and send to artisan_channel
         let cmd_opt = critical_section::with(|_| {
             unsafe {
-                USB_COMMAND_QUEUE.as_mut().and_then(|queue| queue.pop())
+                (*USB_COMMAND_QUEUE.get()).as_mut().and_then(|queue| queue.pop())
             }
         });
 

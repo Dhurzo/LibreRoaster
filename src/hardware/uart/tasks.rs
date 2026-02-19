@@ -9,33 +9,48 @@ use embassy_time::Timer;
 use heapless::{String, Vec};
 use heapless::Deque;
 use log::debug;
+use core::cell::UnsafeCell;
 
 use super::buffer::CircularBuffer;
 use super::driver::get_uart_driver;
 
 pub const COMMAND_PIPE_SIZE: usize = 256;
 
+struct SyncCell<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for SyncCell<T> {}
+
+impl<T> SyncCell<T> {
+    const fn new(val: T) -> Self {
+        Self(UnsafeCell::new(val))
+    }
+
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
 /// Size of the UART event queue for buffering incoming bytes
 pub const EVENT_QUEUE_SIZE: usize = 256;
 
-static mut COMMAND_PIPE: Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> = None;
-static mut RX_BUFFER: Option<CircularBuffer> = None;
+static COMMAND_PIPE: SyncCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>> = SyncCell::new(None);
+static RX_BUFFER: SyncCell<Option<CircularBuffer>> = SyncCell::new(None);
 /// Buffered event queue for UART input - separates I/O from parsing
-static mut EVENT_QUEUE: Option<Deque<u8, EVENT_QUEUE_SIZE>> = None;
+static EVENT_QUEUE: SyncCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>> = SyncCell::new(None);
 /// Command queue for FIFO processing - reject-on-full behavior
-static mut COMMAND_QUEUE: Option<CommandQueue< crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>> = None;
+static COMMAND_QUEUE: SyncCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>> = SyncCell::new(None);
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn uart_reader_task() {
     let mut rbuf: [u8; 64] = [0u8; 64];
 
     critical_section::with(|_| unsafe {
-        COMMAND_PIPE = Some(Pipe::new());
-        RX_BUFFER = Some(CircularBuffer::new());
+        *COMMAND_PIPE.get() = Some(Pipe::new());
+        *RX_BUFFER.get() = Some(CircularBuffer::new());
         // Initialize the event queue for buffering UART input
-        EVENT_QUEUE = Some(Deque::new());
+        *EVENT_QUEUE.get() = Some(Deque::new());
         // Initialize the command queue for FIFO processing
-        COMMAND_QUEUE = Some(CommandQueue::new());
+        *COMMAND_QUEUE.get() = Some(CommandQueue::new());
     });
 
     Timer::after(Duration::from_millis(10)).await;
@@ -64,7 +79,7 @@ pub async fn uart_reader_task() {
 /// Uses heapless Deque for no-std compatible buffering
 fn push_to_event_queue(data: &[u8]) {
     critical_section::with(|_| unsafe {
-        if let Some(queue) = EVENT_QUEUE.as_mut() {
+        if let Some(queue) = (*EVENT_QUEUE.get()).as_mut() {
             for &byte in data {
                 // Drop oldest if queue is full (ring buffer behavior)
                 if queue.len() >= EVENT_QUEUE_SIZE {
@@ -81,7 +96,7 @@ fn process_event_queue() {
     // We need to find a complete line (0x0D) and extract it
     // First, check if there's a terminator in the queue
     let has_terminator = critical_section::with(|_| unsafe {
-        if let Some(queue) = EVENT_QUEUE.as_ref() {
+        if let Some(queue) = (*EVENT_QUEUE.get()).as_ref() {
             queue.iter().any(|&b| b == 0x0D)
         } else {
             false
@@ -94,7 +109,7 @@ fn process_event_queue() {
         let mut extracted = false;
         
         critical_section::with(|_| unsafe {
-            if let Some(queue) = EVENT_QUEUE.as_mut() {
+            if let Some(queue) = (*EVENT_QUEUE.get()).as_mut() {
                 // Extract bytes up to and including the terminator
                 while let Some(byte) = queue.pop_front() {
                     let _ = command_data.push(byte);
@@ -143,7 +158,7 @@ fn handle_command_data_internal(data: &[u8]) {
                     if should_process {
                         // Push to command queue for FIFO processing
                         // On queue full: silently drop command (no response sent - Artisan times out)
-                        if let Some(queue) = unsafe { COMMAND_QUEUE.as_mut() } {
+                        if let Some(queue) = unsafe { (*COMMAND_QUEUE.get()).as_mut() } {
                             match queue.try_push(cmd) {
                                 Ok(()) => {
                                     // Command queued successfully - will be processed by queue processor
@@ -192,8 +207,7 @@ pub async fn uart_writer_task() {
     Timer::after(Duration::from_millis(20)).await;
 
     loop {
-        #[allow(static_mut_refs)]
-        if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
+        if let Some(pipe) = unsafe { (*COMMAND_PIPE.get()).as_ref() } {
             pipe.read(&mut wbuf).await;
         }
 
@@ -232,7 +246,7 @@ pub async fn queue_processor_task() {
         // Try to pop a command from the queue and send to artisan_channel
         let cmd_opt = critical_section::with(|_| {
             unsafe {
-                COMMAND_QUEUE.as_mut().and_then(|queue| queue.pop())
+                (*COMMAND_QUEUE.get()).as_mut().and_then(|queue| queue.pop())
             }
         });
 

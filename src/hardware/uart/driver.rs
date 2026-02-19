@@ -3,6 +3,7 @@ use embedded_io_async::Write;
 use embedded_io_async::Read;
 use esp_hal::uart::{Config, Uart, UartRx, UartTx};
 use static_cell::StaticCell;
+use core::cell::UnsafeCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
@@ -58,9 +59,25 @@ impl UartDriver {
 // SAFETY: StaticCell provides compile-time memory reservation, preventing use-after-free.
 // Initialized once during early boot in single-threaded context before any async tasks start.
 static UART_INSTANCE: StaticCell<Option<UartDriver>> = StaticCell::new();
+
+struct SyncPointer<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for SyncPointer<T> {}
+
+impl<T> SyncPointer<T> {
+    const fn new(ptr: T) -> Self {
+        Self(UnsafeCell::new(ptr))
+    }
+
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
 // Store a raw pointer to the Option<UartDriver> after initialization for later access
-// SAFETY: Only written once during init, safe for single-threaded embedded context
-static mut UART_PTR: core::ptr::NonNull<Option<UartDriver>> = core::ptr::NonNull::dangling();
+// SAFETY: Only written once during init, wrapped in UnsafeCell for safe interior mutability
+static UART_PTR: SyncPointer<core::ptr::NonNull<Option<UartDriver>>> =
+    SyncPointer::new(core::ptr::NonNull::dangling());
 
 pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
     let config = Config::default().with_baudrate(115200);
@@ -87,7 +104,7 @@ pub fn init_uart(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
     // Store the pointer for later retrieval
     // SAFETY: value is &'static mut Option<UartDriver>, converting to NonNull is safe.
     // Only called once during early boot in single-threaded context.
-    unsafe { UART_PTR = core::ptr::NonNull::new_unchecked(value) };
+    unsafe { *UART_PTR.get() = core::ptr::NonNull::new_unchecked(value) };
 
     Ok(())
 }
@@ -96,5 +113,11 @@ pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
     // SAFETY: UART_PTR is set once during init_uart() before any async tasks run.
     // The StaticCell guarantees the memory is valid for the program duration.
     // Only called after UART initialization in single-threaded context.
-    unsafe { UART_PTR.as_mut().as_mut() }
+    unsafe {
+        let opt_ptr = &mut *UART_PTR.get();
+        if let Some(ptr) = opt_ptr.as_mut() {
+            return Some(ptr);
+        }
+        None
+    }
 }

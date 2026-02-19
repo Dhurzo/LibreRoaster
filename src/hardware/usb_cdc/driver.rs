@@ -1,4 +1,5 @@
 use core::fmt;
+use core::cell::UnsafeCell;
 
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
@@ -141,10 +142,24 @@ impl UsbCdcDriver {
 // Initialized once during early boot in single-threaded context before any async tasks start.
 static USB_CDC_INSTANCE: StaticCell<Option<UsbCdcDriver>> = StaticCell::new();
 
-// SAFETY: Only written once during init, safe for single-threaded embedded context
+struct SyncPointer<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for SyncPointer<T> {}
+
+impl<T> SyncPointer<T> {
+    const fn new(ptr: T) -> Self {
+        Self(UnsafeCell::new(ptr))
+    }
+
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
+// SAFETY: Only written once during init, wrapped in UnsafeCell for safe interior mutability
 #[cfg(target_arch = "riscv32")]
-static mut USB_CDC_PTR: core::ptr::NonNull<Option<UsbCdcDriver>> =
-    core::ptr::NonNull::dangling();
+static USB_CDC_PTR: SyncPointer<core::ptr::NonNull<Option<UsbCdcDriver>>> =
+    SyncPointer::new(core::ptr::NonNull::dangling());
 
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
@@ -154,7 +169,7 @@ pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<()
     // Store the pointer for later retrieval
     // SAFETY: value is &'static mut Option<UsbCdcDriver>, converting to NonNull is safe.
     // Only called once during early boot in single-threaded context.
-    unsafe { USB_CDC_PTR = core::ptr::NonNull::new_unchecked(value) };
+    unsafe { *USB_CDC_PTR.get() = core::ptr::NonNull::new_unchecked(value) };
     Ok(())
 }
 
@@ -168,7 +183,13 @@ pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
     // SAFETY: USB_CDC_PTR is set once during init_usb_cdc() before any async tasks run.
     // The StaticCell guarantees the memory is valid for the program duration.
     // Only called after USB initialization in single-threaded context.
-    unsafe { USB_CDC_PTR.as_mut().as_mut() }
+    unsafe {
+        let opt_ptr = &mut *USB_CDC_PTR.get();
+        if let Some(ptr) = opt_ptr.as_mut() {
+            return Some(ptr);
+        }
+        None
+    }
 }
 
 #[cfg(not(target_arch = "riscv32"))]
