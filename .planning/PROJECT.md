@@ -8,22 +8,13 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v3.0 Critical Safety Fixes
+## Current Milestone: vNext
 
-**Goal:** Fix critical safety issues (Use-After-Free, unsafe statics), test failures, documentation inconsistencies, and blocking I/O that prevent reliable hardware operation.
+**Goal:** TBD - run /gsd-new-milestone to define next milestone
 
-**Target fixes:**
-- A. Fix make_static Use-After-Free in main.rs (replace with StaticCell)
-- C. Fix test_parse_ot2_partial_command test failure
-- D. Fix mutable statics without protection in driver.rs
-- E. Fix ServiceContainer::get_instance() unsafe static mut
-- F. Fix README vs PROTOCOL.md documentation mismatch
-- G. Fix blocking temperature reading in MAX31856 (~160ms busy-wait)
-- H. Fix SSR and Fan sharing same LEDC timer
+## Last Shipped: v3.0 Critical Safety Fixes (2026-02-19)
 
-## Last Shipped: v2.6 Hardware Reliability (2026-02-18)
-
-v2.6 fixes SSR duty scaling, makes FanController drive physical LEDC channels, and implements async UART/USB CDC transports with back-pressure handling.
+v3.0 fixed critical safety issues: Use-After-Free bug, unsafe statics (replaced with StaticCell), OT2 parser test, README documentation, async MAX31856 temperature reading, and separate LEDC timers for SSR/Fan.
 
 ## Next Milestone
 
@@ -31,7 +22,7 @@ TBD (run /gsd-new-milestone to define)
 
 ## Current State
 
-v2.6 shipped: SSR duty scaling fixed, FanController drives LEDC channels, async UART/USB with back-pressure. Ready for next milestone.
+v3.0 shipped: StaticCell patterns eliminate unsafe statics, async temperature reading, separate LEDC timers, fan telemetry fixed. Ready for next milestone.
 
 <details>
 <summary>Previous State</summary>
@@ -112,16 +103,18 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ FAN-02: Fan/SSR LEDC writes serialized via LedcBus — v2.6
 - ✓ IO-01: Async UART with embassy traits and event queues — v2.6
 - ✓ IO-02: USB CDC back-pressure handling — v2.6
+- ✓ SAFE-01: Replace make_static Use-After-Free in main.rs with StaticCell — v3.0
+- ✓ SAFE-02: Replace mutable static in USB CDC driver with StaticCell — v3.0
+- ✓ SAFE-03: Replace mutable static in UART driver with StaticCell — v3.0
+- ✓ SAFE-04: Replace ServiceContainer::get_instance() static mut with StaticCell — v3.0
+- ✓ TEST-01: Fix test_parse_ot2_partial_command - returns InvalidValue — v3.0
+- ✓ DOCS-01: Update README.md to 4-value format (ET,BT,HEATER,FAN) — v3.0
+- ✓ PERF-01: Async MAX31856 temperature reading with embassy-time Timer — v3.0
+- ✓ PERF-02: Separate SSR and Fan LEDC timers — v3.0
 
-### Active (v3.0 Critical Safety)
+### Active
 
-- [ ] SAFE-01: Replace make_static Use-After-Free in main.rs with StaticCell (already used elsewhere)
-- [ ] SAFE-02: Add proper safety documentation to get_usb_cdc_driver() and get_uart_driver()
-- [ ] SAFE-03: Replace ServiceContainer::get_instance() static mut with StaticCell pattern
-- [ ] TEST-01: Fix test_parse_ot2_partial_command - should return Err(ParseError::InvalidValue) not Ok(SetFanSpeed(0))
-- [ ] DOCS-01: Update README.md to reflect PROTOCOL.md (4 values: ET,BT,HEATER,FAN)
-- [ ] PERF-01: Replace blocking MAX31856 temperature read (~160ms busy-wait) with async/driver approach
-- [ ] PERF-02: Separate SSR and Fan LEDC timers (SSR needs ~1Hz, Fan needs 25kHz)
+- [ ] (Run /gsd-new-milestone to define next requirements)
 
 ### Out of Scope
 
@@ -153,6 +146,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 **v2.6 focus:** Fix SSR duty math (no double division), FanController LEDC updates, and asynchronous UART/USB CDC transports so hardware output is deterministically driven.
 
 **v3.0 focus:** Critical safety fixes - Use-After-Free, unsafe statics, test failures, documentation fixes, blocking I/O fixes.
+
+**v3.0 shipped:** All 8 requirements complete with StaticCell patterns, async temperature, separate LEDC timers.
 
 ## Key Decisions
 
@@ -190,4 +185,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-18 — v3.0 milestone started (critical safety fixes)*
+*Last updated: 2026-02-19 — v3.0 milestone complete*

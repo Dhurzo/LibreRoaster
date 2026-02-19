@@ -2,17 +2,17 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-18)
+See: .planning/PROJECT.md (updated 2026-02-19)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** v2.6 shipped, ready for next milestone
+**Current focus:** v3.0 shipped, ready for next milestone
 
 ## Current Position
 
 Phase: 57 of 57 (Update Protocol References)
-Plan: 01 complete
-Status: Phase complete
-Last activity: 2026-02-19 — Completed 57-01: Updated line references in PROTOCOL.md
+Plan: Complete
+Status: Milestone complete
+Last activity: 2026-02-19 — v3.0 milestone complete
 
 Progress: ██████████ 100% (Phase 57: Update Protocol References - COMPLETE)
 

@@ -1,24 +1,45 @@
-# Roadmap: LibreRoaster v3.0 Critical Safety Fixes
+# Roadmap: LibreRoaster
 
-**Milestone:** v3.0
-**Defined:** 2026-02-18
-**Start Phase:** 49
+## Milestones
 
-## Overview
+- ✅ **v3.0 Critical Safety Fixes** — Phases 49-57 (shipped 2026-02-19)
+- 🚧 **vNext** — TBD (planned)
 
-| Phase | Name | Goal | Requirements | Success Criteria |
-|-------|------|------|--------------|------------------|
-| 49 | Safety Static Fixes | Replace unsafe static patterns with StaticCell | SAFE-01, SAFE-02, SAFE-03, SAFE-04 | 4 |
-| 50 | Test Fix | Fix parser test failure | TEST-01 | 1 |
-| 51 | Documentation | Update README to match PROTOCOL | DOCS-01 | 1 |
-| 52 | Performance Fixes | Async temp read, separate LEDC timers | PERF-01, PERF-02 | 2 |
-| 53 | Integrate Async Temp | Wire async temperature into control loop | PERF-01 (integration) | 1 |
-| 54 | Clean Up Tech Debt | Remove dead code, fix warnings | DEBT-01, DEBT-02, DEBT-03 | 3 |
-| 55 | Fix Fan Telemetry | Add get_speed override for proper fan readout | Integration gap | 1 |
-| 56 | Complete Phase 51 Verification | Create VERIFICATION.md for documentation phase | Tech debt | 1 |
-| 57 | Update Protocol References | Fix stale line references in PROTOCOL.md | Tech debt | 1 | ✓ Complete |
+## Phases
+
+<details>
+<summary>✅ v3.0 Critical Safety Fixes (Phases 49-57) — SHIPPED 2026-02-19</summary>
+
+- [x] Phase 49: Safety Static Fixes (1/1 plan) — completed 2026-02-18
+- [x] Phase 50: Test Fix (1/1 plan) — completed 2026-02-18
+- [x] Phase 51: Documentation (1/1 plan) — completed 2026-02-18
+- [x] Phase 52: Performance Fixes (2/2 plans) — completed 2026-02-18
+- [x] Phase 53: Integrate Async Temp (3/3 plans) — completed 2026-02-18
+- [x] Phase 54: Clean Up Tech Debt (5/5 plans) — completed 2026-02-18
+- [x] Phase 55: Fix Fan Telemetry (1/1 plan) — completed 2026-02-18
+- [x] Phase 56: Complete Phase 51 Verification (1/1 plan) — completed 2026-02-19
+- [x] Phase 57: Update Protocol References (1/1 plan) — completed 2026-02-19
+
+</details>
+
+### 🚧 vNext (In Progress / Planned)
+
+- [ ] Phase 58: TBD
+
+## Progress
+
+| Phase             | Milestone | Plans Complete | Status      | Completed  |
+| ----------------- | --------- | -------------- | ----------- | ---------- |
+| 49. Safety Static Fixes | v3.0      | 1/1            | Complete    | 2026-02-18 |
+| 50. Test Fix      | v3.0      | 1/1            | Complete    | 2026-02-18 |
+| 51. Documentation | v3.0      | 1/1            | Complete    | 2026-02-18 |
+| 52. Performance  | v3.0      | 2/2            | Complete    | 2026-02-18 |
+| 53. Integrate Async | v3.0    | 3/3            | Complete    | 2026-02-18 |
+| 54. Tech Debt     | v3.0      | 5/5            | Complete    | 2026-02-18 |
+| 55. Fan Telemetry | v3.0      | 1/1            | Complete    | 2026-02-18 |
+| 56. Phase 51 Verify | v3.0   | 1/1            | Complete    | 2026-02-19 |
+| 57. Protocol Refs | v3.0     | 1/1            | Complete    | 2026-02-19 |
 
 ---
 
-## Milestone Complete
-*Gap closure phases added: 2026-02-18*
+_Roadmap archived: See .planning/milestones/v3.0-ROADMAP.md for full details_
