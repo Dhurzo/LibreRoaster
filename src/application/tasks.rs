@@ -59,8 +59,8 @@ pub async fn control_loop_task() {
         if sensor_err.is_none() {
             debug!(
                 "Sensors: BT: {:.1}°C, ET: {:.1}°C",
-                ServiceContainer::read_bean_temperature().unwrap_or(0.0),
-                ServiceContainer::read_env_temperature().unwrap_or(0.0)
+                ServiceContainer::read_bean_temperature().await.unwrap_or(0.0),
+                ServiceContainer::read_env_temperature().await.unwrap_or(0.0)
             );
         } else {
             warn!("Sensor read error: {:?}", sensor_err);

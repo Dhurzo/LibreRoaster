@@ -558,10 +558,7 @@ impl RoasterControl {
                 // Validate response has 4 comma-separated values
                 let parts: alloc::vec::Vec<&str> = response.split(',').collect();
                 if response.trim().is_empty() || parts.len() != 4 {
-                    error!("Malformed READ response: {:?}", response);
-                    let _ = self.heater.set_power(0.0);
-                    self.capture_ssr_monitor_metrics();
-                    panic!(
+                    error!(
                         "Malformed READ response from ArtisanFormatter: expected 4 values, got {}",
                         parts.len()
                     );
