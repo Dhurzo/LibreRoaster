@@ -1,6 +1,5 @@
 extern crate alloc;
 
-use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::output::artisan::ArtisanFormatter;

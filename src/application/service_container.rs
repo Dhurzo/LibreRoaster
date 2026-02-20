@@ -223,9 +223,11 @@ mod async_lock_depth {
 
 #[cfg(not(any(test, feature = "async-lock-depth-metrics")))]
 mod async_lock_depth {
+    #[allow(dead_code)]
     pub(crate) struct AsyncLockDepthGuard;
 
     impl AsyncLockDepthGuard {
+        #[allow(dead_code)]
         pub(crate) fn enter() -> Self {
             AsyncLockDepthGuard
         }
