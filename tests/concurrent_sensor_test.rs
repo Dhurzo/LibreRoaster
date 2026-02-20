@@ -115,7 +115,8 @@ fn concurrent_sensor_reads_verify_async_mutex() {
     let max_depth = async_lock_depth_max_for_tests();
     assert!(
         max_depth <= 1,
-        "Async lock depth recorded {} concurrent holders", max_depth
+        "Async lock depth recorded {} concurrent holders",
+        max_depth
     );
 
     reset_async_lock_metrics_for_tests();

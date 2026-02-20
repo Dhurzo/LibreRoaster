@@ -134,7 +134,7 @@ Command Received (OT275.5)
 
 #### UP - Heater Increment
 
-**Purpose:** Increment heater output by 1%, clamped to 0-100
+**Purpose:** Increment heater output by 5%, clamped to 0-100
 
 **Syntax:** `UP`
 
@@ -146,7 +146,7 @@ Command Received (OT275.5)
 
 #### DOWN - Heater Decrement
 
-**Purpose:** Decrement heater output by 1%, clamped to 0-100
+**Purpose:** Decrement heater output by 5%, clamped to 0-100
 
 **Syntax:** `DOWN`
 
@@ -286,8 +286,8 @@ ET2 and BT2 (second thermocouple channels) are not supported:
 | OT1 | OT1<value> | 0-100 | Set heater percentage |
 | IO3 | IO3<value> | 0-100 | Set fan percentage |
 | OT2 | OT2<value> | 0-100 (decimal) | Set fan percentage (decimal) |
-| UP | UP | None | Increment heater +1% |
-| DOWN | DOWN | None | Decrement heater -1% |
+| UP | UP | None | Increment heater +5% |
+| DOWN | DOWN | None | Decrement heater -5% |
 | UNITS | UNITS<C\|F> | C or F | Set temperature scale |
 
 **Important Notes:**

@@ -2,7 +2,7 @@ pub mod driver;
 pub mod tasks;
 
 pub use driver::{UsbCdcDriver, UsbCdcError};
-pub use tasks::{usb_reader_task, usb_writer_task};
+pub use tasks::usb_reader_task;
 
 pub const USB_CDC_BAUD_RATE: u32 = 115200;
 

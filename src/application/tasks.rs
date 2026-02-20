@@ -11,22 +11,6 @@ use embassy_time::{Duration, Instant, Timer};
 use heapless::String;
 use log::{debug, info, warn};
 
-pub fn queue_processor_metrics_snapshot() -> QueueProcessorMetricsSnapshot {
-    QUEUE_PROCESSOR_METRICS.snapshot()
-}
-
-pub fn reset_queue_processor_metrics() {
-    QUEUE_PROCESSOR_METRICS.reset();
-}
-
-pub fn record_queue_depth(depth: usize) {
-    QUEUE_PROCESSOR_METRICS.record_depth(depth);
-}
-
-pub fn queue_processor_backlog_threshold() -> usize {
-    QUEUE_DEPTH_BACKLOG_THRESHOLD
-}
-
 #[task]
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");

@@ -60,39 +60,45 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     // Fall back to space delimiter for operational commands
     let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().collect();
 
-    match parts.as_slice() {
-        ["READ"] => Ok(ArtisanCommand::ReadStatus),
+    if parts.is_empty() {
+        return Err(ParseError::UnknownCommand);
+    }
 
-        ["START"] => Ok(ArtisanCommand::StartRoast),
+    let cmd = parts[0];
 
-        ["OT1", value_str] => {
-            let value = parse_percentage(value_str)?;
+    if cmd.eq_ignore_ascii_case("READ") && parts.len() == 1 {
+        Ok(ArtisanCommand::ReadStatus)
+    } else if cmd.eq_ignore_ascii_case("START") && parts.len() == 1 {
+        Ok(ArtisanCommand::StartRoast)
+    } else if cmd.eq_ignore_ascii_case("STOP") && parts.len() == 1 {
+        Ok(ArtisanCommand::EmergencyStop)
+    } else if cmd.eq_ignore_ascii_case("UP") && parts.len() == 1 {
+        Ok(ArtisanCommand::IncreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("DOWN") && parts.len() == 1 {
+        Ok(ArtisanCommand::DecreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("OT1") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
             Ok(ArtisanCommand::SetHeater(value))
+        } else {
+            Err(ParseError::InvalidValue)
         }
-
-        ["IO3", value_str] => {
-            let value = parse_percentage(value_str)?;
+    } else if cmd.eq_ignore_ascii_case("IO3") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
             Ok(ArtisanCommand::SetFan(value))
+        } else {
+            Err(ParseError::InvalidValue)
         }
-
-        // Partial command - OT2 requires a value
-        ["OT2" | "ot2"] => Err(ParseError::InvalidValue),
-
-        ["OT2" | "ot2", value_str] => {
-            let (value, was_clamped) = parse_ot2_value(value_str)?;
+    } else if cmd.eq_ignore_ascii_case("OT2") {
+        if parts.len() == 2 {
+            let (value, was_clamped) = parse_ot2_value(parts[1])?;
             Ok(ArtisanCommand::SetFanSpeed(value, was_clamped))
+        } else {
+            Err(ParseError::InvalidValue)
         }
-
-        ["STOP"] => Ok(ArtisanCommand::EmergencyStop),
-
-        ["UP" | "up"] => Ok(ArtisanCommand::IncreaseHeater),
-
-        ["DOWN" | "down"] => Ok(ArtisanCommand::DecreaseHeater),
-
-        // Partial commands (commands that require a value but don't have one)
-        ["OT1"] | ["IO3"] => Err(ParseError::InvalidValue),
-
-        _ => Err(ParseError::UnknownCommand),
+    } else {
+        Err(ParseError::UnknownCommand)
     }
 }
 

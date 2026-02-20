@@ -238,6 +238,4 @@ mod async_lock_depth {
     pub fn reset_async_lock_metrics_for_tests() {}
 }
 
-pub use async_lock_depth::{
-    async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests,
-};
+pub use async_lock_depth::{async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests};

@@ -11,16 +11,10 @@ use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
 use log::debug;
-use log::warn;
 
-use super::driver::{get_usb_cdc_driver, UsbCdcError};
+use super::driver::get_usb_cdc_driver;
 
 pub const USB_COMMAND_PIPE_SIZE: usize = 256;
-
-/// Back-pressure configuration for USB writer
-const BACK_PRESSURE_INITIAL_DELAY_MS: u64 = 1;
-const BACK_PRESSURE_MAX_DELAY_MS: u64 = 10;
-const BACK_PRESSURE_LOG_THRESHOLD_MS: u64 = 100;
 
 struct SyncCell<T>(UnsafeCell<T>);
 
@@ -37,9 +31,8 @@ impl<T> SyncCell<T> {
 }
 
 /// Command queue for USB FIFO processing - reject-on-full behavior
-static USB_COMMAND_QUEUE: SyncCell<
-    Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>,
-> = SyncCell::new(None);
+static USB_COMMAND_QUEUE: SyncCell<Option<CommandQueue<ArtisanCommand, COMMAND_QUEUE_SIZE>>> =
+    SyncCell::new(None);
 
 #[cfg(all(test, target_arch = "riscv32"))]
 pub fn init_usb_command_queue_for_test() {
@@ -88,73 +81,6 @@ pub async fn usb_reader_task() {
         }
 
         Timer::after(Duration::from_millis(10)).await;
-    }
-}
-
-#[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
-pub async fn usb_writer_task() {
-    let output_channel = ServiceContainer::get_output_channel();
-    let mut back_pressure_start: Option<u64> = None;
-    let mut current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
-
-    loop {
-        if let Ok(data) = output_channel.try_receive() {
-            if let Some(usb) = get_usb_cdc_driver() {
-                let bytes = data.as_bytes().to_vec();
-                log_channel!(Channel::Usb, "TX: {}", data);
-
-                let write_result = usb.write_bytes(&bytes).await;
-
-                match write_result {
-                    Ok(()) => {
-                        // Write successful - reset back-pressure state
-                        back_pressure_start = None;
-                        current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
-                    }
-                    Err(UsbCdcError::WouldBlock) => {
-                        // Back-pressure detected - yield and retry with backoff
-                        back_pressure_start = Some(back_pressure_start.unwrap_or_else(|| {
-                            // First time back-pressure detected
-                            embassy_time::Instant::now().as_ticks()
-                        }));
-
-                        // Log warning if prolonged back-pressure
-                        let now = embassy_time::Instant::now().as_ticks();
-                        if let Some(start) = back_pressure_start {
-                            let duration_ms = now.saturating_sub(start);
-                            if duration_ms > BACK_PRESSURE_LOG_THRESHOLD_MS {
-                                warn!(
-                                    "USB CDC back-pressure: {}ms congestion detected",
-                                    duration_ms
-                                );
-                            }
-                        }
-
-                        // Yield with exponential backoff
-                        Timer::after(Duration::from_millis(current_delay)).await;
-
-                        // Increase delay for next retry (up to max)
-                        current_delay = (current_delay * 2).min(BACK_PRESSURE_MAX_DELAY_MS);
-
-                        // Put data back to output channel for retry (try_send doesn't block)
-                        let _ = output_channel.try_send(data);
-                    }
-                    Err(e) => {
-                        // Other error - log and continue
-                        warn!("USB CDC write error: {:?}", e);
-                        back_pressure_start = None;
-                        current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
-                    }
-                }
-            }
-        } else {
-            // No data to send - reset back-pressure state
-            back_pressure_start = None;
-            current_delay = BACK_PRESSURE_INITIAL_DELAY_MS;
-        }
-
-        // Brief yield to allow other tasks to run
-        Timer::after(Duration::from_millis(1)).await;
     }
 }
 
