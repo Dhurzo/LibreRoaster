@@ -6,10 +6,14 @@ use core::cell::RefCell;
 use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::mutex::Mutex as EmbassyMutex;
 use heapless::String;
 
 pub struct ServiceContainer {
-    pub roaster: Mutex<RefCell<Option<RoasterControl>>>,
+    /// Async-safe mutex for use in async task contexts
+    pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+    /// Sync-safe mutex for use in ISR and critical sections
+    pub roaster_sync: Mutex<RefCell<Option<RoasterControl>>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
     pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
 }
@@ -52,49 +56,68 @@ impl ServiceContainer {
         });
     }
 
-    pub fn is_initialized() -> bool {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            container.roaster.borrow(cs).borrow().is_some()
-                && container.artisan_input.borrow(cs).borrow().is_some()
-        })
-    }
-
     pub fn get_instance() -> &'static ServiceContainer {
         // Using a static mutable reference with unsafe code for singleton pattern
         // This is safe because it's only called once during initialization
         static SERVICE: ServiceContainer = ServiceContainer {
-            roaster: Mutex::new(RefCell::new(None)),
+            roaster: EmbassyMutex::new(None),
+            roaster_sync: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
             multiplexer: Mutex::new(RefCell::new(None)),
         };
         &SERVICE
     }
 
+    pub fn is_initialized() -> bool {
+        critical_section::with(|cs| {
+            let container = Self::get_instance();
+            container.roaster_sync.borrow(cs).borrow().is_some()
+                && container.artisan_input.borrow(cs).borrow().is_some()
+        })
+    }
+
+    /// Sync access to RoasterControl for ISR and critical section contexts
+    /// This is the deprecated API kept for backward compatibility with ISR code
+    #[deprecated(note = "Use with_roaster_async() in async contexts")]
     pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut RoasterControl) -> R,
     {
         critical_section::with(|cs| {
             let container = Self::get_instance();
-            match container.roaster.borrow(cs).borrow_mut().as_mut() {
+            match container.roaster_sync.borrow(cs).borrow_mut().as_mut() {
                 Some(roaster) => Ok(f(roaster)),
                 None => Err(ContainerError::NotInitialized),
             }
         })
     }
 
+    /// Sync mutable access to RoasterControl for ISR and critical section contexts
+    /// This is the deprecated API kept for backward compatibility with ISR code
+    #[deprecated(note = "Use with_roaster_async() in async contexts")]
     pub fn with_roaster_mut<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut RoasterControl) -> R,
     {
         critical_section::with(|cs| {
             let container = Self::get_instance();
-            match container.roaster.borrow(cs).borrow_mut().as_mut() {
+            match container.roaster_sync.borrow(cs).borrow_mut().as_mut() {
                 Some(roaster) => Ok(f(roaster)),
                 None => Err(ContainerError::NotInitialized),
             }
         })
+    }
+
+    /// Async access to RoasterControl - use this in async task contexts
+    pub async fn with_roaster_async<R, F>(f: F) -> Result<R, ContainerError>
+    where
+        F: FnOnce(&mut RoasterControl) -> R,
+    {
+        let mut guard = Self::get_instance().roaster.lock().await;
+        match guard.as_mut() {
+            Some(roaster) => Ok(f(roaster)),
+            None => Err(ContainerError::NotInitialized),
+        }
     }
 
     pub fn read_bean_temperature() -> Result<f32, ContainerError> {
@@ -105,30 +128,32 @@ impl ServiceContainer {
         Self::with_roaster(|roaster| Ok(roaster.get_status().env_temp)).unwrap_or(Ok(0.0))
     }
 
-    /// Perform async sensor read by taking roaster out, calling async methods, then putting back
-    /// This pattern allows async operations on RoasterControl which is normally behind a sync mutex
+    /// Perform async sensor read using the async lock
+    /// This uses EmbassyMutex for safe concurrent async access
     pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
-        // Take roaster out of the container
-        let mut roaster: RoasterControl = critical_section::with(|cs| {
-            let container = Self::get_instance();
-            container.roaster.borrow(cs).borrow_mut().take()
-                .expect("Roaster not initialized")
-        });
+        #[cfg(any(test, feature = "async-lock-depth-metrics"))]
+        let _async_lock_depth_guard = async_lock_depth::AsyncLockDepthGuard::enter();
 
-        // Now we can call async methods - this is the gap closure!
-        // The concrete Max31856 type enables async temperature reading
-        roaster.read_sensors().await.map_err(|_| ContainerError::NotInitialized)?;
+        let result = {
+            // Use async lock for safe concurrent access
+            let mut guard = Self::get_instance().roaster.lock().await;
 
-        // Also do the control update (sync)
-        let _ = roaster.update_control(embassy_time::Instant::now());
+            let roaster = guard.as_mut().ok_or(ContainerError::NotInitialized)?;
 
-        // Put roaster back
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            container.roaster.borrow(cs).borrow_mut().replace(roaster);
-        });
+            // Call async sensor reading method
+            roaster
+                .read_sensors()
+                .await
+                .map_err(|_| ContainerError::NotInitialized)?;
 
-        Ok(())
+            // Also do the control update (sync)
+            let _ = roaster.update_control(embassy_time::Instant::now());
+
+            // Guard is automatically released when dropped
+            Ok(())
+        };
+
+        result
     }
 
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
@@ -162,3 +187,57 @@ impl core::fmt::Display for ContainerError {
         }
     }
 }
+
+#[cfg(any(test, feature = "async-lock-depth-metrics"))]
+mod async_lock_depth {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static ASYNC_LOCK_DEPTH_CURRENT: AtomicUsize = AtomicUsize::new(0);
+    static ASYNC_LOCK_DEPTH_MAX: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) struct AsyncLockDepthGuard;
+
+    impl AsyncLockDepthGuard {
+        pub(crate) fn enter() -> Self {
+            let depth = ASYNC_LOCK_DEPTH_CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+            ASYNC_LOCK_DEPTH_MAX.fetch_max(depth, Ordering::SeqCst);
+            AsyncLockDepthGuard
+        }
+    }
+
+    impl Drop for AsyncLockDepthGuard {
+        fn drop(&mut self) {
+            ASYNC_LOCK_DEPTH_CURRENT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    pub fn async_lock_depth_max_for_tests() -> usize {
+        ASYNC_LOCK_DEPTH_MAX.load(Ordering::SeqCst)
+    }
+
+    pub fn reset_async_lock_metrics_for_tests() {
+        ASYNC_LOCK_DEPTH_CURRENT.store(0, Ordering::SeqCst);
+        ASYNC_LOCK_DEPTH_MAX.store(0, Ordering::SeqCst);
+    }
+}
+
+#[cfg(not(any(test, feature = "async-lock-depth-metrics")))]
+mod async_lock_depth {
+    pub(crate) struct AsyncLockDepthGuard;
+
+    impl AsyncLockDepthGuard {
+        pub(crate) fn enter() -> Self {
+            AsyncLockDepthGuard
+        }
+    }
+
+    pub fn async_lock_depth_max_for_tests() -> usize {
+        0
+    }
+
+    pub fn reset_async_lock_metrics_for_tests() {}
+}
+
+pub use async_lock_depth::{
+    async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests,
+};

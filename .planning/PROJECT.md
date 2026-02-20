@@ -8,9 +8,21 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: vNext
+## Current State
 
-**Goal:** TBD - run /gsd-new-milestone to define next milestone
+v4.0 shipped: Sensor reading now relies on an Embassy mutex-backed API, ASYNC-06 is proven by a concurrent host harness with `async-lock-depth-metrics`, and the USB instrumentation helper is wired and documented so every exported hook is exercised.
+
+<details>
+<summary>Previous state</summary>
+
+## Current Milestone: v4.0 Async Sensor Race Condition Fix
+
+**Goal:** Resolve race condition in roaster_async_sensor_read by replacing take/replace pattern with embassy_sync::Mutex for safe async access to RoasterControl.
+
+**Target features:**
+- Replace take/replace pattern with embassy_sync::Mutex in ServiceContainer
+- Ensure safe concurrent async access to RoasterControl
+- Verify no race conditions under concurrent sensor reads
 
 ## Last Shipped: v3.0 Critical Safety Fixes (2026-02-19)
 
@@ -18,7 +30,7 @@ v3.0 fixed critical safety issues: Use-After-Free bug, unsafe statics (replaced 
 
 ## Next Milestone
 
-TBD (run /gsd-new-milestone to define)
+v4.0 — Async Sensor Race Condition Fix
 
 ## Current State
 
@@ -30,6 +42,14 @@ v3.0 shipped: StaticCell patterns eliminate unsafe statics, async temperature re
 v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 issues identified (1 High, 7 Medium, 23 Low).
 
 </details>
+
+</details>
+
+## Next Milestone Goals
+
+- Plan the next milestone via `/gsd-new-milestone`, capturing fresh requirements for observability, instrumentation automation, and safety improvements beyond the async sensor race fix.
+- Turn the remaining tech debt (deprecated `with_roaster()` helpers, host-only instrumentation helpers) into tracked requirements so they are prioritized in the next scope.
+- Define measurable outcomes (instrumentation metrics, USB telecommand stability, asynchronous robustness) as part of the requirements research phase.
 
 ## Requirements
 
@@ -112,9 +132,18 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ PERF-01: Async MAX31856 temperature reading with embassy-time Timer — v3.0
 - ✓ PERF-02: Separate SSR and Fan LEDC timers — v3.0
 
+- ✓ ASYNC-01: Replace take/replace pattern with embassy_sync::Mutex — v4.0
+- ✓ ASYNC-02: Remove take/replace from `roaster_async_sensor_read()` — v4.0
+- ✓ ASYNC-03: Use `lock().await` inside the async sensor read path — v4.0
+- ✓ ASYNC-04: Provide an async `with_roaster_async()` helper — v4.0
+- ✓ ASYNC-05: Update every caller to the async API — v4.0
+- ✓ ASYNC-06: Concurrent sensor read host test proves the mutex is safe — v4.0
+- ✓ SYNC-01: Keep a `critical_section::Mutex` sync path for ISR contexts — v4.0
+
 ### Active
 
-- [ ] (Run /gsd-new-milestone to define next requirements)
+- [ ] Define the next milestone requirements via `/gsd-new-milestone` (observability, instrumentation, and safety automation).
+- [ ] Document instrumentation automation and telemetry goals that surfaced during the async sensor migration.
 
 ### Out of Scope
 
@@ -149,6 +178,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 **v3.0 shipped:** All 8 requirements complete with StaticCell patterns, async temperature, separate LEDC timers.
 
+**v4.0 shipped:** Async sensor read now relies on Embassy mutex locking, concurrent host harness proves ASYNC-06 with instrumentation, and the USB instrumentation helper is wired/documented for auditors.
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
@@ -173,6 +204,10 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | Saturating SSR duty conversion | Fix double-division, clamp to LEDC 0-255 | ✓ Implemented v2.6 |
 | Shared LedcBus with serialization | SSR and Fan share timer via atomic guard | ✓ Implemented v2.6 |
 | Embassy async UART/USB transports | Non-blocking with back-pressure | ✓ Implemented v2.6 |
+| Dual mutex pattern for ServiceContainer | Keep async access safe while preserving ISR sync helpers | ✓ Implemented with EmbassyMutex + roaster_sync |
+| Feature-gated async lock depth telemetry | Keep instrumentation out of release builds while proving ASYNC-06 | ✓ Implemented via `async-lock-depth-metrics` feature |
+| Reset lock-depth metrics between runs | Ensure reproducible instrumentation for auditors | ✓ Documented in README and harness |
+| USB instrumentation harness handles `process_usb_command_data_test` | Exercised unused export while keeping production tasks untouched | ✓ Wired with riscv32-only runner and documentation |
 
 ## Constraints
 
@@ -185,4 +220,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-19 — v3.0 milestone complete*
+*Last updated: 2026-02-20 — v4.0 milestone shipped*

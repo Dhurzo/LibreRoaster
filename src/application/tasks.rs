@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::output::artisan::ArtisanFormatter;
@@ -9,6 +10,22 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
 use heapless::String;
 use log::{debug, info, warn};
+
+pub fn queue_processor_metrics_snapshot() -> QueueProcessorMetricsSnapshot {
+    QUEUE_PROCESSOR_METRICS.snapshot()
+}
+
+pub fn reset_queue_processor_metrics() {
+    QUEUE_PROCESSOR_METRICS.reset();
+}
+
+pub fn record_queue_depth(depth: usize) {
+    QUEUE_PROCESSOR_METRICS.record_depth(depth);
+}
+
+pub fn queue_processor_backlog_threshold() -> usize {
+    QUEUE_DEPTH_BACKLOG_THRESHOLD
+}
 
 #[task]
 pub async fn control_loop_task() {
@@ -26,27 +43,29 @@ pub async fn control_loop_task() {
         if let Ok(command) = cmd_channel.try_receive() {
             let output_channel = ServiceContainer::get_output_channel();
 
-        let _ = ServiceContainer::with_roaster(|roaster: &mut crate::control::roaster_refactored::RoasterControl| {
-                match roaster.process_artisan_command(command) {
-                    Ok(()) => {
-                        debug!("Processed Artisan command successfully");
+            let _ = ServiceContainer::with_roaster_async(
+                |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
+                    match roaster.process_artisan_command(command) {
+                        Ok(()) => {
+                            debug!("Processed Artisan command successfully");
 
-                        if let crate::config::ArtisanCommand::ReadStatus = command {
-                            let status = roaster.get_status();
-                            // Use full READ response with 7 values per Artisan spec
-                            let response = ArtisanFormatter::format_read_response_full(&status);
+                            if let crate::config::ArtisanCommand::ReadStatus = command {
+                                let status = roaster.get_status();
+                                // Use full READ response with 7 values per Artisan spec
+                                let response = ArtisanFormatter::format_read_response_full(&status);
 
-                            if let Ok(line) = String::<128>::try_from(response.as_str()) {
-                                let _ = output_channel.try_send(line);
+                                if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                                    let _ = output_channel.try_send(line);
+                                }
                             }
                         }
+                        Err(err) => {
+                            warn!("Failed to process Artisan command: {:?}", err);
+                            send_handler_error(output_channel, &err);
+                        }
                     }
-                    Err(err) => {
-                        warn!("Failed to process Artisan command: {:?}", err);
-                        send_handler_error(output_channel, &err);
-                    }
-                }
-            });
+                },
+            );
         }
 
         // Control loop now uses async read_sensors() - no longer blocks executor
@@ -64,7 +83,7 @@ pub async fn control_loop_task() {
         }
 
         // Do sync control update separately
-        let _update_result = ServiceContainer::with_roaster(
+        let _update_result = ServiceContainer::with_roaster_async(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| -> Result<(), ()> {
                 match roaster.update_control(current_time) {
                     Ok(output) => {
@@ -89,12 +108,14 @@ pub async fn control_loop_task() {
         let mut is_continuous_now = false;
         let mut status_for_output = None;
 
-        let _ = ServiceContainer::with_roaster(|roaster: &mut crate::control::roaster_refactored::RoasterControl| {
-            is_continuous_now = roaster.get_output_manager().is_continuous_enabled();
-            if is_continuous_now {
-                status_for_output = Some(roaster.get_status());
-            }
-        });
+        let _ = ServiceContainer::with_roaster_async(
+            |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
+                is_continuous_now = roaster.get_output_manager().is_continuous_enabled();
+                if is_continuous_now {
+                    status_for_output = Some(roaster.get_status());
+                }
+            },
+        );
 
         if is_continuous_now != was_continuous {
             formatter.reset();

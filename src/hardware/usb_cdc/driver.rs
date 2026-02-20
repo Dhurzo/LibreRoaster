@@ -1,5 +1,5 @@
-use core::fmt;
 use core::cell::UnsafeCell;
+use core::fmt;
 
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
@@ -66,7 +66,11 @@ impl UsbCdcDriver {
 
     /// Write bytes with timeout for back-pressure detection.
     /// If write takes longer than expected, treats as congestion.
-    pub async fn write_bytes_with_timeout(&mut self, data: &[u8], timeout_ticks: u64) -> Result<(), UsbCdcError> {
+    pub async fn write_bytes_with_timeout(
+        &mut self,
+        data: &[u8],
+        timeout_ticks: u64,
+    ) -> Result<(), UsbCdcError> {
         use embassy_time::{Duration, Timer};
 
         // Try write with polling for back-pressure

@@ -297,15 +297,116 @@ fn init(value: T) -> &'static mut T {
 
 ---
 
-## Sources
+## Additional Pitfall Sections
 
-- `static_cell` crate documentation (v2.1.1) — https://docs.rs/static_cell/latest/static_cell/
-- Embassy Book — https://embassy.dev/book/
-- ESP-IDF LEDC documentation (v5.0.3) — https://docs.espressif.com/projects/esp-idf/en/v5.0.3/esp32/api-reference/peripherals/ledc.html
-- ESP32 LEDC timer conflict issues — https://github.com/espressif/arduino-esp32/issues/6905
-- ESP32 LEDC resolution conflicts — https://github.com/espressif/arduino-esp32/issues/11373
+The following sections cover additional domain-specific pitfalls for this project.
+
+### Pitfall 9: embassy_sync::Mutex Migration — RefCell and Blocking Issues
+
+**What goes wrong:** When migrating from `critical_section::Mutex<RefCell<Option<T>>>` with take/replace pattern to `embassy_sync::Mutex`, several issues can occur:
+
+1. **Keeping RefCell unnecessarily** — The async Mutex already provides exclusive access via MutexGuard; RefCell adds runtime overhead and can cause panics from double borrowing.
+
+2. **Using blocking mutex across await** — The `embassy_sync::blocking_mutex::Mutex` is NOT designed to be held across `.await` points. This causes deadlock.
+
+3. **Wrong RawMutex selection** — Using `ThreadModeRawMutex` when you need interrupt + task sharing, or vice versa.
+
+4. **Lazy initialization pattern mismatch** — Trying to replicate the `Option<T>` lazy init pattern without understanding the new semantics.
+
+**Why it happens:** The original pattern `Mutex<RefCell<Option<T>>>` was necessary for:
+- Interior mutability with critical_section (which doesn't provide exclusive access)
+- Lazy initialization (None at start, replace with Some later)
+- ISR-to-main communication
+
+With embassy_sync's async Mutex, these patterns change fundamentally.
+
+**Consequences:**
+- Compilation errors (trait bounds)
+- Runtime panics (RefCell borrow violations)
+- Deadlocks (blocking across await, wrong RawMutex)
+- Data races (wrong RawMutex for context)
+
+**Prevention:**
+
+```rust
+// WRONG: Keeping RefCell in async Mutex
+use embassy_sync::mutex::Mutex;
+use core::cell::RefCell;
+static DATA: Mutex<ThreadModeRawMutex, RefCell<Option<RoasterControl>>> = 
+    Mutex::new(RefCell::new(None));
+
+// CORRECT: No RefCell needed - MutexGuard provides exclusive access
+static DATA: Mutex<ThreadModeRawMutex, RoasterControl> = 
+    Mutex::new(RoasterControl::new());
+
+// WRONG: Blocking mutex held across await
+static DATA: Mutex<ThreadModeRawMutex, u32> = Mutex::new(0);
+async fn bad_example() {
+    DATA.lock(|v| {
+        *v = 42;
+        Timer::after_millis(100).await; // DEADLOCK - holding lock!
+    });
+}
+
+// CORRECT: Use async Mutex when holding across await
+static DATA: embassy_sync::mutex::Mutex<ThreadModeRawMutex, u32> = 
+    embassy_sync::mutex::Mutex::new(0);
+async fn good_example() {
+    let mut guard = DATA.lock().await;
+    *guard = 42;
+    Timer::after_millis(100).await; // OK - other tasks can run
+}
+
+// WRONG: ThreadModeRawMutex in ISR
+static DATA: Mutex<ThreadModeRawMutex, u32> = Mutex::new(0);
+fn isr_handler() {
+    // Not safe! ThreadModeRawMutex doesn't work in interrupt context
+}
+
+// CORRECT: Use CriticalSectionRawMutex for ISR + task sharing
+static DATA: Mutex<CriticalSectionRawMutex, u32> = Mutex::new(0);
+```
+
+**Detection:**
+- RefCell in Mutex type → likely unnecessary
+- `.await` inside `lock()` closure → blocking across await
+- Compilation errors about `Sync` → likely wrong RawMutex
+- Excessive `.unwrap()` → wrong initialization pattern
 
 ---
 
-*Pitfalls research for: LibreRoaster v3.0 Critical Safety Fixes*  
-*Researched: 2026-02-18*
+### Pitfall 10: embassy_sync Mutex — Trait Bound Issues
+
+**What goes wrong:** "trait `Send` is not implemented" or "trait `Sync` is not implemented" errors.
+
+**Why it happens:** The inner type `T` must be `Send` to be shared between async tasks. The RawMutex must be `Sync`.
+
+**Prevention:**
+```rust
+// Ensure T is Send:
+struct RoasterControl {
+    // Use owned types, not borrowed references with non-'static lifetimes
+    timer: Timer,           // OK - owned
+    // timer: &'a mut Timer, // WRONG - not 'static
+}
+
+// Choose correct RawMutex:
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
+
+// For task-only: ThreadModeRawMutex (or NoopRawMutex)
+// For ISR + task: CriticalSectionRawMutex
+```
+
+---
+
+## Sources
+
+- embassy-sync official documentation: https://docs.embassy.dev/embassy-sync/git/default/mutex/struct.Mutex.html
+- embassy-sync blocking_mutex: https://docs.embassy.dev/embassy-sync/git/default/blocking_mutex/struct.Mutex.html
+- Rust forum — Mutex<RefCell<Option<T>>> pattern: https://users.rust-lang.org/t/mutex-refcell-option-t-on-stm32-project/124386
+- The Embedded Rustacean — Sharing Data Among Tasks: https://blog.theembeddedrustacean.com/sharing-data-among-tasks-in-rust-embassy-synchronization-primitives
+
+---
+
+*Additional pitfalls research for: LibreRoaster v3.0 embassy_sync::Mutex migration*
+*Researched: 2026-02-19*

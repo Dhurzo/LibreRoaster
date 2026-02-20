@@ -1,15 +1,16 @@
+use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
+use core::cell::UnsafeCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
 use embassy_time::Timer;
-use heapless::{String, Vec};
 use heapless::Deque;
+use heapless::{String, Vec};
 use log::debug;
-use core::cell::UnsafeCell;
 
 use super::buffer::CircularBuffer;
 use super::driver::get_uart_driver;
@@ -33,12 +34,15 @@ impl<T> SyncCell<T> {
 /// Size of the UART event queue for buffering incoming bytes
 pub const EVENT_QUEUE_SIZE: usize = 256;
 
-static COMMAND_PIPE: SyncCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>> = SyncCell::new(None);
+static COMMAND_PIPE: SyncCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>> =
+    SyncCell::new(None);
 static RX_BUFFER: SyncCell<Option<CircularBuffer>> = SyncCell::new(None);
 /// Buffered event queue for UART input - separates I/O from parsing
 static EVENT_QUEUE: SyncCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>> = SyncCell::new(None);
 /// Command queue for FIFO processing - reject-on-full behavior
-static COMMAND_QUEUE: SyncCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>> = SyncCell::new(None);
+static COMMAND_QUEUE: SyncCell<
+    Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>,
+> = SyncCell::new(None);
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn uart_reader_task() {
@@ -102,12 +106,12 @@ fn process_event_queue() {
             false
         }
     });
-    
+
     if has_terminator {
         // Extract the complete line including terminator
         let mut command_data: Vec<u8, 64> = Vec::new();
         let mut extracted = false;
-        
+
         critical_section::with(|_| unsafe {
             if let Some(queue) = (*EVENT_QUEUE.get()).as_mut() {
                 // Extract bytes up to and including the terminator
@@ -120,7 +124,7 @@ fn process_event_queue() {
                 extracted = true;
             }
         });
-        
+
         if extracted && !command_data.is_empty() {
             // Remove the terminator (last byte if it's 0x0D)
             let last_idx = command_data.len() - 1;
@@ -128,7 +132,7 @@ fn process_event_queue() {
                 // Truncate to remove terminator
                 command_data.truncate(last_idx);
             }
-            
+
             // Process the complete command
             if !command_data.is_empty() {
                 handle_command_data_internal(&command_data);
@@ -149,6 +153,7 @@ fn handle_command_data_internal(data: &[u8]) {
 
     match parse_result {
         Ok(cmd) => {
+            let mut depth = 0;
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
                 let mut guard = multiplexer.borrow(cs).borrow_mut();
@@ -168,10 +173,12 @@ fn handle_command_data_internal(data: &[u8]) {
                                     debug!("UART command queue full, rejecting command");
                                 }
                             }
+                            depth = queue.len();
                         }
                     }
                 }
             });
+            record_queue_depth(depth);
         }
         Err(error) => {
             send_parse_error_internal(error);
@@ -244,17 +251,25 @@ pub async fn queue_processor_task() {
 
     loop {
         // Try to pop a command from the queue and send to artisan_channel
-        let cmd_opt = critical_section::with(|_| {
-            unsafe {
-                (*COMMAND_QUEUE.get()).as_mut().and_then(|queue| queue.pop())
+        let (cmd_opt, queue_depth) = critical_section::with(|_| unsafe {
+            if let Some(queue) = (*COMMAND_QUEUE.get()).as_mut() {
+                let cmd = queue.pop();
+                let depth = queue.len();
+                (cmd, depth)
+            } else {
+                (None, 0)
             }
         });
+        record_queue_depth(queue_depth);
 
         if let Some(cmd) = cmd_opt {
             let channel = ServiceContainer::get_artisan_channel();
             if let Err(err) = channel.try_send(cmd) {
                 // Log but don't block - command will be reprocessed by Artisan timeout
-                debug!("Queue processor: failed to send to artisan_channel: {:?}", err);
+                debug!(
+                    "Queue processor: failed to send to artisan_channel: {:?}",
+                    err
+                );
             }
         }
 

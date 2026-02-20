@@ -5,12 +5,27 @@ extern crate alloc;
 #[cfg(any(test, feature = "test"))]
 extern crate std;
 
-// Custom embassy-time driver only for riscv32 embedded tests
-// When using --features std, embassy-time provides its own driver via std feature
-#[cfg(all(any(test, feature = "test"), target_arch = "riscv32"))]
+// Provide a stubbed `_embassy_time_now` for riscv so the embedded driver links cleanly.
+#[cfg(target_arch = "riscv32")]
 #[no_mangle]
-fn _embassy_time_now() -> u64 {
+pub extern "C" fn _embassy_time_now() -> u64 {
     0
+}
+
+#[cfg(target_arch = "riscv32")]
+#[no_mangle]
+pub extern "C" fn _embassy_time_schedule_wake(_at: u64, _waker: &core::task::Waker) {}
+
+#[cfg(not(target_arch = "riscv32"))]
+#[no_mangle]
+pub extern "C" fn _embassy_time_now() -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+#[no_mangle]
+pub extern "C" fn _embassy_time_schedule_wake(_at: u64, waker: &core::task::Waker) {
+    waker.wake_by_ref();
 }
 
 pub mod application;

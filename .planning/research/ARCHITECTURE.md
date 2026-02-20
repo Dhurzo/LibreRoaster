@@ -530,26 +530,315 @@ For an ESP32-C3 embedded system, scalability is limited by hardware constraints:
 
 ---
 
-## Sources
+## Part 2: Async Mutex Integration (v3.x Milestone)
 
-- LibreRoaster source code analysis (`src/control/roaster_refactored.rs`, `src/control/handlers.rs`, `src/hardware/ssr.rs`, `src/config/constants.rs`)
-- ESP-IDF Watchdog Timer documentation (https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/wdts.html)
-- Embassy-rs async framework (https://github.com/embassy-rs/embassy)
-- Embedded safety design principles (https://incompliancemag.com/implementing-robust-watchdog-timers-for-embedded-systems/)
-
----
-
-## Confidence Assessment
-
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Component boundaries | HIGH | Direct code analysis of existing architecture |
-| Data flow patterns | HIGH | Traced through actual code paths |
-| Handler chain safety | HIGH | Verified in RoasterControl::process_command() |
-| Anti-pattern identification | HIGH | Based on existing codebase patterns and embedded best practices |
-| v3.0 integration points | HIGH | Direct mapping from architecture to suggested fix locations |
+**Focus:** Replace take/replace pattern with embassy_sync::Mutex for async-safe RoasterControl access  
+**Researched:** 2026-02-19  
+**Confidence:** HIGH
 
 ---
 
-*Architecture research for: LibreRoaster v3.0 Critical Safety Fixes*  
-*Researched: 2026-02-18*
+### Current Architecture: The Take/Replace Problem
+
+The ServiceContainer holds `RoasterControl` behind a `critical_section::Mutex<RefCell<Option<RoasterControl>>>`:
+
+```rust
+// Current ServiceContainer structure
+pub struct ServiceContainer {
+    pub roaster: Mutex<RefCell<Option<RoasterControl>>>,  // critical_section::Mutex
+    pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
+    pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
+}
+```
+
+**The problematic roaster_async_sensor_read() pattern:**
+
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    // Take ownership - blocks ALL other access
+    let mut roaster: RoasterControl = critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().take()  // EXCLUSIVE
+    });
+    
+    // Await while NOT holding the lock - but ownership is moved!
+    roaster.read_sensors().await?;
+    roaster.update_control(embassy_time::Instant::now())?;
+    
+    // Replace - gives access back
+    critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+    });
+    
+    Ok(())
+}
+```
+
+**Why This Is Problematic:**
+
+| Issue | Consequence |
+|-------|-------------|
+| Exclusive ownership model | No concurrent access during async operation |
+| Two-step take/replace | If task preempts between take and replace, container is `None` |
+| Not truly async-safe | Lock is not held during await, but ownership model is racy |
+| Complex error handling | Must ensure replace happens even on errors |
+
+---
+
+### Recommended Architecture: embassy_sync::Mutex
+
+```rust
+use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+pub struct ServiceContainer {
+    // Replace critical_section::Mutex<RefCell<Option<T>>> with:
+    pub roaster: Mutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+    // No RefCell needed - Mutex provides interior mutability
+}
+```
+
+**Why This Works Better:**
+
+1. **Async-aware locking:** The lock is acquired with `.lock().await`:
+   - Suspends the current task if lock is held
+   - Allows other tasks to run while waiting
+   - Automatically releases when the guard drops
+
+2. **No ownership transfer:** The guard provides `&mut T` access:
+   ```rust
+   pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+       let mut guard = Self::get_instance().roaster.lock().await;
+       if let Some(roaster) = guard.as_mut() {
+           roaster.read_sensors().await?;
+           roaster.update_control(embassy_time::Instant::now())?;
+       }
+       Ok(()) // Guard automatically released here
+   }
+   ```
+
+3. **Simpler error handling:** No manual take/replace - guard lifetime ensures cleanup
+
+---
+
+### Integration Points
+
+#### 1. ServiceContainer Structure
+
+**File:** `src/application/service_container.rs`
+
+```rust
+// Before (current)
+use critical_section::Mutex;
+use core::cell::RefCell;
+
+pub struct ServiceContainer {
+    pub roaster: Mutex<RefCell<Option<RoasterControl>>>,
+}
+
+// After (recommended)
+use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+pub struct ServiceContainer {
+    pub roaster: Mutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+}
+```
+
+#### 2. Initialization
+
+```rust
+// Before
+impl ServiceContainer {
+    pub fn get_instance() -> &'static ServiceContainer {
+        static SERVICE: ServiceContainer = ServiceContainer {
+            roaster: Mutex::new(RefCell::new(None)),
+        };
+        &SERVICE
+    }
+}
+
+// After
+impl ServiceContainer {
+    pub fn get_instance() -> &'static ServiceContainer {
+        static SERVICE: ServiceContainer = ServiceContainer {
+            roaster: Mutex::new(None),  // Option<T> directly
+        };
+        &SERVICE
+    }
+}
+```
+
+#### 3. Migrating with_roaster() Patterns
+
+**Before (sync closure pattern):**
+```rust
+pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    critical_section::with(|cs| {
+        match container.roaster.borrow(cs).borrow_mut().as_mut() {
+            Some(roaster) => Ok(f(roaster)),
+            None => Err(ContainerError::NotInitialized),
+        }
+    })
+}
+```
+
+**After - Option 1: Async-first (recommended)**
+```rust
+pub async fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    let mut guard = Self::get_instance().roaster.lock().await;
+    match guard.as_mut() {
+        Some(roaster) => Ok(f(roaster)),
+        None => Err(ContainerError::NotInitialized),
+    }
+}
+```
+
+**After - Option 2: Keep closure pattern for interrupt contexts**
+
+If some callers run in interrupt context (not async), keep a separate sync method using `critical_section::Mutex<RefCell<...>>` or use `embassy_sync::blocking_mutex` for those paths.
+
+#### 4. Migrating roaster_async_sensor_read()
+
+**Before:**
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    let mut roaster = critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().take()
+    });
+    
+    roaster.read_sensors().await?;
+    roaster.update_control(embassy_time::Instant::now())?;
+    
+    critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+    });
+    Ok(())
+}
+```
+
+**After:**
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    let mut guard = Self::get_instance().roaster.lock().await;
+    
+    if let Some(roaster) = guard.as_mut() {
+        roaster.read_sensors().await?;
+        roaster.update_control(embassy_time::Instant::now())?;
+    }
+    
+    Ok(())  // Guard dropped, lock released
+}
+```
+
+---
+
+### Migration Path
+
+#### Phase 1: Add embassy_sync::Mutex alongside existing structure
+
+- Add the new mutex field next to existing one
+- Test that both can coexist
+- No behavioral change yet
+
+#### Phase 2: Migrate roaster_async_sensor_read()
+
+- Replace take/replace with `.lock().await`
+- Verify async behavior works correctly
+- This is the primary motivation for the change
+
+#### Phase 3: Migrate with_roaster() callers
+
+- Identify all sync callers in interrupt context
+- Either:
+  - Convert to async (preferred)
+  - Keep using `critical_section` for those specific paths
+
+#### Phase 4: Remove old structure
+
+- Remove `critical_section::Mutex<RefCell<Option<T>>>`
+- Remove `RefCell` imports if no longer needed
+- Clean up initialization code
+
+---
+
+### Build Order Considerations
+
+| Dependency | Status |
+|------------|--------|
+| embassy_sync 0.6.1 | Already in Cargo.toml |
+| embassy_sync::mutex::Mutex | From same crate |
+| CriticalSectionRawMutex | Re-exported from `embassy_sync::blocking_mutex::raw` |
+
+**No changes needed to:**
+- RoasterControl struct
+- Sensor drivers (max31856)
+- Hardware initialization
+
+**Only files needing modification:**
+- `src/application/service_container.rs` (primary)
+- Callers of `with_roaster()` and `roaster_async_sensor_read()` (secondary)
+
+---
+
+### Risk Assessment
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Breaking sync access from interrupts | HIGH | Test all interrupt handlers, convert to async or keep separate path |
+| Performance regression | LOW | embassy_sync is well-optimized for embedded |
+| Deadlocks | MEDIUM | Ensure all lock acquisitions are async, no nested sync calls |
+
+---
+
+### Alternative Approaches Considered
+
+#### 1. Keep critical_section for sync, embassy_sync for async
+
+```rust
+pub struct ServiceContainer {
+    // For sync access (interrupts)
+    pub roaster_sync: critical_section::Mutex<RefCell<Option<RoasterControl>>>,
+    // For async access  
+    pub roaster_async: Mutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+}
+```
+
+**Verdict:** Not recommended - dual state increases complexity.
+
+#### 2. Use embassy_sync::blocking_mutex::Mutex (not async)
+
+For blocking locks in async context that don't hold across await. Not suitable since we need to hold during `.await`.
+
+#### 3. Refactor to avoid shared state entirely
+
+Pass RoasterControl through channels. **Verdict:** Too invasive for this milestone.
+
+---
+
+### References
+
+- [embassy_sync::mutex::Mutex](https://docs.embassy.dev/embassy-sync/git/default/mutex/struct.Mutex.html)
+- [CriticalSectionRawMutex](https://docs.embassy.dev/embassy-sync/git/default/blocking_mutex/raw/struct.CriticalSectionRawMutex.html)
+- [Sharing Data Among Tasks](https://blog.theembeddedrustacean.com/sharing-data-among-tasks-in-rust-embassy-synchronization-primitives)
+
+---
+
+### Confidence Assessment (Async Mutex)
+
+| Area | Confidence | Reason |
+|------|------------|--------|
+| embassy_sync API | HIGH | Context7 docs, version 0.6.1 stable |
+| Migration pattern | HIGH | Standard embassy pattern |
+| RoasterControl compatibility | HIGH | No changes needed to controlled type |
+| Interrupt compatibility | MEDIUM | Need to verify sync access still works from handlers |
+
+---
+
+*Architecture research for: LibreRoaster v3.x Async Mutex Integration*  
+*Researched: 2026-02-19*

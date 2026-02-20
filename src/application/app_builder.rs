@@ -96,7 +96,11 @@ impl<'a> AppBuilder<'a> {
 
         critical_section::with(|cs| {
             let container = crate::application::service_container::ServiceContainer::get_instance();
-            container.roaster.borrow(cs).borrow_mut().replace(roaster);
+            container
+                .roaster_sync
+                .borrow(cs)
+                .borrow_mut()
+                .replace(roaster);
             container
                 .artisan_input
                 .borrow(cs)
@@ -142,8 +146,8 @@ impl Application {
     }
 
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
-        use crate::hardware::uart::tasks::{uart_reader_task, queue_processor_task};
-        use crate::hardware::usb_cdc::tasks::{usb_reader_task, usb_queue_processor_task};
+        use crate::hardware::uart::tasks::{queue_processor_task, uart_reader_task};
+        use crate::hardware::usb_cdc::tasks::{usb_queue_processor_task, usb_reader_task};
 
         self.verify_initialization()
             .map_err(|e| TaskError::VerificationFailed(e))?;

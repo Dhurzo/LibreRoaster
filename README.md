@@ -175,6 +175,30 @@ cargo build
 cargo clean
 ```
 
+### Concurrency Regression Test
+
+- Run the new host-side multiplexer stress test:
+  ```bash
+  cargo test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency
+  ```
+- The test spawns `queue_processor_task`/`usb_queue_processor_task`, fires concurrent USB+UART commands, and drives `ServiceContainer::roaster_async_sensor_read()` via a `ThreadPool` so the real queue processor is exercised.
+- Instrumentation lives in `libreroaster::application::queue_metrics` (`QueueProcessorMetrics`), and `queue_processor_metrics_snapshot()` returns:
+  - `queue_depth`: the most recent occupancy of the command queue.
+  - `max_depth`: the highest occupancy observed while the test ran.
+  - `backlog_events`: each time the queue depth hit or exceeded `QUEUE_DEPTH_BACKLOG_THRESHOLD` (currently 24, which is 3/4 of the queue) both producers contributed to the same metric.
+- Operators should verify the snapshot after a run: `max_depth` stays below 24 and `backlog_events == 0`. Any backlog event signals the queue saw saturation and is a prompt to revisit command burst pacing or queue handling.
+- To dive deeper, run the test with `-- --nocapture` and instrument `queue_processor_metrics_snapshot()` in your debugger or additional test helpers to inspect the per-run values.
+
+### Concurrent sensor read instrumentation (ASYNC-06)
+
+- Execute the host-side concurrent sensor read proof with async lock metrics enabled:
+  ```bash
+  cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
+  ```
+- The harness boots `ServiceContainer`, populates both async and sync `RoasterControl` instances, then uses a `ThreadPool` to spawn ten `ServiceContainer::roaster_async_sensor_read()` futures and `join_all` the batch so every `Result<(), ContainerError>` is asserted.
+- Internally `ServiceContainer` instruments the embassy mutex with test-only helpers `async_lock_depth_max_for_tests()` and `reset_async_lock_metrics_for_tests()` so the test can confirm `max_async_lock_depth` never exceeds `1` (no parallel holders) and that the counters reset to zero before/after each run.
+- Passing runs prove ASYNC-06 for the milestone audit because the host harness proves the async mutex survives concurrent sensor reads without dropped locks or multiple holders, and the README's command plus telemetry proves we can rerun the coverage on demand.
+
 ### Flash Commands
 
 ```bash

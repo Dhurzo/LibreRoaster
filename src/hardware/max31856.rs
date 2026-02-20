@@ -10,7 +10,11 @@ use embedded_hal::spi::SpiDevice;
 pub mod bt_spi {
     use crate::hardware::shared_spi::SpiDeviceWithCs;
     // Bean Temperature SPI type - using 'static for simplicity
-    pub type BtSpi = SpiDeviceWithCs<'static, esp_hal::spi::master::Spi<'static, esp_hal::Blocking>, esp_hal::gpio::Output<'static>>;
+    pub type BtSpi = SpiDeviceWithCs<
+        'static,
+        esp_hal::spi::master::Spi<'static, esp_hal::Blocking>,
+        esp_hal::gpio::Output<'static>,
+    >;
 }
 
 #[allow(dead_code)]
@@ -18,7 +22,11 @@ pub mod bt_spi {
 pub mod et_spi {
     use crate::hardware::shared_spi::SpiDeviceWithCs;
     // Environment Temperature SPI type - using 'static for simplicity
-    pub type EtSpi = SpiDeviceWithCs<'static, esp_hal::spi::master::Spi<'static, esp_hal::Blocking>, esp_hal::gpio::Output<'static>>;
+    pub type EtSpi = SpiDeviceWithCs<
+        'static,
+        esp_hal::spi::master::Spi<'static, esp_hal::Blocking>,
+        esp_hal::gpio::Output<'static>,
+    >;
 }
 
 #[derive(Debug, Clone, Copy)]

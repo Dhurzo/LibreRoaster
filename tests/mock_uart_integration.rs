@@ -99,7 +99,11 @@ fn init_service_container() {
 
     critical_section::with(|cs| {
         let container = ServiceContainer::get_instance();
-        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+        container
+            .roaster_sync
+            .borrow(cs)
+            .borrow_mut()
+            .replace(roaster);
         container
             .artisan_input
             .borrow(cs)

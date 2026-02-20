@@ -1,9 +1,9 @@
+use core::cell::UnsafeCell;
 use core::fmt;
-use embedded_io_async::Write;
 use embedded_io_async::Read;
+use embedded_io_async::Write;
 use esp_hal::uart::{Config, Uart, UartRx, UartTx};
 use static_cell::StaticCell;
-use core::cell::UnsafeCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
@@ -30,10 +30,7 @@ pub struct UartDriver {
 }
 
 impl UartDriver {
-    pub fn new(
-        tx: UartTx<'static, esp_hal::Async>,
-        rx: UartRx<'static, esp_hal::Async>,
-    ) -> Self {
+    pub fn new(tx: UartTx<'static, esp_hal::Async>, rx: UartRx<'static, esp_hal::Async>) -> Self {
         Self { tx, rx }
     }
 

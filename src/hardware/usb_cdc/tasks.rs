@@ -1,15 +1,17 @@
+use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
+use crate::config::ArtisanCommand;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use crate::log_channel;
 use crate::logging::channel::Channel;
+use core::cell::UnsafeCell;
 use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
-use log::warn;
 use log::debug;
-use core::cell::UnsafeCell;
+use log::warn;
 
 use super::driver::{get_usb_cdc_driver, UsbCdcError};
 
@@ -35,7 +37,32 @@ impl<T> SyncCell<T> {
 }
 
 /// Command queue for USB FIFO processing - reject-on-full behavior
-static USB_COMMAND_QUEUE: SyncCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>> = SyncCell::new(None);
+static USB_COMMAND_QUEUE: SyncCell<
+    Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>,
+> = SyncCell::new(None);
+
+#[cfg(all(test, target_arch = "riscv32"))]
+pub fn init_usb_command_queue_for_test() {
+    critical_section::with(|_| unsafe {
+        *USB_COMMAND_QUEUE.get() = Some(CommandQueue::new());
+    });
+}
+
+#[cfg(all(test, target_arch = "riscv32"))]
+pub fn drain_usb_command_queue_for_test() -> Vec<ArtisanCommand, USB_COMMAND_PIPE_SIZE> {
+    let mut drained: Vec<ArtisanCommand, USB_COMMAND_PIPE_SIZE> = Vec::new();
+
+    critical_section::with(|_| unsafe {
+        if let Some(queue) = (*USB_COMMAND_QUEUE.get()).as_mut() {
+            while let Some(cmd) = queue.pop() {
+                let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
+                let _ = drained.push(cmd);
+            }
+        }
+    });
+
+    drained
+}
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_reader_task() {
@@ -86,12 +113,10 @@ pub async fn usb_writer_task() {
                     }
                     Err(UsbCdcError::WouldBlock) => {
                         // Back-pressure detected - yield and retry with backoff
-                        back_pressure_start = Some(
-                            back_pressure_start.unwrap_or_else(|| {
-                                // First time back-pressure detected
-                                embassy_time::Instant::now().as_ticks()
-                            })
-                        );
+                        back_pressure_start = Some(back_pressure_start.unwrap_or_else(|| {
+                            // First time back-pressure detected
+                            embassy_time::Instant::now().as_ticks()
+                        }));
 
                         // Log warning if prolonged back-pressure
                         let now = embassy_time::Instant::now().as_ticks();
@@ -133,24 +158,7 @@ pub async fn usb_writer_task() {
     }
 }
 
-#[cfg(feature = "test")]
 pub fn process_usb_command_data(data: &[u8]) {
-    let mut command = Vec::<u8, 64>::new();
-
-    for &byte in data {
-        if byte == 0x0D {
-            handle_complete_usb_command(&command);
-            return;
-        }
-
-        if command.push(byte).is_err() {
-            send_usb_parse_error(ParseError::InvalidValue);
-            return;
-        }
-    }
-}
-
-pub(crate) fn process_usb_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
 
     for &byte in data {
@@ -184,6 +192,7 @@ fn handle_complete_usb_command(command: &[u8]) {
 
     match parse_result {
         Ok(cmd) => {
+            let mut depth = 0;
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
                 let mut guard = multiplexer.borrow(cs).borrow_mut();
@@ -203,10 +212,12 @@ fn handle_complete_usb_command(command: &[u8]) {
                                     debug!("USB command queue full, rejecting command");
                                 }
                             }
+                            depth = queue.len();
                         }
                     }
                 }
             });
+            record_queue_depth(depth);
         }
         Err(error) => {
             send_usb_parse_error(error);
@@ -243,17 +254,25 @@ pub async fn usb_queue_processor_task() {
 
     loop {
         // Try to pop a command from the USB queue and send to artisan_channel
-        let cmd_opt = critical_section::with(|_| {
-            unsafe {
-                (*USB_COMMAND_QUEUE.get()).as_mut().and_then(|queue| queue.pop())
+        let (cmd_opt, queue_depth) = critical_section::with(|_| unsafe {
+            if let Some(queue) = (*USB_COMMAND_QUEUE.get()).as_mut() {
+                let cmd = queue.pop();
+                let depth = queue.len();
+                (cmd, depth)
+            } else {
+                (None, 0)
             }
         });
+        record_queue_depth(queue_depth);
 
         if let Some(cmd) = cmd_opt {
             let channel = ServiceContainer::get_artisan_channel();
             if let Err(err) = channel.try_send(cmd) {
                 // Log but don't block - command will be reprocessed by Artisan timeout
-                debug!("USB queue processor: failed to send to artisan_channel: {:?}", err);
+                debug!(
+                    "USB queue processor: failed to send to artisan_channel: {:?}",
+                    err
+                );
             }
         }
 

@@ -49,13 +49,13 @@ use libreroaster::application::AppBuilder;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::fan::FanController;
 #[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::ledc_bus::LedcBus;
+#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::ssr::SsrControlSimple;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::ledc_bus::LedcBus;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
 

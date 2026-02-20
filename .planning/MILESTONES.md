@@ -1,5 +1,28 @@
 # Project Milestones: LibreRoaster
 
+## v4.0 Async Sensor Race Condition Fix (Shipped: 2026-02-20)
+
+**Delivered:** Replaced the take/replace sensor access pattern with an Embassy mutex-backed API, proved ASYNC-06 via a concurrent sensor read harness with lock-depth telemetry, and wired the USB instrumentation helper so the previously unused export is exercised and documented.
+
+**Phases completed:** 58, 60-61 (7 plans total)
+
+**Key accomplishments:**
+- Dual `ServiceContainer` mutex and async helpers eliminate the unsafe take/replace window while keeping ISR access intact.
+- Concurrent host harness plus `async-lock-depth-metrics` instrumentation proves ASYNC-06 and is documented for auditors.
+- `process_usb_command_data_test` now runs inside a riscv32 harness that resets the queue and documents the wiring in internalDoc/INSTRUMENTATION_README.MD.
+- README describes how to run the concurrent sensor harness and interpret the instrumentation metrics.
+
+**Stats:**
+- ~15 files created/modified (mutex migration, instrumentation tests, README, USB harness)
+- 3 phases, 7 plans, ~12 tasks
+- 1 day from start to ship (2026-02-19 → 2026-02-20)
+
+**Git range:** `00ca7c1` → `2293b65`
+
+**What's next:** `/gsd-new-milestone` to define requirements for the next focus (observability, automation, etc.).
+
+---
+
 ## v2.5 Artisan Edge Cases (Shipped: 2026-02-17)
 
 **Delivered:** Fixed Artisan READ framing edge cases, corrected ROR timing/reset behavior, and added regression tests.

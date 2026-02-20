@@ -323,3 +323,281 @@ Replace the unsafe lifetime transmute with proper static cell initialization or 
 
 *Stack research for: LibreRoaster v3.0 Safety Fixes*
 *Researched: 2026-02-18*
+
+---
+
+# Stack Research: Async Mutex Pattern for Race Condition Fix
+
+**Focus:** Replacing take/replace pattern with embassy_sync::Mutex for async-safe access  
+**Researched:** 2026-02-19  
+**Confidence:** HIGH
+
+---
+
+## Executive Summary
+
+The project needs to replace the unsafe `take()/replace()` pattern in `roaster_async_sensor_read()` with proper async mutex handling. The solution uses `embassy_sync::mutex::Mutex` with `CriticalSectionRawMutex`, which is already available in the existing `embassy-sync = "0.6.1"` dependency. **No new crates are required.**
+
+---
+
+## Current Problem: Race Condition
+
+### The Bug in service_container.rs (lines 110-132)
+
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    // Take roaster out of the container - RACE WINDOW STARTS
+    let mut roaster: RoasterControl = critical_section::with(|cs| {
+        let container = Self::get_instance();
+        container.roaster.borrow(cs).borrow_mut().take()
+            .expect("Roaster not initialized")
+    });
+
+    // ASYNC GAP - RoasterControl is None!
+    // Any task calling with_roaster() gets ContainerError::NotInitialized
+    roaster.read_sensors().await.map_err(|_| ContainerError::NotInitialized)?;
+    let _ = roaster.update_control(embademy_time::Instant::now());
+    // RACE WINDOW ENDS
+
+    // Put roaster back
+    critical_section::with(|cs| {
+        let container = Self::get_instance();
+        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+    });
+
+    Ok(())
+}
+```
+
+**The Problem:** Between `take()` and `replace()`, the `RoasterControl` is `None`. If any other async task calls `with_roaster()` during this window, it will fail with `ContainerError::NotInitialized`.
+
+---
+
+## Recommended Solution: embassy_sync::Mutex
+
+### No New Dependencies Required
+
+The project already includes `embassy-sync = "0.6.1"` in Cargo.toml. This version provides both:
+
+1. **`embassy_sync::mutex::Mutex<M, T>`** - Async mutex (holds lock across await points)
+2. **`embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex`** - Critical section raw mutex
+
+### Required Imports (Add to service_container.rs)
+
+```rust
+// Replace current imports:
+use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+// Remove:
+// use critical_section::Mutex;           // Old sync mutex (not needed)
+// use core::cell::RefCell;               // No longer needed for this field
+```
+
+---
+
+## Migration Steps
+
+### Step 1: Change ServiceContainer roaster field type
+
+**Before (service_container.rs:11-15):**
+```rust
+pub struct ServiceContainer {
+    pub roaster: Mutex<RefCell<Option<RoasterControl>>>,  // sync, needs take/replace
+    pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
+    pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
+}
+```
+
+**After:**
+```rust
+pub struct ServiceContainer {
+    // Async-safe: lock is held across await points
+    pub roaster: Mutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+    // These can stay as-is for now (sync access only):
+    pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
+    pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
+}
+```
+
+### Step 2: Update static initialization
+
+**Before (service_container.rs:66-71):**
+```rust
+static SERVICE: ServiceContainer = ServiceContainer {
+    roaster: Mutex::new(RefCell::new(None)),
+    // ...
+};
+```
+
+**After:**
+```rust
+static SERVICE: ServiceContainer = ServiceContainer {
+    roaster: Mutex::new(None),  // Direct Option<T>
+    // ...
+};
+```
+
+### Step 3: Replace with_roaster methods
+
+**Current sync pattern (cannot await):**
+```rust
+pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    critical_section::with(|cs| {
+        let container = Self::get_instance();
+        match container.roaster.borrow(cs).borrow_mut().as_mut() {
+            Some(roaster) => Ok(f(roaster)),
+            None => Err(ContainerError::NotInitialized),
+        }
+    })
+}
+```
+
+**New async pattern:**
+```rust
+pub async fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    let container = Self::get_instance();
+    let mut guard = container.roaster.lock().await;
+    match guard.as_mut() {
+        Some(roaster) => Ok(f(roaster)),
+        None => Err(ContainerError::NotInitialized),
+    }
+}
+```
+
+### Step 4: Fix roaster_async_sensor_read
+
+**Before (race condition):**
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    let mut roaster = critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().take()
+    });
+    roaster.read_sensors().await?;
+    critical_section::with(|cs| {
+        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+    });
+}
+```
+
+**After (async-safe):**
+```rust
+pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
+    let container = Self::get_instance();
+    let mut guard = container.roaster.lock().await;
+    if let Some(roaster) = guard.as_mut() {
+        roaster.read_sensors().await?;
+        let _ = roaster.update_control(embassy_time::Instant::now());
+    }
+    Ok(())
+}
+```
+
+**Key difference:** The lock is held across the entire async operation. Other tasks will block waiting for the lock, but will NOT encounter `None`.
+
+---
+
+## Key Distinction: embassy_sync Mutex Types
+
+| Type | Module | Lock Method | Holds Across Await? | Use Case |
+|------|--------|-------------|-------------------|----------|
+| `embassy_sync::mutex::Mutex` | `mutex` | `.lock().await` | **YES** | Async task-to-task sharing |
+| `embassy_sync::blocking_mutex::Mutex` | `blocking_mutex` | `.lock(\|data\| ...)` | NO | Short sync access only |
+| `critical_section::Mutex` | (crate) | `critical_section::with(\|cs\| ...)` | NO | ISR/main synchronization |
+
+**For this fix:** Use `embassy_sync::mutex::Mutex<CriticalSectionRawMutex, T>` because the lock MUST be held across `await` points.
+
+---
+
+## Breaking Changes to Consider
+
+### API Surface Changes
+
+1. **Sync to Async:** `with_roaster()` becomes async:
+   - Before: `ServiceContainer::with_roaster(|r| ...)` 
+   - After: `await ServiceContainer::with_roaster(|r| ...)`
+
+2. **Call sites update:** Any code calling `with_roaster()` in async context must await the result
+
+3. **Blocking code:** Code that calls `with_roaster()` from truly sync context (not async) needs redesign or dual-mode API
+
+### Dual-Mode Alternative (Optional)
+
+Keep both patterns for compatibility:
+```rust
+// Sync version for ISR compatibility (limited use)
+pub fn with_roaster_sync<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    critical_section::with(|cs| {
+        let container = Self::get_instance();
+        // Use a different underlying storage for sync path
+        // ... implementation
+    })
+}
+
+// Async version for task-to-task communication
+pub async fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
+where
+    F: FnOnce(&mut RoasterControl) -> R,
+{
+    let mut guard = ROASTER.lock().await;
+    // ...
+}
+```
+
+---
+
+## Testing Considerations
+
+### Unit Tests
+
+Update test patterns in `mock_uart_integration.rs`:
+- `ServiceContainer::with_roaster()` becomes async
+- Use `embassy_sync::blocking_mutex::raw::NoopRawMutex` for tests to avoid critical section complexity
+
+```rust
+#[cfg(test)]
+mod tests {
+    use embassy_sync::mutex::Mutex;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    
+    // Use NoopRawMutex for tests - no actual locking overhead
+    static TEST_MUTEX: Mutex<NoopRawMutex, Option<RoasterControl>> = 
+        Mutex::new(None);
+}
+```
+
+---
+
+## Summary of Changes
+
+| Component | Current | Recommended |
+|-----------|---------|-------------|
+| **Dependency** | embassy-sync 0.6.1 | No change needed |
+| **roaster field** | `Mutex<RefCell<Option<RoasterControl>>>` | `Mutex<CriticalSectionRawMutex, Option<RoasterControl>>` |
+| **with_roaster()** | Sync closure | Async (`.lock().await`) |
+| **take/replace** | Required for async gap | **Not needed** |
+| **Race condition** | Present | Fixed |
+
+---
+
+## Sources
+
+- [embassy_sync::mutex::Mutex - Embassy Docs](https://docs.embassy.dev/embassy-sync/git/default/mutex/struct.Mutex.html) - HIGH confidence
+- [embassy_sync::blocking_mutex - Embassy Docs](https://docs.embassy.dev/embassy-sync/git/default/blocking_mutex/struct.Mutex.html) - HIGH confidence
+- [CriticalSectionRawMutex - Embassy Docs](https://docs.embassy.dev/embassy-sync/git/default/blocking_mutex/raw/struct.CriticalSectionRawMutex.html) - HIGH confidence
+- [Current service_container.rs](file:///home/juan/Repos/LibreRoaster/src/application/service_container.rs) - Verified implementation
+- [Cargo.toml](file:///home/juan/Repos/LibreRoaster/Cargo.toml) - embassy-sync 0.6.1 confirmed
+
+---
+
+*Stack research for: Async Mutex Pattern - Race Condition Fix*
+*Researched: 2026-02-19*

@@ -15,6 +15,7 @@ path = "examples/artisan_test.rs"
 default = []
 std = ["embedded-hal-02"]
 test = ["std"]
+async-lock-depth-metrics = []
 embedded = []
 
 [[bin]]
@@ -104,6 +105,7 @@ log = "0.4.27"
 critical-section = { version = "1.2.0", features = ["std"] }
 static_cell = "2.1.1"
 embassy-sync = "0.6.1"
+futures = { version = "0.3", features = ["thread-pool"] }
 
 [profile.dev]
 # Rust debug is too slow.
