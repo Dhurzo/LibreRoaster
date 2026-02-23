@@ -46,6 +46,8 @@ The async architecture enables:
 | Command | Description |
 |---------|-------------|
 | `READ` | Request telemetry (ET, BT, heater%, fan%) |
+| `REG` | Regression-runner trigger that ramps heater/fan to 100%, keeps the watchdog fed, and emits SAFETY OT-REGRESSION records so automation can detect and monitor over-temperature regression cycles |
+| `STATUS/STAT` | Automation telemetry snapshot returning ET, BT, Heater, Fan, WatchdogOK, WatchdogFailures, LastWatchdogReason, LEDCGuardTimeouts, and RegressionActive (alias `STAT`) while surfacing watchdog guard/regression telemetry without touching `READ` |
 | `OT1 [0-100]` | Set heater power percentage |
 | `OT2 [0-100]` | Set fan speed percentage (auto-cuts heater if out of range) |
 | `IO3 [0-100]` | Set fan speed percentage |
@@ -56,6 +58,8 @@ The async architecture enables:
 | `CHAN [rate]` | Set communication rate (legacy) |
 | `UNITS [C/F]` | Set temperature units (Celsius/Fahrenheit) |
 | `FILT [value]` | Set filter value (legacy) |
+
+Automation-focused readers should consult [internalDoc/INSTRUMENTATION_README.MD](internalDoc/INSTRUMENTATION_README.MD) immediately after this table for the STATUS/STAT column definitions, payload expectations, and the way REG logs SAFETY OT-REGRESSION so instrumentation crews can react safely.
 
 ## Quick Start
 

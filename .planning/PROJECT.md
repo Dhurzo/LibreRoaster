@@ -8,6 +8,23 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
+## Current State
+
+v4.1 Documentation Update is shipped. Documentation cleanup, instrumentation automation, and API alignment now keep README/build instructions, automation hooks, and safety telemetry consistent with the source code.
+
+- Verified CLN/BLD requirements via the documentation cleanup and build/test guide updates so readers rely on the live code paths, prerequisites, and instrumentation hints.
+- Delivered WDT/OBS instrumentation: WatchdogFeeder, LEDC guard/timeouts, automated regression runner, and the deterministic STATUS command plus instrumentation guide.
+- Captured Phase 64 verification evidence, published REG/STATUS automation links, and privatized the regression helper so auditors see only the supported entry points.
+
+## Next Milestone Goals
+
+- Kick off `/gsd-new-milestone` to capture the next set of requirements for automation instrumentation, telemetry observability, and safety tooling now that the documentation/instrumentation sprint is complete.
+- Translate the STATUS/REG instrumentation flows, watchdog/guard telemetry, and regression helper learnings into measurable requirements and acceptance criteria for the upcoming milestone.
+- Outline the next phases (70+) so planning continues immediately after the documentation/instrumentation work and keeps instrumentation automation refinements moving forward.
+
+<details>
+<summary>Previous state</summary>
+
 ## Current Milestone: v4.1 Documentation Update
 
 **Goal:** Update readme with new code status and functionality. Clean all the information outdated and update it.
@@ -62,6 +79,8 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - Plan the next milestone via `/gsd-new-milestone`, capturing fresh requirements for observability, instrumentation automation, and safety improvements beyond the async sensor race fix.
 - Turn the remaining tech debt (deprecated `with_roaster()` helpers, host-only instrumentation helpers) into tracked requirements so they are prioritized in the next scope.
 - Define measurable outcomes (instrumentation metrics, USB telecommand stability, asynchronous robustness) as part of the requirements research phase.
+
+</details>
 
 ## Requirements
 
@@ -143,19 +162,23 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ DOCS-01: Update README.md to 4-value format (ET,BT,HEATER,FAN) — v3.0
 - ✓ PERF-01: Async MAX31856 temperature reading with embassy-time Timer — v3.0
 - ✓ PERF-02: Separate SSR and Fan LEDC timers — v3.0
-
-- ✓ ASYNC-01: Replace take/replace pattern with embassy_sync::Mutex — v4.0
-- ✓ ASYNC-02: Remove take/replace from `roaster_async_sensor_read()` — v4.0
-- ✓ ASYNC-03: Use `lock().await` inside the async sensor read path — v4.0
-- ✓ ASYNC-04: Provide an async `with_roaster_async()` helper — v4.0
-- ✓ ASYNC-05: Update every caller to the async API — v4.0
-- ✓ ASYNC-06: Concurrent sensor read host test proves the mutex is safe — v4.0
-- ✓ SYNC-01: Keep a `critical_section::Mutex` sync path for ISR contexts — v4.0
+- ✓ CLN-01: Remove outdated Artisan command information from README.md — v4.1 (Phase 62 documentation cleanup)
+- ✓ CLN-02: Remove outdated pinout or hardware information from README.md — v4.1 (Phase 62 documentation cleanup)
+- ✓ CLN-03: Ensure documentation accurately reflects the current codebase state — v4.1 (Phase 62 documentation cleanup)
+- ✓ BLD-01: Add clear, step-by-step instructions for building the firmware — v4.1 (Phase 63 build/test documentation)
+- ✓ BLD-02: Add instructions for running the test suite, including host integration tests — v4.1 (Phase 63 build/test documentation)
+- ✓ BLD-03: Document the specific commands and flags needed for development (`async-lock-depth-metrics`) — v4.1 (Phase 63 build/test documentation)
+- ✓ WDT-01: Feed the Task Watchdog each 100 ms control loop tick, record the last feed result, and expose failure reasons through SystemStatus — v4.1 (Phase 65 watchdog safety)
+- ✓ WDT-02: Add an LEDC guard timeout that aborts stalled fades, logs guard events, and frees hardware before the watchdog fires, then document the guard hits for auditing — v4.1 (Phase 65 watchdog safety)
+- ✓ WDT-03: Provide an over-temperature regression runner that drives the system into a safe shutdown, reports `SAFETY OT-REGRESSION` telemetry, and verifies the watchdog/guard stack stayed healthy before and after the event — v4.1 (Phase 65 watchdog safety)
+- ✓ OBS-01: Provide a machine-readable instrumentation snapshot that exposes watchdog feed health, last failure reason, LEDC guard timeout counts, and regression activity alongside the existing sensor outputs — v4.1 (Phase 66 instrumentation observability)
+- ✓ OBS-02: Expose the instrumentation snapshot through a new Artisan command so automation and auditors can poll it without changing the standard `READ` response — v4.1 (Phase 66 instrumentation observability)
+- ✓ OBS-03: Document the `STATUS` payload and parsing expectations so instrumentation automation scripts and auditors know how to interpret watchdog and guard telemetry — v4.1 (Phase 66 instrumentation observability)
 
 ### Active
 
-- [ ] Define the next milestone requirements via `/gsd-new-milestone` (observability, instrumentation, and safety automation).
-- [ ] Document instrumentation automation and telemetry goals that surfaced during the async sensor migration.
+- [ ] Define the next milestone requirements via `/gsd-new-milestone` (automation instrumentation, telemetry observability, and safety tooling).
+- [ ] Document instrumentation automation and telemetry goals that surfaced during the documentation/instrumentation sprint so the next milestone starts with measurable outcomes.
 
 ### Out of Scope
 
@@ -192,6 +215,8 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 **v4.0 shipped:** Async sensor read now relies on Embassy mutex locking, concurrent host harness proves ASYNC-06 with instrumentation, and the USB instrumentation helper is wired/documented for auditors.
 
+**v4.1 shipped:** Documentation cleaned (README, FLASH_GUIDE, macOS hints), STATUS instrumentation published, REG/STATUS automation hooks documented, Watchdog/LED guard/regression telemetry observable, and the regression helper API aligned with actual consumers.
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
@@ -220,6 +245,9 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | Feature-gated async lock depth telemetry | Keep instrumentation out of release builds while proving ASYNC-06 | ✓ Implemented via `async-lock-depth-metrics` feature |
 | Reset lock-depth metrics between runs | Ensure reproducible instrumentation for auditors | ✓ Documented in README and harness |
 | USB instrumentation harness handles `process_usb_command_data_test` | Exercised unused export while keeping production tasks untouched | ✓ Wired with riscv32-only runner and documentation |
+| Deterministic STATUS CSV layout | Keep automation parsing stable | ✓ Implemented (v4.1) |
+| README links to REG/STATUS/STAT automation hooks | Make automation readers discover instrumentation without digging through internalDoc | ✓ Implemented (v4.1) |
+| Privitized regression helper exports | Align the API surface with actual callers (regression_task/request_regression) | ✓ Implemented (v4.1) |
 
 ## Constraints
 
@@ -232,4 +260,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-20 — v4.0 milestone shipped*
+*Last updated: 2026-02-23 — v4.1 milestone shipped*

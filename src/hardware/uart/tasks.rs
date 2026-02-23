@@ -285,9 +285,8 @@ pub async fn queue_processor_task() {
 
 // Keep legacy function for compatibility - now delegates to queue-based processing
 pub fn process_command_data(data: &[u8]) {
-    let event_queue_initialized = critical_section::with(|_| unsafe {
-        (*EVENT_QUEUE.get()).as_ref().is_some()
-    });
+    let event_queue_initialized =
+        critical_section::with(|_| unsafe { (*EVENT_QUEUE.get()).as_ref().is_some() });
 
     if event_queue_initialized {
         // Standard path: enqueue bytes and process complete frames.

@@ -2,6 +2,7 @@ use crate::config::ArtisanCommand;
 use crate::control::RoasterControl;
 use crate::input::multiplexer::CommandMultiplexer;
 use crate::input::ArtisanInput;
+use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use core::cell::RefCell;
 use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -16,6 +17,7 @@ pub struct ServiceContainer {
     pub roaster_sync: Mutex<RefCell<Option<RoasterControl>>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
     pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
+    pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
 }
 
 pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 8;
@@ -56,6 +58,30 @@ impl ServiceContainer {
         });
     }
 
+    pub fn init_watchdog(&self, feeder: WatchdogFeeder) {
+        critical_section::with(|cs| {
+            self.watchdog_feeder.borrow(cs).replace(Some(feeder));
+        });
+    }
+
+    pub fn with_watchdog<R, F>(&self, f: F) -> Result<R, ContainerError>
+    where
+        F: FnOnce(&mut WatchdogFeeder) -> Result<R, WatchdogError>,
+    {
+        critical_section::with(|cs| {
+            let mut guard = self.watchdog_feeder.borrow(cs).borrow_mut();
+            if let Some(feeder) = guard.as_mut() {
+                f(feeder).map_err(ContainerError::Watchdog)
+            } else {
+                Err(ContainerError::WatchdogUninitialized)
+            }
+        })
+    }
+
+    pub fn watchdog_available(&self) -> bool {
+        critical_section::with(|cs| self.watchdog_feeder.borrow(cs).borrow().is_some())
+    }
+
     pub fn get_instance() -> &'static ServiceContainer {
         // Using a static mutable reference with unsafe code for singleton pattern
         // This is safe because it's only called once during initialization
@@ -64,6 +90,7 @@ impl ServiceContainer {
             roaster_sync: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
             multiplexer: Mutex::new(RefCell::new(None)),
+            watchdog_feeder: Mutex::new(RefCell::new(None)),
         };
         &SERVICE
     }
@@ -121,11 +148,15 @@ impl ServiceContainer {
     }
 
     pub async fn read_bean_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| Ok(roaster.get_status().bean_temp)).await.unwrap_or(Ok(0.0))
+        Self::with_roaster_async(|roaster| Ok(roaster.get_status().bean_temp))
+            .await
+            .unwrap_or(Ok(0.0))
     }
 
     pub async fn read_env_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| Ok(roaster.get_status().env_temp)).await.unwrap_or(Ok(0.0))
+        Self::with_roaster_async(|roaster| Ok(roaster.get_status().env_temp))
+            .await
+            .unwrap_or(Ok(0.0))
     }
 
     /// Perform async sensor read using the async lock
@@ -217,12 +248,18 @@ impl ServiceContainer {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContainerError {
     NotInitialized,
+    WatchdogUninitialized,
+    Watchdog(WatchdogError),
 }
 
 impl core::fmt::Display for ContainerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ContainerError::NotInitialized => write!(f, "Service container not initialized"),
+            ContainerError::WatchdogUninitialized => write!(f, "Watchdog feeder not initialized"),
+            ContainerError::Watchdog(err) => {
+                write!(f, "Watchdog error: {}", err.reason())
+            }
         }
     }
 }

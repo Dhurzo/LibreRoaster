@@ -663,5 +663,6 @@ fn create_mock_status() -> libreroaster::config::SystemStatus {
         ssr_last_duty_delta_ticks: 0,
         ssr_retry_count: 0,
         ssr_cycle_guard_busy_until_ms: 0,
+        ..libreroaster::config::SystemStatus::default()
     }
 }

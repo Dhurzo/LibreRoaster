@@ -143,6 +143,10 @@ impl RoasterControl {
         self.status
     }
 
+    pub fn status_mut(&mut self) -> &mut SystemStatus {
+        &mut self.status
+    }
+
     pub fn get_state(&self) -> RoasterState {
         self.state
     }
@@ -167,6 +171,10 @@ impl RoasterControl {
         }
 
         Ok(())
+    }
+
+    pub fn mark_overtemp_regression_active(&mut self, active: bool) {
+        self.status.overtemp_regression_active = active;
     }
 
     pub fn process_command(
@@ -548,6 +556,19 @@ impl RoasterControl {
                 info!("Artisan+ DOWN command processed");
             }
 
+            crate::config::ArtisanCommand::StatusReport => {
+                self.status.ssr_hardware_status = self.heater.get_status();
+
+                let response =
+                    crate::output::artisan::ArtisanFormatter::format_status_response(&self.status);
+
+                debug!(
+                    "STATUS command - SSR status: {:?}, response generated",
+                    self.status.ssr_hardware_status
+                );
+                debug!("STATUS payload: {}", response);
+            }
+
             crate::config::ArtisanCommand::ReadStatus => {
                 self.status.ssr_hardware_status = self.heater.get_status();
 
@@ -572,6 +593,9 @@ impl RoasterControl {
 
             crate::config::ArtisanCommand::Chan(_) => {
                 debug!("Chan command received - initialization handled by multiplexer");
+            }
+            crate::config::ArtisanCommand::RunRegression => {
+                info!("Artisan regression command received");
             }
             crate::config::ArtisanCommand::Units(is_fahrenheit) => {
                 let scale = if is_fahrenheit {

@@ -1,5 +1,29 @@
 # Project Milestones: LibreRoaster
 
+## v4.1 Documentation Update (Shipped: 2026-02-23)
+
+**Delivered:** Finalized the documentation cleanup, closed audit gaps, shipped Watchdog/LEDC/regression instrumentation observability, published the STATUS automation snapshot, linked REG/STATUS hooks, and aligned the regression helper API with its actual consumers.
+
+**Phases completed:** 62-69 (11 plans total)
+
+**Key accomplishments:**
+- Rewrote the README/FLASH_GUIDE with correct build/test instructions, binary paths, and macOS guidance so the docs now match the live code.
+- Captured Phase 64 verification evidence and closed the audit gap for every documentation inconsistency.
+- Delivered the WatchdogFeeder, LEDC guard, and regression runner instrumentation and surfaced the data through `SystemStatus` and the deterministic STATUS command.
+- Documented REG/STATUS/STAT automation hooks and linked readers directly to `internalDoc/INSTRUMENTATION_README.MD` so automation engineers can find the payload spec without digging.
+- Privatized the regression helper export while keeping `regression_task`/`request_regression` public so the API surface reflects actual consumers.
+
+**Stats:**
+- ~25 files created/modified (docs, instrumentation, safety, README entries)
+- 8 phases, 11 plans, ~20+ tasks
+- 5 days from start to ship (2026-02-18 → 2026-02-23)
+
+**Git range:** `2293b65` → `6baf634`
+
+**What's next:** `/gsd-new-milestone` to define the instrumentation automation/telemetry/safety requirements that will guide phases 70+.
+
+---
+
 ## v4.0 Async Sensor Race Condition Fix (Shipped: 2026-02-20)
 
 **Delivered:** Replaced the take/replace sensor access pattern with an Embassy mutex-backed API, proved ASYNC-06 via a concurrent sensor read harness with lock-depth telemetry, and wired the USB instrumentation helper so the previously unused export is exercised and documented.

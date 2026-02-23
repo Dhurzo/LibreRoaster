@@ -161,6 +161,7 @@ fn read_response_deterministic() {
         ssr_last_duty_delta_ticks: 0,
         ssr_retry_count: 0,
         ssr_cycle_guard_busy_until_ms: 0,
+        ..SystemStatus::default()
     };
 
     let first = ArtisanFormatter::format_read_response(&status, status.fan_output);
@@ -196,6 +197,7 @@ fn read_response_boundaries() {
         ssr_last_duty_delta_ticks: 0,
         ssr_retry_count: 0,
         ssr_cycle_guard_busy_until_ms: 0,
+        ..SystemStatus::default()
     };
 
     let response = ArtisanFormatter::format_read_response(&status, status.fan_output);

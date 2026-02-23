@@ -365,6 +365,11 @@ mod artisan_command_handler_tests {
             ssr_last_duty_delta_ticks: 0,
             ssr_retry_count: 0,
             ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
         }
     }
 

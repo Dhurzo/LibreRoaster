@@ -66,7 +66,10 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
 
     let cmd = parts[0];
 
-    if cmd.eq_ignore_ascii_case("READ") && parts.len() == 1 {
+    if (cmd.eq_ignore_ascii_case("STATUS") || cmd.eq_ignore_ascii_case("STAT")) && parts.len() == 1
+    {
+        Ok(ArtisanCommand::StatusReport)
+    } else if cmd.eq_ignore_ascii_case("READ") && parts.len() == 1 {
         Ok(ArtisanCommand::ReadStatus)
     } else if cmd.eq_ignore_ascii_case("START") && parts.len() == 1 {
         Ok(ArtisanCommand::StartRoast)
@@ -76,6 +79,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         Ok(ArtisanCommand::IncreaseHeater)
     } else if cmd.eq_ignore_ascii_case("DOWN") && parts.len() == 1 {
         Ok(ArtisanCommand::DecreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("REG") && parts.len() == 1 {
+        Ok(ArtisanCommand::RunRegression)
     } else if cmd.eq_ignore_ascii_case("OT1") {
         if parts.len() == 2 {
             let value = parse_percentage(parts[1])?;
@@ -148,6 +153,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_status_command() {
+        let result = parse_artisan_command("STATUS");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
+    }
+
+    #[test]
+    fn test_parse_stat_command_alias() {
+        let result = parse_artisan_command("STAT");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
+    }
+
+    #[test]
     fn test_parse_start_command() {
         let result = parse_artisan_command("START");
         assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
@@ -169,6 +186,12 @@ mod tests {
     fn test_parse_stop_command() {
         let result = parse_artisan_command("STOP");
         assert!(matches!(result, Ok(ArtisanCommand::EmergencyStop)));
+    }
+
+    #[test]
+    fn test_parse_regression_command() {
+        let result = parse_artisan_command("REG");
+        assert!(matches!(result, Ok(ArtisanCommand::RunRegression)));
     }
 
     #[test]

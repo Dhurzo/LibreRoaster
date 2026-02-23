@@ -135,6 +135,35 @@ impl ArtisanFormatter {
         )
     }
 
+    pub fn format_status_response(status: &SystemStatus) -> String {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(status.fan_output);
+        let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
+        let failure_count = status.watchdog_consecutive_failures;
+        let failure_reason = status.watchdog_last_failure.unwrap_or("none");
+        let guard_timeouts = status.ledc_guard_timeouts;
+        let regression_flag = if status.overtemp_regression_active {
+            1
+        } else {
+            0
+        };
+
+        format!(
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{}",
+            et,
+            bt,
+            heater,
+            fan,
+            watchdog_flag,
+            failure_count,
+            failure_reason,
+            guard_timeouts,
+            regression_flag
+        )
+    }
+
     pub fn format_chan_ack(channel: u16) -> String {
         format!("#{}", channel)
     }
@@ -220,6 +249,11 @@ mod tests {
             ssr_last_duty_delta_ticks: 0,
             ssr_retry_count: 0,
             ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
         }
     }
 
@@ -264,6 +298,32 @@ mod tests {
 
         assert_eq!(output, "0.0,150.5,0.0,25.0");
         assert_eq!(output.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_status_response_columns_order() {
+        let mut status = create_test_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        assert_eq!(output, "120.3,150.5,88.0,42.0,0,3,timeout,7,1");
+        assert_eq!(output.split(',').count(), 9);
+    }
+
+    #[test]
+    fn test_format_status_response_none_reason() {
+        let status = create_test_status();
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        assert!(output.contains(",none,"));
+        assert!(output.ends_with(",0,none,0,0"));
     }
 
     #[test]

@@ -1,46 +1,12 @@
 #![cfg(target_arch = "riscv32")]
 
+use crate::hardware::ledc_guard::{LedcGuard, LedcGuardError};
 use crate::hardware::ssr::LedcDutyReader;
 use core::cell::{Cell, RefCell};
-use core::hint::spin_loop;
 use esp32c3::LEDC;
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::LowSpeed;
-use log::info;
-use portable_atomic::{AtomicBool, Ordering};
-
-struct LedcGuard {
-    locked: AtomicBool,
-}
-
-impl LedcGuard {
-    const fn new() -> Self {
-        Self {
-            locked: AtomicBool::new(false),
-        }
-    }
-
-    fn lock(&self, channel_name: &'static str) -> LedcGuardToken<'_> {
-        if self.locked.swap(true, Ordering::Acquire) {
-            info!("LEDC guard busy - waiting for {}", channel_name);
-            while self.locked.swap(true, Ordering::Acquire) {
-                spin_loop();
-            }
-        }
-
-        LedcGuardToken { guard: self }
-    }
-}
-
-struct LedcGuardToken<'a> {
-    guard: &'a LedcGuard,
-}
-
-impl Drop for LedcGuardToken<'_> {
-    fn drop(&mut self) {
-        self.guard.locked.store(false, Ordering::Release);
-    }
-}
+use log::warn;
 
 struct ChannelEntry<'a> {
     channel: RefCell<channel::Channel<'a, LowSpeed>>,
@@ -99,15 +65,16 @@ impl<'a> LedcBus<'a> {
         }
     }
 
-    fn with_channel_mut<R, F>(&self, entry: &ChannelEntry<'a>, f: F) -> R
+    fn with_channel_mut<R, F>(&self, entry: &ChannelEntry<'a>, f: F) -> Result<R, LedcGuardError>
     where
         F: FnOnce(&mut channel::Channel<'a, LowSpeed>) -> R,
     {
-        let _guard = self.guard.lock(entry.name);
+        let guard = self.guard.try_acquire(entry.name)?;
         let mut channel_ref = entry.channel.borrow_mut();
         let result = f(&mut channel_ref);
         drop(channel_ref);
-        result
+        drop(guard);
+        Ok(result)
     }
 
     fn read_register(&self, entry: &ChannelEntry<'a>) -> u16 {
@@ -149,10 +116,20 @@ impl<'a> LedcChannelHandle<'a> {
 
     pub fn set_duty(&self, duty: u8) -> Result<(), channel::Error> {
         let entry = self.entry();
-        self.bus
-            .with_channel_mut(entry, |channel| channel.set_duty(duty))?;
-        self.bus.store_duty(entry, duty);
-        Ok(())
+        match self
+            .bus
+            .with_channel_mut(entry, |channel| channel.set_duty(duty))
+        {
+            Ok(Ok(())) => {
+                self.bus.store_duty(entry, duty);
+                Ok(())
+            }
+            Ok(Err(err)) => Err(err),
+            Err(err) => {
+                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                Err(channel::Error::Channel)
+            }
+        }
     }
 
     pub fn start_duty_fade(
@@ -162,11 +139,19 @@ impl<'a> LedcChannelHandle<'a> {
         duration_ms: u16,
     ) -> Result<(), channel::Error> {
         let entry = self.entry();
-        self.bus.with_channel_mut(entry, |channel| {
+        match self.bus.with_channel_mut(entry, |channel| {
             channel.start_duty_fade(start_duty, end_duty, duration_ms)
-        })?;
-        self.bus.store_duty(entry, end_duty);
-        Ok(())
+        }) {
+            Ok(Ok(())) => {
+                self.bus.store_duty(entry, end_duty);
+                Ok(())
+            }
+            Ok(Err(err)) => Err(err),
+            Err(err) => {
+                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                Err(channel::Error::Channel)
+            }
+        }
     }
 
     pub fn applied_duty(&self) -> u8 {
@@ -190,8 +175,16 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
         config: channel::config::Config<'a, LowSpeed>,
     ) -> Result<(), channel::Error> {
         let entry = self.entry();
-        self.bus
+        match self
+            .bus
             .with_channel_mut(entry, |channel| channel.configure(config))
+        {
+            Ok(result) => result,
+            Err(err) => {
+                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                Err(channel::Error::Channel)
+            }
+        }
     }
 
     fn set_duty(&self, duty_pct: u8) -> Result<(), channel::Error> {
@@ -209,8 +202,16 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
 
     fn is_duty_fade_running(&self) -> bool {
         let entry = self.entry();
-        self.bus
+        match self
+            .bus
             .with_channel_mut(entry, |channel| channel.is_duty_fade_running())
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                false
+            }
+        }
     }
 }
 

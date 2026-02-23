@@ -5,6 +5,7 @@ pub mod fan;
 pub mod fan;
 #[cfg(target_arch = "riscv32")]
 pub mod ledc_bus;
+pub mod ledc_guard;
 pub mod max31856;
 pub mod shared_spi;
 #[cfg(target_arch = "riscv32")]

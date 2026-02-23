@@ -8,6 +8,8 @@ use crate::output::artisan::ArtisanFormatter;
 use embassy_executor::Spawner;
 use esp_hal::peripherals::UART0;
 
+use crate::safety::regression;
+use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use alloc::boxed::Box;
 use critical_section;
 use log::info;
@@ -109,6 +111,8 @@ impl<'a> AppBuilder<'a> {
         });
 
         ServiceContainer::init_multiplexer();
+        let watchdog = WatchdogFeeder::initialize().map_err(|e| BuildError::WatchdogInit(e))?;
+        ServiceContainer::get_instance().init_watchdog(watchdog);
 
         info!("Application components initialized successfully");
 
@@ -175,6 +179,13 @@ impl Application {
             .spawn(super::control_loop_task())
             .map_err(|e| TaskError::SpawnFailed(e))?;
 
+        #[cfg(target_arch = "riscv32")]
+        {
+            spawner
+                .spawn(regression::regression_task())
+                .map_err(|e| TaskError::SpawnFailed(e))?;
+        }
+
         info!("All application tasks started successfully");
         Ok(())
     }
@@ -187,6 +198,7 @@ pub enum BuildError {
     FanInit(crate::hardware::fan::FanError),
     SsrInit(crate::hardware::ssr::SsrError),
     ArtisanInit(crate::input::InputError),
+    WatchdogInit(WatchdogError),
     ContainerInit(&'static str),
     MissingPeripheral(&'static str),
 }
@@ -199,6 +211,7 @@ impl core::fmt::Display for BuildError {
             BuildError::FanInit(e) => write!(f, "Fan controller initialization failed: {:?}", e),
             BuildError::SsrInit(e) => write!(f, "SSR control initialization failed: {:?}", e),
             BuildError::ArtisanInit(e) => write!(f, "Artisan input initialization failed: {:?}", e),
+            BuildError::WatchdogInit(e) => write!(f, "Watchdog initialization failed: {:?}", e),
             BuildError::ContainerInit(e) => {
                 write!(f, "Service container initialization failed: {}", e)
             }

@@ -1,9 +1,13 @@
 extern crate alloc;
 
-use crate::application::service_container::ServiceContainer;
+use crate::application::service_container::{ContainerError, ServiceContainer};
+use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
+use crate::safety::regression;
+use crate::safety::watchdog::WatchdogError;
+use core::fmt::Write;
 use embassy_executor::task;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
@@ -23,11 +27,16 @@ pub async fn control_loop_task() {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     let output_channel = ServiceContainer::get_output_channel();
     let mut was_continuous = false;
+    let mut last_guard_total_timeouts = ledc_guard::total_timeouts();
 
     loop {
         let current_time = Instant::now();
 
         while let Ok(command) = cmd_channel.try_receive() {
+            if let crate::config::ArtisanCommand::RunRegression = command {
+                regression::request_regression();
+                continue;
+            }
             let output_channel = ServiceContainer::get_output_channel();
 
             let _ = ServiceContainer::with_roaster_async(
@@ -36,7 +45,14 @@ pub async fn control_loop_task() {
                         Ok(()) => {
                             debug!("Processed Artisan command successfully");
 
-                            if let crate::config::ArtisanCommand::ReadStatus = command {
+                            if let crate::config::ArtisanCommand::StatusReport = command {
+                                let status = roaster.get_status();
+                                let response = ArtisanFormatter::format_status_response(&status);
+
+                                if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                                    let _ = output_channel.try_send(line);
+                                }
+                            } else if let crate::config::ArtisanCommand::ReadStatus = command {
                                 let status = roaster.get_status();
                                 // Use full READ response with 4 values per current protocol
                                 let response = ArtisanFormatter::format_read_response_full(&status);
@@ -62,14 +78,21 @@ pub async fn control_loop_task() {
         if sensor_err.is_none() {
             debug!(
                 "Sensors: BT: {:.1}°C, ET: {:.1}°C",
-                ServiceContainer::read_bean_temperature().await.unwrap_or(0.0),
-                ServiceContainer::read_env_temperature().await.unwrap_or(0.0)
+                ServiceContainer::read_bean_temperature()
+                    .await
+                    .unwrap_or(0.0),
+                ServiceContainer::read_env_temperature()
+                    .await
+                    .unwrap_or(0.0)
             );
         } else {
             warn!("Sensor read error: {:?}", sensor_err);
         }
 
         // Do sync control update separately
+        let guard_total_timeouts = ledc_guard::total_timeouts();
+        let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
+
         let _update_result = ServiceContainer::with_roaster_async(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| -> Result<(), ()> {
                 match roaster.update_control(current_time) {
@@ -84,6 +107,50 @@ pub async fn control_loop_task() {
                         warn!("Control update error: {:?}", e);
                     }
                 }
+
+                let status = roaster.status_mut();
+                let previous_watchdog_failure = status.watchdog_last_failure;
+                let mut report_watchdog_failure = |reason: &'static str| {
+                    warn!("SAFETY WATCHDOGFEED fail: {}", reason);
+                    status.watchdog_feed_ok = false;
+                    status.watchdog_last_failure = Some(reason);
+                    status.watchdog_consecutive_failures =
+                        status.watchdog_consecutive_failures.saturating_add(1);
+                    if status.watchdog_consecutive_failures >= 2 {
+                        status.fault_condition = true;
+                    }
+                    if previous_watchdog_failure != Some(reason) {
+                        let mut safety = String::<128>::new();
+                        let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
+                        let _ = output_channel.try_send(safety);
+                    }
+                };
+
+                match ServiceContainer::get_instance()
+                    .with_watchdog(|watchdog| watchdog.feed_async(status.bean_temp))
+                {
+                    Ok(_) => {
+                        status.watchdog_feed_ok = true;
+                        status.watchdog_last_failure = None;
+                        status.watchdog_consecutive_failures = 0;
+                    }
+                    Err(ContainerError::Watchdog(err)) => {
+                        report_watchdog_failure(err.reason());
+                    }
+                    Err(ContainerError::WatchdogUninitialized) => {
+                        report_watchdog_failure(WatchdogError::NotInitialized.reason());
+                    }
+                    Err(err) => {
+                        warn!("Watchdog container error: {:?}", err);
+                    }
+                }
+
+                status.ledc_guard_timeouts = guard_total_timeouts;
+                if guard_timeout_happened {
+                    let mut guard_msg = String::<128>::new();
+                    let _ = guard_msg.push_str("SAFETY LEDC-GUARD timeout");
+                    let _ = output_channel.try_send(guard_msg);
+                }
                 Ok(())
             },
         );
@@ -91,6 +158,8 @@ pub async fn control_loop_task() {
         if let Some(e) = sensor_err {
             info!("Service container error in control loop: {:?}", e);
         }
+
+        last_guard_total_timeouts = guard_total_timeouts;
 
         let mut is_continuous_now = false;
         let mut status_for_output = None;

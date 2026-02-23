@@ -45,6 +45,10 @@ pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
 
 pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
 
+/// Control loop is expected to feed the Task Watchdog at this cadence.
+pub const WATCHDOG_FEED_INTERVAL_MS: u64 = 100;
+pub const LEDC_GUARD_TIMEOUT_MS: u64 = 40;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {
     Idle,
@@ -59,6 +63,7 @@ pub enum RoasterState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtisanCommand {
     ReadStatus,
+    StatusReport,
     StartRoast,
     SetHeater(u8),
     SetFan(u8),
@@ -71,6 +76,7 @@ pub enum ArtisanCommand {
     Chan(u16),
     Units(bool),
     Filt(u8),
+    RunRegression,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,6 +162,11 @@ pub struct SystemStatus {
     pub ssr_last_duty_delta_ticks: i16,
     pub ssr_retry_count: u8,
     pub ssr_cycle_guard_busy_until_ms: u64,
+    pub watchdog_feed_ok: bool,
+    pub watchdog_last_failure: Option<&'static str>,
+    pub watchdog_consecutive_failures: u8,
+    pub ledc_guard_timeouts: u16,
+    pub overtemp_regression_active: bool,
 }
 
 impl Default for SystemStatus {
@@ -174,6 +185,11 @@ impl Default for SystemStatus {
             ssr_last_duty_delta_ticks: 0,
             ssr_retry_count: 0,
             ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
         }
     }
 }
