@@ -8,9 +8,21 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current State
+## Current Milestone: v4.1 Documentation Update
 
-v4.0 shipped: Sensor reading now relies on an Embassy mutex-backed API, ASYNC-06 is proven by a concurrent host harness with `async-lock-depth-metrics`, and the USB instrumentation helper is wired and documented so every exported hook is exercised.
+**Goal:** Update readme with new code status and functionality. Clean all the information outdated and update it.
+
+**Status: SHIPPED** ✓
+
+**Target features:**
+- Cleanup outdated info
+- Recent changes (async changes, transport resilience)
+- Build/Test instructions
+- Documentation consistency (binary paths, target name, macOS ports)
+
+---
+
+**v4.1 shipped:** All documentation updated - README with build/test instructions, FLASH_GUIDE with correct binary paths, macOS port references added.
 
 <details>
 <summary>Previous state</summary>

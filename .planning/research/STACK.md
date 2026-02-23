@@ -601,3 +601,46 @@ mod tests {
 
 *Stack research for: Async Mutex Pattern - Race Condition Fix*
 *Researched: 2026-02-19*
+
+---
+
+# Stack Research: Documentation Update (LibreRoaster v4.1)
+
+**Focus:** README cleanup, build/test instructions, recent async changes
+**Researched:** 2026-02-20
+**Confidence:** HIGH
+
+---
+
+## Recommended Stack
+
+### Documentation Frameworks
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Standard Markdown (`.md`) | N/A | Primary project documentation (README.md) | Universal standard for repository landing pages. Zero-dependency, native support in GitHub/GitLab, and perfectly suited for build instructions and feature status updates. |
+| `cargo doc` | Built-in (Rust) | (Optional) API Documentation | Since the project uses Rust, leveraging the built-in documentation tool ensures code comments remain in sync with the codebase without adding external dependencies. |
+
+### Supporting Libraries / Tooling
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `markdownlint-cli` | `~0.40.0` | (Optional) Markdown formatting and linting | Use to enforce consistent styling across the README when adding new build instructions and async code documentation. |
+
+## What NOT to Add and Why
+
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Static Site Generators | None (Stick to README) | Docusaurus, Sphinx, mdBook | **Overkill for this milestone.** The scope is explicitly "README cleanup, build/test instructions, recent async changes". Introducing a full SSG would add unnecessary build complexity and maintenance overhead for a single-file update. |
+| External Runtime Dependencies | None | N/A | Documentation updates should not bloat the embedded firmware size or compilation time. No new crates or libraries should be added to `Cargo.toml` `[dependencies]`. |
+
+## Integration Points
+
+- **README.md Structure**: 
+  - Update the "Status" or "Features" section to reflect the new async code (Async Mutex for sensors, USB CDC + UART dual channel support).
+  - Remove deprecated ARTISAN legacy info.
+  - Add a dedicated "Build Instructions" section outlining the necessary toolchain (e.g., `rustup target add riscv32imc-unknown-none-elf`, `cargo build --release`).
+- **Testing Instructions**: Add a "Testing" section documenting how to run the existing Mock UART integration tests (`cargo test`).
+
+## Sources
+
+- Ecosystem standard practices for Rust/Embedded project documentation (HIGH)
+- Project scope definition (Documentation Update milestone) (HIGH)

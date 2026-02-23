@@ -1,186 +1,122 @@
 # Project Research Summary
 
-**Project:** LibreRoaster  
-**Domain:** Embedded Rust firmware for coffee roaster control (ESP32-C3)  
-**Researched:** 2026-02-19  
+**Project:** LibreRoaster
+**Domain:** Embedded Rust / ESP32-C3 Firmware Safety Fixes & Async Synchronization
+**Researched:** 2026-02-20
 **Confidence:** HIGH
-
----
 
 ## Executive Summary
 
-LibreRoaster is an ESP32-C3-based coffee roaster firmware requiring critical safety fixes to eliminate Use-After-Free bugs, unsafe static initialization, and race conditions. Research confirms the recommended approach uses **StaticCell** patterns for safe static initialization and **embassy_sync::Mutex** with **CriticalSectionRawMutex** to replace the unsafe `take()/replace()` pattern that causes race windows during async operations. The existing embassy-rs async executor (0.9.1) and esp-hal (1.0.0) stack are validated—no new dependencies required. Key risks include blocking I/O in async contexts, LEDC timer conflicts between SSR (1Hz) and Fan (25kHz) PWM channels, and documentation drift. The architecture follows a handler chain pattern with safety handlers first, dual verification at control boundaries, and fail-safe defaults.
+LibreRoaster is an embedded Rust application running on the ESP32-C3, focusing on hardware reliability (SSR duty clamps, LEDC fan control, responsive UART/USB). The research identifies critical safety vulnerabilities in the current codebase, primarily stemming from unsafe static initialization (`make_static` causing Use-After-Free), race conditions in async sensor reads (the `take/replace` pattern), and blocking I/O starving the async executor.
 
----
+The recommended approach is a comprehensive refactor utilizing established, safe patterns provided by the existing stack. This includes replacing unsafe manual statics with `static_cell::StaticCell`, migrating from `critical_section::Mutex` to `embassy_sync::Mutex<CriticalSectionRawMutex, T>` for async-safe mutual exclusion without the `take/replace` vulnerability, and ensuring all blocking delays and hardware abstractions properly utilize async `.await` semantics.
+
+Key risks involve improper initialization of `StaticCell` (which panics if initialized twice), incorrectly bridging synchronous interrupt contexts with asynchronous tasks, and failing to properly isolate hardware peripherals like LEDC timers. Mitigating these requires strict adherence to initialization patterns at the module scope and thorough validation against ESP32-C3 hardware constraints.
 
 ## Key Findings
 
 ### Recommended Stack
 
-**Core technologies** (from STACK.md):
-- **esp-hal 1.0.0** — LEDC, UART, USB CDC peripherals with async drivers; `unstable` feature unlocks LEDC timer access
-- **embassy-rs 0.9.1** — Async executor; already present and validated
-- **embedded-io-async 0.6.1** — Async byte-stream traits for UART/USB; matches embassy-usb dependencies
-- **embassy-usb 0.5.1** — Async CDC ACM stack with lock-free endpoints; prevents USB from starving SSR/Fan tasks
-- **fixed 1.30.0** — Deterministic saturating arithmetic for SSR duty clamp math; avoids floating-point errors
-- **fugit 0.3.9** — Rate/Duration conversions matching esp-hal timer examples
-- **heapless 0.8.0** — Static ring buffers (spsc::Queue) for non-blocking command buffering
-- **static_cell 2.1.1** — Safe static initialization; already in Cargo.toml, use consistently
-- **embassy-sync 0.6.1** — Async mutex (already present); provides `Mutex<CriticalSectionRawMutex, T>` for race-free async access
+The project already possesses the necessary dependencies to implement these fixes without introducing new crates. The focus is on correctly applying the tools provided by `esp-hal` (~1.0) and `embassy-rs` (0.9.1).
+
+**Core technologies:**
+- `embassy_sync::Mutex`: Async-safe mutual exclusion — allows holding logical locks across `.await` points without blocking the executor.
+- `static_cell` (2.1.1): Safe static initialization — completely replaces dangerous `make_static` transmutes and `static mut` singletons with safe, one-time initialization.
+- `esp-hal` + `embassy-usb` + `embedded-io-async`: Non-blocking peripheral access — ensures USB CDC and UART communications do not starve the executor.
 
 ### Expected Features
 
-**Required for v3.0 safety fixes:**
-- Replace `critical_section::Mutex<RefCell<Option<T>>>` with `embassy_sync::Mutex<CriticalSectionRawMutex, T>`
-- Remove `take()/replace()` pattern from `roaster_async_sensor_read()` — eliminates race window
-- Fix unsafe `make_static()` function in main.rs — use StaticCell
-- Fix ServiceContainer singleton pattern — eliminate `&'static mut` aliasing
-- Fix UART driver lifetime transmute — use StaticCell or updated esp-hal API
-
 **Must have (table stakes):**
-- SSR duty clamping with deterministic math (fixed::Saturating)
-- Async USB CDC + UART output (embassy-usb)
-- Temperature safety checks with emergency shutdown
-- SSR cycle guard (1000ms minimum per datasheet)
+- Safe static initialization using `StaticCell` for SSR and Fan controllers.
+- Elimination of the race condition window in `roaster_async_sensor_read()` via `embassy_sync::Mutex`.
+- Non-blocking UART/USB I/O implementation preventing executor starvation.
 
 **Should have (competitive):**
-- Fan speed verification after LEDC writes
-- Hardware status reporting for graceful degradation
+- Updated, accurate documentation reflecting the new async architecture and build instructions.
+- Proper hardware separation for LEDC timers.
 
 **Defer (v2+):**
-- Advanced PID tuning algorithms
-- Telemetry logging/history
+- Introduction of external static site generators for documentation (stick to pure Markdown).
 
 ### Architecture Approach
 
-The system uses a **layered async architecture** with Embassy-driven control loops and distributed safety mechanisms:
-
-- **Control Layer:** RoasterControl orchestrates handlers; safety handler is first in chain
-- **Hardware Abstraction:** esp-hal drivers for LEDC, SPI (MAX31856), UART, USB
-- **Concurrency:** ServiceContainer uses critical_section mutexes for atomic state; migrate to embassy_sync::Mutex for async
+The architecture relies heavily on the Embassy async executor driving ESP32-C3 peripherals via esp-hal. The critical shift is moving from unsafe/synchronous state management to robust async-first patterns.
 
 **Major components:**
-1. **RoasterControl** — Central safety coordinator; validates commands, enforces limits, triggers shutdown
-2. **SafetyCommandHandler** — First in handler chain; intercepts emergency stops
-3. **SsrCycleGuard** — Enforces 1000ms SSR minimum cycle time; prevents command flooding
-4. **ServiceContainer** — Shared state via mutexes; migrate to async-safe patterns
-5. **dual_output_task** — Non-blocking USB/UART dispatch via DMA
+1. **ServiceContainer:** Dependency injection container — updated to use `embassy_sync::Mutex` for async-safe shared state.
+2. **Hardware Drivers (UART, USB, LEDC):** Peripheral interfaces — leveraging `embedded-io-async` to keep operations non-blocking.
+3. **Documentation Architecture:** Codebase documentation — single source of truth in `README.md` and `internalDoc/`.
 
 ### Critical Pitfalls
 
-1. **StaticCell double initialization** — Calling `.init()` twice panics; define at module scope, check before init
-2. **Blocking→async without `.await`** — Using `Timer::after_millis()` without await still blocks executor
-3. **LEDC timer conflict** — SSR (1Hz) and Fan (25kHz) must use different timer numbers (Timer0 vs Timer1); channels share timers
-4. **Lifetime transmute without ownership** — Unsafe `mem::transmute` creates dangling pointers; use StaticCell
-5. **embassy_sync::Mutex with RefCell** — Async mutex provides exclusive access; RefCell adds runtime overhead and panics
-6. **Wrong RawMutex for context** — Use `CriticalSectionRawMutex` for ISR + task sharing; `ThreadModeRawMutex` fails in interrupts
-
----
+1. **StaticCell Double Initialization** — Avoid by ensuring `.init()` is only called once per cell.
+2. **Race Conditions in Async Gaps** — Avoid using `take()` and `replace()` around `.await` points; use `embassy_sync::Mutex`.
+3. **Blocking in Async Contexts** — Avoid using synchronous delays; always use `embassy_time::Timer` and `.await`.
 
 ## Implications for Roadmap
 
-### Phase 1: StaticCell Safety Fixes
-**Rationale:** Fixes Use-After-Free bugs that cause intermittent crashes; foundational for all other work
+Based on research, suggested phase structure:
 
-**Delivers:**
-- Replace unsafe `make_static()` in main.rs with StaticCell pattern
-- Fix ServiceContainer singleton to return `&'static` not `&'static mut`
-- Fix UART driver lifetime transmute issue
-
-**Addresses:** Bug A (make_static), Bug D (mutable statics), Bug E (ServiceContainer)
-
-**Avoids:** Pitfall 1 (double init), Pitfall 7 (incomplete unsafe replacement)
+### Phase 1: Static Safety Refactoring
+**Rationale:** Eliminates the most severe undefined behavior (Use-After-Free) and establishes a safe foundation.
+**Delivers:** Replacement of `make_static` and `static mut` with `StaticCell` across `main.rs`, `service_container.rs`, and UART drivers.
+**Addresses:** Safe static initialization.
+**Avoids:** StaticCell double initialization and function-scope definitions.
 
 ### Phase 2: Async Mutex Migration
-**Rationale:** Eliminates race; required for reliableDelivers:**
-- async operation
+**Rationale:** Resolves the critical race condition in sensor reading logic, which is the core operational loop.
+**Delivers:** Implementation of `embassy_sync::Mutex<CriticalSectionRawMutex, T>` in `ServiceContainer`, removing the `take/replace` pattern.
+**Uses:** `embassy_sync` 0.6.1.
+**Implements:** ServiceContainer dependency management.
 
-**::Mutex<Ref Replace `critical_section condition in sensor reading>` with `Mutex<RoasterControl>>Cell<OptionMutex, Option<CriticalSectionRaw`
-- Remove take<RoasterControl>>/replace pattern from `roaster_async_sensor_read()`
-- Update `with_roaster()` methods to async
+### Phase 3: Hardware & I/O Validation
+**Rationale:** Ensures peripheral interactions (LEDC, UART, USB) are truly non-blocking and conflict-free.
+**Delivers:** Correct LEDC timer separation and async I/O verification.
 
-**Addresses:** Race condition in roaster_async_sensor_read(), Feature: embassy_sync::Mutex migration
-
-**Avoids:** Pitfall 9 (RefCell in async Mutex), Pittrait bound issues)
-
-fall 10 (### Phase 3: Blocking I/O to Async Conversion
-**Rationale:** MAX31856 sensor reads must not block executor; enables responsive control loops
-
-**Delivers:**
-- Convert blocking delay in MAX31856 read to async `Timer::after_millis().await`
-- Verify USB CDC and UART output remain non-blocking
-- Test control loop jitter under load
-
-**Addresses:** Bug G (blocking MAX31856 read)
-
-**Avoids:** Pitfall 3 (blocking without await), Pitfall 4 (fixing tests instead of code)
-
-### Phase 4: LEDC Timer Separation + Documentation
-**Rationale:** SSR and Fan must use independent timers; docs must match code
-
-**Delivers:**
-- Verify SSR uses Timer0, Fan uses Timer1 (or distinct timers)
-- Update README/PROTOCOL.md to match actual command outputs
-- Verify with integration tests
-
-**Addresses:** Bug H (LEDC timer conflict), Bug F (documentation mismatch)
-
-**Avoids:** Pitfall 6 (timer conflict), Pitfall 5 (docs without verification)
+### Phase 4: Documentation Alignment
+**Rationale:** Must follow code changes to ensure accuracy; updates `README.md` and internal docs.
+**Delivers:** Updated documentation architecture.
 
 ### Phase Ordering Rationale
 
-- StaticCell fixes are foundational (no dependencies) → Phase 1
-- Async mutex migration depends on understanding existing patterns → Phase 2
-- Blocking→async conversion is isolated to sensor code → Phase 3
-- LEDC timer + docs are validation/correctness → Phase 4 (can parallel)
+- Memory safety (Phase 1) is the prerequisite for all other operations.
+- Logical concurrency fixes (Phase 2) depend on a stable static foundation.
+- Hardware verification (Phase 3) tests the fully integrated async system.
+- Documentation (Phase 4) finalizes the milestone.
 
 ### Research Flags
 
-**Phases needing deeper research:**
-- **Phase 2 (Async Mutex):** Verify all sync callers in interrupt context still work after migration; may need dual-mode API
-- **Phase 3 (Blocking→Async):** MAX31856 driver may need API changes for true async; verify esp-hal SPI async support
+Phases likely needing deeper research during planning:
+- **Phase 3:** UART driver transmute fix. The underlying issue with `esp-hal` lifetime requirements (`UartTx<'static>`) may require investigating specific API changes.
 
-**Phases with standard patterns (skip research):**
-- **Phase 1:** StaticCell patterns are well-documented, already partially used in codebase
-- **Phase 4:** LEDC timer config already validated in research; docs update is straightforward
-
----
+Phases with standard patterns (skip research-phase):
+- **Phase 1 & 2:** `StaticCell` and `embassy_sync::Mutex` patterns are highly standardized.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | esp-hal/embassy-rs stack validated; StaticCell already in Cargo.toml |
-| Features | HIGH | Async mutex migration clearly documented; no new dependencies |
-| Architecture | HIGH | Handler chain, dual verification, fail-safe patterns well-established |
-| Pitfalls | HIGH | Comprehensive coverage of embedded-specific issues; Miri/Clippy detection strategies |
+| Stack | HIGH | Validated against existing `Cargo.toml` dependencies. |
+| Features | HIGH | The async mutex pattern directly addresses the identified race condition. |
+| Architecture | HIGH | Matches standard Embassy/Embedded Rust architectural models. |
+| Pitfalls | HIGH | Specific, known issues with embedded Rust mapped directly to the codebase. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **UART driver transmute fix:** May require esp-hal API adjustment; test after StaticCell changes
-- **Interrupt handler compatibility:** Verify sync `with_roaster()` callers work after async migration; may need `critical_section` path preserved
-- **MAX31856 async conversion:** Need to verify esp-hal SPI async capabilities support true non-blocking reads
-
----
+- **UART Driver Lifetime:** The exact API method in `esp-hal` ~1.0 to safely instantiate a `'static` UART driver without `mem::transmute` requires code-level exploration.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- https://docs.rs/esp-hal/latest/esp_hal/ — LEDC, UART, USB drivers with async support
-- https://docs.embassy.dev/embassy-sync/git/default/mutex/struct.Mutex.html — Async mutex API
-- https://docs.rs/static_cell/2.1.1 — Static initialization patterns
-- https://docs.rs/embassy-usb/latest/embassy_usb/ — Async USB CDC stack
+- `embassy_sync::Mutex` official docs — Async-safe mutual exclusion.
+- `static_cell` (2.1.1) crate docs — Safe static initialization patterns.
+- `esp-hal` LEDC and UART documentation.
 
 ### Secondary (MEDIUM confidence)
-- https://blog.theembeddedrustacean.com/sharing-data-among-tasks-in-rust-embassy-synchronization-primitives — Tutorial on async sharing
-- https://gist.github.com/benpeoples/3aa57bffc0f26ede6623ca520f26628c — ESP32 LEDC frequencies
-
-### Tertiary (LOW confidence)
-- Community forum discussions on RefCell + Mutex patterns (needs implementation verification)
+- The Embedded Rustacean Blog — Sharing data among tasks in Embassy.
 
 ---
-
-*Research completed: 2026-02-19*
+*Research completed: 2026-02-20*
 *Ready for roadmap: yes*

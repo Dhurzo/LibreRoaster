@@ -1,7 +1,7 @@
 //! Logging infrastructure for LibreRoaster
 //!
 //! Provides channel-prefixed logging that outputs to UART0 using esp_println.
-//! Channel prefixes: [USB], [UART], [SYSTEM]
+//! Channel prefixes: USB, UART, SYSTEM
 //!
 //! ## Architecture
 //!

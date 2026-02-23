@@ -1,6 +1,6 @@
 //! Channel-prefixed logging macros
 //!
-//! Provides `log_channel!` macro for adding [USB], [UART], [SYSTEM] prefixes to logs.
+//! Provides `log_channel!` macro for adding USB, UART, SYSTEM prefixes to logs.
 //! Uses esp_println for direct UART0 output.
 
 #[derive(Clone, Copy, Debug)]
