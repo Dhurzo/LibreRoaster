@@ -295,8 +295,8 @@ impl RoasterControl {
             .set_speed(fan_value)
             .map_err(|_| RoasterError::HardwareError)?;
 
-        // Read the actual applied speed from the fan controller (via bus)
-        self.status.fan_output = self.fan.get_speed();
+        // Track commanded fan output; hardware drivers may optionally expose readback.
+        self.status.fan_output = fan_value;
 
         self.status.ssr_hardware_status = self.heater.get_status();
 
@@ -367,8 +367,8 @@ impl RoasterControl {
             .set_speed(fan_output)
             .map_err(|_| RoasterError::HardwareError)?;
 
-        // Read the actual applied speed from the fan controller (via bus)
-        self.status.fan_output = self.fan.get_speed();
+        // Keep status aligned with commanded fan output in control loop.
+        self.status.fan_output = fan_output;
 
         self.status.state = self.state;
 

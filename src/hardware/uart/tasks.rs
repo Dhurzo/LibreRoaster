@@ -154,27 +154,33 @@ fn handle_command_data_internal(data: &[u8]) {
     match parse_result {
         Ok(cmd) => {
             let mut depth = 0;
+            let mut should_process = true;
+
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
                 let mut guard = multiplexer.borrow(cs).borrow_mut();
                 if let Some(mux) = guard.as_mut() {
-                    let should_process = mux.should_process_command(CommChannel::Uart);
+                    should_process = mux.should_process_command(CommChannel::Uart);
+                }
 
-                    if should_process {
-                        // Push to command queue for FIFO processing
-                        // On queue full: silently drop command (no response sent - Artisan times out)
-                        if let Some(queue) = unsafe { (*COMMAND_QUEUE.get()).as_mut() } {
-                            match queue.try_push(cmd) {
-                                Ok(()) => {
-                                    // Command queued successfully - will be processed by queue processor
-                                }
-                                Err(QueueError::Full) => {
-                                    // Queue full - reject silently (no response sent)
-                                    debug!("UART command queue full, rejecting command");
-                                }
+                if should_process {
+                    // Push to command queue for FIFO processing
+                    // On queue full: silently drop command (no response sent - Artisan times out)
+                    if let Some(queue) = unsafe { (*COMMAND_QUEUE.get()).as_mut() } {
+                        match queue.try_push(cmd) {
+                            Ok(()) => {
+                                // Command queued successfully - will be processed by queue processor
                             }
-                            depth = queue.len();
+                            Err(QueueError::Full) => {
+                                // Queue full - reject silently (no response sent)
+                                debug!("UART command queue full, rejecting command");
+                            }
                         }
+                        depth = queue.len();
+                    } else {
+                        // Compatibility path (tests / host helpers): if queue is not initialized,
+                        // forward directly to the command channel.
+                        let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
                     }
                 }
             });
@@ -188,21 +194,26 @@ fn handle_command_data_internal(data: &[u8]) {
 
 /// Send parse error (called with critical section not held)
 fn send_parse_error_internal(error: ParseError) {
+    let mut should_write = true;
+
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            let should_write = mux.should_write_to(CommChannel::Uart);
-
-            if should_write {
-                let output_channel = ServiceContainer::get_output_channel();
-                let mut message = String::<128>::new();
-                let _ = message.push_str("ERR ");
-                let _ = message.push_str(error.code());
-                let _ = message.push_str(" ");
-                let _ = message.push_str(error.message());
-                let _ = output_channel.try_send(message);
+            if matches!(mux.get_active_channel(), CommChannel::None) {
+                let _ = mux.on_command_received(CommChannel::Uart);
             }
+            should_write = mux.should_write_to(CommChannel::Uart);
+        }
+
+        if should_write {
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut message = String::<128>::new();
+            let _ = message.push_str("ERR ");
+            let _ = message.push_str(error.code());
+            let _ = message.push_str(" ");
+            let _ = message.push_str(error.message());
+            let _ = output_channel.try_send(message);
         }
     });
 }
@@ -264,13 +275,7 @@ pub async fn queue_processor_task() {
 
         if let Some(cmd) = cmd_opt {
             let channel = ServiceContainer::get_artisan_channel();
-            if let Err(err) = channel.try_send(cmd) {
-                // Log but don't block - command will be reprocessed by Artisan timeout
-                debug!(
-                    "Queue processor: failed to send to artisan_channel: {:?}",
-                    err
-                );
-            }
+            channel.send(cmd).await;
         }
 
         // Small delay to yield to other tasks and prevent tight looping
@@ -280,8 +285,28 @@ pub async fn queue_processor_task() {
 
 // Keep legacy function for compatibility - now delegates to queue-based processing
 pub fn process_command_data(data: &[u8]) {
-    // Simply push to queue - will be processed in the main loop
-    push_to_event_queue(data);
-    // Trigger queue processing
-    process_event_queue();
+    let event_queue_initialized = critical_section::with(|_| unsafe {
+        (*EVENT_QUEUE.get()).as_ref().is_some()
+    });
+
+    if event_queue_initialized {
+        // Standard path: enqueue bytes and process complete frames.
+        push_to_event_queue(data);
+        process_event_queue();
+        return;
+    }
+
+    // Compatibility path (mainly tests): process a single frame directly.
+    let mut command = Vec::<u8, 64>::new();
+    for &byte in data {
+        if byte == 0x0D {
+            handle_command_data_internal(&command);
+            return;
+        }
+
+        if command.push(byte).is_err() {
+            send_parse_error_internal(ParseError::InvalidValue);
+            return;
+        }
+    }
 }

@@ -156,6 +156,45 @@ impl ServiceContainer {
         result
     }
 
+    /// Ensure async roaster storage is initialized.
+    ///
+    /// On embedded startup the builder initializes `roaster_sync` first.
+    /// The control loop uses async access, so we move the instance lazily
+    /// into the async mutex the first time tasks run.
+    pub async fn ensure_async_roaster_initialized_from_sync() -> Result<(), ContainerError> {
+        let async_empty = {
+            let guard = Self::get_instance().roaster.lock().await;
+            guard.is_none()
+        };
+
+        if !async_empty {
+            return Ok(());
+        }
+
+        let moved = critical_section::with(|cs| {
+            let container = Self::get_instance();
+            container.roaster_sync.borrow(cs).borrow_mut().take()
+        });
+
+        match moved {
+            Some(roaster) => {
+                let mut guard = Self::get_instance().roaster.lock().await;
+                if guard.is_none() {
+                    *guard = Some(roaster);
+                }
+                Ok(())
+            }
+            None => {
+                let guard = Self::get_instance().roaster.lock().await;
+                if guard.is_some() {
+                    Ok(())
+                } else {
+                    Err(ContainerError::NotInitialized)
+                }
+            }
+        }
+    }
+
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut ArtisanInput) -> R,

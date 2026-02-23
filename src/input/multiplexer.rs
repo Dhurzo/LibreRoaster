@@ -97,6 +97,18 @@ impl CommandMultiplexer {
     pub fn on_command_received(&mut self, channel: CommChannel) -> bool {
         let now = Instant::now();
 
+        if let Some(last_time) = self.last_command_time {
+            let elapsed = now.duration_since(last_time);
+            if elapsed.as_secs() >= IDLE_TIMEOUT_SECS {
+                self.active_channel = CommChannel::None;
+                self.last_command_time = None;
+                log::info!(
+                    "No artisan commands for {}s, switching active channel to None",
+                    IDLE_TIMEOUT_SECS
+                );
+            }
+        }
+
         match self.active_channel {
             CommChannel::None => {
                 self.active_channel = channel;
@@ -109,19 +121,6 @@ impl CommandMultiplexer {
                 true
             }
             current if current == channel => {
-                if let Some(last_time) = self.last_command_time {
-                    let elapsed = now.duration_since(last_time);
-                    if elapsed.as_secs() >= IDLE_TIMEOUT_SECS {
-                        self.active_channel = channel;
-                        self.last_command_time = Some(now);
-                        log::info!(
-                            "Idle timeout expired, artisan command received on {:?}, switching active channel to {:?}",
-                            channel,
-                            channel
-                        );
-                        return true;
-                    }
-                }
                 self.last_command_time = Some(now);
                 true
             }

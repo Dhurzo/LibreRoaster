@@ -14,6 +14,10 @@ use log::{debug, info, warn};
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");
 
+    if let Err(err) = ServiceContainer::ensure_async_roaster_initialized_from_sync().await {
+        warn!("Failed to initialize async roaster storage: {:?}", err);
+    }
+
     let mut formatter = MutableArtisanFormatter::new();
     let _start_time = Instant::now();
     let cmd_channel = ServiceContainer::get_artisan_channel();
@@ -23,7 +27,7 @@ pub async fn control_loop_task() {
     loop {
         let current_time = Instant::now();
 
-        if let Ok(command) = cmd_channel.try_receive() {
+        while let Ok(command) = cmd_channel.try_receive() {
             let output_channel = ServiceContainer::get_output_channel();
 
             let _ = ServiceContainer::with_roaster_async(
@@ -34,7 +38,7 @@ pub async fn control_loop_task() {
 
                             if let crate::config::ArtisanCommand::ReadStatus = command {
                                 let status = roaster.get_status();
-                                // Use full READ response with 7 values per Artisan spec
+                                // Use full READ response with 4 values per current protocol
                                 let response = ArtisanFormatter::format_read_response_full(&status);
 
                                 if let Ok(line) = String::<128>::try_from(response.as_str()) {

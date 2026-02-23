@@ -119,27 +119,29 @@ fn handle_complete_usb_command(command: &[u8]) {
     match parse_result {
         Ok(cmd) => {
             let mut depth = 0;
+            let mut should_process = true;
+
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
                 let mut guard = multiplexer.borrow(cs).borrow_mut();
                 if let Some(mux) = guard.as_mut() {
-                    let should_process = mux.should_process_command(CommChannel::Usb);
+                    should_process = mux.should_process_command(CommChannel::Usb);
+                }
 
-                    if should_process {
-                        // Push to USB command queue for FIFO processing
-                        // On queue full: silently drop command (no response sent - Artisan times out)
-                        if let Some(queue) = unsafe { (*USB_COMMAND_QUEUE.get()).as_mut() } {
-                            match queue.try_push(cmd) {
-                                Ok(()) => {
-                                    // Command queued successfully - will be processed by queue processor
-                                }
-                                Err(QueueError::Full) => {
-                                    // Queue full - reject silently (no response sent)
-                                    debug!("USB command queue full, rejecting command");
-                                }
+                if should_process {
+                    // Push to USB command queue for FIFO processing
+                    // On queue full: silently drop command (no response sent - Artisan times out)
+                    if let Some(queue) = unsafe { (*USB_COMMAND_QUEUE.get()).as_mut() } {
+                        match queue.try_push(cmd) {
+                            Ok(()) => {
+                                // Command queued successfully - will be processed by queue processor
                             }
-                            depth = queue.len();
+                            Err(QueueError::Full) => {
+                                // Queue full - reject silently (no response sent)
+                                debug!("USB command queue full, rejecting command");
+                            }
                         }
+                        depth = queue.len();
                     }
                 }
             });
@@ -152,21 +154,26 @@ fn handle_complete_usb_command(command: &[u8]) {
 }
 
 fn send_usb_parse_error(error: ParseError) {
+    let mut should_write = true;
+
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            let should_write = mux.should_write_to(CommChannel::Usb);
-
-            if should_write {
-                let output_channel = ServiceContainer::get_output_channel();
-                let mut message = String::<128>::new();
-                let _ = message.push_str("ERR ");
-                let _ = message.push_str(error.code());
-                let _ = message.push_str(" ");
-                let _ = message.push_str(error.message());
-                let _ = output_channel.try_send(message);
+            if matches!(mux.get_active_channel(), CommChannel::None) {
+                let _ = mux.on_command_received(CommChannel::Usb);
             }
+            should_write = mux.should_write_to(CommChannel::Usb);
+        }
+
+        if should_write {
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut message = String::<128>::new();
+            let _ = message.push_str("ERR ");
+            let _ = message.push_str(error.code());
+            let _ = message.push_str(" ");
+            let _ = message.push_str(error.message());
+            let _ = output_channel.try_send(message);
         }
     });
 }
@@ -193,13 +200,7 @@ pub async fn usb_queue_processor_task() {
 
         if let Some(cmd) = cmd_opt {
             let channel = ServiceContainer::get_artisan_channel();
-            if let Err(err) = channel.try_send(cmd) {
-                // Log but don't block - command will be reprocessed by Artisan timeout
-                debug!(
-                    "USB queue processor: failed to send to artisan_channel: {:?}",
-                    err
-                );
-            }
+            channel.send(cmd).await;
         }
 
         // Small delay to yield to other tasks and prevent tight looping
