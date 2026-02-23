@@ -1,412 +1,135 @@
-# Embedded Safety Fix Pitfalls: ESP32-C3 v3.0
+# Pitfalls Research
 
-**Domain:** Embedded Rust / ESP32-C3 Firmware Safety Fixes  
-**Project:** LibreRoaster v3.0 Critical Safety Fixes  
-**Researched:** 2026-02-18  
-**Confidence:** HIGH
-
-## Overview
-
-This document catalogs common mistakes when fixing critical safety issues (Use-After-Free, unsafe statics, test failures, documentation mismatches, blocking I/O) in ESP32-C3 firmware using embassy-rs and esp-hal. Each pitfall includes prevention strategies specific to the bug types in this milestone.
-
----
+**Domain:** Embedded safety instrumentation for ESP32-C3 watchdog, over-temp, and LEDC guards
+**Researched:** 2026-02-23
+**Confidence:** MEDIUM
 
 ## Critical Pitfalls
 
-### Pitfall 1: StaticCell Double Initialization
+### Pitfall 1: Heavy flash/guard work trips the Task WDT instead of the safety handler
 
-**What goes wrong:** Calling `.init()` on a StaticCell that has already been initialized causes a panic at runtime.
+**What goes wrong:** Erasing large flash regions, running instrumentation that polls sensors, or executing long LedcGuard sequences still blocks the idle task and causes `Task watchdog got triggered` logs before safety logic can run.
 
-**Why it happens:** StaticCell can only be initialized once. Code paths that trigger initialization multiple times (e.g., re-initialization on error, conditional initialization) will panic.
+**Why it happens:** Espressif documentation explicitly calls out that erasing large flash areas or any lengthy, non-yielding task can make the Task WDT fire; the same MWDT timer backs both the Interrupt and Task WDTs, so any CPU that ignores `esp_task_wdt_reset` (or lets idle run) is considered hung. A concrete reproduction is the SPIFFS format example that kept wiping external flash and hit Task WDT every 5 s even though the operation eventually completed ([esp-idf#8135](https://github.com/espressif/esp-idf/issues/8135)).
 
-**Consequences:** Firmware crashes on startup or after error recovery attempts.
+**How to avoid:** Tune `CONFIG_ESP_TASK_WDT_TIMEOUT_S` or call `esp_task_wdt_init()` with a larger timeout before known heavy work, feed the WDT via `esp_task_wdt_reset()` from the long-lived task, or move the work to a lower-priority worker that yields often. For flash erases and the LedcGuard fade loop, add explicit yield points (`taskYIELD`/`vTaskDelay(1)`) so the idle task can run and keep the watchdog fed.
 
-**Prevention:**
-```rust
-// WRONG - will panic on second call
-static SSR: StaticCell<SsrControl> = StaticCell::new();
-SSR.init(ssr1);  // First call - OK
-SSR.init(ssr2);  // PANIC!
+**Warning signs:** Repeated `task_wdt` panic prints during formatting/regression tests, especially when CPU0 shows the backtrace inside flash erase or your guard loops; the messages align with the duration of the long operation rather than a random bug.
 
-// CORRECT - check before init or use different pattern
-static SSR: StaticCell<SsrControl> = StaticCell::new();
-pub fn get_ssr() -> &'static mut SsrControl {
-    // Only initializes once; subsequent calls panic
-    // Use critical_section::Mutex if re-initialization needed
-    SSR.init(SsrControl::new())
-}
-```
-
-**Detection:** Runtime panic with message about "already initialized"
-
-**Bug context:** Bug A (make_static), Bug D (mutable statics), Bug E (ServiceContainer)
+**Phase to address:** Phase "v4.2 Watchdog Integration" (before enabling TWDT feed and guard loops in production.)
 
 ---
 
-### Pitfall 2: StaticCell Inside Function Scope
+### Pitfall 2: Tight sampling or guard loops starve the idle task and trigger TWDT resets
 
-**What goes wrong:** Defining a StaticCell inside a function instead of as a static variable defeats the purpose of StaticCell.
+**What goes wrong:** New watchdog/timeout loops (e.g., the over-temperature regression thread or LedcGuard watchdog) poll a sensor or hardware state continuously without yielding. The Task WDT sees the idle task never running and issues a reset even though the code is logically alive.
 
-**Why it happens:** Developers confuse `static_cell::make_static!` macro (which works inside functions) with `StaticCell::new()` (which requires static storage).
+**Why it happens:** FreeRTOS on ESP32 does not round-robin by default; long loops must explicitly yield. As described in the Stack Overflow thread on `ESP32 Task Watchdog Triggered`, failing to call `taskYIELD()`/`vTaskDelay()` from a loop that does 100 k sensor reads causes the Task WDT to fire, even if the loop itself completes later.
 
-```rust
-// WRONG
-fn init_driver() {
-    static DRIVER: StaticCell<Driver> = StaticCell::new();  // Won't compile in const context
-    // ...
-}
+**How to avoid:** Break loops into smaller batches, insert `taskYIELD()`/`vTaskDelay(1)`, or call `esp_task_wdt_reset()` while waiting for the next sample or guard timeout. If you need 1 kHz sampling, consider scheduling the guard on a dedicated FreeRTOS timer task so other tasks (and the idle hook) get CPU time. Also ensure sensors or LEDC guard operations do not hold mutexes that prevent `esp_task_wdt_reset` from running.
 
-// CORRECT - must be at module scope
-static DRIVER: StaticCell<Driver> = StaticCell::new();
+**Warning signs:** `task_wdt` prints show `CPU 0: main` or `LedcGuard` backtraces, loop durations that are multiples of the watchdog timeout, and instrumentation logs that stop during the busy loop.
 
-fn init_driver() {
-    let drv = Driver::new();
-    DRIVER.init(drv);
-}
-```
-
-**Consequences:** Compilation errors, or if using `make_static!` macro incorrectly, the data isn't actually static.
-
-**Prevention:** Use the `make_static!` macro when inside function scope, or define StaticCell at module scope.
-
-**Bug context:** Bug A, Bug D
+**Phase to address:** Phase "Sensor/Timeout Tuning" (as soon as the new guard loops are drafted).
 
 ---
 
-### Pitfall 3: Converting Blocking to Async Incorrectly
+### Pitfall 3: Treating the internal temperature sensor as an accurate over-temp trip without guarding its ISR
 
-**What goes wrong:** Converting blocking delay to async but not actually awaiting it, or using blocking delay in async context.
+**What goes wrong:** The regression test or the production guard triggers on builtin temperature thresholds that do not reflect ambient conditions (chip temperature only), or the ISR never fires because the cache is disabled during flash/timing-critical operations.
 
-**Why it happens:** Simply renaming `delay_ms()` to `Timer::after_millis()` doesn't make it async.
+**Why it happens:** Espressif’s temperature sensor doc cautions the sensor is optimized for chip temperature and is not precise for ambient measurements; it also notes that threshold callbacks rely on interrupts that are deferred when cache is disabled unless `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE` is enabled and callbacks are IRAM-resident, so a cache flush or flash erase can silently block the interrupt [^temp].
 
-```rust
-// WRONG - still blocks!
-async fn read_temp() {
-    Timer::after_millis(160);  // Missing .await!
-    // ...
-}
+**How to avoid:** Calibrate over-temperature limits using the chip temperature relative to your roast (log both chip sensor and external reference), treat the reading as a relative change instead of an absolute, and enable `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE` so the callback fires even during flash-intensive test setups. Keep the callback small and IRAM-safe to avoid missing the alert when the cache is off.
 
-// WRONG - blocks the executor
-async fn read_temp() {
-    embassy_time::block_for(embassy_time::Duration::from_millis(160));  // Blocks entire executor
-    // ...
-}
+**Warning signs:** Threshold callbacks never execute during instrumentation (no log lines even when chip temperature rises), transmissions from the regression test show frozen stack traces around `temperature_sensor_monitor_cbs`, or the guard trips long before the roast’s thermocouple does.
 
-// CORRECT
-async fn read_temp() {
-    Timer::after_millis(160).await;  // Yields to other tasks
-    // ...
-}
-```
-
-**Consequences:** Other async tasks starve; entire async executor blocks.
-
-**Prevention:** Always `.await` async delays; use `Timer::after_millis()` not blocking delays in async contexts.
-
-**Bug context:** Bug G (blocking MAX31856 read)
+**Phase to address:** Phase "Over-Temperature Regression" (before the regression test is used to gate releases).
 
 ---
 
-### Pitfall 4: Fixing Test Assertions Instead of Implementation
+### Pitfall 4: LedcGuard waits forever for fades that cannot be interrupted, starving the watchdog
 
-**What goes wrong:** Changing test expectations to match broken behavior instead of fixing the actual bug.
+**What goes wrong:** LedcGuard holds hardware/state locks while waiting for a fade to finish and then tries to confirm completion by polling, preventing the idle task from running and the TWDT from being reset.
 
-**Why it happens:** Test failure seems easier to fix by changing the assertion than understanding the root cause.
+**Why it happens:** The LEDC driver documentation states that once a fade starts, there is no way to stop it before it reaches the target duty (the hardware doesn’t offer a preempt) [^ledc]. Guard logic that busy-waits for the fade or repeatedly calls `ledc_set_duty` with no yield will therefore monopolize the CPU.
 
-```rust
-// WRONG - test now passes but bug remains
-#[test]
-fn test_partial_ot2() {
-    let result = parse_command("OT2");
-    // Changed from: assert!(matches!(result, Err(ParseError::InvalidValue)));
-    assert!(matches!(result, Ok(SetFanSpeed(0))));  // WRONG!
-}
+**How to avoid:** Restructure LedcGuard to register a fade-end callback via `ledc_cb_register`, let the callback or a timer task signal completion, and keep the guard’s critical section short so FreeRTOS can run idle. When polling completion is unavoidable, insert `taskYIELD()`/`vTaskDelay(1)` and call `esp_task_wdt_reset()` during the wait.
 
-// CORRECT - fix the parser implementation
-// The test expectation is correct; fix the parser instead
-["OT2" | "ot2"] => Err(ParseError::InvalidValue),  // Require value
-["OT2" | "ot2", value_str] => { /* parse value */ }
-```
+**Warning signs:** LedcGuard’s logs show repeated fade requests and the Task WDT triggers with backtraces involving `ledc_fade_start`. The guard may also hold mutexes that stop async sensor tasks from feeding the watchdog.
 
-**Consequences:** Bug remains unfixed; downstream code receives incorrect behavior.
-
-**Prevention:** Treat test failures as bug indicators; always fix implementation, not tests (unless test is wrong about expected behavior).
-
-**Bug context:** Bug C (test_parse_ot2_partial_command)
+**Phase to address:** Phase "LedcGuard Timeout" (final phase for PWM-based safety controls).
 
 ---
 
-### Pitfall 5: Documentation Updates Without Code Verification
+## Technical Debt Patterns
 
-**What goes wrong:** Updating documentation to match code without verifying code behavior.
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Cranking up TWDT timeout until heavy operations finish | Tests stop failing | Hides real blocking operations and leaves production blind | Only as a stop-gap while refactoring the blocking path |
+| Busy-loop guard waiting for fade/sensor without yielding | Simplifies guard state machine | Starves idle task, triggers TWDT, and gutters instrumentation | Never—prefer a deferred callback or timer |
+| Logging inside `esp_task_wdt_isr_user_handler` to surface faults | Easy debugging output | ISR limitations (no `ESP_LOGx`, risk of reentries) and possible stack corruption | Only if you move logging to a non-ISR-safe path and keep ISR minimal |
 
-**Why it happens:** Documentation drift goes both ways - either docs are wrong or code changed without docs.
+## Integration Gotchas
 
-```rust
-// WRONG - just copy from code without verification
-// README.md updated to say: "READ returns ET, BT, HEATER, FAN"
-// But actual implementation returns 7 values
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| Flash/partition operations + Task WDT | Erase/format runs as part of regression test and trips WDT | Either increase TWDT timeout with `esp_task_wdt_init` or split work across yield points before running the erase, as noted in the ESP-IDF task watchdog guide and issue #8135 |
+| Async sensor loops + TWDT | Sensor sampling floods CPU and never yields, starving the idle task | Insert `vTaskDelay(1)`/`taskYIELD()` or call `esp_task_wdt_reset()` inside the loop (Stack Overflow thread) so FreeRTOS can feed the watchdog |
+| LedcGuard + LEDC fades | Guard polls fade completion without IRAM-safe callbacks, locking timers | Register fade-end callbacks via `ledc_cb_register`, keep callbacks in IRAM, and avoid busy waits (LEDC doc) |
 
-// CORRECT - verify actual behavior first
-// 1. Run actual READ command, observe output
-// 2. Check formatter code for exact output format
-// 3. THEN update docs to match reality
-```
+## Performance Traps
 
-**Consequences:** Users rely on incorrect documentation; integration failures.
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Tight sampling loops without yielding | `task_wdt` fires, CPU0 stuck in guard, other tasks starve | Break work into chunks, add `taskYIELD()`/`vTaskDelay(1)` between iterations | When total loop runtime > TWDT timeout (often just a few seconds) |
+| Temperature threshold ISR skipped during cache-disabled flash ops | Callback never runs despite sensor crossing threshold, regression test fails | Enable `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE` and keep callback and helpers in IRAM | When tests erase flash or disable cache (common in regression harness) |
 
-**Prevention:** Always verify actual behavior before updating docs; run commands and inspect outputs.
+## Security Mistakes
 
-**Bug context:** Bug F (README vs PROTOCOL.md mismatch)
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Leaving TWDT configured to only warn instead of panic | Heater or actuator keeps running after timeout because system just logs and keeps going (default behavior) | Set `CONFIG_ESP_TASK_WDT_PANIC` or handle `esp_task_wdt_isr_user_handler` so the WDT forces a safe reset; avoid merely logging in the ISR |
 
----
+## UX Pitfalls
 
-### Pitfall 6: LEDC Timer Not Actually Separated
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Over-temp guard based on uncalibrated chip sensor | Operators see alarms that drift with ambient temperature or never fire because chip temp lags load | Present chip temp as relative delta, add external reference, and document why thresholds do not match thermocouple readings (per sensor doc) |
 
-**What goes wrong:** Creating separate timer variables but they still reference the same hardware timer.
+## "Looks Done But Isn't" Checklist
 
-**Why it happens:** ESP32-C3 has 4 LEDC timers; channels 0-5 share them. Creating a variable doesn't create a new hardware timer.
-
-```rust
-// WRONG - variables are separate but hardware timer is shared
-let timer0 = ledc.timer(Number::Timer0);
-let timer1 = ledc.timer(Number::Timer0);  // Same timer!
-
-// WRONG - both channels end up on same timer
-channel0.configure(ChannelConfig { timer: &mut timer0, ... })?;
-channel1.configure(ChannelConfig { timer: &mut timer0, ... })?;  // Same timer!
-
-// CORRECT - use different timer numbers
-let mut fan_timer = ledc.timer(Number::Timer0);
-let mut ssr_timer = ledc.timer(Number::Timer1);  // Different timer!
-
-fan_channel.configure(ChannelConfig { timer: &mut fan_timer, ... })?;
-ssr_channel.configure(ChannelConfig { timer: &mut ssr_timer, ... })?;
-```
-
-**Consequences:** SSR (~1Hz) and Fan (25kHz) interfere; PWM behaves unexpectedly.
-
-**Prevention:** Explicitly use different timer numbers (Timer0, Timer1, etc.); verify hardware timer allocation.
-
-**Bug context:** Bug H (SSR and Fan share same LEDC timer)
-
----
-
-### Pitfall 7: Unsafe Static Mut Replacement Incomplete
-
-**What goes wrong:** Replacing `static mut` with StaticCell but keeping other unsafe patterns.
-
-**Why it happens:** The original code may have multiple unsafe issues; fixing one doesn't fix all.
-
-```rust
-// WRONG - StaticCell used but still returns &mut and has aliasing issues
-static INSTANCE: StaticCell<ServiceContainer> = StaticCell::new();
-pub fn get_instance() -> &'static mut Self {
-    unsafe { &mut *INSTANCE.as_ptr() }  // Still unsafe!
-}
-
-// CORRECT - StaticCell init returns &static mut; no unsafe needed
-static INSTANCE: StaticCell<ServiceContainer> = StaticCell::new();
-pub fn get_instance() -> &'static mut Self {
-    // .init() can only be called once; returns &'static mut
-    INSTANCE.init(ServiceContainer::new())
-}
-
-// ALTERNATIVE - if shared access needed, use interior mutability
-static INSTANCE: StaticCell<ServiceContainer> = StaticCell::new();
-pub fn get_instance() -> &'static ServiceContainer {
-    // Return shared reference to avoid aliasing
-    unsafe { &*INSTANCE.as_ptr() }
-}
-```
-
-**Consequences:** Compiler warnings persist; potential undefined behavior remains.
-
-**Prevention:** Verify all unsafe is eliminated; use `&'static` not `&'static mut` where possible.
-
-**Bug context:** Bug E (ServiceContainer::get_instance)
-
----
-
-### Pitfall 8: Lifetime Transmute Without Proper Ownership
-
-**What goes wrong:** Using `mem::transmute` to extend lifetimes creates use-after-free if original data is dropped.
-
-**Why it happens:** Transmute changes types but doesn't prevent the original data from being dropped.
-
-```rust
-// WRONG - lifetime extended but data dropped
-fn make_static<T>(value: T) -> &'static mut T {
-    unsafe {
-        let ptr = Box::into_raw(Box::new(value));
-        // value is dropped here!
-        &mut *ptr  // DANGLING POINTER!
-    }
-}
-
-// CORRECT - use StaticCell
-static CELL: StaticCell<T> = StaticCell::new();
-fn init(value: T) -> &'static mut T {
-    CELL.init(value)  // StaticCell owns the data
-}
-```
-
-**Consequences:** Memory corruption; undefined behavior; intermittent crashes.
-
-**Prevention:** Use StaticCell instead of manual transmute; verify with Miri.
-
-**Bug context:** Bug A (make_static), Bug H (LEDC timer lifetime extension)
-
----
-
-## Phase-Specific Warning Matrix
-
-| Bug | Phase | Common Pitfall | Mitigation |
-|-----|-------|----------------|------------|
-| Bug A | 1 | StaticCell double init or not static | Define at module scope; check init |
-| Bug C | 1 | Fix test instead of implementation | Fix parser, not test |
-| Bug D | 2 | Unsafe replacement incomplete | Verify all unsafe eliminated |
-| Bug E | 2 | Aliasing through &mut return | Use &'static or interior mutability |
-| Bug F | 3 | Docs updated without verification | Run code, verify behavior first |
-| Bug G | 3 | Blocking→async without await | Add .await; use Timer |
-| Bug H | 3 | Timer variables but same hardware | Use Timer0 vs Timer1 explicitly |
-
----
-
-## Detection Strategies
-
-| Bug Type | Tool | How |
-|----------|------|-----|
-| Use-After-Free | Miri | `cargo +nightly miri test` |
-| Unsafe statics | Clippy | `clippy --warn unsafe` |
-| Blocking in async | Visual inspection | Search for `.await` after Timer |
-| LEDC timer conflict | ESP-IDF logs | Check for "timer conflict" errors |
-| Documentation mismatch | Integration test | Run actual commands, compare output |
-
----
+- [ ] **TWDT options:** Timeout increased but tasks still never call `esp_task_wdt_reset()`; confirm the long path feeds the watchdog or restructures the work.
+- [ ] **LedcGuard fade wait:** Guard says fade finished, but LEDC hardware was still running; inspect callback/interrupt instead of polling.
+- [ ] **Over-temp ISR:** Callback registered but never executes during flash erase; verify `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE` is set and callback lives in IRAM.
+- [ ] **Async sensors:** New watchdog added but asynchronous sampling tasks not subscribed to TWDT, so the guard only sees the idle task timing out.
 
 ## Recovery Strategies
 
-| Pitfall | Recovery | Cost |
-|---------|----------|------|
-| StaticCell panic | Refactor to check-before-init pattern | MEDIUM |
-| Blocking in async | Add `.await`; use embassy_time::Timer | LOW |
-| Test assertion changed | Revert test; fix implementation | LOW |
-| LEDC timer conflict | Explicit timer numbers in config | MEDIUM |
-| Docs out of sync | Audit code, verify behavior, update docs | LOW |
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Flash/guard work tripping TWDT | MEDIUM | Split the workload, make it yield-friendly, and add `esp_task_wdt_reset()` before/after the heavy block. |
+| Tight guard loops stalling idle | LOW | Insert delays/yields, or move guard onto a dedicated timer task; re-run instrumentation to confirm idle hook runs. |
+| Missed over-temp interrupt | MEDIUM | Move callback to IRAM, enable `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE`, and run regression tests while the cache is disabled to ensure the ISR fires. |
+| LedcGuard busy wait | MEDIUM | Use fade-end callbacks, limit guard to state transitions, and monitor `ledc_get_duty` from a yielding task. |
 
----
+## Pitfall-to-Phase Mapping
 
-## Additional Pitfall Sections
-
-The following sections cover additional domain-specific pitfalls for this project.
-
-### Pitfall 9: embassy_sync::Mutex Migration — RefCell and Blocking Issues
-
-**What goes wrong:** When migrating from `critical_section::Mutex<RefCell<Option<T>>>` with take/replace pattern to `embassy_sync::Mutex`, several issues can occur:
-
-1. **Keeping RefCell unnecessarily** — The async Mutex already provides exclusive access via MutexGuard; RefCell adds runtime overhead and can cause panics from double borrowing.
-
-2. **Using blocking mutex across await** — The `embassy_sync::blocking_mutex::Mutex` is NOT designed to be held across `.await` points. This causes deadlock.
-
-3. **Wrong RawMutex selection** — Using `ThreadModeRawMutex` when you need interrupt + task sharing, or vice versa.
-
-4. **Lazy initialization pattern mismatch** — Trying to replicate the `Option<T>` lazy init pattern without understanding the new semantics.
-
-**Why it happens:** The original pattern `Mutex<RefCell<Option<T>>>` was necessary for:
-- Interior mutability with critical_section (which doesn't provide exclusive access)
-- Lazy initialization (None at start, replace with Some later)
-- ISR-to-main communication
-
-With embassy_sync's async Mutex, these patterns change fundamentally.
-
-**Consequences:**
-- Compilation errors (trait bounds)
-- Runtime panics (RefCell borrow violations)
-- Deadlocks (blocking across await, wrong RawMutex)
-- Data races (wrong RawMutex for context)
-
-**Prevention:**
-
-```rust
-// WRONG: Keeping RefCell in async Mutex
-use embassy_sync::mutex::Mutex;
-use core::cell::RefCell;
-static DATA: Mutex<ThreadModeRawMutex, RefCell<Option<RoasterControl>>> = 
-    Mutex::new(RefCell::new(None));
-
-// CORRECT: No RefCell needed - MutexGuard provides exclusive access
-static DATA: Mutex<ThreadModeRawMutex, RoasterControl> = 
-    Mutex::new(RoasterControl::new());
-
-// WRONG: Blocking mutex held across await
-static DATA: Mutex<ThreadModeRawMutex, u32> = Mutex::new(0);
-async fn bad_example() {
-    DATA.lock(|v| {
-        *v = 42;
-        Timer::after_millis(100).await; // DEADLOCK - holding lock!
-    });
-}
-
-// CORRECT: Use async Mutex when holding across await
-static DATA: embassy_sync::mutex::Mutex<ThreadModeRawMutex, u32> = 
-    embassy_sync::mutex::Mutex::new(0);
-async fn good_example() {
-    let mut guard = DATA.lock().await;
-    *guard = 42;
-    Timer::after_millis(100).await; // OK - other tasks can run
-}
-
-// WRONG: ThreadModeRawMutex in ISR
-static DATA: Mutex<ThreadModeRawMutex, u32> = Mutex::new(0);
-fn isr_handler() {
-    // Not safe! ThreadModeRawMutex doesn't work in interrupt context
-}
-
-// CORRECT: Use CriticalSectionRawMutex for ISR + task sharing
-static DATA: Mutex<CriticalSectionRawMutex, u32> = Mutex::new(0);
-```
-
-**Detection:**
-- RefCell in Mutex type → likely unnecessary
-- `.await` inside `lock()` closure → blocking across await
-- Compilation errors about `Sync` → likely wrong RawMutex
-- Excessive `.unwrap()` → wrong initialization pattern
-
----
-
-### Pitfall 10: embassy_sync Mutex — Trait Bound Issues
-
-**What goes wrong:** "trait `Send` is not implemented" or "trait `Sync` is not implemented" errors.
-
-**Why it happens:** The inner type `T` must be `Send` to be shared between async tasks. The RawMutex must be `Sync`.
-
-**Prevention:**
-```rust
-// Ensure T is Send:
-struct RoasterControl {
-    // Use owned types, not borrowed references with non-'static lifetimes
-    timer: Timer,           // OK - owned
-    // timer: &'a mut Timer, // WRONG - not 'static
-}
-
-// Choose correct RawMutex:
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
-
-// For task-only: ThreadModeRawMutex (or NoopRawMutex)
-// For ISR + task: CriticalSectionRawMutex
-```
-
----
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| Pitfall 1 (heavy flash) | Phase "v4.2 Watchdog Integration" | Run flash/format regression with instrumentation enabled and confirm no `task_wdt` logs. |
+| Pitfall 2 (tight loops) | Phase "Sensor/Timeout Tuning" | Stress-test guard loops at target sample rates and verify idle hook `esp_task_wdt_reset()` runs regularly. |
+| Pitfall 3 (temperature sensor) | Phase "Over-Temperature Regression" | Disable caches/flash, raise chip temp, and confirm the threshold callback fires and maps to the calibration that ops see. |
+| Pitfall 4 (LedcGuard fade) | Phase "LedcGuard Timeout" | Start a fade from the guard and ensure it completes via callback without blocking `ledc_cb_register`. |
 
 ## Sources
 
-- embassy-sync official documentation: https://docs.embassy.dev/embassy-sync/git/default/mutex/struct.Mutex.html
-- embassy-sync blocking_mutex: https://docs.embassy.dev/embassy-sync/git/default/blocking_mutex/struct.Mutex.html
-- Rust forum — Mutex<RefCell<Option<T>>> pattern: https://users.rust-lang.org/t/mutex-refcell-option-t-on-stm32-project/124386
-- The Embedded Rustacean — Sharing Data Among Tasks: https://blog.theembeddedrustacean.com/sharing-data-among-tasks-in-rust-embassy-synchronization-primitives
+- ESP-IDF Task Watchdog documentation (timeout tuning, default behavior, `CONFIG_ESP_TASK_WDT_PANIC`): https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/wdts.html
+- SPIFFS format watchdog issue showing TWDT firing during flash erase: https://github.com/espressif/esp-idf/issues/8135
+- Stack Overflow thread explaining busy loops must yield to avoid task watchdog: https://stackoverflow.com/questions/78614192/esp32-task-watchdog-triggered
+- ESP-IDF temperature sensor guide (chip-only accuracy, IRAM-safe callbacks): https://raw.githubusercontent.com/espressif/esp-idf/master/docs/en/api-reference/peripherals/temp_sensor.rst
+- ESP-IDF LEDC guide (fades cannot be interrupted, callback placement): https://raw.githubusercontent.com/espressif/esp-idf/master/docs/en/api-reference/peripherals/ledc.rst
 
 ---
-
-*Additional pitfalls research for: LibreRoaster v3.0 embassy_sync::Mutex migration*
-*Researched: 2026-02-19*
+*Pitfalls research for: Watchdog and safety guards on LibreRoaster’s ESP32-C3 stack*
+*Researched: 2026-02-23*
