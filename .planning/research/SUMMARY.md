@@ -1,126 +1,181 @@
-# Project Research Summary
+# Project Research Summary: v4.4 SSR Refactoring & Test Stubs
 
-**Project:** LibreRoaster
-**Domain:** Embedded safety instrumentation for the Artisan command stack on ESP32-C3
-**Researched:** 2026-02-23
-**Confidence:** MEDIUM
+**Project:** LibreRoaster (ESP32-C3 Coffee Roaster Firmware)
+**Domain:** Embedded Rust firmware - coffee roaster control
+**Researched:** 2026-02-24
+**Confidence:** HIGH
 
 ## Executive Summary
 
-LibreRoaster is a safety-critical embedded controller for Artisan roasting gear. Experts build it by layering an async executor, a dual-context `ServiceContainer`, and hardened peripheral drivers so the 100 ms control loop can stay deterministic while instrumentation commands and regression tests run alongside it.
+This research addresses two key refactoring goals for LibreRoaster v4.4:
 
-The recommended approach stitches together the stack from `esp-hal` (LEDs, temperature sensors, system registers), the IDF watchdog shim, and `embassy-time` so the existing loop feeds the TWDT, cuts heater duty as soon as an over-temperature condition trips, and drops LEDC guard tokens before awaiting. Telemetry and regression runners share the same `dual_output_task`, keeping safety state observable while the watchdog or regression harness can inject test scenarios.
+1. **SSR Deduplication**: The existing `SsrControl` and `SsrControlSimple` structs share ~95% identical code. Research confirms the recommended approach is **composition + trait default implementations** - extract common state into `SsrControlBase`, define a trait with shared methods, and have both types embed the base while implementing the trait. This eliminates duplication while preserving zero-cost abstraction.
 
-Key risks are long-running guard or flash operations that sideline the idle task, guard loops that spin without yielding, and the built-in temperature sensor being treated as an absolute over-temp answer. Mitigate these by inserting `taskYIELD()`/`vTaskDelay(1)`, feeding the watchdog from the loop before instrumentation work runs, keeping LEDC guard sections short, and enabling IRAM-safe threshold callbacks so regression/production signals fire even when the cache is disabled.
+2. **Shared Test Infrastructure**: Currently, test mocks are scattered across individual test files, causing ~5x duplication. Research recommends creating `tests/common/mod.rs` with manual stub implementations (`StubHeater`, `StubFan`, `StubThermometer`) that implement the existing `control::traits`. No external crates needed - use `RefCell` for interior mutability.
+
+**Key risks identified:**
+- Breaking embedded-hal trait bounds during deduplication (CRITICAL)
+- Losing Send+Sync safety in extracted types (CRITICAL)
+- Safety-critical detection logic must be preserved exactly (CRITICAL)
+
+The existing codebase already has substantial infrastructure - SSR control, Heater trait, and some test mocks. This milestone consolidates and shares that infrastructure.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The research binds the safety logic to the existing asynchronous runtime by feeding TWDT from the 100 ms loop, relying on the guard-managed LEDC access layer, and pulling temperature readings through the HAL so the regression harness can verify the shutdown path.
+**SSR Refactoring: Composition + Trait Pattern**
 
-**Core technologies:**
-- `esp-hal` (esp32c3 + `ledc`, `tsens`, `system`): controls PWM, temp sensors, and system registers safely while exposing the temperature helpers needed by the regression path.
-- `esp_bootloader_esp_idf`: links Task Watchdog APIs (`esp_task_wdt_*`) so the async loop can register/ feed TWDT and report the triggered task.
-- `embassy-time`: orchestrates the deterministic 100 ms cycle that samples sensors, drives LEDC, and feeds the watchdog without blocking the executor.
+| Approach | Implementation | Why |
+|----------|---------------|-----|
+| **Primary** | Extract `SsrState` struct with common fields | Zero-cost abstraction, embeds shared state in both types |
+| **Secondary** | Define `SsrControlTrait` with default implementations | Eliminates duplicate method implementations |
+| **Existing** | Keep `Heater` trait from `control::traits` | Already provides `set_power` abstraction used by roaster control |
+
+**Test Infrastructure: Shared Stubs Module**
+
+| Component | Location | Implementation |
+|-----------|----------|----------------|
+| **Test stubs** | `tests/common/mod.rs` | Manual struct implementations (no external crate needed) |
+| **Stub patterns** | StubHeater, StubFan, StubThermometer | Implement existing `control::traits` traits |
+| **Helper utilities** | `reset_channels()`, `collect_output()` | Module-level functions for test state management |
 
 ### Expected Features
 
-Launch requires the TWDT-backed control cycle, over-temperature detection that immediately shuts down the heater, and the LedcGuard timeout guard that logs failures and leaves the outputs safe. Differentiators include multi-stage watchdog telemetry, regression-proven over-temp tests, and LedcGuard event logs.
-
 **Must have (table stakes):**
-- TWDT-backed 100 ms control cycle — users expect the system to recover from stuck loops.
-- Over-temperature detection & shutdown — the heater must stop when temperatures exceed safe thresholds.
-- LedcGuard timeout guard — serializes LEDC updates and reports guard failures before the watchdog fires.
+- SSR on/off control — Basic heating element control via GPIO
+- SSR PWM/phase control — Variable heating power (not just on/off)
+- Heat source detection — Verify SSR is actually heating
+- Cycle guard — Prevent SSR damage from rapid cycling
+- Duty readback verification — Confirm PWM duty matches commanded
+- **Shared test stubs** — Centralize mock implementations for Heater, Fan, Thermometer traits
 
 **Should have (competitive):**
-- Multi-stage observable watchdog transitions — auditors see each stage so restarts are explainable.
-- Regression-proven over-temp path — the regression harness forces the safe-shutdown sequence and labels it `OT-REGRESSION`.
-- LedcGuard event telemetry — instrumentation reports guard events and ties them to the control tick.
+- MockHeater test double — For PID/controller unit tests (currently missing)
+- Error path test coverage — Mocks that simulate error conditions
 
 **Defer (v2+):**
-- Telemetry dashboards tagging watchdog resets, over-temp events, and guard timeouts (v1.x follow-up once the safety paths are validated).
-- Multi-point temperature fusion and a fault-injection bench (longer-term v2+ work).
+- PID auto-tuning
+- Dual SSR channel support
+- Hardware-in-the-loop (HIL) tests
 
 ### Architecture Approach
 
-The architecture centers on a `ServiceContainer` holding `RoasterControl`, `WatchdogFeeder`, and regression handles so `control_loop_task` can read sensors, update PID outputs, feed the TWDT, and optionally trigger safety tests while `dual_output_task` keeps telemetry flowing.
+**Current Problem:** `SsrControl` and `SsrControlSimple` have ~95% duplicate code across 10+ methods including `detect_heat_source()`, `periodic_check()`, `set_percentage()`, getters, and `Heater` trait implementation.
 
-**Major components:**
-1. `control_loop_task` / `dual_output_task` — run the 100 ms embassy loop, pump telemetry, and feed the watchdog/ regression runner.
-2. `LedcBus` + `LedcGuard` — serialize fan/SSR writes, enforce timeout guards, and keep hardware access short before `await` points.
-3. `Safety` helpers (`WatchdogFeeder`, `OverTempTestRunner`) — wrap TWDT feeds, regression scenarios, and telemetry reporting so instrumentation shares the same async container.
+**Recommended Solution:** Extract `SsrControlBase`:
+
+```
+src/hardware/ssr.rs (refactored)
+├── SsrControlBase<'a, DETECT, PWM>    # NEW: Common state and logic
+│   ├── detection_pin, pwm_channel
+│   ├── hardware_status, current_duty, last_duty_delta_ticks, retry_count
+│   └── Methods: detect_heat_source, periodic_check, set_percentage, getters
+├── SsrControl<'a, PIN, DETECT, PWM>   # Wraps Base + enable pin
+└── SsrControlSimple<'a, DETECT, PWM>  # Wraps Base only
+```
+
+**Test Infrastructure:**
+```
+tests/common/
+├── mod.rs              # Re-exports, helper functions
+├── stub_heater.rs       # StubHeater implementation
+├── stub_fan.rs         # StubFan implementation
+└── stub_thermometer.rs # StubThermometer implementation
+```
 
 ### Critical Pitfalls
 
-1. **Heavy flash/guard work trips the Task WDT** — add yield points or break workloads so the idle task feeds TWDT instead of blocking during flash erases or guard fades.
-2. **Tight sampling or guard loops starve idle** — batch loops, insert `taskYIELD()`/`vTaskDelay(1)`, or call `esp_task_wdt_reset()` so the watchdog sees progress.
-3. **Uncalibrated temperature threshold callbacks** — enable `CONFIG_TEMP_SENSOR_ISR_IRAM_SAFE`, keep callbacks small/IRAM-safe, and calibrate the chip sensor against external references before trusting the guard.
-4. **LedcGuard waits forever on fades** — replace busy waits with fade-end callbacks, yield while polling, and keep mutexes short to avoid starving the watchdog.
+1. **Breaking embedded-hal Trait Bounds** — Extracting shared logic changes generic constraints, breaking `Heater` trait implementation. *Prevention: Define clear trait bounds before refactoring, test compilation of dependent code after each step.*
+
+2. **Losing Send+Sync Safety** — Refactoring may introduce RefCell/Cell for interior mutability, breaking async task boundaries. *Prevention: Preserve existing `unsafe impl Send` pattern, avoid interior mutability in refactored SSR types.*
+
+3. **Safety-Critical Detection Logic Loss** — `detect_heat_source` contains safety logic that must be preserved exactly. *Prevention: Create checklist of all state transitions before refactoring.*
+
+4. **Breaking PWM Readback Contract** — `monitor_ledc_after_set` is essential for safety; must be preserved. *Prevention: Keep readback call in public API after deduplication.*
+
+5. **Test State Pollution** — Shared mocks using RefCell can retain state between tests. *Prevention: Each test creates fresh mock instance, add reset methods.*
 
 ## Implications for Roadmap
 
-### Phase 1: Watchdog Integration
-**Rationale:** The 100 ms loop needs to feed the TWDT before any instrumentation or guard enhancements run so a stuck task is detectable early.
-**Delivers:** deterministic `control_loop_task`, `WatchdogFeeder` wiring, and TWDT feeds through `esp_task_wdt_reset_user` plus telemetry for reset reasons.
-**Addresses:** TWDT-backed cycle, over-temperature detection, logging the watchdog stages.
-**Avoids:** Heavy flash/guard work tripping Task WDT by keeping all long-running work out of this phase.
+Based on research, this milestone should be structured as two sequential phases:
 
-### Phase 2: Guard Timeout Hardening
-**Rationale:** LedcGuard timeouts and the LEDC guard token must exist before regression and instrumentation exercises the same hardware.
-**Delivers:** `LedcGuard`/`LedcBus` timeout-aware guards, callback-based fade completion, and `ServiceContainer` fields for guard telemetry.
-**Uses:** `esp-hal` LEDC primitives plus `embassy-time` timers so guard lookups yield instead of blocking.
-**Implements:** the guarded hardware access pattern and shared service container wiring.
-**Avoids:** LedcGuard busy waits starve the watchdog by enforcing short critical sections and callbacks.
+### Phase 1: SSR Refactoring (Base Struct Extraction)
+**Rationale:** This is foundational - the other work depends on having clean, non-duplicated SSR code. Must be done first to enable proper shared test infrastructure.
 
-### Phase 3: Regression & Observability
-**Rationale:** Once the guard is stable, add regression test runners, instrumentation telemetry, and calibrate over-temperature responses so we can prove safe shutdowns.
-**Delivers:** `OverTempTestRunner`, telemetry for guard/resets, regression harness commands, and documentation of stage transitions.
-**Addresses:** LedcGuard telemetry, regression-proven over-temp path, and deferred telemetry dashboards.
-**Avoids:** Uncalibrated temp sensors failing to fire by validating IRAM-safe callbacks under flash-intensive scenarios.
+**Delivers:**
+- `SsrControlBase` struct with shared state and methods
+- Refactored `SsrControl` and `SsrControlSimple` delegating to base
+- Preserved `Heater` trait implementations
+
+**Addresses:**
+- FEATURES: SSR PWM control, heat source detection, duty readback, cycle guard
+- ARCHITECTURE: Eliminates ~95% code duplication
+
+**Avoids:**
+- PITFALLS: Trait bound breakage, Send+Sync loss, safety logic loss, PWM readback break
+
+**Research Flags:**
+- This phase is well-understood (HIGH confidence from STACK.md research)
+- Standard patterns - skip `/gsd-research-phase` during planning
+
+### Phase 2: Shared Test Infrastructure
+**Rationale:** Depends on SSR refactoring complete (mock implementations may need updating after structural changes). Creates reusable infrastructure for future tests.
+
+**Delivers:**
+- `tests/common/mod.rs` with StubHeater, StubFan, StubThermometer
+- Helper functions: `reset_channels()`, `collect_output()`
+- Migrated existing tests to use shared stubs
+
+**Addresses:**
+- FEATURES: Shared mock location, MockHeater test double
+- ARCHITECTURE: Centralized test infrastructure
+
+**Avoids:**
+- PITFALLS: Mock API drift, test state pollution, missing trait boundary tests
+
+**Research Flags:**
+- This phase is well-understood (HIGH confidence from existing test patterns)
+- May need research if new error-path tests require complex mock configurations
 
 ### Phase Ordering Rationale
-- Build the watchdog loop first so the TWDT feed exists before any guard or regression work can accidentally starve idle.
-- Layer guard timeout logic over that loop because LedcGuard depends on a healthy TWDT feed and existing LEDC synchronization.
-- Add regression + telemetry last since they assume the guard and watchdog are stable and must reuse the same telemetry/ServiceContainer wiring.
 
-### Research Flags
-Phases likely needing deeper research during planning:
-- **Phase 2:** Guard callback latency and LEDC fade semantics need experimentation to avoid busy-waiting traps.
-- **Phase 3:** Over-temperature calibration and IRAM-safe sensor callbacks require sensor/flash gating tests before shipping.
+1. **SSR first** - The structural changes in Phase 1 could break existing mocks. Completing Phase 1 first ensures Phase 2 builds on stable foundations.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** Assembling `esp-hal`, `esp_bootloader_esp_idf`, and `embassy-time` around the 100 ms loop follows well-documented practices.
+2. **Two-phase structure** - Separates infrastructure creation from migration, allowing verification between steps.
+
+3. **Avoids Pitfall 11** - "Refactoring SSR Then Breaking All Existing Mocks" is mitigated by doing SSR refactoring first.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | MEDIUM | Based on official ESP-IDF/esp-hal docs documented in `STACK.md`. |
-| Features | HIGH | Feature priorities are derived from high-confidence research in `FEATURES.md`. |
-| Architecture | MEDIUM | Internal component map is well defined but still evolving. |
-| Pitfalls | MEDIUM | Sources cite ESP-IDF docs/issues with reproducible warnings. |
+| Stack | HIGH | Composition pattern well-established in Rust; existing codebase verified |
+| Features | HIGH | Table stakes verified via code review; gap analysis accurate |
+| Architecture | HIGH | Base struct pattern matches existing codebase structure |
+| Pitfalls | MEDIUM-HIGH | 10+ pitfalls identified; some mitigation strategies inferred |
 
-**Overall confidence:** MEDIUM
+**Overall confidence:** HIGH
 
 ### Gaps to Address
-- **Sensor calibration gap:** Need to validate chip-temperature thresholds against actual roasts and document how they relate to external probes.
-- **Instrumentation timing:** Confirm regression harness and LEDC guard callbacks keep the idle task fed when flash operations / fades run concurrently.
+
+- **Heater trait boundary tests**: No dedicated tests exist for Heater trait implementation on SSR types. Should add in Phase 2.
+- **Error-path mock coverage**: Current mocks implement happy path only. Phase 2 should add error variants.
+- **Property-based tests**: Not in scope for v4.4 but would add value for SSR percentage conversion math.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `.planning/research/STACK.md` — Justifies the safety stack (esp-hal, esp_bootloader_esp_idf, embassy-time) with IDF docs.
-- `.planning/research/FEATURES.md` — Prioritizes TWDT guard, over-temp shutdown, and telemetry/regression differentiators.
+- LibreRoaster codebase (`src/hardware/ssr.rs`, `src/control/traits.rs`) — Verified SSR implementation
+- `tests/mock_uart.rs`, `tests/mock_usb_driver.rs` — Verified existing mock patterns
+- Stack Overflow: Rust trait deduplication patterns
 
 ### Secondary (MEDIUM confidence)
-- `.planning/research/ARCHITECTURE.md` — Maps components, data flows, and design patterns around the ServiceContainer.
-- `.planning/research/PITFALLS.md` — Enumerates watchdog/LEDC pitfalls and prevention strategies drawn from ESP-IDF notes.
-
-### Tertiary (LOW confidence)
-- ESP-IDF issue #8135 (flash erase triggering Task WDT) — highlights heavy work blocking the idle task.
-- Stack Overflow discussion (`ESP32 Task Watchdog Triggered`) — reinforces the need to yield in long loops.
+- embedded-hal-mock crate documentation — Test infrastructure patterns
+- Rust Send+Sync requirements — Embedded async safety
 
 ---
-*Research completed: 2026-02-23*
+
+*Research completed: 2026-02-24*
 *Ready for roadmap: yes*
+*Milestone: v4.4 SSR Refactoring & Test Stubs*

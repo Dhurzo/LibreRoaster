@@ -17,6 +17,7 @@ std = ["embedded-hal-02"]
 test = ["std"]
 async-lock-depth-metrics = []
 embedded = []
+regression = ["embedded-hal-mock"]
 
 [[bin]]
 name = "libreroaster"
@@ -37,8 +38,10 @@ critical-section = "1.2.0"
 static_cell = "2.1.1"
 log              = "0.4.27"
 embassy-sync     = "0.6.1"
+embassy-executor = { version = "0.9.1", features = ["log"] }
 portable-atomic = "1.13"
 libm = "0.2"
+embedded-hal-mock = { version = "0.11.1", optional = true }
 
 # Logging - esp_println for direct UART0 output
 
@@ -73,7 +76,6 @@ esp-backtrace = { version = "0.18.1", features = [
 ] }
 esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
 # for more networking protocol support see https://crates.io/crates/edge-net
-embassy-executor = { version = "0.9.1", features = ["log"] }
 riscv-rt = { version = "0.16.0" }
 esp-radio = { version = "0.17.0", features = [
   "esp-alloc",

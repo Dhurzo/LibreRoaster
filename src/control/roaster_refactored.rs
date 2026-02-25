@@ -3,16 +3,16 @@ use crate::config::*;
 use crate::control::handlers::{
     ArtisanCommandHandler, SafetyCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
 };
+use crate::control::pid::PidFeedback;
 use crate::control::traits::{Fan, Heater};
 use crate::control::SsrCycleGuard;
 use alloc::boxed::Box;
-#[cfg(not(target_arch = "riscv32"))]
-use core::marker::PhantomData;
 use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
 
-#[cfg(target_arch = "riscv32")]
-use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
+use crate::hardware::sensors::{SensorConversionHub, SensorSample};
+
+const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
 /// RoasterControl - uses concrete Max31856 types for sensor storage
 /// This enables calling async temperature methods without blocking the executor
@@ -22,20 +22,14 @@ pub struct RoasterControl {
     ssr_guard: SsrCycleGuard,
     last_temp_read: Option<Instant>,
     last_pid_update: Option<Instant>,
+    last_desired_output: f32,
+    last_pv_sample: Option<f32>,
+    last_pv_sample_time: Option<Instant>,
+    last_filtered_derivative: f32,
 
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
-    /// Sensors stored as concrete Max31856 types - enables async temperature reading
-    #[cfg(target_arch = "riscv32")]
-    bean_sensor: Max31856<BtSpi>,
-    #[cfg(target_arch = "riscv32")]
-    env_sensor: Max31856<EtSpi>,
-    /// PhantomData for non-riscv32 targets to maintain type consistency
-    /// Using fn() -> () which is Send + Sync
-    #[cfg(not(target_arch = "riscv32"))]
-    _bean_sensor: PhantomData<fn() -> ()>,
-    #[cfg(not(target_arch = "riscv32"))]
-    _env_sensor: PhantomData<fn() -> ()>,
+    sensor_hub: SensorConversionHub,
 
     temp_handler: TemperatureCommandHandler,
 
@@ -53,8 +47,7 @@ impl RoasterControl {
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
-        bean_sensor: Max31856<BtSpi>,
-        env_sensor: Max31856<EtSpi>,
+        sensor_hub: SensorConversionHub,
     ) -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
 
@@ -64,10 +57,13 @@ impl RoasterControl {
             ssr_guard: SsrCycleGuard::new(),
             last_temp_read: None,
             last_pid_update: None,
+            last_desired_output: 0.0,
+            last_pv_sample: None,
+            last_pv_sample_time: None,
+            last_filtered_derivative: 0.0,
             heater,
             fan,
-            bean_sensor,
-            env_sensor,
+            sensor_hub,
             temp_handler,
             safety_handler: SafetyCommandHandler::new(),
             artisan_handler: ArtisanCommandHandler::new(),
@@ -80,6 +76,7 @@ impl RoasterControl {
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
+        sensor_hub: SensorConversionHub,
     ) -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
 
@@ -89,10 +86,13 @@ impl RoasterControl {
             ssr_guard: SsrCycleGuard::new(),
             last_temp_read: None,
             last_pid_update: None,
+            last_desired_output: 0.0,
+            last_pv_sample: None,
+            last_pv_sample_time: None,
+            last_filtered_derivative: 0.0,
             heater,
             fan,
-            _bean_sensor: PhantomData,
-            _env_sensor: PhantomData,
+            sensor_hub,
             temp_handler,
             safety_handler: SafetyCommandHandler::new(),
             artisan_handler: ArtisanCommandHandler::new(),
@@ -101,42 +101,28 @@ impl RoasterControl {
         })
     }
 
-    /// Async sensor reading - uses async MAX31856 methods to avoid blocking executor
-    /// This is the gap closure: storing concrete Max31856 types enables async calls
+    /// Async sensor reading - uses the shared conversion helper so every consumer sees the same math
     #[cfg(target_arch = "riscv32")]
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
-        let current_time = Instant::now();
+        let sample = self.sensor_hub.sample().await?;
+        let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
+        if has_fault {
+            self.status.fault_condition = true;
+        }
 
-        // Using async temperature reads - no longer blocks the async executor
-        // The concrete Max31856 type gives us access to read_temperature_async()
-        let raw_bt = self.bean_sensor.read_temperature_async().await?;
-        let raw_et = self.env_sensor.read_temperature_async().await?;
-
-        self.update_temperatures(raw_bt, raw_et, current_time)
+        self.update_temperatures(sample.bean_temp, sample.env_temp, sample.timestamp)
     }
 
     /// Async sensor reading - stub for non-riscv32 targets
     #[cfg(not(target_arch = "riscv32"))]
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
-        // Stub for host target - actual sensor reading not available
-        Ok(())
-    }
+        let sample = self.sensor_hub.sample().await?;
+        let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
+        if has_fault {
+            self.status.fault_condition = true;
+        }
 
-    /// Sync sensor reading - kept for backwards compatibility
-    /// Note: This now uses the concrete Max31856 types but calls sync methods
-    #[cfg(target_arch = "riscv32")]
-    pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
-        let current_time = Instant::now();
-        let raw_bt = self.bean_sensor.read_temperature()?;
-        let raw_et = self.env_sensor.read_temperature()?;
-        self.update_temperatures(raw_bt, raw_et, current_time)
-    }
-
-    /// Sync sensor reading - stub for non-riscv32 targets
-    #[cfg(not(target_arch = "riscv32"))]
-    pub fn read_sensors_sync(&mut self) -> Result<(), RoasterError> {
-        // Stub for host target - actual sensor reading not available
-        Ok(())
+        self.update_temperatures(sample.bean_temp, sample.env_temp, sample.timestamp)
     }
 
     pub fn get_status(&self) -> SystemStatus {
@@ -145,6 +131,10 @@ impl RoasterControl {
 
     pub fn status_mut(&mut self) -> &mut SystemStatus {
         &mut self.status
+    }
+
+    pub fn last_sensor_sample(&self) -> Option<SensorSample> {
+        self.sensor_hub.last_sample()
     }
 
     pub fn get_state(&self) -> RoasterState {
@@ -171,6 +161,41 @@ impl RoasterControl {
         }
 
         Ok(())
+    }
+
+    fn refresh_filtered_derivative(&mut self, current_pv: f32, current_time: Instant) {
+        let mut derivative_rate = 0.0;
+        let mut has_valid_rate = false;
+
+        if let (Some(prev_pv), Some(prev_time)) = (self.last_pv_sample, self.last_pv_sample_time) {
+            let duration = current_time.duration_since(prev_time);
+            let dt_secs = duration.as_micros() as f32 * 1e-6;
+            if dt_secs > 0.0 {
+                let delta_temp = current_pv - prev_pv;
+                if delta_temp.is_finite() {
+                    let instantaneous_rate = delta_temp / dt_secs;
+                    if instantaneous_rate.is_finite() {
+                        derivative_rate = DERIVATIVE_FILTER_ALPHA * instantaneous_rate
+                            + (1.0 - DERIVATIVE_FILTER_ALPHA) * self.last_filtered_derivative;
+                        if derivative_rate.is_finite() {
+                            has_valid_rate = true;
+                            self.last_filtered_derivative = derivative_rate;
+                        }
+                    }
+                }
+            }
+        }
+
+        if has_valid_rate {
+            self.status.derivative_rate = derivative_rate;
+            self.status.derivative_available = true;
+        } else {
+            self.status.derivative_rate = 0.0;
+            self.status.derivative_available = false;
+        }
+
+        self.last_pv_sample = Some(current_pv);
+        self.last_pv_sample_time = Some(current_time);
     }
 
     pub fn mark_overtemp_regression_active(&mut self, active: bool) {
@@ -345,6 +370,10 @@ impl RoasterControl {
 
         self.status.ssr_hardware_status = self.heater.get_status();
 
+        let current_pv = self.status.bean_temp;
+        self.status.pv = current_pv;
+        self.refresh_filtered_derivative(current_pv, current_time);
+
         let desired_output = if self.safety_handler.is_emergency_active() {
             debug!("Emergency active - forcing SSR output to 0%");
             0.0
@@ -368,7 +397,17 @@ impl RoasterControl {
             0.0
         };
 
+        self.last_desired_output = desired_output;
+        let pid_integrator_value = self.temp_handler.pid_integrator_value();
+        let guard_busy = self.ssr_guard.next_cycle_allowed(current_time).is_err();
         let applied_output = self.apply_guarded_heater(desired_output, current_time, false)?;
+        let feedback = PidFeedback::new(desired_output, applied_output, guard_busy);
+        self.temp_handler.set_pid_feedback(feedback);
+
+        self.status.integrator_value = pid_integrator_value;
+        self.status.mv = applied_output;
+        self.status.saturation_active = self.temp_handler.pid_saturation_active();
+        self.status.integrator_clamped = self.temp_handler.pid_integrator_clamped();
 
         let fan_output = self.artisan_handler.get_manual_fan();
         self.fan
@@ -432,6 +471,8 @@ impl RoasterControl {
             self.capture_ssr_monitor_metrics();
             power_result.map_err(|_| RoasterError::HardwareError)?;
             self.status.ssr_output = 0.0;
+            self.status.saturation_active = false;
+            self.status.integrator_clamped = false;
             self.update_guard_busy_ms(now);
             return Ok(0.0);
         }
@@ -443,10 +484,14 @@ impl RoasterControl {
                 self.capture_ssr_monitor_metrics();
                 power_result.map_err(|_| RoasterError::HardwareError)?;
                 self.status.ssr_output = clamped;
+                self.status.saturation_active = false;
+                self.status.integrator_clamped = false;
                 self.update_guard_busy_ms(now);
                 Ok(clamped)
             }
             Err(busy_until) => {
+                self.status.saturation_active = true;
+                self.status.integrator_clamped = true;
                 self.status.ssr_cycle_guard_busy_until_ms = Self::busy_window_ms(now, busy_until);
                 warn!("SSR cycle busy until {:?}", busy_until);
                 if reject_on_busy {
@@ -628,6 +673,10 @@ impl RoasterControl {
 
     pub fn get_fan_speed(&self) -> f32 {
         self.status.fan_output
+    }
+
+    pub fn last_desired_heater_output(&self) -> f32 {
+        self.last_desired_output
     }
 
     fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {

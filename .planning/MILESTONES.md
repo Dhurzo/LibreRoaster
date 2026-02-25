@@ -20,7 +20,23 @@
 
 **Git range:** `2293b65` → `6baf634`
 
-**What's next:** `/gsd-new-milestone` to define the instrumentation automation/telemetry/safety requirements that will guide phases 70+.
+**What's next:** `/gsd-plan-phase 70` to turn the v4.2 requirements into phase plans.
+
+---
+
+## v4.2 Anti-windup integral (Planning)
+
+**Goal:** Harden the 100 ms control loop with anti-windup, derivative-on-measurement, deterministic sampling, and centralized MAX31856 telemetry/tests so automation sees a stable safety envelope.
+
+**Phases:** 70+ (roadmap still to be defined)
+
+**Target features:**
+- Anti-windup integral guard that clamps integrator growth when LEDC outputs saturate.
+- Derivative-on-measurement tied to the centralized MAX31856 conversion helper.
+- Timer-aligned 100 ms loop cadence that feeds watchdog, telemetry, and instrumentation before each tick.
+- Centralized MAX31856 conversion pipeline plus regression/unit tests for every control/safety component.
+
+**What’s next:** Define requirements and phases for v4.2 (phase 70 onward) and head into `/gsd-plan-phase 70` once the roadmap is ready.
 
 ---
 

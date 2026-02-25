@@ -1,6 +1,6 @@
 use super::{RoasterCommandHandler, RoasterError};
 use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
-use crate::control::pid::CoffeeRoasterPid;
+use crate::control::pid::{CoffeeRoasterPid, PidFeedback};
 use crate::control::OutputController;
 use embassy_time::Instant;
 use log::{info, warn};
@@ -25,6 +25,11 @@ impl TemperatureCommandHandler {
             .compute_output(bean_temp, current_time.as_millis() as u32)
     }
 
+    /// Push actuator/LEDC guard feedback into the PID so the integrator can clamp while the guard is busy.
+    pub fn set_pid_feedback(&mut self, feedback: PidFeedback) {
+        self.pid_controller.update_feedback(feedback);
+    }
+
     pub fn set_pid_target(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.pid_controller
             .set_target(target_temp)
@@ -46,6 +51,22 @@ impl TemperatureCommandHandler {
 
     pub fn get_output_manager_mut(&mut self) -> &mut OutputController {
         &mut self.output_manager
+    }
+
+    pub fn pid_integrator_value(&self) -> f32 {
+        self.pid_controller.integrator_value()
+    }
+
+    pub fn pid_derivative_value(&self) -> f32 {
+        self.pid_controller.derivative_value()
+    }
+
+    pub fn pid_integrator_clamped(&self) -> bool {
+        self.pid_controller.is_integrator_clamped()
+    }
+
+    pub fn pid_saturation_active(&self) -> bool {
+        self.pid_controller.is_saturation_active()
     }
 }
 
@@ -370,6 +391,7 @@ mod artisan_command_handler_tests {
             watchdog_consecutive_failures: 0,
             ledc_guard_timeouts: 0,
             overtemp_regression_active: false,
+            ..SystemStatus::default()
         }
     }
 

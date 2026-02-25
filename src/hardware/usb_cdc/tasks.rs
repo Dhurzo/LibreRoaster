@@ -3,10 +3,10 @@ use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
+use crate::hardware::static_sync::SyncCell;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use crate::log_channel;
 use crate::logging::channel::Channel;
-use core::cell::UnsafeCell;
 use embassy_time::Duration;
 use embassy_time::Timer;
 use heapless::{String, Vec};
@@ -15,20 +15,6 @@ use log::debug;
 use super::driver::get_usb_cdc_driver;
 
 pub const USB_COMMAND_PIPE_SIZE: usize = 256;
-
-struct SyncCell<T>(UnsafeCell<T>);
-
-unsafe impl<T> Sync for SyncCell<T> {}
-
-impl<T> SyncCell<T> {
-    const fn new(val: T) -> Self {
-        Self(UnsafeCell::new(val))
-    }
-
-    fn get(&self) -> *mut T {
-        self.0.get()
-    }
-}
 
 /// Command queue for USB FIFO processing - reject-on-full behavior
 static USB_COMMAND_QUEUE: SyncCell<Option<CommandQueue<ArtisanCommand, COMMAND_QUEUE_SIZE>>> =

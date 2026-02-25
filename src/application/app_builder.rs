@@ -1,7 +1,9 @@
 use crate::application::service_container::ServiceContainer;
 use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterControl;
+#[cfg(target_arch = "riscv32")]
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
+use crate::hardware::sensors::SensorConversionHub;
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
@@ -19,8 +21,7 @@ pub struct AppBuilder<'a> {
     formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
-    bean_sensor: Option<Max31856<BtSpi>>,
-    env_sensor: Option<Max31856<EtSpi>>,
+    sensor_hub: Option<SensorConversionHub>,
 }
 
 impl<'a> AppBuilder<'a> {
@@ -30,8 +31,7 @@ impl<'a> AppBuilder<'a> {
             formatter: None,
             heater: None,
             fan: None,
-            bean_sensor: None,
-            env_sensor: None,
+            sensor_hub: None,
         }
     }
 
@@ -56,13 +56,18 @@ impl<'a> AppBuilder<'a> {
         self
     }
 
+    #[cfg(target_arch = "riscv32")]
     pub fn with_temperature_sensors(
-        mut self,
+        self,
         bean_sensor: Max31856<BtSpi>,
         env_sensor: Max31856<EtSpi>,
     ) -> Self {
-        self.bean_sensor = Some(bean_sensor);
-        self.env_sensor = Some(env_sensor);
+        let hub = SensorConversionHub::new(bean_sensor, env_sensor);
+        self.with_sensor_conversion_hub(hub)
+    }
+
+    pub fn with_sensor_conversion_hub(mut self, hub: SensorConversionHub) -> Self {
+        self.sensor_hub = Some(hub);
         self
     }
 
@@ -83,15 +88,12 @@ impl<'a> AppBuilder<'a> {
         let heater = self
             .heater
             .ok_or(BuildError::MissingPeripheral("SSR Heater"))?;
-        let bean_sensor = self
-            .bean_sensor
-            .ok_or(BuildError::MissingPeripheral("Bean Temperature Sensor"))?;
-        let env_sensor = self.env_sensor.ok_or(BuildError::MissingPeripheral(
-            "Environment Temperature Sensor",
-        ))?;
+        let sensor_hub = self
+            .sensor_hub
+            .ok_or(BuildError::MissingPeripheral("Sensor Conversion Hub"))?;
 
-        let roaster = RoasterControl::new(heater, fan, bean_sensor, env_sensor)
-            .map_err(|e| BuildError::RoasterInit(e))?;
+        let roaster =
+            RoasterControl::new(heater, fan, sensor_hub).map_err(|e| BuildError::RoasterInit(e))?;
 
         let artisan_input = ArtisanInput::new().map_err(|e| BuildError::ArtisanInit(e))?;
         let formatter = self.formatter.unwrap_or_else(ArtisanFormatter::new);

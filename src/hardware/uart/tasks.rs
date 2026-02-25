@@ -2,8 +2,8 @@ use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
+use crate::hardware::static_sync::SyncCell;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
-use core::cell::UnsafeCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
@@ -16,20 +16,6 @@ use super::buffer::CircularBuffer;
 use super::driver::get_uart_driver;
 
 pub const COMMAND_PIPE_SIZE: usize = 256;
-
-struct SyncCell<T>(UnsafeCell<T>);
-
-unsafe impl<T> Sync for SyncCell<T> {}
-
-impl<T> SyncCell<T> {
-    const fn new(val: T) -> Self {
-        Self(UnsafeCell::new(val))
-    }
-
-    fn get(&self) -> *mut T {
-        self.0.get()
-    }
-}
 
 /// Size of the UART event queue for buffering incoming bytes
 pub const EVENT_QUEUE_SIZE: usize = 256;

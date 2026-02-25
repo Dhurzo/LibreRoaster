@@ -82,6 +82,79 @@ pub enum SsrHardwareStatus {
     Error,
 }
 
+/// Common state for SSR control implementations.
+/// Embedded by both SsrControl and SsrControlSimple to eliminate code duplication.
+pub struct SsrControlBase {
+    pub(crate) hardware_status: SsrHardwareStatus,
+    pub(crate) current_duty: u16,
+    pub(crate) last_duty_delta_ticks: i16,
+    pub(crate) retry_count: u8,
+    pub(crate) last_detection_check: Option<u32>,
+    pub(crate) is_pwm_enabled: bool,
+}
+
+/// Trait for heat source detection functionality.
+/// Implementations must provide detection logic.
+pub trait HeatSourceDetector {
+    fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError>;
+}
+
+/// Trait for periodic health check functionality.
+/// Implementations must provide periodic check logic.
+pub trait PeriodicCheck {
+    fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError>;
+}
+
+/// Trait for status getter methods.
+/// Provides default implementations for common status queries.
+pub trait StatusGetters {
+    fn get_hardware_status(&self) -> SsrHardwareStatus;
+    fn is_heating_available(&self) -> bool;
+    fn get_current_duty(&self) -> u16;
+    fn is_pwm_enabled(&self) -> bool;
+    fn last_lead_delta_ticks(&self) -> i16;
+    fn last_retry_count(&self) -> u8;
+}
+
+impl SsrControlBase {
+    pub fn new() -> Self {
+        SsrControlBase {
+            hardware_status: SsrHardwareStatus::NotDetected,
+            current_duty: 0,
+            last_duty_delta_ticks: 0,
+            retry_count: 0,
+            last_detection_check: None,
+            is_pwm_enabled: true,
+        }
+    }
+}
+
+impl StatusGetters for SsrControlBase {
+    fn get_hardware_status(&self) -> SsrHardwareStatus {
+        self.hardware_status
+    }
+
+    fn is_heating_available(&self) -> bool {
+        self.hardware_status == SsrHardwareStatus::Available
+    }
+
+    fn get_current_duty(&self) -> u16 {
+        self.current_duty
+    }
+
+    fn is_pwm_enabled(&self) -> bool {
+        self.is_pwm_enabled
+    }
+
+    fn last_lead_delta_ticks(&self) -> i16 {
+        self.last_duty_delta_ticks
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        self.retry_count
+    }
+}
+
 pub struct SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
@@ -94,12 +167,7 @@ where
     pin: PIN,
     detection_pin: DETECT,
     pwm_channel: PWM,
-    hardware_status: SsrHardwareStatus,
-    current_duty: u16,
-    last_duty_delta_ticks: i16,
-    retry_count: u8,
-    last_detection_check: Option<u32>,
-    is_pwm_enabled: bool,
+    base: SsrControlBase,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -129,12 +197,7 @@ where
             pin,
             detection_pin,
             pwm_channel,
-            hardware_status: SsrHardwareStatus::NotDetected,
-            current_duty: 0,
-            last_duty_delta_ticks: 0,
-            retry_count: 0,
-            last_detection_check: None,
-            is_pwm_enabled: true,
+            base: SsrControlBase::new(),
             _phantom: PhantomData,
         };
 
@@ -142,7 +205,7 @@ where
 
         info!(
             "SSR control initialized with PWM - heat source: {:?}",
-            ssr.hardware_status
+            ssr.base.hardware_status
         );
         Ok(ssr)
     }
@@ -156,7 +219,7 @@ where
                     SsrHardwareStatus::NotDetected
                 };
 
-                if new_status != self.hardware_status {
+                if new_status != self.base.hardware_status {
                     match new_status {
                         SsrHardwareStatus::Available => {
                             info!("Heat source detected - SSR heating operational");
@@ -166,51 +229,45 @@ where
                         }
                         _ => {}
                     }
-                    self.hardware_status = new_status;
+                    self.base.hardware_status = new_status;
                 }
 
-                self.last_detection_check = Some(current_time);
+                self.base.last_detection_check = Some(current_time);
                 Ok(())
             }
             Err(_) => {
-                if self.hardware_status != SsrHardwareStatus::Error {
+                if self.base.hardware_status != SsrHardwareStatus::Error {
                     error!("SSR detection pin error - switching to error state");
-                    self.hardware_status = SsrHardwareStatus::Error;
+                    self.base.hardware_status = SsrHardwareStatus::Error;
                 }
                 Err(SsrError::InputError)
             }
         }
     }
 
-    pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
-        let should_check = if let Some(last_check) = self.last_detection_check {
-            current_time.saturating_sub(last_check) >= crate::config::HEAT_SOURCE_CHECK_INTERVAL_MS
-        } else {
-            true
-        };
-
-        if should_check {
-            self.detect_heat_source(current_time)?;
-        }
-
-        Ok(())
+    pub fn get_current_duty(&self) -> u16 {
+        self.base.current_duty
     }
 
-    pub fn get_hardware_status(&self) -> SsrHardwareStatus {
-        self.hardware_status
+    pub fn is_pwm_enabled(&self) -> bool {
+        self.base.is_pwm_enabled
     }
 
-    pub fn is_heating_available(&self) -> bool {
-        self.hardware_status == SsrHardwareStatus::Available
+    pub fn last_lead_delta_ticks(&self) -> i16 {
+        self.base.last_duty_delta_ticks
+    }
+
+    pub fn last_retry_count(&self) -> u8 {
+        self.base.retry_count
     }
 
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
 
-        self.current_duty = ledc_duty as u16;
-        self.last_duty_delta_ticks = 0;
-        self.retry_count = 0;
+        self.base.current_duty = ledc_duty as u16;
+        self.base.last_duty_delta_ticks = 0;
+        self.base.retry_count = 0;
 
         self.pwm_channel
             .set_duty(ledc_duty)
@@ -219,8 +276,8 @@ where
         monitor_ledc_after_set(
             &mut self.pwm_channel,
             ledc_duty,
-            &mut self.retry_count,
-            &mut self.last_duty_delta_ticks,
+            &mut self.base.retry_count,
+            &mut self.base.last_duty_delta_ticks,
         )?;
 
         debug!(
@@ -232,22 +289,6 @@ where
 
         Ok(())
     }
-
-    pub fn get_current_duty(&self) -> u16 {
-        self.current_duty
-    }
-
-    pub fn is_pwm_enabled(&self) -> bool {
-        self.is_pwm_enabled
-    }
-
-    pub fn last_lead_delta_ticks(&self) -> i16 {
-        self.last_duty_delta_ticks
-    }
-
-    pub fn last_retry_count(&self) -> u8 {
-        self.retry_count
-    }
 }
 
 pub struct SsrControlSimple<'a, DETECT, PWM>
@@ -257,12 +298,7 @@ where
 {
     detection_pin: DETECT,
     pwm_channel: PWM,
-    hardware_status: SsrHardwareStatus,
-    current_duty: u16,
-    last_duty_delta_ticks: i16,
-    retry_count: u8,
-    last_detection_check: Option<u32>,
-    is_pwm_enabled: bool,
+    base: SsrControlBase,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -277,12 +313,7 @@ where
         let mut ssr = SsrControlSimple {
             detection_pin,
             pwm_channel,
-            hardware_status: SsrHardwareStatus::NotDetected,
-            current_duty: 0,
-            last_duty_delta_ticks: 0,
-            retry_count: 0,
-            last_detection_check: None,
-            is_pwm_enabled: true,
+            base: SsrControlBase::new(),
             _phantom: PhantomData,
         };
 
@@ -290,7 +321,7 @@ where
 
         info!(
             "SSR control initialized (simple mode) - heat source: {:?}",
-            ssr.hardware_status
+            ssr.base.hardware_status
         );
         Ok(ssr)
     }
@@ -304,7 +335,7 @@ where
                     SsrHardwareStatus::NotDetected
                 };
 
-                if new_status != self.hardware_status {
+                if new_status != self.base.hardware_status {
                     match new_status {
                         SsrHardwareStatus::Available => {
                             info!("Heat source detected - SSR heating operational");
@@ -314,16 +345,16 @@ where
                         }
                         _ => {}
                     }
-                    self.hardware_status = new_status;
+                    self.base.hardware_status = new_status;
                 }
 
-                self.last_detection_check = Some(current_time);
+                self.base.last_detection_check = Some(current_time);
                 Ok(())
             }
             Err(_) => {
-                if self.hardware_status != SsrHardwareStatus::Error {
+                if self.base.hardware_status != SsrHardwareStatus::Error {
                     error!("SSR detection pin error - switching to error state");
-                    self.hardware_status = SsrHardwareStatus::Error;
+                    self.base.hardware_status = SsrHardwareStatus::Error;
                 }
                 Err(SsrError::InputError)
             }
@@ -331,7 +362,7 @@ where
     }
 
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
-        let should_check = if let Some(last_check) = self.last_detection_check {
+        let should_check = if let Some(last_check) = self.base.last_detection_check {
             current_time.saturating_sub(last_check) >= crate::config::HEAT_SOURCE_CHECK_INTERVAL_MS
         } else {
             true
@@ -345,20 +376,20 @@ where
     }
 
     pub fn get_hardware_status(&self) -> SsrHardwareStatus {
-        self.hardware_status
+        self.base.hardware_status
     }
 
     pub fn is_heating_available(&self) -> bool {
-        self.hardware_status == SsrHardwareStatus::Available
+        self.base.hardware_status == SsrHardwareStatus::Available
     }
 
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
 
-        self.current_duty = ledc_duty as u16;
-        self.last_duty_delta_ticks = 0;
-        self.retry_count = 0;
+        self.base.current_duty = ledc_duty as u16;
+        self.base.last_duty_delta_ticks = 0;
+        self.base.retry_count = 0;
 
         self.pwm_channel
             .set_duty(ledc_duty)
@@ -367,8 +398,8 @@ where
         monitor_ledc_after_set(
             &mut self.pwm_channel,
             ledc_duty,
-            &mut self.retry_count,
-            &mut self.last_duty_delta_ticks,
+            &mut self.base.retry_count,
+            &mut self.base.last_duty_delta_ticks,
         )?;
 
         debug!(
@@ -382,19 +413,82 @@ where
     }
 
     pub fn get_current_duty(&self) -> u16 {
-        self.current_duty
+        self.base.current_duty
     }
 
     pub fn is_pwm_enabled(&self) -> bool {
-        self.is_pwm_enabled
+        self.base.is_pwm_enabled
     }
 
     pub fn last_lead_delta_ticks(&self) -> i16 {
-        self.last_duty_delta_ticks
+        self.base.last_duty_delta_ticks
     }
 
     pub fn last_retry_count(&self) -> u8 {
-        self.retry_count
+        self.base.retry_count
+    }
+}
+
+impl<'a, PIN, DETECT, PWM> StatusGetters for SsrControl<'a, PIN, DETECT, PWM>
+where
+    PIN: OutputPin,
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn get_hardware_status(&self) -> SsrHardwareStatus {
+        self.base.hardware_status
+    }
+
+    fn is_heating_available(&self) -> bool {
+        self.base.hardware_status == SsrHardwareStatus::Available
+    }
+
+    fn get_current_duty(&self) -> u16 {
+        self.base.current_duty
+    }
+
+    fn is_pwm_enabled(&self) -> bool {
+        self.base.is_pwm_enabled
+    }
+
+    fn last_lead_delta_ticks(&self) -> i16 {
+        self.base.last_duty_delta_ticks
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        self.base.retry_count
+    }
+}
+
+impl<'a, PIN, DETECT, PWM> HeatSourceDetector for SsrControl<'a, PIN, DETECT, PWM>
+where
+    PIN: OutputPin,
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
+        SsrControl::detect_heat_source(self, current_time)
+    }
+}
+
+impl<'a, PIN, DETECT, PWM> PeriodicCheck for SsrControl<'a, PIN, DETECT, PWM>
+where
+    PIN: OutputPin,
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
+        let should_check = if let Some(last_check) = self.base.last_detection_check {
+            current_time.saturating_sub(last_check) >= crate::config::HEAT_SOURCE_CHECK_INTERVAL_MS
+        } else {
+            true
+        };
+
+        if should_check {
+            self.detect_heat_source(current_time)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -417,11 +511,61 @@ where
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {
-        self.last_duty_delta_ticks
+        self.base.last_duty_delta_ticks
     }
 
     fn last_retry_count(&self) -> u8 {
-        self.retry_count
+        self.base.retry_count
+    }
+}
+
+impl<'a, DETECT, PWM> StatusGetters for SsrControlSimple<'a, DETECT, PWM>
+where
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn get_hardware_status(&self) -> SsrHardwareStatus {
+        self.base.hardware_status
+    }
+
+    fn is_heating_available(&self) -> bool {
+        self.base.hardware_status == SsrHardwareStatus::Available
+    }
+
+    fn get_current_duty(&self) -> u16 {
+        self.base.current_duty
+    }
+
+    fn is_pwm_enabled(&self) -> bool {
+        self.base.is_pwm_enabled
+    }
+
+    fn last_lead_delta_ticks(&self) -> i16 {
+        self.base.last_duty_delta_ticks
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        self.base.retry_count
+    }
+}
+
+impl<'a, DETECT, PWM> HeatSourceDetector for SsrControlSimple<'a, DETECT, PWM>
+where
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
+        SsrControlSimple::detect_heat_source(self, current_time)
+    }
+}
+
+impl<'a, DETECT, PWM> PeriodicCheck for SsrControlSimple<'a, DETECT, PWM>
+where
+    DETECT: InputPin,
+    PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
+{
+    fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
+        SsrControlSimple::periodic_check(self, current_time)
     }
 }
 
@@ -439,12 +583,12 @@ where
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.set_percentage(duty)
-            .map_err(|_| RoasterError::HardwareError)
+        StatusGetters::get_hardware_status(self);
+        SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError)
     }
 
     fn get_status(&self) -> GlobalSsrStatus {
-        match self.get_hardware_status() {
+        match StatusGetters::get_hardware_status(self) {
             SsrHardwareStatus::Available => GlobalSsrStatus::Available,
             SsrHardwareStatus::NotDetected => GlobalSsrStatus::NotDetected,
             SsrHardwareStatus::Error => GlobalSsrStatus::Error,
@@ -452,11 +596,11 @@ where
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {
-        self.last_duty_delta_ticks
+        StatusGetters::last_lead_delta_ticks(self)
     }
 
     fn last_retry_count(&self) -> u8 {
-        self.retry_count
+        StatusGetters::last_retry_count(self)
     }
 }
 

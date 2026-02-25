@@ -149,9 +149,16 @@ impl ArtisanFormatter {
         } else {
             0
         };
+        let pv = Self::normalize_read_value(status.pv);
+        let mv = Self::normalize_read_value(status.mv);
+        let integrator_value = Self::normalize_read_value(status.integrator_value);
+        let derivative_value = Self::normalize_read_value(status.derivative_rate);
+        let saturation_flag = if status.saturation_active { 1 } else { 0 };
+        let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
+        let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
 
         format!(
-            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{}",
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{}",
             et,
             bt,
             heater,
@@ -160,7 +167,14 @@ impl ArtisanFormatter {
             failure_count,
             failure_reason,
             guard_timeouts,
-            regression_flag
+            regression_flag,
+            pv,
+            mv,
+            integrator_value,
+            derivative_value,
+            saturation_flag,
+            integrator_clamp_flag,
+            derivative_available_flag
         )
     }
 
@@ -254,7 +268,20 @@ mod tests {
             watchdog_consecutive_failures: 0,
             ledc_guard_timeouts: 0,
             overtemp_regression_active: false,
+            ..SystemStatus::default()
         }
+    }
+
+    fn create_instrumented_status() -> SystemStatus {
+        let mut status = create_test_status();
+        status.pv = 150.5;
+        status.mv = 88.5;
+        status.integrator_value = 37.1;
+        status.derivative_rate = -0.42;
+        status.saturation_active = true;
+        status.integrator_clamped = true;
+        status.derivative_available = true;
+        status
     }
 
     #[test]
@@ -302,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_format_status_response_columns_order() {
-        let mut status = create_test_status();
+        let mut status = create_instrumented_status();
         status.watchdog_feed_ok = false;
         status.watchdog_consecutive_failures = 3;
         status.watchdog_last_failure = Some("timeout");
@@ -313,8 +340,61 @@ mod tests {
 
         let output = ArtisanFormatter::format_status_response(&status);
 
-        assert_eq!(output, "120.3,150.5,88.0,42.0,0,3,timeout,7,1");
-        assert_eq!(output.split(',').count(), 9);
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 16);
+
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "88.0");
+        assert_eq!(parts[3], "42.0");
+        assert_eq!(parts[4], "0");
+        assert_eq!(parts[5], "3");
+        assert_eq!(parts[6], "timeout");
+        assert_eq!(parts[7], "7");
+        assert_eq!(parts[8], "1");
+        assert_eq!(parts[9], "150.5");
+        assert_eq!(parts[10], "88.5");
+        assert_eq!(parts[11], "37.1");
+        assert_eq!(parts[12], "-0.42");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "1");
+    }
+
+    #[test]
+    fn test_format_status_response_flags_reflect_system_status() {
+        let mut status = create_test_status();
+        status.saturation_active = false;
+        status.integrator_clamped = true;
+        status.derivative_available = false;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 16);
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "0");
+    }
+
+    #[test]
+    fn test_format_status_response_derivative_integrator_values_reflect_system_status() {
+        let mut status = create_test_status();
+        status.integrator_value = 51.2;
+        status.derivative_rate = 0.73;
+        status.saturation_active = true;
+        status.integrator_clamped = false;
+        status.derivative_available = true;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 16);
+        assert_eq!(parts[11], "51.2");
+        assert_eq!(parts[12], "0.73");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "1");
     }
 
     #[test]
@@ -323,7 +403,12 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
 
         assert!(output.contains(",none,"));
-        assert!(output.ends_with(",0,none,0,0"));
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 16);
+        assert_eq!(parts[12], "0.00");
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "0");
     }
 
     #[test]

@@ -1,108 +1,237 @@
-# Feature Research: Watchdog Timer Safety for LibreRoaster
+# Feature Research: SSR Refactoring and Test Infrastructure
 
-**Domain:** Safety-critical control loop for the Artisan serial protocol on ESP32-C3
-**Researched:** 2026-02-23
-**Confidence:** HIGH
+**Domain:** Embedded Rust coffee roaster control - SSR hardware control and testing infrastructure
+**Researched:** 2026-02-24
+**Project:** LibreRoaster - ESP32-C3 firmware with Artisan+ protocol compatibility
+**Confidence:** HIGH (codebase verified) / MEDIUM (ecosystem patterns)
 
-## Feature Landscape
+---
 
-### Table Stakes (Users Expect These)
+## Executive Summary
 
-Features users assume exist. Missing these = product feels incomplete.
+This document categorizes features for the SSR (Solid State Relay) refactoring milestone and shared test stubs infrastructure. Based on research of the existing codebase and embedded Rust ecosystems, features are organized into:
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| TWDT-backed 100 ms control cycle | A roaster must recover from stuck loops; TWDT (Task Watchdog) built on MWDT ensures stuck tasks raise interrupts and either prints backtrace or resets the system if not fed in time [[Watchdogs](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/system/wdts.html#task-watchdog-timer-twdt)] | MEDIUM | Guarantee that each cycle calls `esp_task_wdt_reset()` (current observers already enforce 100 ms cadence) and record the reset source so the next boot knows whether a watchdog triggered; stage actions allow interrupts → CPU reset → system reset so the observable fallback is: log/panic → safe reset → restart. |
-| Over-temperature detection & shutdown | Prevent heater lock-on by removing duty whenever the internal temp passes safe thresholds; built-in temp sensor is good for chip temperature [[Temperature Sensor](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/temp_sensor.html)] | MEDIUM | Every over-temp event must cut LEDC heating channels _and_ report telemetry/backtrace; regression test proves the detection works by driving temperature readings above the limit and seeing the same safe-shutdown path executed. |
-| LedcGuard timeout guard | LEDC APIs are not thread-safe and can keep PWM hardware in an undefined state; existing LEDC cycle guard + fan serialization means we already expect the `LEDC` driver to be run inside a critical section [[LEDC](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/ledc.html#timer-configuration)] | HIGH | Guard verifies the spinlock progress: if LEDC channel update takes longer than the allowed guard window, abort the fade, mark heater offline, and feed the TWDT with the guard failure reason so we can log it. Also ensures the guard hooks into existing telemetry (`async-lock-depth-metrics`, `LED cycle guard`). |
+- **Table stakes** — features that must exist for the system to function properly
+- **Differentiators** — features that provide competitive advantage  
+- **Anti-features** — features to deliberately NOT build
 
-### Differentiators (Competitive Advantage)
+The existing codebase already has significant SSR infrastructure (`SsrControl`, `SsrControlSimple`, `Heater` trait) and test mocks (`MockUsbCdcDriver`, `FakeDetectPin`). This research identifies gaps and recommended improvements for this milestone.
 
-Features that set the product apart. Not required, but valuable.
+---
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Multi-stage observale watchdog transitions | Document each stage (interrupt warning, CPU reset, system+RTC reset) so operators can see whether we panicked or reset; this visibility makes safety behavior auditable | MEDIUM | TWDT stage actions are configurable via `wdt_hal_config_stage()`; log the stage before the next action fires and include stage metadata in telemetry so we can correlate logs with reset reasons. |
-| Regression proven over-temp path | Replays the safety shutdown path in CI by forcing the sensor and seeing the heater/fan disable; tests the instrumentation, not just the `LEDC` duty cutoff | MEDIUM | Use harness (existing USB/test infra) to stimulate the over-temp condition and verify recorded telemetry labeled `OT-REGRESSION`; also ensures watchers remain satisfied (watchdog never fires during the regression). |
-| LedcGuard event telemetry | Reports guard timeouts, the spinlock that triggered, and which cycle (100 ms control tick) was interrupted | MEDIUM | Connects to existing instrumentation that already tracks async lock depth; makes observable guarantees that safety features emit `LED-GUARD` logs and drive the `Fan` to idle state before a reset. |
+## Table Stakes
 
-### Anti-Features (Commonly Requested, Often Problematic)
+Features users expect. Missing or broken implementations cause system failure.
 
-Features that seem good but create problems.
+### SSR Control Features
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Letting the watchdog silently reset without safe shutdown actions | Fastest path to get back online | Hides the root cause, leaves heater on while CPU resets (heater stays on until reset finishes, defeating safety goal) | Record the current duty, immediately zero the heaters/fans, log the reason, then allow the TWDT to reset if we still cannot recover. |
-| Trusting LEDC fade-plus-spinlock to never hang | Hardware PWM fade is convenient; keeping the guard low reduces code | LEDC APIs are not thread-safe; spinlock hangs have been seen when duty updates race with other hardware interactions, risking heater lock-on | Keep the LEDC cycle guard + explicit LedcGuard that aborts fades if they exceed the 100 ms tick window. |
-| Sampling temperature infrequently to avoid false positives | Reduces sensor noise/processing | Delayed response allows runaway heat between samples and may defeat regression tests that expect timely detection | Keep the sensor read on each async tick, use hysteresis thresholds plus `OT1` telemetry flag to suppress chatter while guaranteeing a safety cutoff within the 100 ms cycle. |
+| Feature | Why Expected | Complexity | Dependencies | Notes |
+|---------|--------------|------------|--------------|-------|
+| **SSR on/off control** | Basic heating element control via GPIO | Low | `OutputPin` trait, LEDC PWM | Implemented via `set_percentage(0)` or `set_percentage(100)` |
+| **SSR PWM/phase control** | Variable heating power (not just on/off) | Medium | LEDC channel, duty cycle mapping | Implemented with `percentage_to_ledc_duty()` |
+| **Heat source detection** | Verify SSR is actually heating | Medium | `InputPin` trait, detection circuit | `detect_heat_source()` in existing code |
+| **Cycle guard** | Prevent SSR damage from rapid cycling | Low | Timer/state tracking | `SsrCycleGuard` already exists |
+| **Duty readback verification** | Confirm PWM duty matches commanded | Medium | LEDC duty readback | `monitor_ledc_after_set()` with retry logic |
+| **Error state handling** | Graceful degradation when hardware fails | Low | Error enum, hardware status | `SsrError`, `SsrHardwareStatus` enums |
+| **Heater trait implementation** | Abstract heating control for testability | Low | `Heater` trait | Implemented for both `SsrControl` and `SsrControlSimple` |
+
+### Test Infrastructure Features
+
+| Feature | Why Expected | Complexity | Dependencies | Notes |
+|---------|--------------|------------|--------------|-------|
+| **Mock GPIO pins** | Test without hardware | Low | `embedded-hal-mock` | `FakeDetectPin` implements `InputPin` trait |
+| **Mock PWM channels** | Test LEDC control without ESP32 | Medium | `ChannelIFace`, `LedcDutyReader` | `FakeLedcChannel` in `tests/ssr_monitor.rs` |
+| **Mock USB CDC driver** | Test Artisan protocol without USB hardware | Medium | `UsbCdcDriver` trait | `MockUsbCdcDriver` exists (668 lines) |
+| **Unit test support** | Test business logic in isolation | Low | `#[cfg(test)]` modules | In `src/hardware/ssr.rs` |
+| **Integration test framework** | Test component interactions | Medium | `ServiceContainer`, channels | Existing test suite in `tests/` |
+| **Shared mock location** | Reuse mocks across test files | Low | Module organization | Mocks currently in individual test files |
+
+### Safety Features
+
+| Feature | Why Expected | Complexity | Dependencies | Notes |
+|---------|--------------|------------|--------------|-------|
+| **Watchdog integration** | Prevent runaway heating | Low | `WatchdogFeeder` | Integrated in `RoasterControl` |
+| **Temperature limits** | Prevent over-temp conditions | Low | Thermometer reads | Should block heating above threshold |
+| **Fault detection and reporting** | Notify Artisan of problems | Medium | Artisan protocol, status codes | Part of `SsrHardwareStatus` |
+
+---
+
+## Differentiators
+
+Features that set LibreRoaster apart from other coffee roaster firmware.
+
+### Advanced SSR Features
+
+| Feature | Value Proposition | Complexity | Dependencies | Notes |
+|---------|-------------------|------------|--------------|-------|
+| **PID temperature control** | Precise temperature tracking of roast profiles | High | PID algorithm, temperature sensor, SSR output | Has `RoasterControl` with PID |
+| **SSR duty cycle logging** | Record heating patterns for analysis | Medium | Storage, Artisan logging | Could add to `SystemStatus` |
+| **Dual SSR channel support** | Control multiple heating elements | High | Additional SSR channels | Future consideration |
+
+### Testing Infrastructure Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies | Notes |
+|---------|-------------------|------------|--------------|-------|
+| **Property-based testing** | Test SSR behavior across input ranges | Medium | `proptest` or custom | Not yet implemented |
+| **Hardware-in-the-loop (HIL) tests** | Run tests on actual ESP32 | High | ESP32-C3, probe-rs | `embedded-test` crate available |
+| **MockHeater test double** | Test PID without real SSR | Low | `Heater` trait | Could be created |
+| **Cross-platform test CI** | Run tests on multiple architectures | Medium | GitHub Actions, QEMU | Uses `std` feature already |
+| **Protocol fuzzing** | Find edge cases in Artisan parsing | Medium | Fuzzing framework | Could integrate |
+
+---
+
+## Anti-Features
+
+Features to explicitly NOT build. Common mistakes in this domain.
+
+### SSR Anti-Features
+
+| Anti-Feature | Why Avoid | What To Do Instead |
+|--------------|-----------|---------------------|
+| **Blocking PWM calls in hot path** | Blocks async executor, timing issues | Use async-safe LEDC driver |
+| **Direct hardware access in app code** | Breaks testability | Use `Heater` trait abstraction |
+| **Ignoring SSR cycle time limits** | Can damage SSR | Use `SsrCycleGuard` |
+| **Hardcoded GPIO pin numbers** | Makes hardware changes difficult | Use board configuration |
+| **No duty readback** | Silent failures | Keep retry logic |
+
+### Test Infrastructure Anti-Features
+
+| Anti-Feature | Why Avoid | What To Do Instead |
+|--------------|-----------|---------------------|
+| **Mocking everything** | Loses integration test value | Use mocks for units, real for HIL |
+| **Tests only run on hardware** | Blocks CI | Maintain `#[cfg(test)]` host tests |
+| **Manual mocks for all peripherals** | Duplication | Use `embedded-hal-mock` crate |
+| **Tests without assertions** | No value | Verify expected behavior |
+
+### Architecture Anti-Features
+
+| Anti-Feature | Why Avoid | What To Do Instead |
+|--------------|-----------|---------------------|
+| **Global mutable state** | Race conditions | Use `ServiceContainer` |
+| **Panic on hardware errors** | No recovery | Return `Result<T, SsrError>` |
+| **Synchronous blocking I/O** | Blocks system | Use async/embassy |
+
+---
 
 ## Feature Dependencies
 
 ```
-[TWDT + 100 ms control tick]
-    └──requires──> [Async-safe cycle guard + embassy mutex protected control state]
-        └──reinforces──> [Over-temp shutdown path (must feed watchdog after disabling heater)]
-        └──enhances──> [LedcGuard logging (guard can feed TWDT with the guard-failure marker)]
+SSR Control Flow:
+┌─────────────────┐
+│ Artisan Command │ (OT1, IO3)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ RoasterControl  │ ←── Heater trait
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│ SsrCycleGuard   │────▶│ SsrControlSimple │──▶ LEDC PWM
+└─────────────────┘     └────────┬─────────┘
+                                 │
+                                 ▼
+                        ┌──────────────────┐
+                        │ Heat Source      │
+                        │ Detection (Input)│
+                        └──────────────────┘
 
-[Over-temperature detection]
-    └──requires──> [Temperature sensor handle + async sensor read scheduling] 
-        └──requires──> [Instrumentation telemetry (OT1, USB harness) for observability]
-
-[LedcGuard timeout guard]
-    └──requires──> [Existing LEDC cycle guard + fan serialization (so guard can park the fan before resetting heater)]
+Test Infrastructure:
+┌─────────────────┐
+│ MockUSBDriver   │ ← used by → Integration Tests
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│ FakeLedcChannel │────▶│ SSR Monitor Test │
+└────────┬────────┘     └──────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│ MockUartDriver  │ ← used by → Protocol Tests
+└─────────────────┘
 ```
 
-### Dependency Notes
+---
 
-- **TWDT requires the 100 ms control tick provided by the async-safe loop** because the loop is the natural place to feed the watchdog and verify heater/fan state after each action.
-- **Over-temp detection needs the async sensor read pipeline** (the same path that already uses exporter telemetry) so we have consistent readings to compare against thresholds and so the regression test can programmatically manipulate sensor inputs.
-- **LedcGuard builds on the existing LEDC cycle guard + fan serialization** so that a guard timeout not only logs an error but also leaves the outputs in a known-safe configuration before the watchdog decides to panic/reset. This prevents conflicting commands when the guard and the control task both want to talk to LEDC. 
+## MVP Recommendation
 
-## MVP Definition
+For this milestone (SSR refactoring + shared test stubs), prioritize:
 
-### Launch With (v1)
+### Phase 1: Table Stakes (Must Have)
 
-- [ ] `TWDT` feed tied to the 100 ms control loop (guarantee every loop either feeds the watchdog or halts before missing the deadline). Essential because without it heater lock-on cannot be detected in software.
-- [ ] Over-temperature detection that instantly cuts LEDC heater duty, stops the fan briefly, and records the event + log so a human can verify the safety path. Without it we risk heater runaway.
-- [ ] `LedcGuard` spinlock timeout guard that aborts fades/updates after the guard window, logs a `LED-GUARD` event, and leaves the outputs safe before the watchdog is allowed to panic/reset. Ensures the LEDC driver cannot hang the heater cycle.
+1. **SSR refactoring** — Consolidate and improve existing SSR logic
+   - Ensure `Heater` trait is consistently used
+   - Verify cycle guard is applied everywhere
+   
+2. **Shared test stubs** — Centralize mock implementations
+   - Move `FakeDetectPin`, `FakeLedcChannel` to shared location
+   - Create `MockHeater` implementing `Heater` trait for tests
+   - Add module documentation for mock patterns
 
-### Add After Validation (v1.x)
+### Phase 2: Testing Improvements
 
-- [ ] Telemetry dashboards that tag watchdog resets, over-temp events, and guard timeouts so operators can see patterns across roasts.
-- [ ] TWDT user handles subscribed to the heater/fan tasks separately so longer-running maintenance jobs can still report progress and avoid false positives during forced sequences.
+3. **Add `MockHeater` test double** — For PID/controller unit tests
+4. **Improve mock USB driver** — Add more error injection capabilities
+5. **Property-based tests** for SSR percentage conversion
 
-### Future Consideration (v2+)
+### Phase 3: Differentiators (Future)
 
-- [ ] Multi-point temperature fusion (internal + external thermocouple) so the over-temp logic has redundant inputs before cutting the heater.
-- [ ] Hardware fault injection test bench that exercises each WDT stage and ensures the regression harness detects the intended reset reason. 
+- HIL test setup with probe-rs
+- Duty cycle logging
+- PID auto-tuning
 
-## Feature Prioritization Matrix
+---
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| TWDT-anchored control loop | HIGH | MEDIUM | P1 |
-| Over-temperature detection + regression proof | HIGH | MEDIUM | P1 |
-| LedcGuard timeout + log | HIGH | HIGH | P1 |
-| Safety telemetry/observable reset logs | MEDIUM | MEDIUM | P2 |
-| Regression harness for guard + TWDT interplay | MEDIUM | LOW | P2 |
+## Existing Implementation Assessment
 
-**Priority key:**
-- P1: Must have for launch
-- P2: Should follow once P1 user value is validated
+### Already Implemented (Table Stakes)
 
-## Competitor Feature Analysis
+| Feature | Location | Status |
+|---------|----------|--------|
+| SSR PWM control | `src/hardware/ssr.rs` | ✅ Complete |
+| Heat source detection | `src/hardware/ssr.rs` | ✅ Complete |
+| Cycle guard | `src/control/ssr_scheduler.rs` | ✅ Complete |
+| Duty readback with retry | `src/hardware/ssr.rs` | ✅ Complete |
+| `Heater` trait | `src/control/traits.rs` | ✅ Complete |
+| Mock USB driver | `tests/mock_usb_driver.rs` | ✅ Complete |
+| Fake LEDC channel | `tests/ssr_monitor.rs` | ✅ Complete |
+| Unit tests | `src/hardware/ssr.rs` | ✅ Complete |
 
-| Feature | Competitor A | Competitor B | Our Approach |
-|---------|--------------|--------------|--------------|
-| Heater lock protection | Mechanical thermostat cutoff → slow hysteresis, no software visibility | Static firmware timeout that resets but leaves heaters enabled until reset completes | TWDT + LedcGuard + over-temp detection combine to trip before runaway, log the cause, and drive outputs to safe state before allowing watchdog reset. |
-| Over-temperature visibility | Simple LED indicator or beeper | Vendor-specific logging requiring manual dumps | Regression-tested over-temp path that emits `OT-REGRESSION` telemetry and preserves the shutdown reason for post-mortem, making safety behavior auditable. |
+### Gap Analysis
+
+| Feature | Status | Recommendation |
+|---------|--------|----------------|
+| Shared mock location | ❌ Mocks in individual test files | Create `tests/mocks/` module |
+| `MockHeater` test double | ❌ Not created | Implement for PID tests |
+| Property-based tests | ❌ Not implemented | Add `proptest` for SSR math |
+| HIL tests | ❌ Not implemented | Add `embedded-test` setup |
+
+---
+
+## Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| SSR table stakes | HIGH | Verified via code review |
+| Test infrastructure | HIGH | Existing mocks work, `embedded-hal-mock` well-documented |
+| Differentiators | MEDIUM | Based on research of coffee roaster systems |
+| Anti-features | HIGH | Common embedded patterns verified |
+
+---
 
 ## Sources
 
-- Espressif `Watchdogs` documentation (Task Watchdog, IWDT, timeout stages, configs) — https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/system/wdts.html
-- Espressif Temperature Sensor driver (range configuration, threads, over-limit events) — https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/temp_sensor.html
-- Espressif LEDC controller traits (timer/channel config, driver warnings about thread safety) — https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/ledc.html
+- **embedded-hal-mock crate**: https://docs.rs/embedded-hal-mock/0.11.1/
+- **embedded-test crate**: https://docs.rs/embedded-test/0.7.0/
+- **Artisan PID control**: https://artisan-roasterscope.blogspot.com/2016/11/pid-control.html
+- **ESP32 LEDC PWM**: https://medium.com/@7086cmd/generating-pwm-signals-on-bare-metal-rust-esp32-ae4aaf23cf38
+- **Coffee roaster SSR control**: https://github.com/AlexMunt/coffee-roaster-software
+- **Embedded Rust testing**: https://barretts.club/posts/embedded-tests/
+- **Project code**: `/home/juan/Repos/LibreRoaster/src/hardware/ssr.rs`
+- **Existing tests**: `/home/juan/Repos/LibreRoaster/tests/ssr_monitor.rs`, `tests/mock_usb_driver.rs`
 
 ---
-*Feature research for: Watchdog safety Milestone v4.2*
-*Researched: 2026-02-23*
+
+*Feature research for: SSR refactoring and shared test stubs milestone*

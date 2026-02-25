@@ -167,6 +167,13 @@ pub struct SystemStatus {
     pub watchdog_consecutive_failures: u8,
     pub ledc_guard_timeouts: u16,
     pub overtemp_regression_active: bool,
+    pub pv: f32,
+    pub mv: f32,
+    pub integrator_value: f32,
+    pub derivative_rate: f32,
+    pub saturation_active: bool,
+    pub integrator_clamped: bool,
+    pub derivative_available: bool,
 }
 
 impl Default for SystemStatus {
@@ -190,6 +197,13 @@ impl Default for SystemStatus {
             watchdog_consecutive_failures: 0,
             ledc_guard_timeouts: 0,
             overtemp_regression_active: false,
+            pv: 0.0,
+            mv: 0.0,
+            integrator_value: 0.0,
+            derivative_rate: 0.0,
+            saturation_active: false,
+            integrator_clamped: false,
+            derivative_available: false,
         }
     }
 }

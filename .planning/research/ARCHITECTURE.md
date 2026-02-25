@@ -1,197 +1,326 @@
-# Architecture Research
+# Architecture Research: SSR Refactoring and Test Infrastructure
 
-**Domain:** Embedded roaster safety control (LEDC + TWDT + regression safeguards)
-**Researched:** 2026-02-23
-**Confidence:** MEDIUM
+**Project:** LibreRoaster v4.4 SSR Refactoring
+**Researched:** 2026-02-24
+**Confidence:** HIGH
 
-## Standard Architecture
+## Executive Summary
 
-### System Overview
+This architecture research addresses the SSR refactoring and shared test infrastructure for LibreRoaster v4.4. The current codebase has significant code duplication between `SsrControl` and `SsrControlSimple` structs, and test helpers are scattered across individual test files rather than being centralized.
 
-```
-                                        ┌─────────────────────────┐
-                                        │ instrumentation harness │
-                                        │ (USB CDC + UART mux)     │
-                                        └───────┬─────────────────┘
-                                                ↓
-        ┌────────────────────────┐    ┌──────────▼──────────┐
-        │Async Execution Layer    │    │Safety Utilities     │
-        │(embassy executor tasks) │    │ - WatchdogFeeder    │
-        │  control_loop_task      │────│ - OverTempTestRunner│
-        │  dual_output_task       │    │ - LedcGuardTimeout   │
-        └────────────┬───────────┘    └──────────┬──────────┘
-                     │                           ↓
-              ┌──────▼──────────────────────────────┐
-              │ServiceContainer (dual mutex / async)│
-              │  - RoasterControl                    │
-              │  - Artisan command channels          │
-              │  - Watchdog / Safety handles         │
-              └──────┬──────────────────────────────┘
-                     │
-             ┌───────▼────────────┐
-             │LEDC subsystem       │
-             │(LedcBus + LedcGuard)│
-             │  Fan + SSR channels │
-             └────────────────────┘
-                     │
-        ┌────────────▼────────────┐        ┌──────────────────┐
-        │ESP32-C3 peripherals     │        │Temperature sensors│
-        │ - SSR GPIO (Heat detect)│        │ (Max31856 BT/ET)  │
-        │ - TWDT timer            │        └──────────────────┘
-        └─────────────────────────┘
-```
+The recommended approach is to extract a common `SsrControlBase` struct that holds all shared state and logic, with `SsrControl` and `SsrControlSimple` as thin wrappers that add their specific pin handling. For test infrastructure, a `tests/common/mod.rs` module should provide reusable stubs that eliminate the ~5x duplication observed in current inline mock implementations.
 
-### Component Responsibilities
+---
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| `ServiceContainer` (`src/application/service_container.rs`) | Dual mutex for tasks that need `RoasterControl`, artisan channels, and the soon-to-ship watchdog/over-temp handles. | `EmbassyMutex + critical_section` bridging sync/async contexts; new fields store singletons for watchdog feeder and regression runner. |
-| `control_loop_task` (`src/application/tasks.rs`) | 100 ms timer loop that pumps sensors, updates control output, sends telemetry, and now feeds TWDT and the regression watchdog. | `embassy_time::Timer::after(Duration::from_millis(100))`, `ServiceContainer::with_roaster_async`, `MutableArtisanFormatter` streaming to `dual_output_task`. |
-| `LedcBus` + `LedcGuard` (`src/hardware/ledc_bus.rs`) | Serialize fan/SSR writes, buffer applied duty, and now field a timeout-aware guard so long-running safety tests can force release. | `RefCell` per channel, `AtomicBool` guard, new timeout metadata tracked with `embassy_time::Instant`. |
-| `WatchdogFeeder` (`src/safety/watchdog.rs`) **(new)** | Wraps ESP32-C3 `TWDT` peripheral, exposes `feed_async()` for tasks, and keeps a failure flag for telemetry. | Keeps a `esp_hal::twdt::Rwdt` or TWDT handle, stores last feed instant, integrates with `ServiceContainer`. |
-| `OverTempTestRunner` (`src/safety/regression.rs`) **(new)** | Runs the regression scenario: escalate heater command, wait for sensor breakpoints, verify `RoasterControl` enters emergency, and publishes telemetry via `dual_output_task`. | Owned by `ServiceContainer`, invoked either at startup or via instrumentation control channel, uses `RoasterControl` to set artificial temperatures. |
-| `dual_output_task` (`src/application/tasks.rs`) | Demultiplex telemetry to USB/UART and report watchdog/regression state back to host. | Reads from `ARTISAN_OUTPUT_CHANNEL`, uses `CommChannel` multiplexer, writes via `hardware::usb_cdc::driver` or `hardware::uart::driver`. |
+## Current Architecture
 
-## Recommended Project Structure
+### SSR Control Components
 
 ```
-src/
-├── application/
-│   ├── app_builder.rs        # initialize peripherals + ServiceContainer
-│   └── tasks.rs              # control loop, telemetry, new watchdog trigger points
-├── hardware/
-│   ├── ledc_bus.rs           # fan/SSR access + timeout-aware guard
-│   ├── ledc_guard.rs         # (new) timeout/waiter abstraction shared by bus
-│   └── usb_cdc/              # instrumentation harness (existing)
-├── safety/
-│   ├── watchdog.rs           # (new) TWDT feed + health status
-│   └── regression.rs         # (new) over-temp regression/test runner
-├── control/
-│   └── roaster_refactored.rs # existing logic (updated to expose regression hooks)
-└── config/                    # constants (TWDT feed cadence, over-temp thresholds)
+src/hardware/ssr.rs
+├── SsrError                     # Error enum (OutputError, InputError, HeatSourceNotDetected, PwmError)
+├── SsrHardwareStatus            # Status enum (Available, NotDetected, Error)
+├── LedcDutyReader               # Trait for PWM duty readback
+├── percentage_to_ledc_duty()   # Conversion helper
+├── monitor_ledc_after_set()    # Drift detection and retry logic
+├── SsrControl<'a, PIN, DETECT, PWM>    # Full SSR with enable pin
+└── SsrControlSimple<'a, DETECT, PWM>   # Simplified SSR without enable pin
 ```
 
-### Structure Rationale
+### Duplicate Code Analysis
 
-- **application/** keeps async boot orchestration, tasks, and ServiceContainer wiring in one place so the control loop and watchdog feed share the same `EmbassyMutex` protection.
-- **hardware/** isolates low-level peripherals; the new `ledc_guard.rs` makes the timeout logic reusable between fan/SSR handlers and any future LEDC consumers.
-- **safety/** groups TWDT and regression work under a safety contract so tests, guards, and telemetry can share configuration constants without polluting `control/`.
-- **control/** continues to own PID/SSR semantics while exposing instrumentation hooks (status snapshot, command injection) used by the regression runner.
+Both `SsrControl` and `SsrControlSimple` implement nearly identical methods:
 
-## Architectural Patterns
+| Method | SsrControl | SsrControlSimple | Duplication |
+|--------|-------------|-------------------|-------------|
+| `detect_heat_source()` | Lines 150-183 | Lines 298-331 | ~95% identical |
+| `periodic_check()` | Lines 185-197 | Lines 333-345 | Identical |
+| `get_hardware_status()` | Lines 199-201 | Lines 347-349 | Identical |
+| `is_heating_available()` | Lines 203-205 | Lines 351-353 | Identical |
+| `set_percentage()` | Lines 207-234 | Lines 355-382 | ~90% identical |
+| `get_current_duty()` | Lines 236-238 | Lines 384-386 | Identical |
+| `is_pwm_enabled()` | Lines 240-242 | Lines 388-390 | Identical |
+| `last_lead_delta_ticks()` | Lines 244-246 | Lines 392-394 | Identical |
+| `last_retry_count()` | Lines 248-250 | Lines 396-398 | Identical |
+| `Heater` impl | Lines 435-461 | Lines 401-426 | Identical |
 
-### Pattern 1: Guarded hardware access with timeouts
+### Control Layer Integration
 
-**What:** Wrap LEDC channel writes in a guard token that adds a watchdog timer. The guard token is dropped before any `await`, and a timeout mechanism forces release if a task stalls.
+```
+src/control/
+├── traits.rs              # Heater, Fan, Thermometer traits
+├── abstractions.rs       # RoasterError, PidController, RoasterCommandHandler
+├── ssr_scheduler.rs      # SsrCycleGuard
+├── roaster_refactored.rs # RoasterControl using Box<dyn Heater>
+└── mod.rs                # Exports
+```
 
-**When to use:** Hardware shares a single peripheral (LEDC) needing mutual exclusion between temperature control and safety tests.
+The `Heater` trait (lines 16-28 in `traits.rs`) is the abstraction point:
 
-**Trade-offs:** Guarantees no task monopolizes LEDC at the cost of extra bookkeeping and steady-state timer checks; the timeout should be longer than the expected command runtime to avoid false triggers.
-
-**Example:**
 ```rust
-let guard = ledc_bus.guard().acquire();
-if guard.wait_timeout(Duration::from_millis(10)).is_err() {
-    log::warn!("LEDC guard timeout before applying SSR duty");
+pub trait Heater: Send {
+    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError>;
+    fn get_status(&self) -> SsrHardwareStatus;
+    fn last_duty_delta_ticks(&self) -> i16 { 0 }
+    fn last_retry_count(&self) -> u8 { 0 }
 }
-guard.apply(SSR_DUTY)?;
-// guard dropped before awaiting to avoid blocking other LEDC users
 ```
 
-### Pattern 2: Safety orchestration via shared service container
+`RoasterControl` uses `Box<dyn Heater + Send>` to hold the heater implementation, allowing runtime polymorphism.
 
-**What:** Extend `ServiceContainer` to hold handles for the watchdog feeder and regression test runner so all async tasks (control loop + instrumentation) access them through the same locking strategy.
+### Test Infrastructure Current State
 
-**When to use:** Tasks share critical hardware `RoasterControl` state plus new safety helpers; this keeps ownership consistent and avoids double-locking.
+```
+tests/
+├── mock_uart.rs              # MockUartDriver (432 lines)
+├── mock_usb_driver.rs        # MockUsbCdcDriver (668 lines)  
+├── ssr_monitor.rs           # Inline FakeDetectPin, FakeLedcChannel (91 lines)
+├── ssr_scheduler.rs          # Uses real SsrCycleGuard, no mocks
+└── [other tests]            # Each has inline stub implementations
+```
 
-**Trade-offs:** Slightly more complex initialization but preserves the async/sync semantics already enforced by the container.
+The duplication pattern: each test file that needs a heater/fan stub defines its own mock types rather than reusing shared implementations.
 
-**Example:**
+---
+
+## Recommended Architecture
+
+### SSR Refactoring: Base Struct Pattern
+
+The recommended approach extracts common state into a `SsrControlBase` struct:
+
+```
+src/hardware/ssr.rs (refactored)
+├── SsrError
+├── SsrHardwareStatus
+├── LedcDutyReader trait
+├── percentage_to_ledc_duty()
+├── monitor_ledc_after_set()
+├── SsrControlBase<'a, DETECT, PWM>    # NEW: Common state and logic
+│   ├── detection_pin: DETECT
+│   ├── pwm_channel: PWM
+│   ├── hardware_status: SsrHardwareStatus
+│   ├── current_duty: u16
+│   ├── last_duty_delta_ticks: i16
+│   ├── retry_count: u8
+│   ├── last_detection_check: Option<u32>
+│   ├── is_pwm_enabled: bool
+│   └── Methods: detect_heat_source, periodic_check, set_percentage, getters
+├── SsrControl<'a, PIN, DETECT, PWM>   # Wraps Base + enable pin
+│   ├── pin: PIN                        # Enable pin (stored but not used)
+│   └── base: SsrControlBase
+└── SsrControlSimple<'a, DETECT, PWM>  # Wraps Base only
+    └── base: SsrControlBase
+```
+
+**Benefits:**
+- Single source of truth for SSR control logic
+- Easier to maintain, test, and extend
+- Trait implementations delegate to base
+- No runtime overhead (zero-cost abstraction)
+
+### Test Infrastructure: Shared Stubs Module
+
+```
+tests/common/mod.rs          # NEW: Shared test infrastructure
+├── StubHeater               # Implements Heater trait
+├── StubFan                  # Implements Fan trait  
+├── StubThermometer          # Implements Thermometer trait
+├── StubAsyncThermometer     # Implements AsyncThermometer trait
+├── reset_channels()         # Helper to reset test channels
+├── collect_output()         # Helper to collect queued output
+└── TestChannels             # Shared channel storage for tests
+```
+
+**Updated test files would import from common:**
+
 ```rust
-ServiceContainer::with_roaster_async(|roaster| {
-    let status = roaster.get_status();
-    watch_dog.feed(status.bean_temp);
-});
-WatchdogFeeder::get().feed_async().await?;
+// Before (ssr_monitor.rs)
+struct FakeDetectPin;
+impl InputPin for FakeDetectPin { ... }
+
+struct FakeLedcChannel;
+impl LedcDutyReader for FakeLedcChannel { ... }
+
+// After
+use tests_common::mocks::{FakeDetectPin, FakeLedcChannel};
 ```
 
-## Data Flow
-
-### Request Flow
-
-```
-[Embassy Timer tick (100 ms)]
-    ↓
-[control_loop_task] → [ServiceContainer::with_roaster_async]
-        → read sensors → update `SystemStatus`
-        → compute PID/fan
-        → blocking writes via `LedcBus` (+ guard timeout)
-        → feed `WatchdogFeeder`
-        → optionally start `OverTempTestRunner`
-        → emit telemetry to `ARTISAN_OUTPUT_CHANNEL`
-            → [dual_output_task] → USB/UART instrumentation
-```
-
-### Key Data Flows
-1. **Control loop → hardware:** `control_loop_task` sends SSR/fan commands through `LedcBus` using the guard token, while LEDC guard timeouts prevent indefinite blocking. `RoasterControl` updates `SystemStatus` so telemetry stays accurate.
-2. **Watchdog feed:** Immediately after `update_control`, the `WatchdogFeeder` gets the latest bean temperature and feeds the ESP32-C3 TWDT; failure to feed sets a status flag and emits an error over telemetry.
-3. **Regression test instrumentation:** The regression runner listens for a special command (e.g., from USB CDC mux), ramps heater output/virtual temperature, and ensures `RoasterControl` triggers `emergency_shutdown`; results are pushed through the same telemetry pipeline.
-
-## Scaling Considerations
-
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| Single device (current) | Monolithic control loop + watchdog feed is sufficient. Guard timeouts keep hardware usable despite single executor thread. |
-| Fleet deployment (future) | Offload watchdog health reporting over USB/serial telemetry; keep watchdog feed local while telemetry states can be forwarded to an external watchdog router. |
-| Safety certification | Regression runner can be run in isolation (via instrumentation command) before deployment to prove over-temp behavior; keep hardware guard/timeouts parameterized. |
-
-### Scaling Priorities
-
-1. **Control integrity:** The 100 ms loop must keep feeding the TWDT and LEDC updates before worrying about telemetry throughput.
-2. **Guard resilience:** Timeout guard protects LEDC before instrumentation or watchdog expansion begins.
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Blocking the watchdog feed inside longlasting LEDC operations
-
-**What people do:** Hold the LEDC guard across asynchronous waits or instrumentation callbacks, preventing the 100 ms loop from feeding TWDT.
-**Why it's wrong:** Watchdog resets trigger even though control logic is alive, and LEDC bus remains locked. |
-**Do this instead:** Release the guard before any `await`, add a timeout in the guard, and keep feed logic inline with the control loop.
-
-### Anti-Pattern 2: Running regression tests directly inside ISR or USB handlers
-
-**What people do:** Kick off the over-temp regression within a USART interrupt or USB callback.
-**Why it's wrong:** ISR context cannot safely block on `EmbassyMutex` and may starve the 100 ms loop, causing TWDT resets.
-**Do this instead:** Use `ServiceContainer` to signal a spawned `SafetyRegressionRunner` task that runs under the executor and communicates via the existing telemetry channel.
+---
 
 ## Integration Points
 
-### External Services
+### 1. Hardware Module Integration
 
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| ESP32-C3 TWDT | `WatchdogFeeder` (`src/safety/watchdog.rs`) holds the TWDT handle and exposes `feed_async()` | Initialized during `AppBuilder::build()` and woken inside `control_loop_task`. Failure status reported to `dual_output_task`. |
-| USB CDC + UART drivers | Telemetry pipeline (`dual_output_task` in `src/application/tasks.rs`) publishes watchdog/regression status via `CommChannel` multiplexing. | Regression runner reuses this channel to report test success/failure. |
+| Component | File | Integration Point |
+|-----------|------|------------------|
+| SSR Base | `src/hardware/ssr.rs` | New `SsrControlBase` struct |
+| SSR Full | `src/hardware/ssr.rs` | Delegates to base, adds enable pin |
+| SSR Simple | `src/hardware/ssr.rs` | Delegates to base |
+| Heater trait | `src/control/traits.rs` | Unchanged, implementations delegate |
 
-### Internal Boundaries
+### 2. Control Layer Integration
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `control_loop_task` ↔ `WatchdogFeeder` | Inline method calls after `update_control` | Must run before `Timer::after(100ms)` to keep TWDT happy. |
-| `control_loop_task` ↔ `LedcBus` | `LedcChannelHandle::set_duty` + guard token | Guard timeout lives in `hardware/ledc_guard.rs`; new `apply_without_wait()` method ensures tests can't starve control. |
-| `SafetyRegressionRunner` ↔ `RoasterControl` | `ServiceContainer::with_roaster_async` to inject pseudo-high temperatures / emergency triggers | Runner is triggered via instrumentation command or at startup, uses `status` snapshots for verification. |
+| Component | File | Integration Point |
+|-----------|------|------------------|
+| RoasterControl | `src/control/roaster_refactored.rs` | Uses `Box<dyn Heater>` - no changes needed |
+| ServiceContainer | `src/application/service_container.rs` | No changes needed |
 
-### Build Order Considerations
+### 3. Test Infrastructure Integration
 
-1. **LED C guard timeout (modify `src/hardware/ledc_bus.rs` + add `src/hardware/ledc_guard.rs`):** Need timeout guard before regression test uses LEDC to avoid locking starvation.
-2. **WatchdogFeeder initialization (`src/safety/watchdog.rs` + wiring in `AppBuilder`):** Must be ready before control loop spawns, so TWDT feed is available on first iteration.
-3. **Over-temperature regression runner (`src/safety/regression.rs` + instrumentation hooks):** Depends on guarded LEDC writes and the watchdog feeder, so build last in this set.
+| Component | File | Integration Point |
+|-----------|------|------------------|
+| Test stubs | `tests/common/mod.rs` | New module, exports `StubHeater`, `StubFan`, etc. |
+| Existing tests | `tests/*.rs` | Refactor to use shared stubs |
+
+---
+
+## Data Flow
+
+### SSR Control Flow (Unchanged by Refactoring)
+
+```
+Artisan Command (OT1 75)
+    ↓
+RoasterControl::handle_command()
+    ↓
+Heater::set_power(duty)         ← Trait abstraction
+    ↓
+SsrControlBase::set_percentage()
+    ↓
+PWM channel set_duty() + monitor_ledc_after_set()
+    ↓
+SystemStatus updated with hardware status
+```
+
+The refactoring preserves this flow; only the internal SSR implementation changes.
+
+### Test Flow with Shared Stubs
+
+```
+Test
+    ↓
+Create StubHeater with configured behavior
+    ↓
+Inject into RoasterControl (or test component)
+    ↓
+Execute test actions
+    ↓
+Assert on StubHeater state / output channels
+    ↓
+reset_channels() for next test
+```
+
+---
+
+## Build Order and Dependencies
+
+### Phase 1: SSR Refactoring
+
+1. **Create `SsrControlBase`** in `src/hardware/ssr.rs`
+   - Move shared state fields from both structs
+   - Move `detect_heat_source()`, `periodic_check()`, `set_percentage()` implementations
+   - Move getter methods
+
+2. **Refactor `SsrControlSimple`** to use base
+   - Replace inline implementation with delegation to base
+   - Keep `Heater` impl that calls
+
+3. **Refactor `SsrControl`** to use base
+   - Replace inline implementation with delegation to base base methods
+   - Keep enable pin storage (structural requirement)
+   - Keep `Heater` impl that calls base methods
+
+4. **Verify compilation**
+   ```bash
+   cargo check --target riscv32
+   # host tests
+   cargo check
+   ```
+
+5. **Run existing tests**
+   ```bash
+   cargo test
+   ```
+
+### Phase 2: Test Infrastructure
+
+1. **Create `tests/common/mod.rs`**
+   - Define `StubHeater`, `StubFan`, `StubThermometer`
+   - Include `reset_channels()`, `collect_output()` helpers
+
+2. **Migrate `ssr_monitor.rs` to use shared stubs**
+   - Remove inline `FakeDetectPin`, `FakeLedcChannel`
+   - Import from `tests_common`
+
+3. **Migrate other test files**
+   - Identify tests using inline stubs
+   - Refactor to use shared implementations
+
+4. **Run full test suite**
+   ```bash
+   cargo test
+   ```
+
+---
+
+## Component Summary
+
+### New Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `SsrControlBase` | `src/hardware/ssr.rs` | Shared SSR state and logic |
+| `tests/common/mod.rs` | `tests/common/mod.rs` | Shared test stubs |
+
+### Modified Components
+
+| Component | Change Type | Purpose |
+|-----------|-------------|---------|
+| `SsrControl` | Refactor | Delegate to base |
+| `SsrControlSimple` | Refactor | Delegate to base |
+| `tests/ssr_monitor.rs` | Refactor | Use shared stubs |
+| Other test files | Refactor | Use shared stubs |
+
+### Unchanged Components
+
+| Component | Reason |
+|-----------|--------|
+| `Heater` trait | Already correct abstraction |
+| `RoasterControl` | Works with trait |
+| `ServiceContainer` | No SSR-specific changes needed |
+
+---
+
+## Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| SSR refactoring pattern | HIGH | Base struct pattern is well-established in Rust, no technical blockers |
+| Test infrastructure design | HIGH | Mirrors existing patterns in mock_uart.rs and mock_usb_driver.rs |
+| Integration with control layer | HIGH | Trait abstraction already in place, no changes needed |
+| Build order | HIGH | Clear dependency chain, can verify at each step |
+
+---
+
+## Risks and Mitigations
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Breaking existing SSR behavior | Medium | Keep public API identical, verify all tests pass |
+| Trait method signature changes | Low | Heater trait is stable; base struct is internal |
+| Test migration effort | Low | Can do incrementally, verify after each file |
+
+---
 
 ## Sources
 
-- Embedded logic from `src/application/tasks.rs`, `src/control/roaster_refactored.rs`, `src/hardware/ledc_bus.rs`.
-- Domain constraints described in the milestone context (100 ms loop, ServiceContainer, LEDC bus guard).
+- Current implementation: `src/hardware/ssr.rs` (lines 85-473)
+- Heater trait: `src/control/traits.rs` (lines 16-28)
+- RoasterControl usage: `src/control/roaster_refactored.rs` (lines 30-31, 64)
+- Mock patterns: `tests/mock_uart.rs`, `tests/mock_usb_driver.rs`
 
 ---
-*Architecture research for: Embedded roaster safety control (TWDT + regression + LEDC guard)*
-*Researched: 2026-02-23*
+
+*Architecture research for: LibreRoaster v4.4 SSR Refactoring*  
+*Researched: 2026-02-24*

@@ -1,5 +1,6 @@
 use crate::control::traits::{AsyncThermometer, Thermometer};
 use crate::control::RoasterError;
+use crate::hardware::sensors::conversion::convert_raw_temp;
 use embassy_time::{Duration, Timer};
 use embedded_hal::spi::SpiDevice;
 
@@ -36,6 +37,12 @@ pub enum Max31856Error {
     InvalidTemperature,
 }
 
+/// Raw conversion payload returned by the MAX31856 driver.
+pub struct Max31856Reading {
+    pub raw_temp: u32,
+    pub fault: u8,
+}
+
 impl From<Max31856Error> for RoasterError {
     fn from(e: Max31856Error) -> Self {
         match e {
@@ -69,7 +76,16 @@ where
         Ok(())
     }
 
-    pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
+    fn read_conversion_block(&mut self) -> Result<Max31856Reading, Max31856Error> {
+        let temp_data = self.read_registers(0x0C, 3)?;
+        let fault = self.read_register(0x0F)?;
+        let raw_temp =
+            ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
+
+        Ok(Max31856Reading { raw_temp, fault })
+    }
+
+    pub fn read_raw_temperature(&mut self) -> Result<Max31856Reading, Max31856Error> {
         self.write_register(0x80, 0x80)?; // Set one-shot bit
 
         const DELAY_MS: u64 = 160;
@@ -78,25 +94,24 @@ where
             core::hint::spin_loop();
         }
 
-        let temp_data = self.read_registers(0x0C, 3)?;
+        self.read_conversion_block()
+    }
 
-        let fault = self.read_register(0x0F)?;
-        if fault & 0x01 != 0 {
+    pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
+        self.write_register(0x80, 0x80)?; // Set one-shot bit
+
+        Timer::after(Duration::from_millis(160)).await;
+
+        self.read_conversion_block()
+    }
+
+    pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
+        let reading = self.read_raw_temperature()?;
+        if reading.fault & 0x01 != 0 {
             return Err(Max31856Error::FaultDetected);
         }
 
-        // Convert 24-bit temperature to Celsius
-        let temp_raw =
-            ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
-
-        // Convert from MAX31856 format (0.0078125°C LSB)
-        let temperature = if (temp_raw & 0x800000) != 0 {
-            // Negative temperature - two's complement
-            let temp_complement = !temp_raw & 0x7FFFFF;
-            -(temp_complement as i32) as f32 * 0.0078125
-        } else {
-            temp_raw as f32 * 0.0078125
-        };
+        let temperature = convert_raw_temp(reading.raw_temp);
 
         if temperature < -200.0 || temperature > 1350.0 {
             return Err(Max31856Error::InvalidTemperature);
@@ -108,30 +123,12 @@ where
     /// Async temperature read using embassy-time Timer instead of blocking spin loop.
     /// This prevents blocking the async executor during the 160ms conversion delay.
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
-        self.write_register(0x80, 0x80)?; // Set one-shot bit
-
-        // Use async Timer instead of blocking spin loop - allows executor to run other tasks
-        Timer::after(Duration::from_millis(160)).await;
-
-        let temp_data = self.read_registers(0x0C, 3)?;
-
-        let fault = self.read_register(0x0F)?;
-        if fault & 0x01 != 0 {
+        let reading = self.read_raw_temperature_async().await?;
+        if reading.fault & 0x01 != 0 {
             return Err(Max31856Error::FaultDetected);
         }
 
-        // Convert 24-bit temperature to Celsius
-        let temp_raw =
-            ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
-
-        // Convert from MAX31856 format (0.0078125°C LSB)
-        let temperature = if (temp_raw & 0x800000) != 0 {
-            // Negative temperature - two's complement
-            let temp_complement = !temp_raw & 0x7FFFFF;
-            -(temp_complement as i32) as f32 * 0.0078125
-        } else {
-            temp_raw as f32 * 0.0078125
-        };
+        let temperature = convert_raw_temp(reading.raw_temp);
 
         if temperature < -200.0 || temperature > 1350.0 {
             return Err(Max31856Error::InvalidTemperature);

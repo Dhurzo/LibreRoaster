@@ -10,77 +10,27 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Current State
 
-v4.1 Documentation Update is shipped. Documentation cleanup, instrumentation automation, and API alignment now keep README/build instructions, automation hooks, and safety telemetry consistent with the source code.
+v4.4 SSR Refactoring & Test Stubs is shipped. SsrControlBase extracted with ~90 lines of duplicated code eliminated, both SSR types now implement focused traits (HeatSourceDetector, PeriodicCheck, StatusGetters), and shared test stubs module created in tests/common/mod.rs.
 
-- Verified CLN/BLD requirements via the documentation cleanup and build/test guide updates so readers rely on the live code paths, prerequisites, and instrumentation hints.
-- Delivered WDT/OBS instrumentation: WatchdogFeeder, LEDC guard/timeouts, automated regression runner, and the deterministic STATUS command plus instrumentation guide.
-- Captured Phase 64 verification evidence, published REG/STATUS automation links, and privatized the regression helper so auditors see only the supported entry points.
+- Verified SSR-01, SSR-02, SSR-03, SSR-04, SSR-05, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05 requirements via the SSR refactoring and test infrastructure efforts.
 
 ## Next Milestone Goals
 
-- Kick off `/gsd-new-milestone` to capture the next set of requirements for automation instrumentation, telemetry observability, and safety tooling now that the documentation/instrumentation sprint is complete.
-- Translate the STATUS/REG instrumentation flows, watchdog/guard telemetry, and regression helper learnings into measurable requirements and acceptance criteria for the upcoming milestone.
-- Outline the next phases (70+) so planning continues immediately after the documentation/instrumentation work and keeps instrumentation automation refinements moving forward.
-
-<details>
-<summary>Previous state</summary>
-
-## Current Milestone: v4.1 Documentation Update
-
-**Goal:** Update readme with new code status and functionality. Clean all the information outdated and update it.
-
-**Status: SHIPPED** ✓
-
-**Target features:**
-- Cleanup outdated info
-- Recent changes (async changes, transport resilience)
-- Build/Test instructions
-- Documentation consistency (binary paths, target name, macOS ports)
+- Initiate `/gsd-new-milestone` to define requirements for v4.5.
+- Plan and scope phases for v4.5 based on current project state and identified opportunities.
 
 ---
 
-**v4.1 shipped:** All documentation updated - README with build/test instructions, FLASH_GUIDE with correct binary paths, macOS port references added.
-
-<details>
-<summary>Previous state</summary>
-
-## Current Milestone: v4.0 Async Sensor Race Condition Fix
-
-**Goal:** Resolve race condition in roaster_async_sensor_read by replacing take/replace pattern with embassy_sync::Mutex for safe async access to RoasterControl.
-
-**Target features:**
-- Replace take/replace pattern with embassy_sync::Mutex in ServiceContainer
-- Ensure safe concurrent async access to RoasterControl
-- Verify no race conditions under concurrent sensor reads
-
-## Last Shipped: v3.0 Critical Safety Fixes (2026-02-19)
-
-v3.0 fixed critical safety issues: Use-After-Free bug, unsafe statics (replaced with StaticCell), OT2 parser test, README documentation, async MAX31856 temperature reading, and separate LEDC timers for SSR/Fan.
-
-## Next Milestone
-
-v4.0 — Async Sensor Race Condition Fix
-
 ## Current State
 
-v3.0 shipped: StaticCell patterns eliminate unsafe statics, async temperature reading, separate LEDC timers, fan telemetry fixed. Ready for next milestone.
+v4.3 Code Cleanup is shipped. Documentation cleanup, instrumentation automation, and API alignment now keep README/build instructions, automation hooks, and safety telemetry consistent with the source code.
 
-<details>
-<summary>Previous State</summary>
-
-v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 issues identified (1 High, 7 Medium, 23 Low).
-
-</details>
-
-</details>
+- Verified CLEAN-01, CLEAN-02, ARCH-01, REFR-01, REFR-02, REFR-03 requirements via the code cleanup and consolidation efforts.
 
 ## Next Milestone Goals
 
-- Plan the next milestone via `/gsd-new-milestone`, capturing fresh requirements for observability, instrumentation automation, and safety improvements beyond the async sensor race fix.
-- Turn the remaining tech debt (deprecated `with_roaster()` helpers, host-only instrumentation helpers) into tracked requirements so they are prioritized in the next scope.
-- Define measurable outcomes (instrumentation metrics, USB telecommand stability, asynchronous robustness) as part of the requirements research phase.
-
-</details>
+- Initiate `/gsd-new-milestone` to define requirements for v4.4 (e.g., further performance tuning, new safety features).
+- Plan and scope phases for v4.4 based on current project state and identified opportunities.
 
 ## Requirements
 
@@ -147,13 +97,6 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ IO-02: USB CDC back-pressure handling — v2.6
 - ✓ IO-03: CommandQueue FIFO with reject-on-full — v2.6
 - ✓ TEST-02: Transport flood tests — v2.6
-- ✓ SSR-01: Saturating SSR duty conversion 0-100 → LEDC 0-255 — v2.6
-- ✓ SSR-02: SSR cycle guard (≥1s) enforcement — v2.6
-- ✓ SSR-03: LEDC drift monitoring (±2 ticks) with retry — v2.6
-- ✓ FAN-01: FanController writes LEDC duty directly — v2.6
-- ✓ FAN-02: Fan/SSR LEDC writes serialized via LedcBus — v2.6
-- ✓ IO-01: Async UART with embassy traits and event queues — v2.6
-- ✓ IO-02: USB CDC back-pressure handling — v2.6
 - ✓ SAFE-01: Replace make_static Use-After-Free in main.rs with StaticCell — v3.0
 - ✓ SAFE-02: Replace mutable static in USB CDC driver with StaticCell — v3.0
 - ✓ SAFE-03: Replace mutable static in UART driver with StaticCell — v3.0
@@ -174,11 +117,26 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 - ✓ OBS-01: Provide a machine-readable instrumentation snapshot that exposes watchdog feed health, last failure reason, LEDC guard timeout counts, and regression activity alongside the existing sensor outputs — v4.1 (Phase 66 instrumentation observability)
 - ✓ OBS-02: Expose the instrumentation snapshot through a new Artisan command so automation and auditors can poll it without changing the standard `READ` response — v4.1 (Phase 66 instrumentation observability)
 - ✓ OBS-03: Document the `STATUS` payload and parsing expectations so instrumentation automation scripts and auditors know how to interpret watchdog and guard telemetry — v4.1 (Phase 66 instrumentation observability)
+- ✓ CLEAN-01: Remove unused `sample_sync()`, `read_bean_sync()`, `read_env_sync()`, and `read_sensor_sync()` methods from sensors/conversion.rs so production binary contains only the async variant. — v4.3
+- ✓ CLEAN-02: Verify all tests pass after removing sync methods; if tests depend on sync behavior, migrate them to use async with `block_on` or gate behind `#[cfg(test)]`. — v4.3
+- ✓ ARCH-01: Document the decision to keep `log + esp-println` over `defmt` in PROJECT.md with rationale (adequate for 100ms loop, avoids tooling complexity). — v4.3
+- ✓ REFR-01: Consolidate duplicate `SyncCell<T>` wrapper from uart/tasks.rs and usb_cdc/tasks.rs into a shared module using `static_cell::StaticCell`. — v4.3
+- ✓ REFR-02: Update uart/tasks.rs and usb_cdc/tasks.rs to import the consolidated SyncCell from the shared module. — v4.3
+- ✓ REFR-03: Verify both UART and USB CDC communication paths function correctly after SyncCell consolidation. — v4.3
+- ✓ SSR-01: Extract common state into `SsrControlBase` struct with fields shared between `SsrControl` and `SsrControlSimple` — v4.4
+- ✓ SSR-02: Define `SsrControlTrait` with default implementations for common methods — v4.4
+- ✓ SSR-03: Refactor `SsrControl` to embed `SsrControlBase` and implement `SsrControlTrait` — v4.4
+- ✓ SSR-04: Refactor `SsrControlSimple` to embed `SsrControlBase` and implement `SsrControlTrait` — v4.4
+- ✓ SSR-05: Verify all existing tests pass after refactoring — v4.4
+- ✓ TEST-01: Create `tests/common/mod.rs` module with module-level helper functions — v4.4
+- ✓ TEST-02: Create `StubHeater` struct implementing `control::traits::Heater` with call history tracking — v4.4
+- ✓ TEST-03: Create `StubFan` struct implementing `control::traits::Fan` with call history tracking — v4.4
+- ✓ TEST-04: Create `StubThermometer` struct implementing `control::traits::Thermometer` with configurable temperature returns — v4.4
+- ✓ TEST-05: Implement `reset_channels()` and `collect_output()` helper functions for test isolation — v4.4
 
 ### Active
 
-- [ ] Define the next milestone requirements via `/gsd-new-milestone` (automation instrumentation, telemetry observability, and safety tooling).
-- [ ] Document instrumentation automation and telemetry goals that surfaced during the documentation/instrumentation sprint so the next milestone starts with measurable outcomes.
+(None — start `/gsd-new-milestone` to define v4.5 requirements)
 
 ### Out of Scope
 
@@ -193,34 +151,97 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 
 Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
-**v1.0 shipped:** Core Artisan protocol implementation with test infrastructure.
+<details>
+<summary>Previous state</summary>
 
-**v1.1 cleanup:** Removed unused modules and consolidated abstractions.
+## Current Milestone: v4.3 Code Cleanup
 
-**v1.2 polish:** Hardened commands and formatted outputs.
+**Goal:** Remove dead sync code, consolidate duplicate SyncCell wrappers, and evaluate defmt for lower overhead in the 100ms control loop.
 
-**v1.3 verification:** USB CDC dual-channel implementation.
+**Target features:**
+- Remove unused `read_temperature()` sync variant with 160ms spin-loop
+- Consolidate duplicate SyncCell<T> from uart/tasks.rs and usb_cdc/tasks.rs into shared module
+- Evaluate defmt vs log+esp-println for embedded logging overhead
 
-**v1.5 complete:** Full Artisan serial protocol with READ, OT1, IO3, UP, DOWN, START, STOP commands.
+**Status: SHIPPED** ✓
 
-**v1.7 complete:** Non-blocking logging infrastructure with defmt + bbqueue + UART drain task.
+**v4.3 shipped:** Removed dead sync code, documented logging architecture decision, and consolidated SyncCell wrappers.
 
-**v2.0 complete:** Code quality audit with clippy/geiger configuration and 31-issue inventory.
+<details>
+<summary>Previous state</summary>
 
-**v2.6 focus:** Fix SSR duty math (no double division), FanController LEDC updates, and asynchronous UART/USB CDC transports so hardware output is deterministically driven.
+## Current Milestone: v4.2 Anti-windup integral
 
-**v3.0 focus:** Critical safety fixes - Use-After-Free, unsafe statics, test failures, documentation fixes, blocking I/O fixes.
+**Goal:** Harden the 100 ms control loop with anti-windup, derivative-on-measurement, and deterministic sampling so safety telemetry stays aligned with heater/fan outputs.
 
-**v3.0 shipped:** All 8 requirements complete with StaticCell patterns, async temperature, separate LEDC timers.
+**Target features:**
+- Anti-windup integral inside the PID stack so heater commands never let integrators grow beyond actuator saturation.
+- Derivative-on-measurement computed from the shared sensor stream to boost responsiveness without noise-induced jitter.
+- Control loop cadence aligned to the 100 ms timer so watchdog feeding, telemetry, and instrumentation remain deterministic.
+- Centralized `MAX31856` conversion helper plus comprehensive unit tests for every control/safety component (including the conversion path).
 
-**v4.0 shipped:** Async sensor read now relies on Embassy mutex locking, concurrent host harness proves ASYNC-06 with instrumentation, and the USB instrumentation helper is wired/documented for auditors.
+**Status: SHIPPED** ✓
 
-**v4.1 shipped:** Documentation cleaned (README, FLASH_GUIDE, macOS hints), STATUS instrumentation published, REG/STATUS automation hooks documented, Watchdog/LED guard/regression telemetry observable, and the regression helper API aligned with actual consumers.
+**v4.2 shipped:** All 9 requirements complete - anti-windup integral guard, derivative-on-measurement, centralized SensorConversionHub, and regression harness behind feature flag.
+
+<details>
+<summary>Previous state</summary>
+
+## Current Milestone: v4.1 Documentation Update
+
+**Goal:** Update readme with new code status and functionality. Clean all the information outdated and update it.
+
+**Target features:**
+- Cleanup outdated info
+- Recent changes (async changes, transport resilience)
+- Build/Test instructions
+- Documentation consistency (binary paths, target name, macOS ports)
+
+**Status: SHIPPED** ✓
+
+**v4.1 shipped:** All documentation updated - README with build/test instructions, FLASH_GUIDE with correct binary paths, macOS port references added.
+
+<details>
+<summary>Previous state</summary>
+
+## Current Milestone: v4.0 Async Sensor Race Condition Fix
+
+**Goal:** Resolve race condition in roaster_async_sensor_read by replacing take/replace pattern with embassy_sync::Mutex for safe async access to RoasterControl.
+
+**Target features:**
+- Replace take/replace pattern with embassy_sync::Mutex in ServiceContainer
+- Ensure safe concurrent async access to RoasterControl
+- Verify no race conditions under concurrent sensor reads
+
+## Last Shipped: v3.0 Critical Safety Fixes (2026-02-19)
+
+v3.0 fixed critical safety issues: Use-After-Free bug, unsafe statics (replaced with StaticCell), OT2 parser test, README documentation, async MAX31856 temperature reading, and separate LEDC timers for SSR/Fan.
+
+## Next Milestone
+
+v4.0 — Async Sensor Race Condition Fix
+
+## Current State
+
+v3.0 shipped: StaticCell patterns eliminate unsafe statics, async temperature reading, separate LEDC timers, fan telemetry fixed. Ready for next milestone.
+
+<details>
+<summary>Previous State</summary>
+
+v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 issues identified (1 High, 7 Medium, 23 Low).
+
+</details>
+
+</details>
+
+</details>
+
+</details>
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
-|----------|-----------|---------|
+|---|---|---|
 | Dual clippy config (Cargo.toml + clippy.toml) | Portability + project-specific thresholds | ✓ Configured |
 | allow-unwrap-in-tests=true | Tests can use unwrap for test logic | ✓ Configured |
 | Grep-based unsafe analysis | cargo-geiger embedded feature complexity | ✓ Documented 22 blocks |
@@ -248,6 +269,10 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 | Deterministic STATUS CSV layout | Keep automation parsing stable | ✓ Implemented (v4.1) |
 | README links to REG/STATUS/STAT automation hooks | Make automation readers discover instrumentation without digging through internalDoc | ✓ Implemented (v4.1) |
 | Privitized regression helper exports | Align the API surface with actual callers (regression_task/request_regression) | ✓ Implemented (v4.1) |
+| log + esp-println over defmt | esp_println provides direct UART0 output without complex RTT integration, no buffering or async drain task needed, works reliably at 115200 baud for debugging/development | ✓ Implemented (v4.3) |
+| Trait delegation pattern | impl Trait for Type { fn method(...) { Type::inherent(...) } } for consistency with existing code | ✓ Implemented (v4.4) |
+| RefCell for interior mutability in test stubs | Per accumulated decisions from STATE.md | ✓ Implemented (v4.4) |
+| Composition over inheritance for SSR base struct | Better for embedded Rust with static dispatch | ✓ Implemented (v4.4) |
 
 ## Constraints
 
@@ -260,4 +285,4 @@ Brownfield ESP32-C3 Rust embedded project using embassy-rs framework.
 
 ---
 
-*Last updated: 2026-02-23 — v4.1 milestone shipped*
+*Last updated: 2026-02-25 — v4.4 milestone shipped*

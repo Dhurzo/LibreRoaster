@@ -1,79 +1,393 @@
-# Stack Research
+# Stack Research: SSR Refactoring and Test Infrastructure
 
-**Domain:** LibreRoaster ESP32-C3 safety stack (Watchdog + over-temp guard)
-**Researched:** 2026-02-23
-**Confidence:** MEDIUM
+**Project:** LibreRoaster (ESP32-C3 Coffee Roaster Firmware)
+**Researched:** February 2026
+**Focus:** Rust patterns for trait-based code deduplication and embedded test infrastructure
+**Confidence:** HIGH
+
+---
+
+## Executive Summary
+
+For the SSR refactoring milestone, the recommended approach is **composition + trait default implementations** rather than inheritance-like patterns. Extract common state into `SsrState`, define a trait with default implementations, and have both `SsrControl` and `SsrControlSimple` embed the shared state while implementing the trait.
+
+For test infrastructure, create a `tests/common/mod.rs` module with manual stub implementations that implement the existing `control::traits` (Heater, Fan, Thermometer). No external crates needed—use `RefCell` for interior mutability in test stubs.
+
+---
 
 ## Recommended Stack
 
-### Core Technologies
+### SSR Refactoring: Composition + Trait Pattern
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| `esp-hal` (esp32c3 + `ledc`, `tsens`, `system`) | 1.0.0 | Access the on-chip temperature sensor, LED/PWM hardware, and system control registers without unsafe bindings | `esp_hal::tsens::TemperatureSensor` exposes `get_temperature`/`to_celsius` for over-temperature regression and `ledc` controls the fan/SSR channels; using the HAL keeps C register gymnastics under Rust safety (see esp-hal tsens module docs). |
-| `esp_bootloader_esp_idf` | 0.4.0 | Link ESP-IDF’s system API so we can call TWDT helpers (`esp_task_wdt_*`) directly from Rust | The IDF Watchdog documentation shows that `esp_task_wdt_init`, `esp_task_wdt_add_user`, and `esp_task_wdt_reset_user` are the sanctioned APIs for feeding TWDT and printing the triggered tasks, so the bootloader shim must remain part of the stack to provide those symbols. |
-| `embassy-time` | 0.5.0 | Drive the existing 100 ms control loop that feeds TWDT and samples temperature | `embassy_time::Timer`/`Ticker` already orchestrates the 100 ms control cycle; keeping this crate lets the watchdog feed stay in sync with the async loop that already updates heater outputs and instrumentation macros, ensuring the feed happens deterministically. |
+| Approach | Implementation | Why |
+|----------|---------------|-----|
+| **Primary** | Extract `SsrState` struct with common fields | Zero-cost abstraction, embeds shared state in both types |
+| **Secondary** | Define `SsrControlTrait` with default implementations | Eliminates duplicate method implementations |
+| **Existing** | Keep `Heater` trait from `control::traits` | Already provides `set_power` abstraction used by roaster control |
 
-### Supporting Libraries
+### Test Infrastructure: Shared Stubs Module
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `libreroaster::hardware::ledc_bus::LedcGuard` | current tree | Serialize LEDC calls and enforce the guard token drop before handing control back | Always around instrumentation macros that talk to the LEDC bus (fan + SSR). The guard uses an `AtomicBool` so only one caller can update the LEDC registers at a time, preventing the `ledc_set_duty`/`ledc_update_duty` re-entry failure noted in the official LEDC driver doc. |
-| `esp-hal::tsens` | 1.0.0 (already part of esp-hal) | Sample raw temperature values for the over-temperature regression test | Use `TemperatureSensor::new(...).get_temperature()` when the test runs to confirm HW temperature matches expected thermal curves; `Temperature::to_celsius` does the conversion doc describes. |
+| Component | Location | Implementation |
+|-----------|----------|----------------|
+| **Test stubs** | `tests/common/mod.rs` | Manual struct implementations (no external crate needed) |
+| **Stub patterns** | StubHeater, StubFan, StubThermometer | Implement existing `control::traits` traits |
+| **Helper utilities** | `reset_channels()`, `collect_output()` | Module-level functions for test state management |
 
-### Development Tools
+### Alternative Crates Considered
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `cargo` | Manage embedded dependencies | The existing toolchain (Rust 1.88 + `riscv32imc-unknown-none-elf`) already satisfies all crates above; no new tooling needed. |
+| Crate | Why Not |
+|-------|---------|
+| `faux` | Requires unsafe for mocks; adds proc-macro complexity; overkill for simple stubs |
+| `mockall` | Requires nightly or complex setup; better for external trait mocking |
+| `embedded-hal-mock` | Targets embedded-hal trait mocking; our stubs need to implement our own traits |
+| `inherit_methods_macro` | Adds build complexity; manual delegation is clear enough here |
+| `isotest` | Useful for verifying trait impls but adds dependency; manual approach is sufficient |
+
+---
+
+## Recommended Pattern: SSR Refactoring
+
+### Strategy: Extract Common State via Composition
+
+The current `SsrControl` and `SsrControlSimple` share ~90% identical code. The recommended approach:
+
+```rust
+// Step 1: Extract shared state into a base struct (no trait needed)
+pub struct SsrState {
+    pub(crate) hardware_status: SsrHardwareStatus,
+    pub(crate) current_duty: u16,
+    pub(crate) last_duty_delta_ticks: i16,
+    pub(crate) retry_count: u8,
+    pub(crate) last_detection_check: Option<u32>,
+    pub(crate) is_pwm_enabled: bool,
+}
+
+impl SsrState {
+    pub fn new() -> Self {
+        Self {
+            hardware_status: SsrHardwareStatus::NotDetected,
+            current_duty: 0,
+            last_duty_delta_ticks: 0,
+            retry_count: 0,
+            last_detection_check: None,
+            is_pwm_enabled: true,
+        }
+    }
+
+    // Common getter/setter implementations
+    pub fn get_hardware_status(&self) -> SsrHardwareStatus { ... }
+    pub fn is_heating_available(&self) -> bool { ... }
+    pub fn get_current_duty(&self) -> u16 { ... }
+    // etc.
+}
+
+// Step 2: Define trait with default implementations for shared behavior
+pub trait SsrControlTrait {
+    fn state(&self) -> &SsrState;
+    fn state_mut(&mut self) -> &mut SsrState;
+
+    // Default implementations delegate to shared state
+    fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
+        let detection_pin = self.get_detection_pin(); // requires impl
+        match detection_pin.is_low() { ... }
+    }
+
+    fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
+        let should_check = self.state().last_detection_check
+            .map(|last| current_time.saturating_sub(last) >= HEAT_SOURCE_CHECK_INTERVAL_MS)
+            .unwrap_or(true);
+        if should_check {
+            self.detect_heat_source(current_time)?;
+        }
+        Ok(())
+    }
+
+    // Getters with default implementations
+    fn get_hardware_status(&self) -> SsrHardwareStatus { self.state().hardware_status }
+    fn is_heating_available(&self) -> bool { self.state().hardware_status == SsrHardwareStatus::Available }
+    fn get_current_duty(&self) -> u16 { self.state().current_duty }
+    // etc.
+}
+
+// Step 3: Both structs embed SsrState and implement the trait
+pub struct SsrControl<'a, PIN, DETECT, PWM> {
+    pin: PIN,  // Only SsrControl has this
+    detection_pin: DETECT,
+    pwm_channel: PWM,
+    state: SsrState,
+}
+
+pub struct SsrControlSimple<'a, DETECT, PWM> {
+    detection_pin: DETECT,
+    pwm_channel: PWM,
+    state: SsrState,
+}
+```
+
+### Why This Approach
+
+1. **Zero runtime cost**: No dynamic dispatch, no heap allocation
+2. **Clear ownership**: The `pin` field stays with `SsrControl` where it belongs
+3. **DRY**: Shared logic in one place, updated once
+4. **Trait polymorphism available**: If needed later, `SsrControlTrait` enables `dyn` usage
+5. **Idiomatic Rust**: Follows "composition over inheritance" principle
+
+### What NOT to Do
+
+| Anti-pattern | Why Avoid |
+|--------------|-----------|
+| Create a base struct with inheritance | Rust doesn't have inheritance; forces awkward patterns |
+| Use `dyn SsrControlTrait` in hot paths | Dynamic dispatch adds cost; embedded Rust prefers static dispatch |
+| Duplicate the methods in each struct | Creates maintenance burden, drift risk |
+| Make SsrState public fields | Breaks encapsulation; use getters/setters |
+
+---
+
+## Recommended Pattern: Test Infrastructure
+
+### Structure: `tests/common/mod.rs`
+
+```
+tests/
+├── common/
+│   ├── mod.rs              # Re-exports, helper functions
+│   ├── stub_heater.rs      # StubHeater implementation
+│   ├── stub_fan.rs         # StubFan implementation
+│   └── stub_thermometer.rs # StubThermometer implementation
+├── ssr_monitor.rs          # Existing tests (will use common stubs)
+└── ...
+```
+
+### Module Content: `tests/common/mod.rs`
+
+```rust
+//! Shared test stubs and utilities for LibreRoaster integration tests.
+//!
+//! Provides test doubles for hardware abstractions:
+//! - `StubHeater` - implements `control::traits::Heater`
+//! - `StubFan` - implements `control::traits::Fan`  
+//! - `StubThermometer` - implements `control::traits::Thermometer`
+//!
+//! # Usage
+//!
+//! ```rust
+//! use libreroaster::control::traits::{Heater, Fan, Thermometer};
+//! use tests::common::{StubHeater, StubFan, StubThermometer};
+//!
+//! let mut heater = StubHeater::new();
+//! heater.set_power(50.0).unwrap();
+//! assert_eq!(heater.get_status(), SsrHardwareStatus::Available);
+//! ```
+
+mod stub_heater;
+mod stub_fan;
+mod stub_thermometer;
+
+pub use stub_heater::StubHeater;
+pub use stub_fan::StubFan;
+pub use stub_thermometer::StubThermometer;
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+use core::cell::RefCell;
+use core::collections::VecDeque;
+
+/// Global test output collector for串接 integration tests.
+/// 
+/// Thread-local storage using RefCell for single-threaded test contexts.
+/// Reset between tests to ensure isolation.
+static TEST_OUTPUT: RefCell<VecDeque<String>> = RefCell::new(VecDeque::new());
+
+/// Reset all test channels - call between tests to ensure isolation.
+/// 
+/// Clears:
+/// - Output buffer
+/// - Call history in all stubs
+/// - Any accumulated state
+pub fn reset_channels() {
+    TEST_OUTPUT.borrow_mut().clear();
+    StubHeater::reset_history();
+    StubFan::reset_history();
+    StubThermometer::reset_history();
+}
+
+/// Collect all output strings into a single String.
+/// 
+/// Useful for verifying complete command → response flows.
+pub fn collect_output() -> String {
+    TEST_OUTPUT
+        .borrow_mut()
+        .drain(..)
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// Push a string to the test output buffer.
+/// 
+/// Internal helper for stubs to record their actions.
+pub fn push_output(s: &str) {
+    TEST_OUTPUT.borrow_mut().push_back(s.to_string());
+}
+```
+
+### Stub Implementation Pattern
+
+```rust
+// tests/common/stub_heater.rs
+
+use core::cell::RefCell;
+use crate::config::constants::SsrHardwareStatus;
+use crate::control::{traits::Heater, RoasterError};
+
+/// Static call history for verification
+static CALL_HISTORY: RefCell<Vec<HeaterCall>> = RefCell::new(Vec::new());
+
+#[derive(Debug, Clone)]
+enum HeaterCall {
+    SetPower(f32),
+    GetStatus,
+    LastDelta,
+    LastRetry,
+}
+
+pub struct StubHeater {
+    power: f32,
+    status: SsrHardwareStatus,
+    last_delta: i16,
+    last_retry: u8,
+}
+
+impl StubHeater {
+    pub fn new() -> Self {
+        Self {
+            power: 0.0,
+            status: SsrHardwareStatus::Available,
+            last_delta: 0,
+            last_retry: 0,
+        }
+    }
+
+    pub fn with_status(mut self, status: SsrHardwareStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub fn with_last_delta(mut self, delta: i16) -> Self {
+        self.last_delta = delta;
+        self
+    }
+
+    pub fn reset_history() {
+        CALL_HISTORY.borrow_mut().clear();
+    }
+
+    pub fn get_call_history() -> Vec<HeaterCall> {
+        CALL_HISTORY.borrow().clone()
+    }
+}
+
+// Implement the trait - this is what makes it useful for testing
+impl Heater for StubHeater {
+    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
+        CALL_HISTORY.borrow_mut().push(HeaterCall::SetPower(duty));
+        self.power = duty.clamp(0.0, 100.0);
+        Ok(())
+    }
+
+    fn get_status(&self) -> SsrHardwareStatus {
+        CALL_HISTORY.borrow_mut().push(HeaterCall::GetStatus);
+        self.status
+    }
+
+    fn last_duty_delta_ticks(&self) -> i16 {
+        CALL_HISTORY.borrow_mut().push(HeaterCall::LastDelta);
+        self.last_delta
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        CALL_HISTORY.borrow_mut().push(HeaterCall::LastRetry);
+        self.last_retry
+    }
+}
+```
+
+### Integration with Existing Code
+
+The key insight is that stubs implement **the same traits** the real hardware uses:
+
+```rust
+// In your roaster control code, you likely have:
+fn control_loop(heater: &mut impl Heater, thermometer: &mut impl Thermometer) {
+    let temp = thermometer.read_temperature().unwrap();
+    // ... control logic
+    heater.set_power(duty).unwrap();
+}
+
+// In tests, just pass the stubs:
+#[test]
+fn test_control_loop() {
+    let mut heater = StubHeater::new();
+    let mut thermo = StubThermometer::with_temperature(150.0);
+    
+    control_loop(&mut heater, &mut thermo);
+    
+    assert_eq!(heater.get_call_history(), ...);
+}
+```
+
+### What NOT to Add
+
+| Anti-pattern | Why Avoid |
+|--------------|-----------|
+| External mock crates (mockall, faux) | Adds build complexity; manual stubs are simple enough |
+| `unsafe` in test stubs | Unnecessary; RefCell provides interior mutability |
+| Async test stubs | Embedded code uses sync traits for hardware; keep it simple |
+| Complex verification frameworks | Simple call history is sufficient; don't over-engineer |
+
+---
 
 ## Installation
 
-```bash
-# Keep the safety stack aligned
-cargo add esp-hal@1.0 --features esp32c3,unstable,log-04
-cargo add esp_bootloader_esp_idf@0.4 --features esp32c3,log-04
-cargo add embassy-time@0.5
+### For SSR Refactoring
+No new dependencies required. The refactoring uses only stdlib features.
+
+### For Test Infrastructure
+No new dependencies required. The stub pattern uses:
+- `core::cell::RefCell` for interior mutability (already in std)
+- Existing trait implementations (from `control::traits`)
+
+Optional if you want more sophisticated testing later:
+```toml
+[dev-dependencies]
+# Only if needed - manual stubs are sufficient for now
+# embedded-hal-mock = "0.4"  # For testing embedded-hal drivers
 ```
 
-## Alternatives Considered
+---
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| Task WDT (`esp_task_wdt_*`) | Interrupt WDT (IWDT) | Only when ISR deadlocks/critical sections are the dominant risk. Task WDT lets us watch the 100 ms control task directly, which is what needs to keep moving to prevent heater hang-ups. |
-| `LedcGuard` (single mutex) | Hardware fade interrupts + `ledc_set_duty_and_update` | Use the guard when multiple instrumentation macros run on the same LEDC channel; fall back to the thread-safe API only if you need per-channel interrupts (none of our macros do). |
+## Confidence Assessment
 
-## What NOT to Use
+| Area | Confidence | Notes |
+|------|------------|-------|
+| SSR trait pattern | HIGH | Well-established Rust pattern; matches existing Heater trait usage |
+| Test stub structure | HIGH | Follows existing test patterns in codebase (see tests/ssr_monitor.rs) |
+| Integration approach | HIGH | Stubs implement existing traits; should integrate cleanly |
+| No external deps needed | MEDIUM | Manual approach chosen over crates; could change if complexity grows |
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| Calling `ledc_set_duty`/`ledc_update_duty` from multiple tasks | The LECD peripheral is not thread-safe, and the driver explicitly warns against this pattern (it triggers spinlock deadlocks). | Hold `LedcGuard::lock(...)` around each update so the `AtomicBool` serializes access before calling the non-thread-safe APIs. |
-| Spin-locking the 100 ms control loop just to feed the TWDT | Blocking the loop increases latency for the safety guard itself and defeats the async/embassy timing guarantees; the TWDT is satisfied with a periodic async reset. | Use `embassy_time::Ticker` to drive the 100 ms work and call `esp_task_wdt_reset_user` once the guard/measurements complete. |
-
-## Stack Patterns by Variant
-
-**If the heater control loop is running (100 ms periodic task):**
-- Schedule the same `embassy_time::Ticker` that already steps heaters to also call `esp_task_wdt_reset_user(twdt_handle)` before instrumentation macros run. This ensures the Task WDT always gets fed from the long-lived task that would otherwise starve the heater if something stuck. The doc states `esp_task_wdt_reset_user` must be called via the user handle returned by `esp_task_wdt_add_user` so we keep that handle in the control loop context.
-
-**If LED instrumentation must update the LEDC bus:**
-- Acquire `LedcGuard::lock("fan")` before calling any `ledc_set_*` or `ledc_update_duty` pair and drop the guard (via `LedcGuardToken`) once the hardware write completes. Because `esp-idf` warns the LEDC APIs are not thread-safe, the guard replaces the spinlock deadlock path while still allowing `LedcDutyReader` to work inside the guard scope. |
-
-## Version Compatibility
-
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| `esp-hal@1.0` | `esp32c3@0.31`, `esp_bootloader_esp_idf@0.4` | `esp-hal` 1.0 is the documented release for these peripherals; it gates `tsens` under `soc_has_tsens` so no extra features are needed. |
-| `esp_bootloader_esp_idf@0.4` | `esp_task_wdt` IDF v5.2.3 APIs | This version targets the same IDF release we vendor (v5.2.3), so the exported `esp_task_wdt_*` functions match the docs used for this research. |
-| `embassy-time@0.5` | `embassy-executor@0.9`, `embassy-sync@0.7` | Embassy’s 0.5 tick driver is compatible with the existing executor crates already in Cargo.toml; the periodic `Ticker` API is what runs the 100 ms cooperative loop. |
+---
 
 ## Sources
 
-- https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/wdts.html — Task Watchdog API (`esp_task_wdt_init`, `esp_task_wdt_add_user`, `esp_task_wdt_reset_user`, `esp_task_wdt_print_triggered_tasks`) and configuration options (HIGH confidence)
-- https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/ledc.html — LEDC API warns `ledc_set_duty`/`ledc_update_duty` are not thread-safe, illustrates `ledc_timer_config`/`ledc_channel_config`, justifying the guard (HIGH confidence)
-- /home/juan/Repos/LibreRoaster/target/riscv32imc-unknown-none-elf/doc/esp_hal/tsens/index.html — `esp_hal::tsens::TemperatureSensor` and `Temperature::to_celsius` (HIGH confidence)
-- /home/juan/Repos/LibreRoaster/target/riscv32imc-unknown-none-elf/doc/libreroaster/hardware/ledc_bus/index.html — `LedcGuard` ensures atomic LEDC access via `LedcGuardToken` drop (MEDIUM confidence)
-- https://docs.rs/embassy-time/0.5.0/embassy_time/ — `embassy_time::Ticker`/`Timer` provide the periodic 100 ms driver that feeds the TWDT while keeping async tasks scheduled (MEDIUM confidence)
+- **Composition over inheritance**: https://www.oreateai.com/blog/analysis-of-three-typical-patterns-for-implementing-inheritance-in-rust/
+- **Stack Overflow discussion on trait deduplication**: https://stackoverflow.com/questions/78926546/how-to-avoid-duplicate-code-when-i-impl-a-trait-for-many-structs-in-rust
+- **embedded-hal-mock crate**: https://docs.rs/embedded-hal-mock/latest/embedded-hal_mock
+- **faux crate for mocking**: https://docs.rs/faux/latest/faux
+- **Existing ssr_monitor.rs test**: tests/ssr_monitor.rs (contains FakeDetectPin, FakeLedcChannel)
+- **Existing MockUartDriver**: tests/mock_uart.rs (full example of manual stub implementation)
 
 ---
-*Stack research for: LibreRoaster v4.2 “Watchdog Timer” safety features milestone*
-*Researched: 2026-02-23*
+
+_*Stack research for: LibreRoaster SSR refactoring and test infrastructure milestone*_
+_*Researched: 2026-02-24*_
