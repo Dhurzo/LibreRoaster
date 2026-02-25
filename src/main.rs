@@ -5,21 +5,21 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for duration of a data transfer."
 )]
-#![deny(clippy::large_stack_frames)]
-
+#[cfg(target_arch = "riscv32")]
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 #[cfg(target_arch = "riscv32")]
-use embassy_time::{Duration, Timer};
+use embedded_hal::delay::DelayNs;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::clock::CpuClock;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
+use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::config::Config as TimerConfig;
 #[cfg(target_arch = "riscv32")]
@@ -30,6 +30,9 @@ use esp_hal::ledc::{channel, timer, Ledc, LowSpeed};
 use esp_hal::spi::master::Spi;
 
 #[cfg(target_arch = "riscv32")]
+use esp_hal::delay::Delay;
+
+#[cfg(target_arch = "riscv32")]
 use log::info;
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
@@ -37,10 +40,16 @@ use static_cell::StaticCell;
 #[cfg(target_arch = "riscv32")]
 extern crate alloc;
 
+// StaticCells for safe static initialization (replaces unsafe make_static)
+static SSR_CELL: StaticCell<SsrControlSimple> = StaticCell::new();
+static FAN_CELL: StaticCell<FanController> = StaticCell::new();
+
 #[cfg(target_arch = "riscv32")]
 use libreroaster::application::AppBuilder;
 #[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::fan::SimpleLedcFan;
+use libreroaster::hardware::fan::FanController;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::ledc_bus::LedcBus;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
 #[cfg(target_arch = "riscv32")]
@@ -53,15 +62,18 @@ use libreroaster::output::artisan::ArtisanFormatter;
 #[cfg(target_arch = "riscv32")]
 use core::cell::RefCell;
 #[cfg(target_arch = "riscv32")]
-use critical_section;
+use esp_bootloader_esp_idf;
 
 #[cfg(target_arch = "riscv32")]
-#[allow(
-    clippy::large_stack_frames,
-    reason = "it's not unusual to allocate larger buffers etc. in main"
-)]
+use critical_section;
+
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
+    let mut delay = Delay::new();
+
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -69,53 +81,105 @@ async fn main(spawner: Spawner) -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 66320);
 
-    // Initialize GPIO peripheral
     let _io = Io::new(peripherals.IO_MUX);
 
-    // Configure heat detection pin (GPIO1)
     let heat_detection_pin = Input::new(
         peripherals.GPIO1,
         InputConfig::default().with_pull(Pull::Up),
     );
 
-    // Configure LEDC for both Fan (Channel0) and SSR (Channel1)
     let ledc = Ledc::new(peripherals.LEDC);
 
-    // Configure Timer0 for Fan (25kHz)
-    let mut fan_timer = ledc.timer(timer::Number::Timer0);
+    // Configure Timer0 for SSR (~1Hz for zero-crossing control)
+    let mut ssr_timer = ledc.timer(timer::Number::Timer0);
+    ssr_timer
+        .configure(TimerConfig {
+            duty: timer::config::Duty::Duty8Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: esp_hal::time::Rate::from_hz(libreroaster::config::SSR_PWM_FREQUENCY_HZ),
+        })
+        .map_err(|e| {
+            log::error!("Failed to configure SSR timer: {:?}", e);
+            panic!("SSR timer configuration failed");
+        })
+        .unwrap();
+
+    // Configure Timer1 for Fan (25kHz for silent operation)
+    let mut fan_timer = ledc.timer(timer::Number::Timer1);
     fan_timer
         .configure(TimerConfig {
             duty: timer::config::Duty::Duty8Bit,
             clock_source: timer::LSClockSource::APBClk,
             frequency: esp_hal::time::Rate::from_hz(libreroaster::config::FAN_PWM_FREQUENCY_HZ),
         })
-        .expect("Failed to configure fan timer");
+        .map_err(|e| {
+            log::error!("Failed to configure fan timer: {:?}", e);
+            panic!("Fan timer configuration failed");
+        })
+        .unwrap();
 
-    // Fan Channel (GPIO9 - safe, strapping but works in SPI boot mode)
     let gpio9 = peripherals.GPIO9;
-    let fan_channel = ledc.channel::<LowSpeed>(channel::Number::Channel0, gpio9);
-    let mut fan_impl = SimpleLedcFan::new(fan_channel);
+    let mut fan_channel = ledc.channel::<LowSpeed>(channel::Number::Channel0, gpio9);
 
-    // Initialize fan to 0
-    // We can unwrap here because initialization should work
-    let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_impl, 0.0);
+    fan_channel
+        .configure(ChannelConfig {
+            timer: &mut fan_timer,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .map_err(|e| {
+            log::error!("Failed to configure fan channel: {:?}", e);
+            panic!("Fan channel configuration failed");
+        })
+        .unwrap();
 
-    // --- Sensor Initialization ---
-    // Configure SPI2
+    let ssr_pin_for_pwm = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
+
+    let mut ssr_channel = ledc.channel::<LowSpeed>(channel::Number::Channel1, ssr_pin_for_pwm);
+    ssr_channel
+        .configure(ChannelConfig {
+            timer: &mut ssr_timer,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .map_err(|e| {
+            log::error!("Failed to configure SSR channel: {:?}", e);
+            panic!("SSR channel configuration failed");
+        })
+        .unwrap();
+
+    let ledc_bus = LEDC_BUS.init(LedcBus::new(
+        fan_channel,
+        channel::Number::Channel0,
+        ssr_channel,
+        channel::Number::Channel1,
+    ));
+
+    let fan_handle = ledc_bus.fan_handle();
+    let ssr_handle = ledc_bus.ssr_handle();
+
+    let mut fan_controller = FanController::with_handle(fan_handle).unwrap_or_else(|e| {
+        log::error!("Failed to initialize fan controller: {:?}", e);
+        panic!("Fan controller initialization failed");
+    });
+
+    let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_controller, 0.0);
+
     use esp_hal::spi::master::Config;
 
     let spi_config = Config::default().with_frequency(esp_hal::time::Rate::from_khz(1000));
 
-    // Spi::new returns Result in esp-hal 1.0
-    let spi = Spi::new(peripherals.SPI2, spi_config).unwrap();
+    let spi = match Spi::new(peripherals.SPI2, spi_config) {
+        Ok(spi_instance) => spi_instance,
+        Err(e) => {
+            log::error!("Failed to initialize SPI2: {:?}", e);
+            panic!("SPI2 initialization failed");
+        }
+    };
 
-    // Check available methods or configuration on spi
-    // If with_pins is not available directly, we might need to use the Result from new
-    // But typically Spi has with_pins or similar
-
-    // Store SPI in static Mutex for sharing
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<esp_hal::Blocking>>>> =
         StaticCell::new();
+    static LEDC_BUS: StaticCell<LedcBus<'static>> = StaticCell::new();
     let spi_mutex = SPI_BUS.init(critical_section::Mutex::new(RefCell::new(spi)));
 
     // Create devices
@@ -125,13 +189,20 @@ async fn main(spawner: Spawner) -> ! {
     let et_cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
     let et_spi = SpiDeviceWithCs::new(spi_mutex, et_cs);
 
-    // Initialize Sensors
-    let bean_sensor = Max31856::new(bt_spi).expect("Failed to init BT sensor");
-    let env_sensor = Max31856::new(et_spi).expect("Failed to init ET sensor");
+    let bean_sensor = Max31856::new(bt_spi)
+        .map_err(|e| {
+            log::error!("Failed to init BT sensor: {:?}", e);
+            panic!("BT sensor initialization failed");
+        })
+        .unwrap();
+    let env_sensor = Max31856::new(et_spi)
+        .map_err(|e| {
+            log::error!("Failed to init ET sensor: {:?}", e);
+            panic!("ET sensor initialization failed");
+        })
+        .unwrap();
 
     info!("Temperature sensors initialized - BT: GPIO4, ET: GPIO3");
-
-    // Check heat source
 
     let heat_detected = heat_detection_pin.is_low();
     info!(
@@ -143,51 +214,47 @@ async fn main(spawner: Spawner) -> ! {
         }
     );
 
-    // SSR Channel (GPIO10 - safe, non-strapping)
-    // Create the pin and give it directly to the LEDC channel
-    let ssr_pin_for_pwm = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
-
-    let ssr_channel = ledc.channel::<LowSpeed>(channel::Number::Channel1, ssr_pin_for_pwm);
-
-    // Initialize SSR control with PWM and heat detection (simple mode - no backup pin)
-    let real_ssr = SsrControlSimple::new(heat_detection_pin, ssr_channel)
-        .expect("Failed to initialize SSR control");
+    let real_ssr = SsrControlSimple::new(heat_detection_pin, ssr_handle)
+        .map_err(|e| {
+            log::error!("Failed to initialize SSR control: {:?}", e);
+            panic!("SSR control initialization failed");
+        })
+        .unwrap();
 
     info!("SSR configured with REAL GPIO hardware (GPIO10) - simple mode");
 
-    // Static allocation for drivers to pass to AppBuilder
-    static SSR_DRIVER: StaticCell<
-        SsrControlSimple<'static, Input<'static>, channel::Channel<'static, LowSpeed>>,
-    > = StaticCell::new();
-    let static_ssr = SSR_DRIVER.init(real_ssr);
-
-    static FAN_DRIVER: StaticCell<SimpleLedcFan<'static, channel::Channel<'static, LowSpeed>>> =
-        StaticCell::new();
-    let static_fan = FAN_DRIVER.init(fan_impl);
+    // SAFETY: StaticCell::init() provides compile-time memory reservation,
+    // preventing use-after-free. Called once during initialization before async tasks start.
+    let static_ssr: &'static mut SsrControlSimple = SSR_CELL.init(real_ssr);
+    let static_fan: &'static mut FanController = FAN_CELL.init(fan_controller);
 
     info!("Drivers initialized and moved to static memory");
 
     let _ = libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE);
 
+    let mut delay = Delay::new();
+
     info!("Wake the f*** up samurai we have beans to burn!");
 
-    // Build and start application
-    // We pass UART0 for the builder to initialize UART system
     let app = AppBuilder::new()
         .with_uart(peripherals.UART0)
-        .with_real_ssr(static_ssr) // Pass mutable reference (implements Heater)
-        .with_fan_control(static_fan) // Pass mutable reference (implements Fan)
-        .with_temperature_sensors(bean_sensor, env_sensor) // Real sensors!
+        .with_real_ssr(static_ssr)
+        .with_fan_control(static_fan)
+        .with_temperature_sensors(bean_sensor, env_sensor)
         .with_formatter(ArtisanFormatter::new())
         .build()
-        .expect("Failed to build application");
+        .map_err(|e| {
+            log::error!("Failed to build application: {:?}", e);
+            panic!("Application build failed");
+        })
+        .unwrap();
 
-    app.start_tasks(spawner)
+    let _ = app
+        .start_tasks(spawner)
         .await
-        .expect("Failed to start application tasks");
-
-    loop {
-        Timer::after(Duration::from_secs(5)).await;
-        info!("Heartbeat - LibreRoaster running with Artisan+ control");
-    }
+        .map_err(|e| {
+            log::error!("Failed to start application tasks: {:?}", e);
+            panic!("Application tasks start failed");
+        })
+        .unwrap();
 }

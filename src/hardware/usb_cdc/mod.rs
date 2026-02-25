@@ -2,7 +2,7 @@ pub mod driver;
 pub mod tasks;
 
 pub use driver::{UsbCdcDriver, UsbCdcError};
-pub use tasks::{usb_reader_task, usb_writer_task};
+pub use tasks::usb_reader_task;
 
 pub const USB_CDC_BAUD_RATE: u32 = 115200;
 
@@ -15,7 +15,10 @@ pub fn initialize_usb_cdc_system(
     let usb_serial_jtag = UsbSerialJtag::new(usb_device);
 
     let usb_static = unsafe {
-        core::mem::transmute::<UsbSerialJtag<'_, esp_hal::Blocking>, UsbSerialJtag<'static, esp_hal::Blocking>>(usb_serial_jtag)
+        core::mem::transmute::<
+            UsbSerialJtag<'_, esp_hal::Blocking>,
+            UsbSerialJtag<'static, esp_hal::Blocking>,
+        >(usb_serial_jtag)
     };
 
     driver::init_usb_cdc(usb_static)

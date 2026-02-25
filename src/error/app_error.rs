@@ -1,38 +1,37 @@
-//! Unified error handling system for LibreRoaster
-//! Provides consistent error types and handling strategies across all modules
-
 use core::fmt;
 
-/// Unified application error type
-/// Consolidates errors from all modules with proper context
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
-    /// Temperature-related errors
     Temperature {
         message: heapless::String<256>,
         source: TemperatureError,
     },
 
-    /// Control system errors
-    Control { source: ControlError },
+    Control {
+        source: ControlError,
+    },
 
-    /// Hardware communication errors
-    Hardware { source: HardwareError },
+    Hardware {
+        source: HardwareError,
+    },
 
-    /// Input/communication errors
-    Communication { source: CommunicationError },
+    Communication {
+        source: CommunicationError,
+    },
 
-    /// System initialization errors
-    Initialization { source: InitError },
+    Initialization {
+        source: InitError,
+    },
 
-    /// Safety system errors
-    Safety { severity: SafetyLevel },
+    Safety {
+        severity: SafetyLevel,
+    },
 
-    /// Configuration errors
-    Configuration { source: ConfigError },
+    Configuration {
+        source: ConfigError,
+    },
 }
 
-/// Specific temperature-related errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum TemperatureError {
     OutOfRange,
@@ -41,7 +40,6 @@ pub enum TemperatureError {
     InvalidValue,
 }
 
-/// Control system errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum ControlError {
     PidError,
@@ -51,7 +49,6 @@ pub enum ControlError {
     EmergencyShutdown,
 }
 
-/// Hardware-related errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareError {
     UartError,
@@ -60,7 +57,6 @@ pub enum HardwareError {
     GpioError,
 }
 
-/// Communication errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommunicationError {
     UartError,
@@ -69,7 +65,6 @@ pub enum CommunicationError {
     TimeoutError,
 }
 
-/// Initialization errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitError {
     ServiceContainer,
@@ -78,7 +73,6 @@ pub enum InitError {
     MemoryAllocation,
 }
 
-/// Configuration errors
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigError {
     InvalidValue,
@@ -86,7 +80,6 @@ pub enum ConfigError {
     CorruptedData,
 }
 
-/// Safety error severity levels
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SafetyLevel {
     Warning,
@@ -95,7 +88,6 @@ pub enum SafetyLevel {
 }
 
 impl AppError {
-    /// Check if the error is recoverable
     pub fn is_recoverable(&self) -> bool {
         match self {
             AppError::Temperature { source, .. } => match source {
@@ -115,7 +107,6 @@ impl AppError {
         }
     }
 
-    /// Check if the error requires immediate system shutdown
     pub fn requires_emergency_shutdown(&self) -> bool {
         match self {
             AppError::Temperature { source, .. } => matches!(source, TemperatureError::OutOfRange),
@@ -124,7 +115,6 @@ impl AppError {
         }
     }
 
-    /// Get error category for logging/metrics
     pub fn category(&self) -> &'static str {
         match self {
             AppError::Temperature { .. } => "temperature",
@@ -137,7 +127,6 @@ impl AppError {
         }
     }
 
-    /// Get user-friendly error message
     pub fn user_message(&self) -> &'static str {
         match self {
             AppError::Temperature { source, .. } => match source {
@@ -191,9 +180,7 @@ impl fmt::Display for AppError {
     }
 }
 
-/// Error recovery strategies
 pub trait ErrorRecovery {
-    /// Attempt to recover from the error
     fn recover(&mut self, error: &AppError) -> Result<RecoveryResult, RecoveryError>;
 }
 
@@ -212,7 +199,6 @@ pub enum RecoveryError {
     SystemInconsistent,
 }
 
-/// Convert module-specific errors to AppError
 impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {
         match err {

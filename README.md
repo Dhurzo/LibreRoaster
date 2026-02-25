@@ -23,17 +23,43 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 | **Command Multiplexer** | Routes Artisan commands between USB and UART with 60s timeout |
 | **Initialization Handshake** | Supports CHAN→UNITS→FILT sequence with `#` acknowledgment |
 
+### Async Architecture
+
+LibreRoaster uses the **Embassy** async framework for concurrent task execution:
+
+| Component | Description |
+|-----------|-------------|
+| **Embassy Executor** | Task scheduler for ESP32-C3 RISC-V |
+| **Async Sensors** | Non-blocking MAX31856 temperature reads using embassy-time timers |
+| **Async UART/USB** | Non-blocking serial communication via embassy traits |
+| **Async Mutex** | Thread-safe access to shared RoasterControl |
+| **Channel Communication** | Inter-task command passing via embassy-sync channels |
+
+The async architecture enables:
+- Concurrent USB and UART command processing
+- Non-blocking sensor reads (no busy-wait loops)
+- Predictable timing with embassy-time delays
+- Safe concurrent access to shared state
+
 ### Supported Artisan Commands
 
 | Command | Description |
 |---------|-------------|
-| `READ` | Request telemetry (ET, BT, ambient, fan%, heater%) |
+| `READ` | Request telemetry (ET, BT, heater%, fan%) |
+| `REG` | Regression-runner trigger that ramps heater/fan to 100%, keeps the watchdog fed, and emits SAFETY OT-REGRESSION records so automation can detect and monitor over-temperature regression cycles |
+| `STATUS/STAT` | Automation telemetry snapshot returning ET, BT, Heater, Fan, WatchdogOK, WatchdogFailures, LastWatchdogReason, LEDCGuardTimeouts, and RegressionActive (alias `STAT`) while surfacing watchdog guard/regression telemetry without touching `READ` |
 | `OT1 [0-100]` | Set heater power percentage |
+| `OT2 [0-100]` | Set fan speed percentage (auto-cuts heater if out of range) |
 | `IO3 [0-100]` | Set fan speed percentage |
 | `UP` | Increase heater by 5% |
 | `DOWN` | Decrease heater by 5% |
 | `START` | Begin roasting, enable continuous output |
 | `STOP` | Emergency stop, disable outputs |
+| `CHAN [rate]` | Set communication rate (legacy) |
+| `UNITS [C/F]` | Set temperature units (Celsius/Fahrenheit) |
+| `FILT [value]` | Set filter value (legacy) |
+
+Automation-focused readers should consult [internalDoc/INSTRUMENTATION_README.MD](internalDoc/INSTRUMENTATION_README.MD) immediately after this table for the STATUS/STAT column definitions, payload expectations, and the way REG logs SAFETY OT-REGRESSION so instrumentation crews can react safely.
 
 ## Quick Start
 
@@ -51,7 +77,7 @@ See [FLASH_GUIDE.md](internalDoc/FLASH_GUIDE.md) for detailed flashing instructi
 See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed connection instructions.
 
 **Summary:**
-1. Identify the USB port (ttyACM on Linux, COM on Windows)
+1. Identify the USB port (ttyACM on Linux, /dev/cu.usbmodem-* on macOS, COM on Windows)
 2. Configure Artisan: port + 115200 baud + Arduino/RPi mode
 3. Verify connection with READ command
 
@@ -60,7 +86,8 @@ See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed conn
 | Component | Description |
 |-----------|-------------|
 | ESP32-C3 | RISC-V development board |
-| 2x MAX31856 | Thermocouple amplifier boards |
+| 2x MAX31856 | Ther
+mocouple amplifier boards |
 | 2x Type-K Thermocouples | Bean Temp and Environment Temp |
 | SSR | Solid State Relay for heater control |
 | Fan | Variable speed fan (PWM controlled) |
@@ -69,11 +96,12 @@ See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed conn
 
 | GPIO | Function |
 |------|----------|
-| 3 | MAX31856 #1 CS (BT) |
-| 4 | MAX31856 #2 CS (ET) |
+| 3 | MAX31856 #1 CS (ET - Environment Temperature) |
+| 4 | MAX31856 #2 CS (BT - Bean Temperature) |
 | 5-7 | SPI (MOSI, MISO, SCLK) |
 | 9 | Fan PWM |
 | 10 | SSR PWM |
+| 1 | Heat Detection (SSR feedback) |
 | 20 | UART TX (to Artisan) |
 | 21 | UART RX (from Artisan) |
 
@@ -97,21 +125,16 @@ LibreRoaster supports two connection methods to Artisan:
 
 ### READ Response Format
 
-```
-ET,BT,ET2,BT2,ambient,fan,heater
-```
+4-value CSV: ET,BT,HEATER,FAN
 
-Example: `185.2,192.3,-1,-1,24.5,45,75`
+| Field | Type | Unit | Description |
+|-------|------|------|-------------|
+| ET | Decimal | °C | Exhaust Temperature |
+| BT | Decimal | °C | Bean Temperature |
+| HEATER | Decimal | % | Heater PWM percentage |
+| FAN | Decimal | % | Fan PWM percentage |
 
-| Field | Description |
-|-------|-------------|
-| ET | Environment temperature (°C) |
-| BT | Bean temperature (°C) |
-| ET2 | Extra channel (-1 if unused) |
-| BT2 | Extra channel (-1 if unused) |
-| ambient | Ambient temperature |
-| fan | Fan output % |
-| heater | Heater output % |
+Example: `185.3,201.4,45,80`
 
 ### Initialization
 
@@ -166,6 +189,26 @@ Apache 2.0
 
 ## Development
 
+### Prerequisites
+
+Before building LibreRoaster, ensure you have:
+
+1. **Rust Toolchain** (v1.88):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   rustup update stable
+   ```
+
+2. **ESP32-C3 Target**:
+   ```bash
+   rustup target add riscv32imc-unknown-none-elf
+   ```
+
+3. **espflash Tool** (for flashing firmware):
+   ```bash
+   cargo install espflash
+   ```
+
 ### Build Commands
 
 ```bash
@@ -177,6 +220,106 @@ cargo build
 
 # Clean build artifacts
 cargo clean
+```
+
+#### Building for ESP32-C3
+
+LibreRoaster is built as an embedded binary for the ESP32-C3 RISC-V processor. The build requires specifying the target explicitly:
+
+```bash
+# Build for ESP32-C3 embedded target
+cargo build --release --target riscv32imc-unknown-none-elf
+```
+
+**Output location:** `target/riscv32imc-unknown-none-elf/release/libreroaster.bin`
+
+> **Note:** The `--target riscv32imc-unknown-none-elf` flag is required because LibreRoaster is an embedded application (no stdlib), not a host application.
+
+### Test Commands
+
+LibreRoaster includes a comprehensive test suite. Tests can run on the host (x86_64) for development without requiring ESP32-C3 hardware.
+
+#### Basic Test Commands
+
+```bash
+# Run all tests
+cargo test
+
+# Run specific test by name
+cargo test test_name
+
+# Run with output (see print statements)
+cargo test -- --nocapture
+```
+
+#### Host Integration Tests
+
+These tests run on the host (x86_64) without embedded hardware. They validate concurrent behavior, command routing, and Artisan protocol compatibility.
+
+| Test | Command | Purpose |
+|------|---------|---------|
+| **Command Multiplexer Concurrency** | `cargo test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency` | Validates concurrent USB+UART command routing without queue saturation |
+| **Concurrent Sensor Read** | `cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test` | Proves async mutex handles concurrent sensor reads without race conditions |
+| **Mock UART Integration** | `cargo test --target x86_64-unknown-linux-gnu --test mock_uart_integration` | Tests UART communication protocol with mock hardware |
+| **Artisan Integration** | `cargo test --target x86_64-unknown-linux-gnu --test artisan_integration_test` | Validates Artisan command/response protocol compliance |
+
+> **Note:** Host tests do not require ESP32-C3 hardware. They run on your development machine using the `std` feature.
+
+### Concurrency Regression Test
+
+- Run the new host-side multiplexer stress test:
+  ```bash
+  cargo test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency
+  ```
+- The test spawns `queue_processor_task`/`usb_queue_processor_task`, fires concurrent USB+UART commands, and drives `ServiceContainer::roaster_async_sensor_read()` via a `ThreadPool` so the real queue processor is exercised.
+- Instrumentation lives in `libreroaster::application::queue_metrics` (`QueueProcessorMetrics`), and `queue_processor_metrics_snapshot()` returns:
+  - `queue_depth`: the most recent occupancy of the command queue.
+  - `max_depth`: the highest occupancy observed while the test ran.
+  - `backlog_events`: each time the queue depth hit or exceeded `QUEUE_DEPTH_BACKLOG_THRESHOLD` (currently 24, which is 3/4 of the queue) both producers contributed to the same metric.
+- Operators should verify the snapshot after a run: `max_depth` stays below 24 and `backlog_events == 0`. Any backlog event signals the queue saw saturation and is a prompt to revisit command burst pacing or queue handling.
+- To dive deeper, run the test with `-- --nocapture` and instrument `queue_processor_metrics_snapshot()` in your debugger or additional test helpers to inspect the per-run values.
+
+### Concurrent sensor read instrumentation (ASYNC-06)
+
+- Execute the host-side concurrent sensor read proof with async lock metrics enabled:
+  ```bash
+  cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
+  ```
+- The harness boots `ServiceContainer`, populates both async and sync `RoasterControl` instances, then uses a `ThreadPool` to spawn ten `ServiceContainer::roaster_async_sensor_read()` futures and `join_all` the batch so every `Result<(), ContainerError>` is asserted.
+- Internally `ServiceContainer` instruments the embassy mutex with test-only helpers `async_lock_depth_max_for_tests()` and `reset_async_lock_metrics_for_tests()` so the test can confirm `max_async_lock_depth` never exceeds `1` (no parallel holders) and that the counters reset to zero before/after each run.
+- Passing runs prove ASYNC-06 for the milestone audit because the host harness proves the async mutex survives concurrent sensor reads without dropped locks or multiple holders, and the README's command plus telemetry proves we can rerun the coverage on demand.
+
+### Development Features
+
+LibreRoaster provides Cargo features to enable optional functionality:
+
+| Feature | Purpose | Command Example |
+|---------|---------|-----------------|
+| `std` | Enable standard library (for host tests) | `cargo test --features std ...` |
+| `test` | Enable test helpers | `cargo test --features test ...` |
+| `async-lock-depth-metrics` | Enable async mutex depth instrumentation for concurrency testing | `cargo test --features async-lock-depth-metrics ...` |
+| `embedded` | Enable embedded binary build | `cargo build --features embedded ...` |
+
+#### Using async-lock-depth-metrics
+
+The `async-lock-depth-metrics` feature instruments the Embassy async mutex to track lock depth during concurrent operations:
+
+- **What it does:** Instruments the embassy mutex to track maximum concurrent holders
+- **When to use:** Running `concurrent_sensor_test` to verify no race conditions
+- **How to interpret results:** `max_async_lock_depth` should never exceed `1` (indicating no parallel holders)
+
+```bash
+# Run concurrent sensor test with lock metrics
+cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
+```
+
+#### Combining Features
+
+Multiple features can be combined:
+
+```bash
+# Run host tests with async lock metrics
+cargo test --features "std,test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu
 ```
 
 ### Flash Commands
@@ -214,6 +357,25 @@ cargo espflash monitor --speed 115200
    - Update Rust toolchain: `rustup update stable`
    - Clear build artifacts: `cargo clean`
    - Check internet connection for dependency downloads
+
+## Safety Features
+
+LibreRoaster implements multiple safety mechanisms:
+
+| Feature | Threshold | Action |
+|---------|-----------|--------|
+| **Over-temperature** | 260°C | Emergency shutdown, cut heater, max fan |
+| **Sensor Timeout** | 1 second | Fault condition, disable heater |
+| **Heat Detection** | SSR feedback | Verify heater is actually turning on |
+| **Fault Conditions** | Any fault | Emergency shutdown, max fan for cooling |
+
+### Safety Guarantees
+
+- **Automatic Emergency Shutdown**: If temperature exceeds 260°C or sensor times out, the system automatically cuts power to the heater and runs the fan at 100% for cooling
+- **Heat Source Verification**: System monitors SSR feedback to verify the heater element is actually drawing power
+- **Temperature Validity**: Sensor readings older than 1 second are marked invalid to prevent stale data from causing issues
+- **Fault Tracking**: All fault conditions are logged and trigger safe shutdown state
+- **Manual Emergency**: STOP command immediately cuts heater and sets fan to 100%
 
 ## ⚠️ Safety Warning
 

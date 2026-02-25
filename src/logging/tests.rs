@@ -35,9 +35,18 @@ mod buffer_tests {
         let mut consumer = producer.split().1;
 
         // Producer writes
-        producer.enqueue(&1).unwrap();
-        producer.enqueue(&2).unwrap();
-        producer.enqueue(&3).unwrap();
+        assert!(
+            producer.enqueue(&1).is_ok(),
+            "Failed to enqueue item 1 in test"
+        );
+        assert!(
+            producer.enqueue(&2).is_ok(),
+            "Failed to enqueue item 2 in test"
+        );
+        assert!(
+            producer.enqueue(&3).is_ok(),
+            "Failed to enqueue item 3 in test"
+        );
 
         // Consumer reads
         assert_eq!(consumer.dequeue(), Some(1));
@@ -54,7 +63,11 @@ mod buffer_tests {
 
         // Fill and drain
         for i in 0..3 {
-            producer.enqueue(&i).unwrap();
+            assert!(
+                producer.enqueue(&i).is_ok(),
+                "Failed to enqueue item {} in test",
+                i
+            );
         }
         for _ in 0..3 {
             assert!(consumer.dequeue().is_some());
@@ -64,7 +77,10 @@ mod buffer_tests {
         assert_eq!(consumer.dequeue(), None);
 
         // Should be able to write again (wrap-around)
-        producer.enqueue(&99).unwrap();
+        assert!(
+            producer.enqueue(&99).is_ok(),
+            "Failed to enqueue item 99 in test"
+        );
         assert_eq!(consumer.dequeue(), Some(99));
     }
 }

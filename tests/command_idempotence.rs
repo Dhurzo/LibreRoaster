@@ -55,8 +55,6 @@ fn build_control() -> RoasterControl {
             status: SsrHardwareStatus::Available,
         }),
         Box::new(StubFan::default()),
-        Box::new(StubThermometer { temp: 25.0 }),
-        Box::new(StubThermometer { temp: 30.0 }),
     )
     .expect("RoasterControl should build with stubs")
 }
@@ -160,6 +158,10 @@ fn read_response_deterministic() {
         artisan_control: false,
         fault_condition: false,
         ssr_hardware_status: SsrHardwareStatus::Available,
+        ssr_last_duty_delta_ticks: 0,
+        ssr_retry_count: 0,
+        ssr_cycle_guard_busy_until_ms: 0,
+        ..SystemStatus::default()
     };
 
     let first = ArtisanFormatter::format_read_response(&status, status.fan_output);
@@ -192,6 +194,10 @@ fn read_response_boundaries() {
         artisan_control: false,
         fault_condition: false,
         ssr_hardware_status: SsrHardwareStatus::Available,
+        ssr_last_duty_delta_ticks: 0,
+        ssr_retry_count: 0,
+        ssr_cycle_guard_busy_until_ms: 0,
+        ..SystemStatus::default()
     };
 
     let response = ArtisanFormatter::format_read_response(&status, status.fan_output);

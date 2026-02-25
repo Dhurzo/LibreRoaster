@@ -60,31 +60,50 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     // Fall back to space delimiter for operational commands
     let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().collect();
 
-    match parts.as_slice() {
-        ["READ"] => Ok(ArtisanCommand::ReadStatus),
+    if parts.is_empty() {
+        return Err(ParseError::UnknownCommand);
+    }
 
-        ["START"] => Ok(ArtisanCommand::StartRoast),
+    let cmd = parts[0];
 
-        ["OT1", value_str] => {
-            let value = parse_percentage(value_str)?;
+    if (cmd.eq_ignore_ascii_case("STATUS") || cmd.eq_ignore_ascii_case("STAT")) && parts.len() == 1
+    {
+        Ok(ArtisanCommand::StatusReport)
+    } else if cmd.eq_ignore_ascii_case("READ") && parts.len() == 1 {
+        Ok(ArtisanCommand::ReadStatus)
+    } else if cmd.eq_ignore_ascii_case("START") && parts.len() == 1 {
+        Ok(ArtisanCommand::StartRoast)
+    } else if cmd.eq_ignore_ascii_case("STOP") && parts.len() == 1 {
+        Ok(ArtisanCommand::EmergencyStop)
+    } else if cmd.eq_ignore_ascii_case("UP") && parts.len() == 1 {
+        Ok(ArtisanCommand::IncreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("DOWN") && parts.len() == 1 {
+        Ok(ArtisanCommand::DecreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("REG") && parts.len() == 1 {
+        Ok(ArtisanCommand::RunRegression)
+    } else if cmd.eq_ignore_ascii_case("OT1") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
             Ok(ArtisanCommand::SetHeater(value))
+        } else {
+            Err(ParseError::InvalidValue)
         }
-
-        ["IO3", value_str] => {
-            let value = parse_percentage(value_str)?;
+    } else if cmd.eq_ignore_ascii_case("IO3") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
             Ok(ArtisanCommand::SetFan(value))
+        } else {
+            Err(ParseError::InvalidValue)
         }
-
-        ["STOP"] => Ok(ArtisanCommand::EmergencyStop),
-
-        ["UP" | "up"] => Ok(ArtisanCommand::IncreaseHeater),
-
-        ["DOWN" | "down"] => Ok(ArtisanCommand::DecreaseHeater),
-
-        // Partial commands (commands that require a value but don't have one)
-        ["OT1"] | ["IO3"] => Err(ParseError::InvalidValue),
-
-        _ => Err(ParseError::UnknownCommand),
+    } else if cmd.eq_ignore_ascii_case("OT2") {
+        if parts.len() == 2 {
+            let (value, was_clamped) = parse_ot2_value(parts[1])?;
+            Ok(ArtisanCommand::SetFanSpeed(value, was_clamped))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else {
+        Err(ParseError::UnknownCommand)
     }
 }
 
@@ -100,6 +119,29 @@ fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
     }
 }
 
+/// Parse OT2 fan speed value with decimal support
+/// - Decimals are rounded to nearest integer
+/// - Values are silently clamped to 0-100 range
+/// - Negative values clamp to 0
+/// - Returns (clamped_value, was_clamped)
+fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
+    let value = value_str
+        .parse::<f32>()
+        .map_err(|_| ParseError::InvalidValue)?;
+
+    let was_clamped = value < 0.0 || value > 100.0;
+
+    // Round to nearest integer (0.5 rounds up)
+    let rounded = if value >= 0.0 {
+        (value + 0.5) as i32
+    } else {
+        (value - 0.5) as i32
+    };
+
+    let clamped = rounded.clamp(0, 100) as u8;
+    Ok((clamped, was_clamped))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +150,18 @@ mod tests {
     fn test_parse_read_command() {
         let result = parse_artisan_command("READ");
         assert!(matches!(result, Ok(ArtisanCommand::ReadStatus)));
+    }
+
+    #[test]
+    fn test_parse_status_command() {
+        let result = parse_artisan_command("STATUS");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
+    }
+
+    #[test]
+    fn test_parse_stat_command_alias() {
+        let result = parse_artisan_command("STAT");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
     }
 
     #[test]
@@ -132,6 +186,12 @@ mod tests {
     fn test_parse_stop_command() {
         let result = parse_artisan_command("STOP");
         assert!(matches!(result, Ok(ArtisanCommand::EmergencyStop)));
+    }
+
+    #[test]
+    fn test_parse_regression_command() {
+        let result = parse_artisan_command("REG");
+        assert!(matches!(result, Ok(ArtisanCommand::RunRegression)));
     }
 
     #[test]
@@ -270,46 +330,37 @@ mod tests {
 
     #[test]
     fn test_semicolon_with_space_fallback() {
-        // Semicolon commands should not fallback to space delimiter
         let result = parse_artisan_command("CHAN;1200");
         assert!(matches!(result, Ok(ArtisanCommand::Chan(1200))));
 
-        // Space-delimited should still work for existing commands
         let result = parse_artisan_command("OT1 75");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(75))));
     }
 
-    // Phase 18: Command & Response Protocol Tests
-
-    /// TEST-18-02a: Verify UP command parses correctly
     #[test]
     fn test_parse_up_command() {
         let result = parse_artisan_command("UP");
         assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
     }
 
-    /// TEST-18-02b: Verify UP command is case-insensitive
     #[test]
     fn test_parse_up_command_case_insensitive() {
         let result = parse_artisan_command("up");
         assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
     }
 
-    /// TEST-18-02c: Verify DOWN command parses correctly
     #[test]
     fn test_parse_down_command() {
         let result = parse_artisan_command("DOWN");
         assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
     }
 
-    /// TEST-18-02d: Verify DOWN command is case-insensitive
     #[test]
     fn test_parse_down_command_case_insensitive() {
         let result = parse_artisan_command("down");
         assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
     }
 
-    /// TEST-18-05a: Verify empty command returns EmptyCommand error
     #[test]
     fn test_empty_command_returns_empty_command_error() {
         let result = parse_artisan_command("");
@@ -323,66 +374,122 @@ mod tests {
         assert!(matches!(result, Err(ParseError::EmptyCommand)));
     }
 
-    /// TEST-18-05c: Verify partial OT1 command (no value) returns InvalidValue error
     #[test]
     fn test_partial_ot1_command_returns_invalid_value() {
         let result = parse_artisan_command("OT1");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 
-    /// TEST-18-05d: Verify partial IO3 command (no value) returns InvalidValue error
     #[test]
     fn test_partial_io3_command_returns_invalid_value() {
         let result = parse_artisan_command("IO3");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 
-    /// TEST-18-05e: Verify extra whitespace is handled correctly
     #[test]
     fn test_extra_whitespace_handled_correctly() {
         let result = parse_artisan_command("OT1  50");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(50))));
     }
 
-    /// TEST-18-05f: Verify OT1 with value zero parses correctly
     #[test]
     fn test_parse_ot1_zero_value() {
         let result = parse_artisan_command("OT1 0");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(0))));
     }
 
-    /// TEST-18-05g: Verify OT1 with value 100 parses correctly
     #[test]
     fn test_parse_ot1_max_value() {
         let result = parse_artisan_command("OT1 100");
         assert!(matches!(result, Ok(ArtisanCommand::SetHeater(100))));
     }
 
-    /// TEST-18-05h: Verify OT1 with value > 100 returns OutOfRange error
     #[test]
     fn test_parse_ot1_out_of_range() {
         let result = parse_artisan_command("OT1 150");
         assert!(matches!(result, Err(ParseError::OutOfRange)));
     }
 
-    /// TEST-18-05i: Verify IO3 with value zero parses correctly
     #[test]
     fn test_parse_io3_zero_value() {
         let result = parse_artisan_command("IO3 0");
         assert!(matches!(result, Ok(ArtisanCommand::SetFan(0))));
     }
 
-    /// TEST-18-05j: Verify IO3 with value 100 parses correctly
     #[test]
     fn test_parse_io3_max_value() {
         let result = parse_artisan_command("IO3 100");
         assert!(matches!(result, Ok(ArtisanCommand::SetFan(100))));
     }
 
-    /// TEST-18-05k: Verify IO3 with value > 100 returns OutOfRange error
     #[test]
     fn test_parse_io3_out_of_range() {
         let result = parse_artisan_command("IO3 150");
         assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    // OT2 Command Tests
+
+    #[test]
+    fn test_parse_ot2_command_basic() {
+        let result = parse_artisan_command("OT2 75");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(75, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_command_lowercase() {
+        let result = parse_artisan_command("ot2 50");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_up() {
+        let result = parse_artisan_command("OT2 50.5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(51, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_down() {
+        let result = parse_artisan_command("OT2 50.4");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_above_max() {
+        let result = parse_artisan_command("OT2 150");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(100, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_negative() {
+        let result = parse_artisan_command("OT2 -5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_zero() {
+        let result = parse_artisan_command("OT2 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_max() {
+        let result = parse_artisan_command("OT2 100");
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetFanSpeed(100, false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_ot2_invalid_value() {
+        let result = parse_artisan_command("OT2 abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_ot2_partial_command() {
+        let result = parse_artisan_command("OT2");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 }

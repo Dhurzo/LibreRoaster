@@ -26,21 +26,13 @@ critical_section::set_impl!(TestCriticalSection);
 
 unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn acquire() -> RawRestoreState {
-        ()
+        false
     }
 
     unsafe fn release(_restore_state: RawRestoreState) {}
 }
 
 static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
-
-#[no_mangle]
-fn _embassy_time_now() -> u64 {
-    TEST_TIME_TICKS.fetch_add(1, Ordering::Relaxed)
-}
-
-#[no_mangle]
-fn _embassy_time_schedule_wake(_at: u64, _waker: &core::task::Waker) {}
 
 struct StubHeater {
     power: f32,
@@ -97,8 +89,6 @@ fn build_control() -> RoasterControl {
             status: SsrHardwareStatus::Available,
         }),
         Box::new(StubFan::default()),
-        Box::new(StubThermometer { temp: 25.0 }),
-        Box::new(StubThermometer { temp: 30.0 }),
     )
     .expect("RoasterControl should build with stubs")
 }
@@ -109,7 +99,11 @@ fn init_service_container() {
 
     critical_section::with(|cs| {
         let container = ServiceContainer::get_instance();
-        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+        container
+            .roaster_sync
+            .borrow(cs)
+            .borrow_mut()
+            .replace(roaster);
         container
             .artisan_input
             .borrow(cs)

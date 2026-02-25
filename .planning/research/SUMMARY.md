@@ -1,125 +1,181 @@
-# Project Research Summary
+# Project Research Summary: v4.4 SSR Refactoring & Test Stubs
 
-**Project:** LibreRoaster (ESP32-C3)
-**Domain:** Non-Blocking USB Logging for Real-Time Control
-**Researched:** 2026-02-05
+**Project:** LibreRoaster (ESP32-C3 Coffee Roaster Firmware)
+**Domain:** Embedded Rust firmware - coffee roaster control
+**Researched:** 2026-02-24
 **Confidence:** HIGH
 
 ## Executive Summary
 
-LibreRoaster v1.7 requires a robust, non-blocking logging system to monitor USB communication without compromising the 100ms PID control loop. Standard synchronous logging (like `esp-println`) poses a critical risk: if the USB buffer fills or a serial monitor is disconnected, the entire firmware can stall, potentially leading to dangerous roasting conditions.
+This research addresses two key refactoring goals for LibreRoaster v4.4:
 
-The recommended approach is to adopt a **Producer-Consumer architecture** using `defmt` for deferred formatting and `defmt-bbq` as a lock-free buffer. This setup ensures that log "writes" are near-instantaneous memory operations. A low-priority background task handles the actual hardware transmission, allowing the high-priority PID and serial parser tasks to proceed without interruption. To manage log volume, "Smart Filtering" will be implemented to suppress repetitive Artisan polling commands.
+1. **SSR Deduplication**: The existing `SsrControl` and `SsrControlSimple` structs share ~95% identical code. Research confirms the recommended approach is **composition + trait default implementations** - extract common state into `SsrControlBase`, define a trait with shared methods, and have both types embed the base while implementing the trait. This eliminates duplication while preserving zero-cost abstraction.
+
+2. **Shared Test Infrastructure**: Currently, test mocks are scattered across individual test files, causing ~5x duplication. Research recommends creating `tests/common/mod.rs` with manual stub implementations (`StubHeater`, `StubFan`, `StubThermometer`) that implement the existing `control::traits`. No external crates needed - use `RefCell` for interior mutability.
+
+**Key risks identified:**
+- Breaking embedded-hal trait bounds during deduplication (CRITICAL)
+- Losing Send+Sync safety in extracted types (CRITICAL)
+- Safety-critical detection logic must be preserved exactly (CRITICAL)
+
+The existing codebase already has substantial infrastructure - SSR control, Heater trait, and some test mocks. This milestone consolidates and shares that infrastructure.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack moves away from synchronous blocking logs toward an async-native, deferred-formatting ecosystem.
+**SSR Refactoring: Composition + Trait Pattern**
 
-**Core technologies:**
-- **defmt (0.3.10):** Logging Interface — Minimizes CPU and binary size by deferring string formatting to the host PC.
-- **defmt-bbq (0.1.0):** Global Logger Shim — Decouples log sites from hardware by routing logs into a lock-free queue.
-- **bbqueue (0.5.1):** Lock-free Buffer — Provides the underlying SPSC queue for high-performance, non-blocking data transfer.
-- **esp-hal (1.0.0):** Peripheral Drivers — Utilizes the latest stable async drivers for non-blocking hardware I/O.
+| Approach | Implementation | Why |
+|----------|---------------|-----|
+| **Primary** | Extract `SsrState` struct with common fields | Zero-cost abstraction, embeds shared state in both types |
+| **Secondary** | Define `SsrControlTrait` with default implementations | Eliminates duplicate method implementations |
+| **Existing** | Keep `Heater` trait from `control::traits` | Already provides `set_power` abstraction used by roaster control |
+
+**Test Infrastructure: Shared Stubs Module**
+
+| Component | Location | Implementation |
+|-----------|----------|----------------|
+| **Test stubs** | `tests/common/mod.rs` | Manual struct implementations (no external crate needed) |
+| **Stub patterns** | StubHeater, StubFan, StubThermometer | Implement existing `control::traits` traits |
+| **Helper utilities** | `reset_channels()`, `collect_output()` | Module-level functions for test state management |
 
 ### Expected Features
 
 **Must have (table stakes):**
-- **Non-blocking Logging** — PID loop must never wait for logs; users expect roaster stability regardless of logging state.
-- **Log Level Control** — Standard Info/Debug/Error filtering to manage log verbosity.
-- **USB-Serial-JTAG Output** — Native support for the ESP32-C3's internal debug peripheral.
+- SSR on/off control — Basic heating element control via GPIO
+- SSR PWM/phase control — Variable heating power (not just on/off)
+- Heat source detection — Verify SSR is actually heating
+- Cycle guard — Prevent SSR damage from rapid cycling
+- Duty readback verification — Confirm PWM duty matches commanded
+- **Shared test stubs** — Centralize mock implementations for Heater, Fan, Thermometer traits
 
 **Should have (competitive):**
-- **Smart Filtering** — Suppression of repetitive `READ` commands to keep logs focused on meaningful state changes.
-- **Millisecond Timestamps** — High-precision timing integrated with `embassy-time` for latency analysis.
+- MockHeater test double — For PID/controller unit tests (currently missing)
+- Error path test coverage — Mocks that simulate error conditions
 
 **Defer (v2+):**
-- **Remote Log Streaming** — Streaming logs over Wi-Fi/UDP is out of scope for the current USB-focused improvement.
+- PID auto-tuning
+- Dual SSR channel support
+- Hardware-in-the-loop (HIL) tests
 
 ### Architecture Approach
 
-The architecture follows a strictly decoupled Producer-Consumer pattern where the logging system is an observer of the serial traffic, not a participant in the critical path.
+**Current Problem:** `SsrControl` and `SsrControlSimple` have ~95% duplicate code across 10+ methods including `detect_heat_source()`, `periodic_check()`, `set_percentage()`, getters, and `Heater` trait implementation.
 
-**Major components:**
-1. **defmt Macros** — Fast log producers embedded in the Serial Reader/Writer tasks.
-2. **defmt-bbq (BBQueue)** — Centralized buffer managing the life-cycle of log data.
-3. **Async Logger Task** — A low-priority consumer that drains the queue and writes to the hardware transport async.
+**Recommended Solution:** Extract `SsrControlBase`:
+
+```
+src/hardware/ssr.rs (refactored)
+├── SsrControlBase<'a, DETECT, PWM>    # NEW: Common state and logic
+│   ├── detection_pin, pwm_channel
+│   ├── hardware_status, current_duty, last_duty_delta_ticks, retry_count
+│   └── Methods: detect_heat_source, periodic_check, set_percentage, getters
+├── SsrControl<'a, PIN, DETECT, PWM>   # Wraps Base + enable pin
+└── SsrControlSimple<'a, DETECT, PWM>  # Wraps Base only
+```
+
+**Test Infrastructure:**
+```
+tests/common/
+├── mod.rs              # Re-exports, helper functions
+├── stub_heater.rs       # StubHeater implementation
+├── stub_fan.rs         # StubFan implementation
+└── stub_thermometer.rs # StubThermometer implementation
+```
 
 ### Critical Pitfalls
 
-1. **Synchronous Blocking in `esp-println`** — Prevented by strictly using `defmt-bbq` and avoiding standard `println!`.
-2. **Shared Resource Conflict (UsbSerialJtag)** — Avoided by using a dedicated transport (UART0) or protocol-aware multiplexing to prevent interleaving logs with Artisan data.
-3. **BBQueue Overrun** — Mitigated by "Smart Filtering" and a "Drop-Oldest" policy to ensure the system remains responsive even under heavy log load.
+1. **Breaking embedded-hal Trait Bounds** — Extracting shared logic changes generic constraints, breaking `Heater` trait implementation. *Prevention: Define clear trait bounds before refactoring, test compilation of dependent code after each step.*
+
+2. **Losing Send+Sync Safety** — Refactoring may introduce RefCell/Cell for interior mutability, breaking async task boundaries. *Prevention: Preserve existing `unsafe impl Send` pattern, avoid interior mutability in refactored SSR types.*
+
+3. **Safety-Critical Detection Logic Loss** — `detect_heat_source` contains safety logic that must be preserved exactly. *Prevention: Create checklist of all state transitions before refactoring.*
+
+4. **Breaking PWM Readback Contract** — `monitor_ledc_after_set` is essential for safety; must be preserved. *Prevention: Keep readback call in public API after deduplication.*
+
+5. **Test State Pollution** — Shared mocks using RefCell can retain state between tests. *Prevention: Each test creates fresh mock instance, add reset methods.*
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on research, this milestone should be structured as two sequential phases:
 
-### Phase 1: Logging Foundation
-**Rationale:** Establishing the non-blocking buffer and `defmt` integration is the prerequisite for all subsequent features.
-**Delivers:** Working `defmt` setup over `bbqueue` with a basic async drain task.
-**Addresses:** Non-blocking Logging.
-**Avoids:** Synchronous Blocking Pitfall.
+### Phase 1: SSR Refactoring (Base Struct Extraction)
+**Rationale:** This is foundational - the other work depends on having clean, non-duplicated SSR code. Must be done first to enable proper shared test infrastructure.
 
-### Phase 2: Transport Configuration
-**Rationale:** The ESP32-C3 has specific hardware constraints for USB-Serial-JTAG that must be handled before attaching real traffic sniffers.
-**Delivers:** Stable log output over a designated channel (USB-JTAG or UART0) without interfering with Artisan.
-**Uses:** `esp-hal` 1.0.0 async drivers.
-**Implements:** Async Logger Task.
+**Delivers:**
+- `SsrControlBase` struct with shared state and methods
+- Refactored `SsrControl` and `SsrControlSimple` delegating to base
+- Preserved `Heater` trait implementations
 
-### Phase 3: Communication Sniffer Integration
-**Rationale:** Once the transport is safe, we can hook into the existing Artisan command multiplexer.
-**Delivers:** Real-time visibility into RX/TX bytes for Artisan commands.
-**Addresses:** Bi-directional Monitoring.
-**Implements:** `defmt` log sites in Reader/Writer tasks.
+**Addresses:**
+- FEATURES: SSR PWM control, heat source detection, duty readback, cycle guard
+- ARCHITECTURE: Eliminates ~95% code duplication
 
-### Phase 4: Smart Filtering & Polish
-**Rationale:** High-frequency polling in Artisan will flood the logs; filtering is needed for usability.
-**Delivers:** Logic to suppress repetitive `READ` polling logs.
-**Addresses:** Smart Filtering.
-**Avoids:** BBQueue Overrun Pitfall.
+**Avoids:**
+- PITFALLS: Trait bound breakage, Send+Sync loss, safety logic loss, PWM readback break
+
+**Research Flags:**
+- This phase is well-understood (HIGH confidence from STACK.md research)
+- Standard patterns - skip `/gsd-research-phase` during planning
+
+### Phase 2: Shared Test Infrastructure
+**Rationale:** Depends on SSR refactoring complete (mock implementations may need updating after structural changes). Creates reusable infrastructure for future tests.
+
+**Delivers:**
+- `tests/common/mod.rs` with StubHeater, StubFan, StubThermometer
+- Helper functions: `reset_channels()`, `collect_output()`
+- Migrated existing tests to use shared stubs
+
+**Addresses:**
+- FEATURES: Shared mock location, MockHeater test double
+- ARCHITECTURE: Centralized test infrastructure
+
+**Avoids:**
+- PITFALLS: Mock API drift, test state pollution, missing trait boundary tests
+
+**Research Flags:**
+- This phase is well-understood (HIGH confidence from existing test patterns)
+- May need research if new error-path tests require complex mock configurations
 
 ### Phase Ordering Rationale
 
-- **Dependencies:** The async runtime and `bbqueue` must exist before any logging can happen safely.
-- **Grouping:** Transport setup is grouped separately because it involves hardware-specific configuration (C3 JTAG vs UART) which is distinct from the logical sniffer implementation.
-- **Safety:** By building the "Smart Filter" last, we ensure the system is already non-blocking and safe, even if it is "chatty" initially.
+1. **SSR first** - The structural changes in Phase 1 could break existing mocks. Completing Phase 1 first ensures Phase 2 builds on stable foundations.
 
-### Research Flags
+2. **Two-phase structure** - Separates infrastructure creation from migration, allowing verification between steps.
 
-Phases likely needing deeper research during planning:
-- **Phase 2:** Hardware multiplexing vs RTT. Need to confirm if Artisan and logs can coexist on one USB port via different frames or if a physical UART is required.
-
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** `defmt-bbq` setup is a well-documented embedded Rust pattern.
-- **Phase 3:** Adding log macros to existing tasks is straightforward instrumentation.
+3. **Avoids Pitfall 11** - "Refactoring SSR Then Breaking All Existing Mocks" is mitigated by doing SSR refactoring first.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | `defmt` + `bbqueue` is the industry standard for this use case. |
-| Features | HIGH | Based on known pain points in the current blocking implementation. |
-| Architecture | HIGH | Producer-Consumer pattern is naturally suited for async logging. |
-| Pitfalls | HIGH | ESP32-C3 JTAG and blocking issues are well-documented. |
+| Stack | HIGH | Composition pattern well-established in Rust; existing codebase verified |
+| Features | HIGH | Table stakes verified via code review; gap analysis accurate |
+| Architecture | HIGH | Base struct pattern matches existing codebase structure |
+| Pitfalls | MEDIUM-HIGH | 10+ pitfalls identified; some mitigation strategies inferred |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Hardware Conflict:** Need to decide on the default log transport (UART vs USB) based on the user's hardware setup. This should be handled via a feature flag or config during implementation.
+- **Heater trait boundary tests**: No dedicated tests exist for Heater trait implementation on SSR types. Should add in Phase 2.
+- **Error-path mock coverage**: Current mocks implement happy path only. Phase 2 should add error variants.
+- **Property-based tests**: Not in scope for v4.4 but would add value for SSR percentage conversion math.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [esp-hal 1.0.0 Release Notes](https://github.com/esp-rs/esp-hal/releases/tag/v1.0.0) — Stable async driver patterns.
-- [defmt Documentation](https://defmt.ferrous-systems.com/) — Logging framework specifics.
-- [defmt-bbq GitHub](https://github.com/knurling-rs/defmt-bbq) — Non-blocking bridge implementation.
+- LibreRoaster codebase (`src/hardware/ssr.rs`, `src/control/traits.rs`) — Verified SSR implementation
+- `tests/mock_uart.rs`, `tests/mock_usb_driver.rs` — Verified existing mock patterns
+- Stack Overflow: Rust trait deduplication patterns
 
 ### Secondary (MEDIUM confidence)
-- [Artisan Protocol Documentation](https://artisan-roaster-scope.blogspot.com/) — Command structures for filtering.
+- embedded-hal-mock crate documentation — Test infrastructure patterns
+- Rust Send+Sync requirements — Embedded async safety
 
 ---
-*Research completed: 2026-02-05*
+
+*Research completed: 2026-02-24*
 *Ready for roadmap: yes*
+*Milestone: v4.4 SSR Refactoring & Test Stubs*

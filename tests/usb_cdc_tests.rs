@@ -3,6 +3,9 @@
 //! Tests for USB CDC command processing, error handling, and channel routing
 //! using the mock USB driver.
 //!
+//! This test requires embassy-time and critical-section implementations
+//! that are only available on the embedded target.
+//!
 //! # Test Coverage (10 tests)
 //!
 //! - Complete command processing (READ, OT1, IO3)
@@ -11,7 +14,7 @@
 //! - Command routing by channel
 //! - Error routing by channel
 
-#![cfg(all(test, not(target_arch = "riscv32")))]
+#![cfg(all(test, target_arch = "riscv32"))]
 #![allow(non_snake_case)]
 
 extern crate std;

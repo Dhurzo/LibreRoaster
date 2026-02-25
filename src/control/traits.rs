@@ -1,28 +1,40 @@
 use crate::config::constants::SsrHardwareStatus;
 use crate::control::RoasterError;
 
-/// Trait para leer temperatura (Termómetro)
 pub trait Thermometer: Send {
-    /// Lee la temperatura en grados Celsius
     fn read_temperature(&mut self) -> Result<f32, RoasterError>;
 }
 
-/// Trait para controlar un elemento calefactor (SSR)
+/// Async thermometer trait for non-blocking temperature reads.
+/// Must be implemented separately from Thermometer because async methods
+/// make a trait not dyn-compatible.
+#[allow(async_fn_in_trait)]
+pub trait AsyncThermometer: Send {
+    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError>;
+}
+
 pub trait Heater: Send {
-    /// Establece el nivel de potencia (0.0 a 100.0)
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError>;
 
-    /// Obtiene el estado físico del hardware
     fn get_status(&self) -> SsrHardwareStatus;
+
+    fn last_duty_delta_ticks(&self) -> i16 {
+        0
+    }
+
+    fn last_retry_count(&self) -> u8 {
+        0
+    }
 }
 
-/// Trait para controlar un ventilador
 pub trait Fan: Send {
-    /// Establece la velocidad (0.0 a 100.0)
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError>;
+
+    fn get_speed(&self) -> f32 {
+        0.0
+    }
 }
 
-// Blanket implementation for mutable references
 impl<T: Heater + ?Sized> Heater for &mut T {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         (**self).set_power(duty)
@@ -37,10 +49,20 @@ impl<T: Fan + ?Sized> Fan for &mut T {
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
         (**self).set_speed(duty)
     }
+
+    fn get_speed(&self) -> f32 {
+        (**self).get_speed()
+    }
 }
 
 impl<T: Thermometer + ?Sized> Thermometer for &mut T {
     fn read_temperature(&mut self) -> Result<f32, RoasterError> {
         (**self).read_temperature()
+    }
+}
+
+impl<T: AsyncThermometer + ?Sized> AsyncThermometer for &mut T {
+    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError> {
+        (**self).read_temperature_async().await
     }
 }

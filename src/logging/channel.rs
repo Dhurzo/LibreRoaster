@@ -1,6 +1,6 @@
 //! Channel-prefixed logging macros
 //!
-//! Provides `log_channel!` macro for adding [USB], [UART], [SYSTEM] prefixes to logs.
+//! Provides `log_channel!` macro for adding USB, UART, SYSTEM prefixes to logs.
 //! Uses esp_println for direct UART0 output.
 
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +23,13 @@ impl core::fmt::Display for Channel {
 #[macro_export]
 macro_rules! log_channel {
     ($channel:expr, $($arg:tt)*) => {
-        esp_println::println!("[{}] {}", $channel, format_args!($($arg)*))
+        #[cfg(any(test, feature = "test", not(target_arch = "riscv32")))]
+        {
+            log::info!("[{}] {}", $channel, format_args!($($arg)*));
+        }
+        #[cfg(all(not(any(test, feature = "test")), target_arch = "riscv32"))]
+        {
+            esp_println::println!("[{}] {}", $channel, format_args!($($arg)*));
+        }
     };
 }
