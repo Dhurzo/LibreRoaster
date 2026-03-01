@@ -266,6 +266,126 @@ This document catalogs common pitfalls when:
 
 ---
 
+---
+
+## Critical Pitfalls: v4.5-Specific Refactoring
+
+### Pitfall 15: Zero-Duration SSR Command Deduplication Creates Race Windows
+
+**What goes wrong:**
+When deduplicating SSR commands with identical values arriving in rapid succession, if the time window is zero (or too small), the second command arrives before the first has actually been applied to hardware. This creates a race where the "duplicate" detection is based on stale state.
+
+**Why it happens:**
+The deduplication logic compares `commanded_value == last_commanded_value`. If commands arrive within the same execution context (same task tick), there's no temporal separation. The fix of "only deduplicate if time delta > X" is often applied incorrectly—the guard gets added but uses the wrong time source (e.g., wall-clock instead of monotonic, or forgets to account for timer wraparound).
+
+**How to avoid:**
+- Use embassy time `Instant` for all temporal comparisons, not raw u32 timestamps
+- Ensure the deduplication window is larger than the maximum SSR PWM update latency (typically 10-50ms for LEDC)
+- Add integration tests that verify rapid successive commands (same value, <1ms apart) are correctly deduplicated while different values are not
+
+**Warning signs:**
+- SSR output jitters when Artisan sends repeated SET commands
+- Test `ssr_scheduler` shows 100% duplicate rejection rate
+- Adding debug logging causes the bug to disappear (timing dependency)
+
+**Phase to address:** v4.5 SSR deduplication implementation
+
+---
+
+### Pitfall 16: Deduplication State Lost When Handler Pattern Splits Responsibility
+
+**What goes wrong:**
+When splitting SSR control into separate handler components (e.g., `TemperatureCommandHandler`, `ArtisanCommandHandler`), the deduplication state (last command value, last command time) gets duplicated or lost. Each handler maintains its own "last value" but the scheduler has another, causing contradictory deduplication decisions.
+
+**Why it happens:**
+The `RoasterCommandHandler` trait operates on `RoasterCommand` enums, but SSR deduplication requires state that persists across commands. If handlers are restructured without preserving this state, each new handler instance starts with fresh state.
+
+**How to avoid:**
+- Keep deduplication state in a dedicated component (e.g., `SsrCommandDeduplicator`) that wraps the handler chain
+- Ensure the deduplicator is constructed once and lives across handler instantiations
+- Verify with integration tests: send same command 3x rapidly, verify hardware receives only 1 actual write
+
+**Warning signs:**
+- `TemperatureCommandHandler` and `ArtisanCommandHandler` both have duplicate SSR setting logic
+- Compiler warns about dead code after refactoring (old deduplication code wasn't removed)
+- Integration test failures that only appear under load
+
+**Phase to address:** v4.5 handler pattern refactoring
+
+---
+
+### Pitfall 17: heapless::Deque Capacity Overflow When Used as Drop-In Replacement
+
+**What goes wrong:**
+Replacing `Vec<f32>` with `heapless::Deque<f32, N>` causes runtime panics when the Deque fills up. Unlike `Vec` which reallocates, `Deque::push_back` returns `Err` (or panics if using the non-fallible API). Code that worked with unbounded `Vec` fails silently or crashes with `capacity error`.
+
+**Why it happens:**
+The heapless crate API diverges from std `Vec`. The `push` method is fallible (`Result<(), CapacityError>`) but many developers use `.unwrap()` or forget to handle the error.
+
+**How to avoid:**
+- Use `.try_push_back(value).ok()` for graceful degradation when capacity is reached
+- Ensure the fixed capacity `N` is sized for the worst-case scenario (e.g., 5-element sliding window)
+- Add integration tests that push past capacity to verify behavior
+- Prefer the fallible API explicitly: `deque.push_back(value).map_err(|_| Error::QueueFull)`
+
+**Warning signs:**
+- Code uses `deque.push_back()` without error handling
+- Original `Vec` had `.push()` that was assumed to always succeed
+- `Cargo.toml` pins an old heapless version with panicking behavior
+
+**Phase to address:** v4.5 heapless::Deque migration
+
+---
+
+### Pitfall 18: Handler Pattern Refactor Breaks Send + Sync Bounds
+
+**What goes wrong:**
+After refactoring to use the handler pattern (separate `TemperatureCommandHandler`, `ArtisanCommandHandler`, etc.), the code fails to compile with "type cannot be sent between threads" errors. This happens because handler state includes references to non-`Send` types (e.g., `embedded_hal` peripherals, mutex guards held across await points).
+
+**Why it happens:**
+The Embassy executor requires all types passed between tasks to be `Send`. If a handler holds a reference to SSR control (which wraps LEDC channels), and that handler is accessed from multiple tasks, the borrow checker and `Send` bound become problematic.
+
+**How to avoid:**
+- Use `heapless::spsc::Channel` or `embassy_sync::signal::Signal` for inter-task communication
+- Ensure handlers are constructed in the `main` task and ownership is clear
+- Add `unsafe impl Send for MyHandler` only after verifying the inner state is actually safe (document why!)
+- Run `cargo check --features "std"` to catch `Send` issues early
+
+**Warning signs:**
+- Adding a new handler causes unrelated code to fail `Send` check
+- Compiler error mentions "cannot send a shared reference across tasks"
+- Code previously compiled with `Send` but handler refactor broke it
+
+**Phase to address:** v4.5 handler pattern refactoring
+
+---
+
+### Pitfall 19: Test Stub Migration Breaks Between cfg(test) and /tests/
+
+**What goes wrong:**
+Unit tests in `#[cfg(test)]` modules use `crate::` paths and mock hardware via trait objects. When migrating to `/tests/` integration files, tests fail because:
+- The `crate::` paths become `libreroaster::`
+- Mock implementations that worked in-unit become `use` conflicts
+- `embedded_hal` traits differ between `std` and `no_std` contexts
+
+**Why it happens:**
+The embedded Rust testing ecosystem has a split personality: `#[cfg(test)]` compiles against `std` (via `test` feature), while `/tests/` files require `no_std` compatible code or explicit feature gating.
+
+**How to avoid:**
+- Define mock types in a dedicated `tests/common/mod.rs` module
+- Use `#[cfg(all(test, feature = "std"))]` for std-specific test code
+- Keep hardware mocks as trait implementations that work in both contexts
+- Document the expected feature flags for each test file
+
+**Warning signs:**
+- `error[E0433]: failed to resolve: use of undeclared type` in test files
+- Mock implementations duplicate production code's trait bounds
+- Tests pass in `cargo test` but fail in `cargo test --features std`
+
+**Phase to address:** v4.5 test stub migration
+
+---
+
 ## Minor Pitfalls
 
 ### Pitfall 13: Documentation Disconnect
@@ -282,6 +402,18 @@ This document catalogs common pitfalls when:
 
 ---
 
+## Embedded-Specific Gotchas
+
+| Issue | Common Mistake | Correct Approach |
+|-------|----------------|------------------|
+| Time handling | Using `u32` timestamps directly | Use `embassy_time::Instant` and `Duration` |
+| Static lifetimes | Overusing `static mut` | Prefer `static` with `Mutex<CriticalSectionRawMutex, T>` |
+| Hardware mocks | Implementing traits manually | Use `embedded-hal-mock` crate for common peripherals |
+| Async exclusion | Blocking in async context | Use blocking variants or redesign to async |
+| Stack overflow | Large stack allocations in tasks | Keep stack usage minimal, use `Box` for heap |
+
+---
+
 ## Pitfall Summary Table
 
 | Pitfall | Severity | Phase to Address | Detection Method |
@@ -291,6 +423,11 @@ This document catalogs common pitfalls when:
 | Trait explosion | MODERATE | Phase 1 | Code review |
 | Safety logic loss | CRITICAL | Phase 1 | Safety tests |
 | PWM readback break | CRITICAL | Phase 1 | Integration tests |
+| Zero-duration deduplication race | CRITICAL | v4.5 | Rapid-fire command tests |
+| Handler state loss | CRITICAL | v4.5 | Multi-command state tests |
+| heapless::Deque overflow | MODERATE | v4.5 | Push-past-capacity tests |
+| Handler Send+Sync break | CRITICAL | v4.5 | cargo check errors |
+| Test migration failure | MODERATE | v4.5 | Feature flag tests |
 | Mock API drift | MODERATE | Phase 2 | Integration tests |
 | No error path tests | MODERATE | Phase 2 | Coverage tools |
 | no_std test failure | MODERATE | Phase 2 | CI failure |
@@ -301,6 +438,28 @@ This document catalogs common pitfalls when:
 
 ---
 
+## "Looks Done But Isn't" Checklist
+
+- [ ] **SSR deduplication:** Verified with rapid-fire commands (<1ms apart) — not just single command tests
+- [ ] **heapless::Deque:** Tested with overflow scenario (pushing past capacity N) — not just happy path
+- [ ] **Handler state:** Verified state persists across multiple command invocations — not just initialization
+- [ ] **Test migration:** Tests run with both `std` and `no_std` configurations — not just one feature flag
+- [ ] **Send+Sync:** Code compiles with `cargo check --features "std"` — not just `cargo build`
+
+---
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Zero-duration deduplication race | MEDIUM | Add temporal guard with `Instant::elapsed()`, re-run integration test |
+| Handler state loss | HIGH | Re-architect to centralize deduplication state, may need API change |
+| heapless::Deque overflow | LOW | Add `.try_push_back().ok()` handling, increase N if needed |
+| Handler Send+Sync break | HIGH | Refactor inter-task communication, may need channel-based redesign |
+| Test migration failures | LOW-MEDIUM | Add feature gates, simplify mock hierarchy, keep mocks in `tests/common` |
+
+---
+
 ## Sources
 
 - LibreRoaster codebase analysis — HIGH confidence
@@ -308,8 +467,37 @@ This document catalogs common pitfalls when:
 - Rust trait bounds and Send+Sync requirements — HIGH confidence
 - Common embedded testing patterns from Ferrous Systems blog — MEDIUM confidence
 - Code deduplication best practices (Manning Idiomatic Rust) — MEDIUM confidence
+- Embassy async patterns documentation — HIGH confidence
+- heapless crate v0.9.x API documentation — HIGH confidence
+- Embedded Rust community discussions on handler patterns — MEDIUM confidence
+
+---
+
+## Performance Traps for Embedded
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Stack growth in async tasks | Watchdog resets, random crashes | Verify stack size with `embassy-executor` config | At >2KB stack per task |
+| Allocating in ISR context | System hangs | Never heap-allocate in interrupt handlers | During hardware interrupts |
+| Blocking on channel full | Command processing stalls | Use bounded channels with backpressure | Under high command rate |
+| Excessive debug logging | Timing violations | Disable logs in release or use `defmt` | Real-time temperature control |
+| Vec heap allocation | Memory fragmentation | Use heapless collections | On memory-constrained devices |
+
+---
+
+## Pitfall-to-Phase Mapping: v4.5
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| Zero-duration SSR deduplication | SSR deduplication implementation | Rapid-fire command integration test |
+| Handler state loss | Handler pattern refactor | Multi-command state persistence test |
+| heapless::Deque overflow | Deque migration | Push-past-capacity unit test |
+| Handler Send+Sync break | Handler pattern design | `cargo check --features std` clean compile |
+| Test migration failures | Test infrastructure cleanup | Run tests with `--features std` and without |
+| Breaking trait bounds | SSR deduplication | Test downstream dependent code |
+| Losing Send+Sync | SSR deduplication | Verify type can be stored in Embassy task |
 
 ---
 
 *Research for: SSR refactoring and test infrastructure milestone*
-*Updated: 2026-02-24*
+*Updated: 2026-02-28*

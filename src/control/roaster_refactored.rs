@@ -211,14 +211,6 @@ impl RoasterControl {
             return self.stop_streaming();
         }
 
-        if let RoasterCommand::SetHeaterManual(value) = command {
-            return self.apply_manual_heater(value, current_time);
-        }
-
-        if let RoasterCommand::SetFanManual(value) = command {
-            return self.apply_manual_fan(value);
-        }
-
         let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
             &mut self.safety_handler,
             &mut self.temp_handler,
@@ -231,6 +223,18 @@ impl RoasterControl {
                 let result = handler.handle_command(command, current_time, &mut self.status);
 
                 self.status.fault_condition = self.safety_handler.is_emergency_active();
+                if result.is_ok() {
+                    if matches!(
+                        command,
+                        RoasterCommand::SetHeaterManual(_)
+                            | RoasterCommand::IncreaseHeater
+                            | RoasterCommand::DecreaseHeater
+                    ) {
+                        self.apply_manual_heater(current_time)?;
+                    } else if matches!(command, RoasterCommand::SetFanManual(_)) {
+                        self.apply_manual_fan()?;
+                    }
+                }
 
                 return result;
             }
@@ -278,21 +282,12 @@ impl RoasterControl {
         Ok(())
     }
 
-    fn apply_manual_heater(
-        &mut self,
-        value: u8,
-        current_time: Instant,
-    ) -> Result<(), RoasterError> {
-        if value > 100 {
-            return Err(RoasterError::InvalidState);
-        }
-
-        let manual_value = (value as f32).clamp(0.0, 100.0);
+    fn apply_manual_heater(&mut self, current_time: Instant) -> Result<(), RoasterError> {
+        let manual_value = self.artisan_handler.get_manual_heater().clamp(0.0, 100.0);
 
         self.temp_handler.disable_pid();
         self.status.pid_enabled = false;
         self.status.artisan_control = true;
-        self.artisan_handler.set_manual_heater(manual_value);
         self.temp_handler
             .get_output_manager_mut()
             .enable_continuous_output();
@@ -302,21 +297,15 @@ impl RoasterControl {
         self.status.ssr_hardware_status = self.heater.get_status();
 
         info!(
-            "Artisan+ manual heater set to {:.1}% (manual mode enabled)",
+            "Artisan+ manual heater applied to {:.1}% (manual mode enabled)",
             manual_value
         );
 
         Ok(())
     }
 
-    fn apply_manual_fan(&mut self, value: u8) -> Result<(), RoasterError> {
-        if value > 100 {
-            return Err(RoasterError::InvalidState);
-        }
-
-        let fan_value = (value as f32).clamp(0.0, 100.0);
-
-        self.artisan_handler.set_manual_fan(fan_value);
+    fn apply_manual_fan(&mut self) -> Result<(), RoasterError> {
+        let fan_value = self.artisan_handler.get_manual_fan().clamp(0.0, 100.0);
         self.status.artisan_control = true;
         self.status.pid_enabled = false;
 
@@ -334,8 +323,8 @@ impl RoasterControl {
         self.status.ssr_hardware_status = self.heater.get_status();
 
         info!(
-            "Artisan+ manual fan set to {:.1}% (manual mode enabled)",
-            self.status.fan_output
+            "Artisan+ manual fan applied to {:.1}% (manual mode enabled)",
+            fan_value
         );
 
         Ok(())
@@ -555,21 +544,27 @@ impl RoasterControl {
             }
 
             crate::config::ArtisanCommand::SetHeater(value) => {
-                let heater_command = crate::config::RoasterCommand::SetHeaterManual(value);
-                self.process_command(heater_command, current_time)?;
+                self.forward_artisan_manual_command(
+                    crate::config::RoasterCommand::SetHeaterManual(value),
+                    current_time,
+                )?;
                 info!("Artisan+ heater command processed: {}%", value);
             }
 
             crate::config::ArtisanCommand::SetFan(value) => {
-                let fan_command = crate::config::RoasterCommand::SetFanManual(value);
-                self.process_command(fan_command, current_time)?;
+                self.forward_artisan_manual_command(
+                    crate::config::RoasterCommand::SetFanManual(value),
+                    current_time,
+                )?;
 
                 info!("Artisan+ fan command processed: {}%", value);
             }
 
             crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => {
-                let fan_command = crate::config::RoasterCommand::SetFanManual(value);
-                self.process_command(fan_command, current_time)?;
+                self.forward_artisan_manual_command(
+                    crate::config::RoasterCommand::SetFanManual(value),
+                    current_time,
+                )?;
 
                 if was_clamped {
                     // Out of range value - stop heater as safety measure
@@ -590,14 +585,18 @@ impl RoasterControl {
             }
 
             crate::config::ArtisanCommand::IncreaseHeater => {
-                let up_command = crate::config::RoasterCommand::IncreaseHeater;
-                self.process_command(up_command, current_time)?;
+                self.forward_artisan_manual_command(
+                    crate::config::RoasterCommand::IncreaseHeater,
+                    current_time,
+                )?;
                 info!("Artisan+ UP command processed");
             }
 
             crate::config::ArtisanCommand::DecreaseHeater => {
-                let down_command = crate::config::RoasterCommand::DecreaseHeater;
-                self.process_command(down_command, current_time)?;
+                self.forward_artisan_manual_command(
+                    crate::config::RoasterCommand::DecreaseHeater,
+                    current_time,
+                )?;
                 info!("Artisan+ DOWN command processed");
             }
 
@@ -657,6 +656,14 @@ impl RoasterControl {
         }
 
         Ok(())
+    }
+
+    fn forward_artisan_manual_command(
+        &mut self,
+        command: crate::config::RoasterCommand,
+        current_time: Instant,
+    ) -> Result<(), RoasterError> {
+        self.process_command(command, current_time)
     }
 
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {

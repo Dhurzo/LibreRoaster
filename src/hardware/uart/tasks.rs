@@ -1,8 +1,8 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
+use crate::hardware::static_sync::SyncCell;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
-use crate::hardware::static_sync::SyncCell;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;

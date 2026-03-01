@@ -13,12 +13,15 @@ use embassy_time::Instant;
 use heapless::String;
 
 use libreroaster::application::service_container::ServiceContainer;
-use libreroaster::config::{ArtisanCommand, RoasterState, SsrHardwareStatus, SystemStatus};
-use libreroaster::control::traits::{Fan, Heater, Thermometer};
-use libreroaster::control::{RoasterControl, RoasterError};
+use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
+use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
 use libreroaster::input::ArtisanInput;
 use libreroaster::output::artisan::ArtisanFormatter;
+
+#[path = "common/mod.rs"]
+mod tests_common;
+use tests_common::{build_test_control, StubFan, StubHeater};
 
 struct TestCriticalSection;
 
@@ -34,63 +37,8 @@ unsafe impl critical_section::Impl for TestCriticalSection {
 
 static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
 
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-impl Default for StubHeater {
-    fn default() -> Self {
-        Self {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }
-    }
-}
-
-#[derive(Default)]
-struct StubFan {
-    speed: f32,
-}
-
-impl Fan for StubFan {
-    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.speed = duty;
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct StubThermometer {
-    temp: f32,
-}
-
-impl Thermometer for StubThermometer {
-    fn read_temperature(&mut self) -> Result<f32, RoasterError> {
-        Ok(self.temp)
-    }
-}
-
 fn build_control() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }),
-        Box::new(StubFan::default()),
-    )
-    .expect("RoasterControl should build with stubs")
+    build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
 fn init_service_container() {

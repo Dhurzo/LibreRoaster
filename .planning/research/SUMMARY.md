@@ -1,181 +1,199 @@
-# Project Research Summary: v4.4 SSR Refactoring & Test Stubs
+# Project Research Summary
 
-**Project:** LibreRoaster (ESP32-C3 Coffee Roaster Firmware)
-**Domain:** Embedded Rust firmware - coffee roaster control
-**Researched:** 2026-02-24
+**Project:** LibreRoaster v4.5 Refactoring
+**Domain:** Embedded Firmware Refactoring (ESP32-C3 Coffee Roaster Control)
+**Researched:** 2026-02-28
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This research addresses two key refactoring goals for LibreRoaster v4.4:
+LibreRoaster v4.5 is a focused refactoring milestone targeting four specific code quality improvements in an embedded Rust firmware project. Unlike typical feature development, this release eliminates technical debt: duplicate SSR control implementations, inaccessible test stubs, heap allocations in hot paths, and a large match statement in command processing. All four refactoring tasks can be completed with **zero new dependencies** — the existing heapless v0.9.2 provides the `Deque<f32, N>` type needed for the memory optimization, and the handler delegation pattern is already established in v4.4.
 
-1. **SSR Deduplication**: The existing `SsrControl` and `SsrControlSimple` structs share ~95% identical code. Research confirms the recommended approach is **composition + trait default implementations** - extract common state into `SsrControlBase`, define a trait with shared methods, and have both types embed the base while implementing the trait. This eliminates duplication while preserving zero-cost abstraction.
-
-2. **Shared Test Infrastructure**: Currently, test mocks are scattered across individual test files, causing ~5x duplication. Research recommends creating `tests/common/mod.rs` with manual stub implementations (`StubHeater`, `StubFan`, `StubThermometer`) that implement the existing `control::traits`. No external crates needed - use `RefCell` for interior mutability.
-
-**Key risks identified:**
-- Breaking embedded-hal trait bounds during deduplication (CRITICAL)
-- Losing Send+Sync safety in extracted types (CRITICAL)
-- Safety-critical detection logic must be preserved exactly (CRITICAL)
-
-The existing codebase already has substantial infrastructure - SSR control, Heater trait, and some test mocks. This milestone consolidates and shares that infrastructure.
+The key risk is **scope creep**: these refactorings must remain pure refactoring without adding new functionality. The embedded context introduces additional constraints (no heap allocations, Send+Sync requirements for Embassy async tasks, no_std compatibility) that must be preserved. The research identifies 19 potential pitfalls organized by severity, with critical issues centered on breaking embedded-hal trait bounds and losing Send+Sync safety during deduplication.
 
 ## Key Findings
 
 ### Recommended Stack
 
-**SSR Refactoring: Composition + Trait Pattern**
+All v4.5 refactoring tasks use existing dependencies with no changes required:
 
-| Approach | Implementation | Why |
-|----------|---------------|-----|
-| **Primary** | Extract `SsrState` struct with common fields | Zero-cost abstraction, embeds shared state in both types |
-| **Secondary** | Define `SsrControlTrait` with default implementations | Eliminates duplicate method implementations |
-| **Existing** | Keep `Heater` trait from `control::traits` | Already provides `set_power` abstraction used by roaster control |
+- **heapless 0.9.2** — Already provides `Deque<f32, N>` for zero-allocation ring buffer; no upgrade needed
+- **embedded-hal 1.0.0** — Stable trait bounds must be preserved during SSR refactoring
+- **embassy-rs 0.5.0+** — Async executor requires Send+Sync bounds on shared types
+- **portable-atomic 1.13** — Already in use for atomic operations
 
-**Test Infrastructure: Shared Stubs Module**
-
-| Component | Location | Implementation |
-|-----------|----------|----------------|
-| **Test stubs** | `tests/common/mod.rs` | Manual struct implementations (no external crate needed) |
-| **Stub patterns** | StubHeater, StubFan, StubThermometer | Implement existing `control::traits` traits |
-| **Helper utilities** | `reset_channels()`, `collect_output()` | Module-level functions for test state management |
+**No new dependencies needed.** The v4.5 work is purely refactoring within existing patterns.
 
 ### Expected Features
 
-**Must have (table stakes):**
-- SSR on/off control — Basic heating element control via GPIO
-- SSR PWM/phase control — Variable heating power (not just on/off)
-- Heat source detection — Verify SSR is actually heating
-- Cycle guard — Prevent SSR damage from rapid cycling
-- Duty readback verification — Confirm PWM duty matches commanded
-- **Shared test stubs** — Centralize mock implementations for Heater, Fan, Thermometer traits
+The v4.5 milestone has four specific refactoring tasks (no new functionality):
 
-**Should have (competitive):**
-- MockHeater test double — For PID/controller unit tests (currently missing)
-- Error path test coverage — Mocks that simulate error conditions
+**Table Stakes (Must Achieve):**
 
-**Defer (v2+):**
-- PID auto-tuning
-- Dual SSR channel support
-- Hardware-in-the-loop (HIL) tests
+- **Task 1: detect_heat_source() extraction** — Move duplicate ~30 lines from both `SsrControl` and `SsrControlSimple` to `SsrControlBase`, following the v4.4 delegation pattern
+- **Task 2: Test stubs migration** — Move `StubHeater`, `StubFan`, `StubThermometer` from `tests/common/mod.rs` to `src/common/mod.rs` with `pub(crate)` visibility
+- **Task 3: heapless::Deque migration** — Replace `Vec<f32>` with `Deque<f32, 5>` in `ArtisanFormatter.bt_history`, eliminating heap allocation from hot path
+- **Task 4: Handler pattern completion** — Refactor `process_artisan_command()` to delegate to existing `ArtisanCommandHandler`
+
+**Differentiators (Value-Adding Outcomes):**
+
+- Unified periodic health check across SSR implementations
+- Doctests and example binaries can use shared stubs
+- Paves the way for `#![no_std]` builds
+- Individual handlers testable in isolation; enables future middleware
+
+**Defer to v2+:**
+
+- New SSR hardware variants (beyond SsrControl/SsrControlSimple)
+- Additional command handlers beyond ArtisanCommandHandler
+- Advanced middleware (logging, rate limiting) — depends on Task 4 completion
 
 ### Architecture Approach
 
-**Current Problem:** `SsrControl` and `SsrControlSimple` have ~95% duplicate code across 10+ methods including `detect_heat_source()`, `periodic_check()`, `set_percentage()`, getters, and `Heater` trait implementation.
-
-**Recommended Solution:** Extract `SsrControlBase`:
+The v4.5 architecture builds directly on the v4.4 foundation:
 
 ```
-src/hardware/ssr.rs (refactored)
-├── SsrControlBase<'a, DETECT, PWM>    # NEW: Common state and logic
-│   ├── detection_pin, pwm_channel
-│   ├── hardware_status, current_duty, last_duty_delta_ticks, retry_count
-│   └── Methods: detect_heat_source, periodic_check, set_percentage, getters
-├── SsrControl<'a, PIN, DETECT, PWM>   # Wraps Base + enable pin
-└── SsrControlSimple<'a, DETECT, PWM>  # Wraps Base only
+Application Layer
+├── RoasterControl (command routing, state management)
+└── Control Layer
+    ├── TemperatureHandler, SafetyHandler, ArtisanHandler, SystemHandler
+    └── Heater trait (hardware abstraction)
+└── Hardware Layer
+    ├── SsrControlBase (shared SSR logic)
+    ├── SsrControl / SsrControlSimple (concrete implementations)
+    └── ArtisanFormatter (CSV output with bt_history)
 ```
 
-**Test Infrastructure:**
-```
-tests/common/
-├── mod.rs              # Re-exports, helper functions
-├── stub_heater.rs       # StubHeater implementation
-├── stub_fan.rs         # StubFan implementation
-└── stub_thermometer.rs # StubThermometer implementation
-```
+**Key pattern:** The v4.4 extraction of `SsrControlBase` established delegation as the standard pattern. The v4.5 tasks extend this same pattern: method extraction to base types, not trait polymorphism.
 
 ### Critical Pitfalls
 
-1. **Breaking embedded-hal Trait Bounds** — Extracting shared logic changes generic constraints, breaking `Heater` trait implementation. *Prevention: Define clear trait bounds before refactoring, test compilation of dependent code after each step.*
+1. **Breaking embedded-hal trait bounds** — SSR deduplication must preserve `PIN: OutputPin<Error = ()>`, `DETECT: InputPin<Error = ()>` constraints. Define bounds before refactoring.
 
-2. **Losing Send+Sync Safety** — Refactoring may introduce RefCell/Cell for interior mutability, breaking async task boundaries. *Prevention: Preserve existing `unsafe impl Send` pattern, avoid interior mutability in refactored SSR types.*
+2. **Losing Send+Sync safety** — SSR types must remain Sendable for Embassy task boundaries. Avoid `RefCell`/`Cell` in refactored types; preserve existing `unsafe impl Send` pattern.
 
-3. **Safety-Critical Detection Logic Loss** — `detect_heat_source` contains safety logic that must be preserved exactly. *Prevention: Create checklist of all state transitions before refactoring.*
+3. **Zero-duration deduplication race** — Commands arriving within same task tick create race windows. Use embassy `Instant` for temporal comparisons, not raw u32.
 
-4. **Breaking PWM Readback Contract** — `monitor_ledc_after_set` is essential for safety; must be preserved. *Prevention: Keep readback call in public API after deduplication.*
+4. **heapless::Deque capacity overflow** — Unlike Vec, `Deque::push_back` is fallible. Use `.try_push_back().ok()` for graceful degradation when capacity reached.
 
-5. **Test State Pollution** — Shared mocks using RefCell can retain state between tests. *Prevention: Each test creates fresh mock instance, add reset methods.*
+5. **Handler state loss** — When splitting SSR control into handlers, deduplication state must persist. Keep deduplication state in dedicated component wrapping handler chain.
 
 ## Implications for Roadmap
 
-Based on research, this milestone should be structured as two sequential phases:
+Based on research, the v4.5 refactoring tasks can be organized into a single coherent release:
 
-### Phase 1: SSR Refactoring (Base Struct Extraction)
-**Rationale:** This is foundational - the other work depends on having clean, non-duplicated SSR code. Must be done first to enable proper shared test infrastructure.
-
-**Delivers:**
-- `SsrControlBase` struct with shared state and methods
-- Refactored `SsrControl` and `SsrControlSimple` delegating to base
-- Preserved `Heater` trait implementations
-
-**Addresses:**
-- FEATURES: SSR PWM control, heat source detection, duty readback, cycle guard
-- ARCHITECTURE: Eliminates ~95% code duplication
-
-**Avoids:**
-- PITFALLS: Trait bound breakage, Send+Sync loss, safety logic loss, PWM readback break
-
-**Research Flags:**
-- This phase is well-understood (HIGH confidence from STACK.md research)
-- Standard patterns - skip `/gsd-research-phase` during planning
-
-### Phase 2: Shared Test Infrastructure
-**Rationale:** Depends on SSR refactoring complete (mock implementations may need updating after structural changes). Creates reusable infrastructure for future tests.
+### Phase 1: Foundation & Memory Optimization
+**Rationale:** Task 3 (heapless::Deque) is the lowest-risk, highest-impact change. It eliminates heap allocation from the artisan CSV formatting hot path, enabling no_std compatibility. This should be completed first as a confidence-builder.
 
 **Delivers:**
-- `tests/common/mod.rs` with StubHeater, StubFan, StubThermometer
-- Helper functions: `reset_channels()`, `collect_output()`
-- Migrated existing tests to use shared stubs
+- `Vec<f32>` → `Deque<f32, 5>` in ArtisanFormatter and MutableArtisanFormatter
+- No heap allocations in BT history tracking
+- O(1) amortized sliding window (was O(n) with Vec::remove(0))
 
-**Addresses:**
-- FEATURES: Shared mock location, MockHeater test double
-- ARCHITECTURE: Centralized test infrastructure
+**Addresses:** Task 3 from FEATURES.md
+
+**Avoids:** Pitfall 17 — Deque capacity overflow (use .try_push_back().ok())
+
+### Phase 2: SSR Deduplication
+**Rationale:** Task 1 extends the v4.4 SsrControlBase pattern. Requires careful attention to trait bounds and safety logic preservation. Both SsrControl and SsrControlSimple must delegate to the base implementation.
+
+**Delivers:**
+- `detect_heat_source()` moved to SsrControlBase
+- ~30 lines of duplicate code eliminated
+- Both SSR types delegate to base implementation
+
+**Addresses:** Task 1 from FEATURES.md
 
 **Avoids:**
-- PITFALLS: Mock API drift, test state pollution, missing trait boundary tests
+- Pitfall 1 — Define trait bounds before extraction
+- Pitfall 4 — Preserve all three state transitions (Available, NotDetected, Error)
+- Pitfall 5 — Keep PWM readback contract intact
+- Pitfall 15 — Zero-duration deduplication race
 
-**Research Flags:**
-- This phase is well-understood (HIGH confidence from existing test patterns)
-- May need research if new error-path tests require complex mock configurations
+### Phase 3: Test Infrastructure
+**Rationale:** Task 2 moves test stubs to library-accessible location. Enables better testing across modules without duplicating mock implementations.
+
+**Delivers:**
+- Test stubs accessible via `crate::common::{StubHeater, StubFan, StubThermometer}`
+- Shared mocks usable by both unit and integration tests
+
+**Addresses:** Task 2 from FEATURES.md
+
+**Avoids:**
+- Pitfall 8 — Host-side test execution (use #[cfg(not(target_arch = "riscv32"))])
+- Pitfall 19 — Test migration failure between cfg(test) and /tests/
+
+### Phase 4: Command Handler Delegation
+**Rationale:** Task 4 extends the existing handler pattern from v4.4. The handler chain already exists; this task verifies all commands go through it and removes direct match statements.
+
+**Delivers:**
+- `process_artisan_command()` delegates to ArtisanCommandHandler
+- Large match statement removed from RoasterControl
+- Handlers testable in isolation
+
+**Addresses:** Task 4 from FEATURES.md
+
+**Avoids:**
+- Pitfall 16 — Handler state loss (keep deduplication state in dedicated component)
+- Pitfall 18 — Handler Send+Sync break (verify compiles with cargo check --features std)
 
 ### Phase Ordering Rationale
 
-1. **SSR first** - The structural changes in Phase 1 could break existing mocks. Completing Phase 1 first ensures Phase 2 builds on stable foundations.
+- **Why Tasks 1-3 are independent:** No dependencies between Vec→Deque migration, detect_heat_source extraction, and test stub migration. Can be parallelized if resources allow.
+- **Why Task 4 is last:** Depends on handler pattern already existing in v4.4; requires careful state management across handler chain.
+- **Why P1 before P2:** Task 3 (memory optimization) has clear bounded scope and immediate benefit. Task 1 (SSR deduplication) requires more architectural caution.
 
-2. **Two-phase structure** - Separates infrastructure creation from migration, allowing verification between steps.
+### Research Flags
 
-3. **Avoids Pitfall 11** - "Refactoring SSR Then Breaking All Existing Mocks" is mitigated by doing SSR refactoring first.
+Phases likely needing deeper research during planning:
+
+- **Phase 2 (SSR Deduplication):** Complex trait bounds interaction between SsrControl, SsrControlSimple, and Heater trait. May need to verify embedded-hal version compatibility.
+- **Phase 4 (Handler Pattern):** Send+Sync verification requires compile-time checks; state management across handler chain needs careful design.
+
+Phases with standard patterns (skip research-phase):
+
+- **Phase 1 (heapless::Deque):** Well-documented heapless API; straightforward drop-in replacement.
+- **Phase 3 (Test Stubs):** Structural change only; pattern already exists in tests/common/mod.rs.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Composition pattern well-established in Rust; existing codebase verified |
-| Features | HIGH | Table stakes verified via code review; gap analysis accurate |
-| Architecture | HIGH | Base struct pattern matches existing codebase structure |
-| Pitfalls | MEDIUM-HIGH | 10+ pitfalls identified; some mitigation strategies inferred |
+| Stack | HIGH | All dependencies verified; heapless 0.9.2 confirmed as latest stable |
+| Features | HIGH | Codebase verified; all four tasks have clear technical outcomes |
+| Architecture | HIGH | Follows established v4.4 patterns; handler delegation already exists |
+| Pitfalls | MEDIUM-HIGH | Comprehensive list (19 pitfalls); embedded context introduces unknowns |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Heater trait boundary tests**: No dedicated tests exist for Heater trait implementation on SSR types. Should add in Phase 2.
-- **Error-path mock coverage**: Current mocks implement happy path only. Phase 2 should add error variants.
-- **Property-based tests**: Not in scope for v4.4 but would add value for SSR percentage conversion math.
+- **PWM readback contract:** Not explicitly tested in current test suite. Flag for integration test verification during Phase 2.
+- **Error path coverage:** Existing mocks implement happy path only. Need FakeDetectPinError variants for error branch testing.
+- **Multi-SSR variant testing:** Current tests cover SsrControl and SsrControlSimple individually; need integration test for concurrent operation.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- LibreRoaster codebase (`src/hardware/ssr.rs`, `src/control/traits.rs`) — Verified SSR implementation
-- `tests/mock_uart.rs`, `tests/mock_usb_driver.rs` — Verified existing mock patterns
-- Stack Overflow: Rust trait deduplication patterns
+
+- LibreRoaster codebase analysis — All refactoring targets verified in source
+  - `src/hardware/ssr.rs` — SsrControlBase, detect_heat_source() implementations (lines 87-246, 329-362)
+  - `src/output/artisan.rs` — Vec<f32> bt_history usage (lines 25, 51-55)
+  - `tests/common/mod.rs` — Existing test stub pattern (317 lines)
+  - `src/control/handlers.rs` — ArtisanCommandHandler implementation (471 lines)
+- heapless crate documentation (docs.rs/heapless/0.9.2) — Deque API confirmed
+- Template: /home/juan/.config/opencode/get-shit-done/templates/research-project/SUMMARY.md
 
 ### Secondary (MEDIUM confidence)
-- embedded-hal-mock crate documentation — Test infrastructure patterns
-- Rust Send+Sync requirements — Embedded async safety
+
+- embedded-hal-mock crate documentation — For test infrastructure patterns
+- Embassy async patterns documentation — For Send+Sync requirements
+
+### Tertiary (LOW confidence)
+
+- Community discussions on handler patterns in embedded Rust — Varied approaches, recommend validating during Phase 4
 
 ---
 
-*Research completed: 2026-02-24*
+*Research completed: 2026-02-28*
 *Ready for roadmap: yes*
-*Milestone: v4.4 SSR Refactoring & Test Stubs*

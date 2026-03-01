@@ -40,10 +40,9 @@ extern crate std;
 
 use std::println;
 use std::string::String;
-use std::vec;
 use std::vec::Vec;
 
-use libreroaster::hardware::uart::{UartDriver, UartError};
+use libreroaster::hardware::uart::UartError;
 
 /// Mock implementation of UartDriver for testing
 ///
@@ -59,6 +58,8 @@ pub struct MockUartDriver {
     /// Whether we've seen EOF marker
     eof: bool,
 }
+
+const TX_BUFFER_CAPACITY: usize = 256;
 
 impl MockUartDriver {
     /// Create a new MockUartDriver with initial RX data
@@ -93,12 +94,16 @@ impl MockUartDriver {
 
     /// Check if there's more data available to read
     pub fn has_data(&self) -> bool {
-        self.read_index < self.rx_buffer.len() || (!self.rx_buffer.is_empty() && !self.eof)
+        !self.eof && self.read_index < self.rx_buffer.len()
     }
 
     /// Get remaining data length
     pub fn remaining_data_len(&self) -> usize {
-        self.rx_buffer.len().saturating_sub(self.read_index)
+        if self.eof {
+            0
+        } else {
+            self.rx_buffer.len().saturating_sub(self.read_index)
+        }
     }
 
     /// Clear both buffers
@@ -111,6 +116,10 @@ impl MockUartDriver {
 
     /// Add more RX data (for simulating streaming input)
     pub fn add_rx_data(&mut self, data: &str) {
+        if self.eof {
+            self.eof = false;
+            self.read_index = 0;
+        }
         self.rx_buffer.extend(data.as_bytes());
     }
 
@@ -137,17 +146,23 @@ impl MockUartDriver {
     ///
     /// Number of bytes read, or error
     pub fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UartError> {
-        if self.read_index >= self.rx_buffer.len() {
+        let available = self.rx_buffer.len().saturating_sub(self.read_index);
+        if available == 0 {
             // No more data available
             return Err(UartError::ReceptionError);
         }
 
-        let available = self.rx_buffer.len() - self.read_index;
         let to_read = buffer.len().min(available);
 
         buffer[..to_read]
             .copy_from_slice(&self.rx_buffer[self.read_index..self.read_index + to_read]);
         self.read_index += to_read;
+
+        if self.read_index >= self.rx_buffer.len() {
+            self.eof = true;
+            self.rx_buffer.clear();
+            self.read_index = 0;
+        }
 
         Ok(to_read)
     }
@@ -166,6 +181,10 @@ impl MockUartDriver {
     /// Success or error
     pub fn write_bytes(&mut self, data: &[u8]) -> Result<(), UartError> {
         self.tx_buffer.extend(data);
+        if self.tx_buffer.len() > TX_BUFFER_CAPACITY {
+            let excess = self.tx_buffer.len() - TX_BUFFER_CAPACITY;
+            let _ = self.tx_buffer.drain(..excess);
+        }
         Ok(())
     }
 }
@@ -323,14 +342,22 @@ fn test_multiple_commands() {
 
     let expected_commands = ["READ", "OT1 75", "IO3 50"];
 
-    for (i, expected) in expected_commands.iter().enumerate() {
-        // Read command
-        let mut buffer = [0u8; 64];
-        let bytes_read = mock.read_bytes(&mut buffer).unwrap();
-        let command = core::str::from_utf8(&buffer[..bytes_read]).unwrap();
+    let mut buffer = [0u8; 64];
+    let bytes_read = mock.read_bytes(&mut buffer).unwrap();
+    let chunk = core::str::from_utf8(&buffer[..bytes_read]).unwrap();
+    let commands: Vec<&str> = chunk
+        .split("\r\n")
+        .filter(|line| !line.is_empty())
+        .collect();
 
-        // Should have command plus \r\n
-        let command_trimmed = command.trim_end();
+    assert_eq!(
+        commands.len(),
+        expected_commands.len(),
+        "Should find every command in the stream"
+    );
+
+    for (i, expected) in expected_commands.iter().enumerate() {
+        let command = commands[i].trim_end();
         assert!(
             command.starts_with(expected),
             "Command {} should start with '{}', got '{}'",
@@ -340,13 +367,14 @@ fn test_multiple_commands() {
         );
 
         // Parse command
-        let result = parse_artisan_command(command_trimmed);
+        let result = parse_artisan_command(command);
         assert!(result.is_ok(), "Command {} should parse", i + 1);
 
-        println!("   ✅ Command {} processed: '{}'", i + 1, command_trimmed);
+        println!("   ✅ Command {} processed: '{}'", i + 1, command);
     }
 
     assert!(!mock.has_data(), "All commands should be consumed");
+    assert_eq!(mock.remaining_data_len(), 0, "No bytes should remain");
 
     println!("   ✅ Multiple commands handled correctly");
 }
@@ -374,12 +402,18 @@ fn test_mock_uart_streaming() {
     assert!(mock.has_data(), "Should have more data after streaming");
 
     // Read next chunk
-    let mut buffer2 = [0u8; 8];
+    let mut buffer2 = [0u8; 10];
     let bytes_read2 = mock.read_bytes(&mut buffer2).unwrap();
-    assert_eq!(bytes_read2, 8, "Should read remaining and new data");
+    assert_eq!(bytes_read2, 10, "Should read remaining and new data");
     assert_eq!(
         core::str::from_utf8(&buffer2[..bytes_read2]).unwrap(),
-        "AD\r\nOT1 5"
+        "AD\r\nOT1 50"
+    );
+    assert!(!mock.has_data(), "Streaming data should be drained");
+    assert_eq!(
+        mock.remaining_data_len(),
+        0,
+        "No bytes should remain after streaming"
     );
 
     println!("   ✅ Streaming data simulation works correctly");

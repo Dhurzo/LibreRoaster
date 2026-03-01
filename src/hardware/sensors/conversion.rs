@@ -150,9 +150,8 @@ impl SensorConversionHub {
 
     #[cfg(feature = "regression")]
     fn channel_result_from_bytes(adc_bytes: [u8; 3], fault: u8) -> SensorChannelResult {
-        let raw_temp = ((adc_bytes[0] as u32) << 16)
-            | ((adc_bytes[1] as u32) << 8)
-            | (adc_bytes[2] as u32);
+        let raw_temp =
+            ((adc_bytes[0] as u32) << 16) | ((adc_bytes[1] as u32) << 8) | (adc_bytes[2] as u32);
 
         let temperature = convert_raw_temp(raw_temp);
         let sensor_fault = SensorFault::from_register(fault);
@@ -161,7 +160,10 @@ impl SensorConversionHub {
     }
 
     #[cfg(feature = "regression")]
-    pub fn sample_from_fixture(&mut self, fixture: FixtureReading) -> Result<SensorSample, RoasterError> {
+    pub fn sample_from_fixture(
+        &mut self,
+        fixture: FixtureReading,
+    ) -> Result<SensorSample, RoasterError> {
         let timestamp = Instant::now();
         let (bean_result, env_result) = fixture.to_channel_results();
         self.build_sample(timestamp, bean_result, env_result)

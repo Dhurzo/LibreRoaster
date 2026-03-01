@@ -11,11 +11,17 @@ use libreroaster::application::service_container::{
     async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests, ContainerError,
     ServiceContainer,
 };
-use libreroaster::config::constants::SsrHardwareStatus;
-use libreroaster::control::traits::{Fan, Heater};
+#[path = "common/mod.rs"]
+mod tests_common;
+
 use libreroaster::control::RoasterControl;
-use libreroaster::control::RoasterError;
 use std::boxed::Box;
+use std::hint::spin_loop;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tests_common::{build_test_control, StubFan, StubHeater};
+
+// Atomic flag serializes host critical section entries so the RefCell borrow never overlaps.
+static TEST_CRITICAL_SECTION_LOCK: AtomicBool = AtomicBool::new(false);
 
 critical_section::set_impl!(TestCriticalSection);
 
@@ -23,52 +29,25 @@ struct TestCriticalSection;
 
 unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn acquire() -> RawRestoreState {
-        false
+        while TEST_CRITICAL_SECTION_LOCK
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            spin_loop();
+        }
+
+        true
     }
 
-    unsafe fn release(_restore_state: RawRestoreState) {}
-}
-
-#[derive(Default)]
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-#[derive(Default)]
-struct StubFan {
-    speed: f32,
-}
-
-impl Fan for StubFan {
-    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.speed = duty;
-        Ok(())
+    unsafe fn release(_restore_state: RawRestoreState) {
+        TEST_CRITICAL_SECTION_LOCK.store(false, Ordering::Release);
     }
 }
 
 const CONCURRENT_READS: usize = 10;
 
 fn build_control() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }),
-        Box::new(StubFan { speed: 0.0 }),
-    )
-    .expect("RoasterControl should initialize successfully")
+    build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
 fn init_service_container() {
@@ -79,13 +58,16 @@ fn init_service_container() {
     });
 
     let sync_roaster = build_control();
-    critical_section::with(|cs| {
-        ServiceContainer::get_instance()
-            .roaster_sync
-            .borrow(cs)
-            .borrow_mut()
-            .replace(sync_roaster);
-    });
+    critical_section::with(|cs| replace_sync_roaster(cs, sync_roaster));
+}
+
+// Helper keeps the borrow local to the critical section so it drops before any async tasks spawn.
+fn replace_sync_roaster(cs: critical_section::CriticalSection, roaster: RoasterControl) {
+    ServiceContainer::get_instance()
+        .roaster_sync
+        .borrow(cs)
+        .borrow_mut()
+        .replace(roaster);
 }
 
 #[test]

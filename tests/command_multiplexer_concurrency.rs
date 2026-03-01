@@ -11,58 +11,18 @@ use libreroaster::application::queue_metrics::{
     reset_queue_processor_metrics,
 };
 use libreroaster::application::service_container::ServiceContainer;
-use libreroaster::config::SsrHardwareStatus;
-use libreroaster::control::traits::{Fan, Heater};
 use libreroaster::control::{RoasterControl, RoasterError};
 use libreroaster::hardware::uart::tasks::{process_command_data, queue_processor_task};
 use libreroaster::hardware::usb_cdc::tasks::{process_usb_command_data, usb_queue_processor_task};
 use libreroaster::input::ArtisanInput;
 use std::thread;
 use std::time::Duration as StdDuration;
-
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-impl Default for StubHeater {
-    fn default() -> Self {
-        Self {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }
-    }
-}
-
-#[derive(Default)]
-struct StubFan {
-    speed: f32,
-}
-
-impl Fan for StubFan {
-    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.speed = duty;
-        Ok(())
-    }
-}
+#[path = "common/mod.rs"]
+mod tests_common;
+use tests_common::{build_test_control, StubFan, StubHeater};
 
 fn build_control() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater::default()),
-        Box::new(StubFan::default()),
-    )
-    .expect("RoasterControl should build with stubs")
+    build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
 fn init_service_container() {

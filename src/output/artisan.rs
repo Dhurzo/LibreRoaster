@@ -14,15 +14,16 @@ extern crate alloc;
 use crate::config::SystemStatus;
 use crate::output::traits::{OutputError, OutputFormatter};
 use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::string::String as AllocString;
+use core::fmt::Write;
 use embassy_time::Instant;
+use heapless::{Deque, String as HeaplessString};
 
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Vec<f32>,
+    bt_history: Deque<f32, 5>,
 }
 
 impl ArtisanFormatter {
@@ -30,14 +31,14 @@ impl ArtisanFormatter {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
-            bt_history: Vec::new(),
+            bt_history: Deque::<f32, 5>::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
-        self.bt_history.clear();
+        self.bt_history = Deque::<f32, 5>::new();
     }
 
     fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
@@ -48,11 +49,11 @@ impl ArtisanFormatter {
         }
     }
 
-    fn update_bt_history(history: &mut Vec<f32>, current_bt: f32) {
+    fn update_bt_history(history: &mut Deque<f32, 5>, current_bt: f32) {
         if history.len() >= 5 {
-            history.remove(0);
+            let _ = history.pop_front();
         }
-        history.push(current_bt);
+        let _ = history.push_back(current_bt);
     }
 
     fn compute_ror_from_history(history: &[f32]) -> f32 {
@@ -69,12 +70,31 @@ impl ArtisanFormatter {
         }
     }
 
-    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> String {
-        format!("{}.{:02}", elapsed_secs, elapsed_ms / 10)
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<8> {
+        let mut buf = HeaplessString::<8>::new();
+        core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10).unwrap();
+        buf
     }
 
-    fn format_artisan_line(time_str: &str, et: f32, bt: f32, ror: f32, gas: f32) -> String {
-        format!("{},{:.1},{:.1},{:.2},{:.1}", time_str, et, bt, ror, gas)
+    fn format_artisan_line(
+        time_str: &str,
+        et: f32,
+        bt: f32,
+        ror: f32,
+        gas: f32,
+    ) -> HeaplessString<32> {
+        let mut buf = HeaplessString::<32>::new();
+        core::write!(
+            &mut buf,
+            "{},{:.1},{:.1},{:.2},{:.1}",
+            time_str,
+            et,
+            bt,
+            ror,
+            gas
+        )
+        .unwrap();
+        buf
     }
 
     fn normalize_read_value(value: f32) -> f32 {
@@ -87,7 +107,7 @@ impl ArtisanFormatter {
 }
 
 impl OutputFormatter for ArtisanFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
+    fn format(&self, status: &SystemStatus) -> Result<AllocString, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -101,12 +121,12 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = Self::format_time(elapsed_secs, elapsed_ms);
         let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(line)
+        Ok(AllocString::from(line.as_str()))
     }
 }
 
 impl ArtisanFormatter {
-    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> AllocString {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -120,7 +140,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_read_response_full(status: &SystemStatus) -> String {
+    pub fn format_read_response_full(status: &SystemStatus) -> AllocString {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -135,7 +155,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_status_response(status: &SystemStatus) -> String {
+    pub fn format_status_response(status: &SystemStatus) -> AllocString {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -178,11 +198,11 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_chan_ack(channel: u16) -> String {
+    pub fn format_chan_ack(channel: u16) -> AllocString {
         format!("#{}", channel)
     }
 
-    pub fn format_err(code: u8, message: &str) -> String {
+    pub fn format_err(code: u8, message: &str) -> AllocString {
         format!("ERR {} {}", code, message)
     }
 }
@@ -190,7 +210,7 @@ impl ArtisanFormatter {
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Vec<f32>,
+    bt_history: Deque<f32, 5>,
 }
 
 impl MutableArtisanFormatter {
@@ -198,17 +218,17 @@ impl MutableArtisanFormatter {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
-            bt_history: Vec::new(),
+            bt_history: Deque::<f32, 5>::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
         self.last_bt = 0.0;
-        self.bt_history.clear();
+        self.bt_history = Deque::<f32, 5>::new();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
+    pub fn format(&mut self, status: &SystemStatus) -> Result<AllocString, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -221,7 +241,7 @@ impl MutableArtisanFormatter {
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(line)
+        Ok(AllocString::from(line.as_str()))
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
@@ -238,7 +258,26 @@ impl MutableArtisanFormatter {
 
         self.last_bt = current_bt;
         ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
-        ArtisanFormatter::compute_ror_from_history(&self.bt_history)
+
+        // Compute ROR from Deque history using as_slices
+        let (front, back) = self.bt_history.as_slices();
+        let combined_len = front.len() + back.len();
+        if combined_len < 2 {
+            return 0.0;
+        }
+
+        // Build a temporary array for ROR calculation
+        let mut history_arr = [0.0f32; 5];
+        for (i, &v) in front.iter().enumerate() {
+            history_arr[i] = v;
+        }
+        for (i, &v) in back.iter().enumerate() {
+            history_arr[front.len() + i] = v;
+        }
+
+        let first_bt = history_arr[0];
+        let last_bt = history_arr[combined_len - 1];
+        (last_bt - first_bt) / (combined_len as f32 - 1.0)
     }
 }
 

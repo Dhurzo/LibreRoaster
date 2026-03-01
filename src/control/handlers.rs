@@ -120,23 +120,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 Ok(())
             }
 
-            RoasterCommand::SetHeaterManual(value) => {
-                if value > 100 {
-                    warn!("Ignoring manual heater value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState);
-                }
-
-                status.artisan_control = true;
-                status.pid_enabled = false;
-                self.disable_pid();
-
-                let heater_value = value as f32;
-                status.ssr_output = heater_value;
-
-                info!("Artisan+ manual heater set to: {}%", value);
-                Ok(())
-            }
-
             _ => Err(RoasterError::InvalidState),
         }
     }
@@ -147,7 +130,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
             RoasterCommand::StartRoast(_)
                 | RoasterCommand::StopRoast
                 | RoasterCommand::SetTemperature(_)
-                | RoasterCommand::SetHeaterManual(_)
         )
     }
 }

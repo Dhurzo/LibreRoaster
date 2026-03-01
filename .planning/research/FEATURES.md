@@ -1,237 +1,202 @@
-# Feature Research: SSR Refactoring and Test Infrastructure
+# Feature Research: v4.5 Refactoring Tasks
 
-**Domain:** Embedded Rust coffee roaster control - SSR hardware control and testing infrastructure
-**Researched:** 2026-02-24
-**Project:** LibreRoaster - ESP32-C3 firmware with Artisan+ protocol compatibility
-**Confidence:** HIGH (codebase verified) / MEDIUM (ecosystem patterns)
+**Domain:** Embedded Firmware Refactoring (ESP32-C3 Coffee Roaster)
+**Researched:** 2026-02-28
+**Project:** LibreRoaster v4.5 - SSR deduplication continuation from v4.4
+**Confidence:** HIGH (codebase verified)
 
 ---
 
 ## Executive Summary
 
-This document categorizes features for the SSR (Solid State Relay) refactoring milestone and shared test stubs infrastructure. Based on research of the existing codebase and embedded Rust ecosystems, features are organized into:
+This document analyzes the four refactoring tasks specified for v4.5. Unlike typical feature work, these are code quality improvements that:
 
-- **Table stakes** — features that must exist for the system to function properly
-- **Differentiators** — features that provide competitive advantage  
-- **Anti-features** — features to deliberately NOT build
+- Eliminate duplication in SSR control
+- Improve test infrastructure accessibility
+- Remove heap allocations from hot paths
+- Extend existing handler pattern to Artisan commands
 
-The existing codebase already has significant SSR infrastructure (`SsrControl`, `SsrControlSimple`, `Heater` trait) and test mocks (`MockUsbCdcDriver`, `FakeDetectPin`). This research identifies gaps and recommended improvements for this milestone.
-
----
-
-## Table Stakes
-
-Features users expect. Missing or broken implementations cause system failure.
-
-### SSR Control Features
-
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| **SSR on/off control** | Basic heating element control via GPIO | Low | `OutputPin` trait, LEDC PWM | Implemented via `set_percentage(0)` or `set_percentage(100)` |
-| **SSR PWM/phase control** | Variable heating power (not just on/off) | Medium | LEDC channel, duty cycle mapping | Implemented with `percentage_to_ledc_duty()` |
-| **Heat source detection** | Verify SSR is actually heating | Medium | `InputPin` trait, detection circuit | `detect_heat_source()` in existing code |
-| **Cycle guard** | Prevent SSR damage from rapid cycling | Low | Timer/state tracking | `SsrCycleGuard` already exists |
-| **Duty readback verification** | Confirm PWM duty matches commanded | Medium | LEDC duty readback | `monitor_ledc_after_set()` with retry logic |
-| **Error state handling** | Graceful degradation when hardware fails | Low | Error enum, hardware status | `SsrError`, `SsrHardwareStatus` enums |
-| **Heater trait implementation** | Abstract heating control for testability | Low | `Heater` trait | Implemented for both `SsrControl` and `SsrControlSimple` |
-
-### Test Infrastructure Features
-
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| **Mock GPIO pins** | Test without hardware | Low | `embedded-hal-mock` | `FakeDetectPin` implements `InputPin` trait |
-| **Mock PWM channels** | Test LEDC control without ESP32 | Medium | `ChannelIFace`, `LedcDutyReader` | `FakeLedcChannel` in `tests/ssr_monitor.rs` |
-| **Mock USB CDC driver** | Test Artisan protocol without USB hardware | Medium | `UsbCdcDriver` trait | `MockUsbCdcDriver` exists (668 lines) |
-| **Unit test support** | Test business logic in isolation | Low | `#[cfg(test)]` modules | In `src/hardware/ssr.rs` |
-| **Integration test framework** | Test component interactions | Medium | `ServiceContainer`, channels | Existing test suite in `tests/` |
-| **Shared mock location** | Reuse mocks across test files | Low | Module organization | Mocks currently in individual test files |
-
-### Safety Features
-
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| **Watchdog integration** | Prevent runaway heating | Low | `WatchdogFeeder` | Integrated in `RoasterControl` |
-| **Temperature limits** | Prevent over-temp conditions | Low | Thermometer reads | Should block heating above threshold |
-| **Fault detection and reporting** | Notify Artisan of problems | Medium | Artisan protocol, status codes | Part of `SsrHardwareStatus` |
+Each task has clear technical outcomes and bounded scope.
 
 ---
 
-## Differentiators
+## Table Stakes (Must Achieve)
 
-Features that set LibreRoaster apart from other coffee roaster firmware.
+Essential outcomes for v4.5 to be considered successful. These are refactoring prerequisites.
 
-### Advanced SSR Features
-
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| **PID temperature control** | Precise temperature tracking of roast profiles | High | PID algorithm, temperature sensor, SSR output | Has `RoasterControl` with PID |
-| **SSR duty cycle logging** | Record heating patterns for analysis | Medium | Storage, Artisan logging | Could add to `SystemStatus` |
-| **Dual SSR channel support** | Control multiple heating elements | High | Additional SSR channels | Future consideration |
-
-### Testing Infrastructure Differentiators
-
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| **Property-based testing** | Test SSR behavior across input ranges | Medium | `proptest` or custom | Not yet implemented |
-| **Hardware-in-the-loop (HIL) tests** | Run tests on actual ESP32 | High | ESP32-C3, probe-rs | `embedded-test` crate available |
-| **MockHeater test double** | Test PID without real SSR | Low | `Heater` trait | Could be created |
-| **Cross-platform test CI** | Run tests on multiple architectures | Medium | GitHub Actions, QEMU | Uses `std` feature already |
-| **Protocol fuzzing** | Find edge cases in Artisan parsing | Medium | Fuzzing framework | Could integrate |
+| Refactoring | Expected Outcome | Complexity | Dependencies |
+|-------------|------------------|------------|--------------|
+| **Task 1: Extract detect_heat_source() to SsrControlBase** | Eliminates ~30 lines of duplicate code. Both `SsrControl` (lines 213-246) and `SsrControlSimple` (lines 329-362) have identical implementations. Moving to `SsrControlBase` removes duplication. | LOW | None - pure extraction |
+| **Task 2: Migrate test stubs to crate::common::*** | Stubs (`StubHeater`, `StubFan`, `StubThermometer`) move from `tests/common/mod.rs` to `src/common/mod.rs`. Makes stubs accessible to library code for mocking in integration tests. | LOW | None - structural change |
+| **Task 3: Replace Vec<f32> with heapless::Deque<f32, 5>** | `ArtisanFormatter.bt_history` uses fixed-size deque. Current code at artisan.rs:51-55 manually manages 5-element sliding window with Vec (calls `remove(0)` which is O(n)). Deque does this in O(1). | LOW | None - drop-in replacement |
+| **Task 4: Refactor process_artisan_command() to handler pattern** | Large match statement (roaster_refactored.rs:533-657, ~125 lines) extracted to handler structs. Uses existing `RoasterCommandHandler` trait pattern from `handlers.rs`. | MEDIUM | Requires extending handlers.rs pattern |
 
 ---
 
-## Anti-Features
+## Differentiators (Value-Adding Improvements)
 
-Features to explicitly NOT build. Common mistakes in this domain.
+Benefits beyond basic refactoring - nice-to-have outcomes.
 
-### SSR Anti-Features
-
-| Anti-Feature | Why Avoid | What To Do Instead |
-|--------------|-----------|---------------------|
-| **Blocking PWM calls in hot path** | Blocks async executor, timing issues | Use async-safe LEDC driver |
-| **Direct hardware access in app code** | Breaks testability | Use `Heater` trait abstraction |
-| **Ignoring SSR cycle time limits** | Can damage SSR | Use `SsrCycleGuard` |
-| **Hardcoded GPIO pin numbers** | Makes hardware changes difficult | Use board configuration |
-| **No duty readback** | Silent failures | Keep retry logic |
-
-### Test Infrastructure Anti-Features
-
-| Anti-Feature | Why Avoid | What To Do Instead |
-|--------------|-----------|---------------------|
-| **Mocking everything** | Loses integration test value | Use mocks for units, real for HIL |
-| **Tests only run on hardware** | Blocks CI | Maintain `#[cfg(test)]` host tests |
-| **Manual mocks for all peripherals** | Duplication | Use `embedded-hal-mock` crate |
-| **Tests without assertions** | No value | Verify expected behavior |
-
-### Architecture Anti-Features
-
-| Anti-Feature | Why Avoid | What To Do Instead |
-|--------------|-----------|---------------------|
-| **Global mutable state** | Race conditions | Use `ServiceContainer` |
-| **Panic on hardware errors** | No recovery | Return `Result<T, SsrError>` |
-| **Synchronous blocking I/O** | Blocks system | Use async/embassy |
+| Refactoring | Value Proposition | Complexity | Notes |
+|-------------|-------------------|------------|-------|
+| **detect_heat_source extraction** | Enables unified periodic health check across SSR implementations. Future: consistent timing logic. | LOW | Adds `HeatSourceDetector` trait to base |
+| **crate::common migration** | Enables doctests and example binaries to use stubs. Better documentation through runnable examples. | LOW | Requires `pub(crate)` visibility |
+| **heapless::Deque** | Zero-allocation, no_std compatible. Paves way for `#![no_std]` builds. Cargo.toml already has heapless v0.9.2. | LOW | Matches 5-element window in current code |
+| **Handler pattern for ArtisanCommand** | Individual handlers testable in isolation. Enables future middleware (logging, rate limiting). | MEDIUM | Follows existing RoasterCommandHandler pattern |
 
 ---
 
-## Feature Dependencies
+## Anti-Features (What NOT To Do)
+
+Common mistakes during these refactorings - avoid these approaches.
+
+| Anti-Pattern | Why Problematic | Correct Approach |
+|--------------|-----------------|------------------|
+| **Adding new functionality during refactoring** | Scope creep. v4.5 should only refactor existing code. | Complete extraction first, new features in separate milestones |
+| **Changing public API signatures** | Breaks existing callers. v4.5 must be drop-in replacement. | Preserve trait bounds and method signatures |
+| **Replacing Vec<f32> with Deque<f32, N> where N != 5** | Current code explicitly manages 5-element window. Different capacity changes semantics. | Use `Deque<f32, 5>` to match current sliding window |
+| **Creating new handler trait for ArtisanCommand** | Already has `RoasterCommandHandler` in handlers.rs. Duplication. | Extend existing trait with ArtisanCommand variants |
+| **Moving stubs without pub visibility** | Must be `pub(crate)` to be usable across modules. | Ensure `pub(crate)` visibility in src/common/mod.rs |
+
+---
+
+## Refactoring Dependencies
 
 ```
-SSR Control Flow:
-┌─────────────────┐
-│ Artisan Command │ (OT1, IO3)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ RoasterControl  │ ←── Heater trait
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌──────────────────┐
-│ SsrCycleGuard   │────▶│ SsrControlSimple │──▶ LEDC PWM
-└─────────────────┘     └────────┬─────────┘
-                                 │
-                                 ▼
-                        ┌──────────────────┐
-                        │ Heat Source      │
-                        │ Detection (Input)│
-                        └──────────────────┘
+[Task 3: heapless::Deque]
+    └── No dependencies - pure replacement
 
-Test Infrastructure:
-┌─────────────────┐
-│ MockUSBDriver   │ ← used by → Integration Tests
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌──────────────────┐
-│ FakeLedcChannel │────▶│ SSR Monitor Test │
-└────────┬────────┘     └──────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│ MockUartDriver  │ ← used by → Protocol Tests
-└─────────────────┘
+[Task 1: detect_heat_source extraction]
+    └── No dependencies - pure extraction
+
+[Task 2: crate::common migration]
+    └── No dependencies - structural change
+
+[Task 4: handler pattern refactor]
+        └── optional──> [Task 1: detect_heat_source] (if handler needs heat source detection)
+        └── optional──> [Task 2: crate::common] (if new tests need stubs)
 ```
 
----
+### Dependency Notes
 
-## MVP Recommendation
-
-For this milestone (SSR refactoring + shared test stubs), prioritize:
-
-### Phase 1: Table Stakes (Must Have)
-
-1. **SSR refactoring** — Consolidate and improve existing SSR logic
-   - Ensure `Heater` trait is consistently used
-   - Verify cycle guard is applied everywhere
-   
-2. **Shared test stubs** — Centralize mock implementations
-   - Move `FakeDetectPin`, `FakeLedcChannel` to shared location
-   - Create `MockHeater` implementing `Heater` trait for tests
-   - Add module documentation for mock patterns
-
-### Phase 2: Testing Improvements
-
-3. **Add `MockHeater` test double** — For PID/controller unit tests
-4. **Improve mock USB driver** — Add more error injection capabilities
-5. **Property-based tests** for SSR percentage conversion
-
-### Phase 3: Differentiators (Future)
-
-- HIL test setup with probe-rs
-- Duty cycle logging
-- PID auto-tuning
+- **Tasks 1-3 are independent** - can be completed in any order
+- **Task 4 (handler pattern)** has optional dependencies on Tasks 1 and 2
+- **No blocking dependencies** - all four can proceed in parallel
 
 ---
 
-## Existing Implementation Assessment
+## Current vs Expected State
 
-### Already Implemented (Table Stakes)
+### Task 1: detect_heat_source()
 
-| Feature | Location | Status |
-|---------|----------|--------|
-| SSR PWM control | `src/hardware/ssr.rs` | ✅ Complete |
-| Heat source detection | `src/hardware/ssr.rs` | ✅ Complete |
-| Cycle guard | `src/control/ssr_scheduler.rs` | ✅ Complete |
-| Duty readback with retry | `src/hardware/ssr.rs` | ✅ Complete |
-| `Heater` trait | `src/control/traits.rs` | ✅ Complete |
-| Mock USB driver | `tests/mock_usb_driver.rs` | ✅ Complete |
-| Fake LEDC channel | `tests/ssr_monitor.rs` | ✅ Complete |
-| Unit tests | `src/hardware/ssr.rs` | ✅ Complete |
+| Aspect | Current (v4.4) | Expected (v4.5) |
+|--------|---------------|-----------------|
+| Implementation count | 2 (SsrControl, SsrControlSimple) | 1 (SsrControlBase) |
+| Lines duplicated | ~30 lines | 0 lines |
+| Trait usage | HeatSourceDetector trait exists | Base struct implements directly |
 
-### Gap Analysis
+### Task 2: Test stubs location
 
-| Feature | Status | Recommendation |
-|---------|--------|----------------|
-| Shared mock location | ❌ Mocks in individual test files | Create `tests/mocks/` module |
-| `MockHeater` test double | ❌ Not created | Implement for PID tests |
-| Property-based tests | ❌ Not implemented | Add `proptest` for SSR math |
-| HIL tests | ❌ Not implemented | Add `embedded-test` setup |
+| Aspect | Current (v4.4) | Expected (v4.5) |
+|--------|---------------|-----------------|
+| Module path | `tests/common/mod.rs` | `src/common/mod.rs` |
+| Visibility | test-only | `pub(crate)` |
+| Usable from library | No | Yes |
+
+### Task 3: bt_history type
+
+| Aspect | Current (v4.4) | Expected (v4.5) |
+|--------|---------------|-----------------|
+| Type | `Vec<f32>` | `heapless::Deque<f32, 5>` |
+| Allocation | Heap (dynamic) | Stack (fixed) |
+| Remove(0) complexity | O(n) | O(1) amortized |
+
+### Task 4: process_artisan_command()
+
+| Aspect | Current (v4.4) | Expected (v4.5) |
+|--------|---------------|-----------------|
+| Implementation | 125-line match in RoasterControl | Handler structs delegating |
+| Testability | Requires full RoasterControl | Handlers testable in isolation |
+| Extensibility | Modify large function | Add new handler |
 
 ---
 
-## Confidence Assessment
+## MVP Definition (v4.5 Scope)
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| SSR table stakes | HIGH | Verified via code review |
-| Test infrastructure | HIGH | Existing mocks work, `embedded-hal-mock` well-documented |
-| Differentiators | MEDIUM | Based on research of coffee roaster systems |
-| Anti-features | HIGH | Common embedded patterns verified |
+### Must Complete
+
+- [ ] **Task 1:** `detect_heat_source()` extracted to SsrControlBase - no duplicate implementations
+- [ ] **Task 2:** Test stubs migrated to `crate::common::*` with `pub(crate)` visibility
+- [ ] **Task 3:** No `Vec<f32>` in artisan.rs, uses `heapless::Deque<f32, 5>`
+- [ ] **Task 4:** `process_artisan_command()` delegates to handler structs
+
+### Completion Criteria
+
+Each refactoring is complete when:
+
+1. **Task 1:** Both `SsrControl` and `SsrControlSimple` call base implementation - verify no duplicate `detect_heat_source` methods
+2. **Task 2:** Stubs accessible via `crate::common::{StubHeater, StubFan, StubThermometer}`
+3. **Task 3:** Binary size unchanged (fixed capacity equals same memory usage)
+4. **Task 4:** Match statement removed from RoasterControl, handlers registered
+
+### Testing Requirements
+
+- [ ] All existing tests pass after refactoring
+- [ ] No new compiler warnings
+- [ ] Binary size change < 1KB (embedded constraint)
+- [ ] No runtime behavioral changes (same outputs for same inputs)
+
+---
+
+## Prioritization Matrix
+
+| Refactoring | Code Quality Impact | Risk | Priority |
+|-------------|---------------------|------|----------|
+| Task 3: Vec→Deque | HIGH - eliminates heap in hot path | LOW | P1 |
+| Task 1: detect_heat_source | MEDIUM - removes duplication | LOW | P1 |
+| Task 2: crate::common | MEDIUM - enables better testing | LOW | P2 |
+| Task 4: Handler pattern | MEDIUM - enables extensibility | MEDIUM | P2 |
+
+**Priority Rationale:**
+
+- P1 tasks have clear, bounded scope and low risk - should be completed first
+- P2 tasks require more architectural decisions (handler trait design for ArtisanCommand)
+- All tasks are independent enough to parallelize
+
+---
+
+## Feature Interactions
+
+### With Existing v4.4 Features v4.4 Feature
+
+| | Interaction with v4.5 Tasks |
+|--------------|------------------------------|
+| SsrControlBase extracted (v4.4) | Task 1 extends this pattern further |
+| Test stubs in tests/common (v4.4) | Task 2 moves these to library |
+| ArtisanFormatter with READ response (v4.4) | Task 3 improves its implementation |
+| Handler pattern in handlers.rs (v4.4) | Task 4 extends this pattern |
+
+### Testing Strategy
+
+- **Task 1:** Existing unit tests in `src/hardware/ssr.rs` should pass without modification
+- **Task 2:** Update test imports to use new module path
+- **Task 3:** Unit tests in artisan.rs verify same ROR calculations
+- **Task 4:** Existing integration tests verify command processing unchanged
 
 ---
 
 ## Sources
 
-- **embedded-hal-mock crate**: https://docs.rs/embedded-hal-mock/0.11.1/
-- **embedded-test crate**: https://docs.rs/embedded-test/0.7.0/
-- **Artisan PID control**: https://artisan-roasterscope.blogspot.com/2016/11/pid-control.html
-- **ESP32 LEDC PWM**: https://medium.com/@7086cmd/generating-pwm-signals-on-bare-metal-rust-esp32-ae4aaf23cf38
-- **Coffee roaster SSR control**: https://github.com/AlexMunt/coffee-roaster-software
-- **Embedded Rust testing**: https://barretts.club/posts/embedded-tests/
-- **Project code**: `/home/juan/Repos/LibreRoaster/src/hardware/ssr.rs`
-- **Existing tests**: `/home/juan/Repos/LibreRoaster/tests/ssr_monitor.rs`, `tests/mock_usb_driver.rs`
+- **Codebase verified:**
+  - `src/hardware/ssr.rs` - lines 87-156 (SsrControlBase), 213-246, 329-362 (detect_heat_source)
+  - `tests/common/mod.rs` - lines 1-317 (test stubs)
+  - `src/output/artisan.rs` - lines 25, 51-55 (Vec<f32> usage)
+  - `src/control/roaster_refactored.rs` - lines 533-657 (process_artisan_command)
+  - `src/control/handlers.rs` - lines 1-471 (existing handler pattern)
+- **Cargo.toml:** heapless v0.9.2 already in dependencies
+- **Template:** /home/juan/.config/opencode/get-shit-done/templates/research-project/FEATURES.md
 
 ---
 
-*Feature research for: SSR refactoring and shared test stubs milestone*
+*Feature research for: LibreRoaster v4.5 refactoring tasks*
+*Researched: 2026-02-28*

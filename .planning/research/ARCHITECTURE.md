@@ -1,294 +1,389 @@
-# Architecture Research: SSR Refactoring and Test Infrastructure
+# Architecture Research: v4.5 Refactoring Tasks
 
-**Project:** LibreRoaster v4.4 SSR Refactoring
-**Researched:** 2026-02-24
+**Project:** LibreRoaster v4.5 Refactoring
+**Researched:** 2026-02-28
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This architecture research addresses the SSR refactoring and shared test infrastructure for LibreRoaster v4.4. The current codebase has significant code duplication between `SsrControl` and `SsrControlSimple` structs, and test helpers are scattered across individual test files rather than being centralized.
+This architecture research addresses four refactoring tasks for LibreRoaster v4.5 that build upon the v4.4 foundation:
 
-The recommended approach is to extract a common `SsrControlBase` struct that holds all shared state and logic, with `SsrControl` and `SsrControlSimple` as thin wrappers that add their specific pin handling. For test infrastructure, a `tests/common/mod.rs` module should provide reusable stubs that eliminate the ~5x duplication observed in current inline mock implementations.
+1. **SSR Control Enhancement**: Extend the `SsrControlBase` pattern with formal trait delegation
+2. **Test Infrastructure Usage**: Integrate existing `tests/common/mod.rs` stubs
+3. **Formatter Optimization**: Replace `Vec<f32>` BT history with fixed-size array for embedded compatibility
+4. **Command Processing Refactor**: Decompose large match statement in `roaster_refactored.rs`
+
+All refactoring tasks integrate with the existing v4.4 architecture without requiring fundamental architectural changes.
 
 ---
 
-## Current Architecture
+## Current Architecture (v4.4 Baseline)
 
-### SSR Control Components
-
-```
-src/hardware/ssr.rs
-├── SsrError                     # Error enum (OutputError, InputError, HeatSourceNotDetected, PwmError)
-├── SsrHardwareStatus            # Status enum (Available, NotDetected, Error)
-├── LedcDutyReader               # Trait for PWM duty readback
-├── percentage_to_ledc_duty()   # Conversion helper
-├── monitor_ledc_after_set()    # Drift detection and retry logic
-├── SsrControl<'a, PIN, DETECT, PWM>    # Full SSR with enable pin
-└── SsrControlSimple<'a, DETECT, PWM>   # Simplified SSR without enable pin
-```
-
-### Duplicate Code Analysis
-
-Both `SsrControl` and `SsrControlSimple` implement nearly identical methods:
-
-| Method | SsrControl | SsrControlSimple | Duplication |
-|--------|-------------|-------------------|-------------|
-| `detect_heat_source()` | Lines 150-183 | Lines 298-331 | ~95% identical |
-| `periodic_check()` | Lines 185-197 | Lines 333-345 | Identical |
-| `get_hardware_status()` | Lines 199-201 | Lines 347-349 | Identical |
-| `is_heating_available()` | Lines 203-205 | Lines 351-353 | Identical |
-| `set_percentage()` | Lines 207-234 | Lines 355-382 | ~90% identical |
-| `get_current_duty()` | Lines 236-238 | Lines 384-386 | Identical |
-| `is_pwm_enabled()` | Lines 240-242 | Lines 388-390 | Identical |
-| `last_lead_delta_ticks()` | Lines 244-246 | Lines 392-394 | Identical |
-| `last_retry_count()` | Lines 248-250 | Lines 396-398 | Identical |
-| `Heater` impl | Lines 435-461 | Lines 401-426 | Identical |
-
-### Control Layer Integration
+### System Overview
 
 ```
-src/control/
-├── traits.rs              # Heater, Fan, Thermometer traits
-├── abstractions.rs       # RoasterError, PidController, RoasterCommandHandler
-├── ssr_scheduler.rs      # SsrCycleGuard
-├── roaster_refactored.rs # RoasterControl using Box<dyn Heater>
-└── mod.rs                # Exports
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Application Layer                             │
+├─────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              RoasterControl (roaster_refactored.rs)          │  │
+│  │  - State management (RoasterState, SystemStatus)           │  │
+│  │  - Command processing (process_command)                      │  │
+│  │  - PID control coordination                                  │  │
+│  └──────────────────────────┬────────────────────────────────────┘  │
+├─────────────────────────────┴────────────────────────────────────────┤
+│                        Control Layer                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
+│  │ Temperature  │  │   Safety     │  │     Artisan          │   │
+│  │   Handler    │  │   Handler    │  │     Handler          │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘   │
+│         │                 │                      │                │
+│  ┌──────┴─────────────────┴──────────────────────┴───────────┐  │
+│  │              Heater Trait (traits.rs)                        │  │
+│  │  - set_power(duty) -> Result                                │  │
+│  │  - get_status() -> SsrHardwareStatus                        │  │
+│  └──────────────────────────┬───────────────────────────────────┘  │
+├─────────────────────────────┴────────────────────────────────────────┤
+│                        Hardware Layer                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │           SsrControlBase (hardware/ssr.rs)                  │  │
+│  │  ┌─────────────────────────────────────────────────────┐   │  │
+│  │  │ SsrControl<'a, PIN, DETECT, PWM>                    │   │  │
+│  │  │ SsrControlSimple<'a, DETECT, PWM>                   │   │  │
+│  │  └─────────────────────────────────────────────────────┘   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
+│  │    Fan       │  │   Sensors    │  │      USB/UART        │   │
+│  │  (ledc_bus)  │  │  (max31856)  │  │    (communication)   │   │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-The `Heater` trait (lines 16-28 in `traits.rs`) is the abstraction point:
+### Component Responsibilities
+
+| Component | Responsibility | Current Implementation |
+|-----------|----------------|----------------------|
+| `RoasterControl` | Main state machine, command routing | `src/control/roaster_refactored.rs` (722 lines) |
+| `SsrControlBase` | SSR state and logic extraction | `src/hardware/ssr.rs` (lines 87-156) |
+| `Heater` trait | Hardware abstraction | `src/control/traits.rs` (lines 16-28) |
+| `ArtisanFormatter` | CSV output formatting | `src/output/artisan.rs` (603 lines) |
+| `tests/common/mod.rs` | Shared test stubs | `tests/common/mod.rs` (317 lines) |
+
+---
+
+## v4.5 Refactoring Tasks
+
+### Task 1: SSR Control — Trait Delegation Enhancement
+
+**Current State (v4.4):**
 
 ```rust
-pub trait Heater: Send {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError>;
-    fn get_status(&self) -> SsrHardwareStatus;
-    fn last_duty_delta_ticks(&self) -> i16 { 0 }
-    fn last_retry_count(&self) -> u8 { 0 }
+// src/hardware/ssr.rs - SsrControlBase already exists
+pub struct SsrControlBase {
+    pub(crate) hardware_status: SsrHardwareStatus,
+    pub(crate) current_duty: u16,
+    pub(crate) last_duty_delta_ticks: i16,
+    pub(crate) retry_count: u8,
+    pub(crate) last_detection_check: Option<u32>,
+    pub(crate) is_pwm_enabled: bool,
 }
 ```
 
-`RoasterControl` uses `Box<dyn Heater + Send>` to hold the heater implementation, allowing runtime polymorphism.
+**v4.5 Enhancement:**
+The v4.4 already provides `StatusGetters` trait. The v4.5 may extend this with:
+- `HeatSourceDetector` trait (already exists at lines 98-100)
+- `PeriodicCheck` trait (already exists at lines 104-106)
+- Formal delegation macros for reduce boilerplate
 
-### Test Infrastructure Current State
+**Integration Points:**
 
-```
-tests/
-├── mock_uart.rs              # MockUartDriver (432 lines)
-├── mock_usb_driver.rs        # MockUsbCdcDriver (668 lines)  
-├── ssr_monitor.rs           # Inline FakeDetectPin, FakeLedcChannel (91 lines)
-├── ssr_scheduler.rs          # Uses real SsrCycleGuard, no mocks
-└── [other tests]            # Each has inline stub implementations
-```
+| Component | File | Change Type |
+|-----------|------|-------------|
+| `SsrControlBase` | `src/hardware/ssr.rs` | Already complete (v4.4) |
+| `StatusGetters` trait | `src/hardware/ssr.rs` | Already complete (v4.4) |
+| `HeatSourceDetector` | `src/hardware/ssr.rs` | Already complete (v4.4) |
+| `PeriodicCheck` | `src/hardware/ssr.rs` | Already complete (v4.4) |
 
-The duplication pattern: each test file that needs a heater/fan stub defines its own mock types rather than reusing shared implementations.
+**Build Impact:** None — v4.4 already completed this work.
 
 ---
 
-## Recommended Architecture
+### Task 2: Test Infrastructure Integration
 
-### SSR Refactoring: Base Struct Pattern
-
-The recommended approach extracts common state into a `SsrControlBase` struct:
-
-```
-src/hardware/ssr.rs (refactored)
-├── SsrError
-├── SsrHardwareStatus
-├── LedcDutyReader trait
-├── percentage_to_ledc_duty()
-├── monitor_ledc_after_set()
-├── SsrControlBase<'a, DETECT, PWM>    # NEW: Common state and logic
-│   ├── detection_pin: DETECT
-│   ├── pwm_channel: PWM
-│   ├── hardware_status: SsrHardwareStatus
-│   ├── current_duty: u16
-│   ├── last_duty_delta_ticks: i16
-│   ├── retry_count: u8
-│   ├── last_detection_check: Option<u32>
-│   ├── is_pwm_enabled: bool
-│   └── Methods: detect_heat_source, periodic_check, set_percentage, getters
-├── SsrControl<'a, PIN, DETECT, PWM>   # Wraps Base + enable pin
-│   ├── pin: PIN                        # Enable pin (stored but not used)
-│   └── base: SsrControlBase
-└── SsrControlSimple<'a, DETECT, PWM>  # Wraps Base only
-    └── base: SsrControlBase
-```
-
-**Benefits:**
-- Single source of truth for SSR control logic
-- Easier to maintain, test, and extend
-- Trait implementations delegate to base
-- No runtime overhead (zero-cost abstraction)
-
-### Test Infrastructure: Shared Stubs Module
-
-```
-tests/common/mod.rs          # NEW: Shared test infrastructure
-├── StubHeater               # Implements Heater trait
-├── StubFan                  # Implements Fan trait  
-├── StubThermometer          # Implements Thermometer trait
-├── StubAsyncThermometer     # Implements AsyncThermometer trait
-├── reset_channels()         # Helper to reset test channels
-├── collect_output()         # Helper to collect queued output
-└── TestChannels             # Shared channel storage for tests
-```
-
-**Updated test files would import from common:**
+**Current State (v4.4):**
 
 ```rust
-// Before (ssr_monitor.rs)
-struct FakeDetectPin;
-impl InputPin for FakeDetectPin { ... }
+// tests/common/mod.rs - Already created
+pub struct StubHeater {
+    pub calls: RefCell<Vec<HeaterCall>>,
+    pub status: RefCell<SsrHardwareStatus>,
+}
 
-struct FakeLedcChannel;
-impl LedcDutyReader for FakeLedcChannel { ... }
+pub struct StubFan {
+    pub calls: RefCell<Vec<FanCall>>,
+    pub speed: RefCell<f32>,
+}
 
-// After
-use tests_common::mocks::{FakeDetectPin, FakeLedcChannel};
+pub struct StubThermometer {
+    pub calls: RefCell<Vec<ThermometerCall>>,
+    pub temp: RefCell<f32>,
+}
 ```
+
+**v4.5 Task:**
+Use the existing test stubs in more test files rather than defining inline mocks.
+
+**Integration Points:**
+
+| Component | File | Current Usage | v4.5 Target |
+|-----------|------|---------------|-------------|
+| `StubHeater` | `tests/common/mod.rs` | Limited | Expand usage |
+| `StubFan` | `tests/common/mod.rs` | Limited | Expand usage |
+| `StubThermometer` | `tests/common/mod.rs` | Limited | Expand usage |
+
+**Files to Update:**
+- `tests/ssr_monitor.rs` — inline `FakeDetectPin`, `FakeLedcChannel`
+- `tests/command_errors.rs` — inline command builders
+- `tests/fan_serialization.rs` — inline fan mocks
+
+**Build Order:**
+1. Verify `tests/common/mod.rs` compiles: `cargo test --no-run`
+2. Migrate one test file at a time
+3. Run tests after each migration
 
 ---
 
-## Integration Points
+### Task 3: Formatter — BT History Optimization
 
-### 1. Hardware Module Integration
+**Current State:**
 
-| Component | File | Integration Point |
-|-----------|------|------------------|
-| SSR Base | `src/hardware/ssr.rs` | New `SsrControlBase` struct |
-| SSR Full | `src/hardware/ssr.rs` | Delegates to base, adds enable pin |
-| SSR Simple | `src/hardware/ssr.rs` | Delegates to base |
-| Heater trait | `src/control/traits.rs` | Unchanged, implementations delegate |
+```rust
+// src/output/artisan.rs
+pub struct ArtisanFormatter {
+    start_time: Instant,
+    last_bt: f32,
+    bt_history: Vec<f32>,  // DYNAMIC ALLOCATION - problematic for embedded
+}
 
-### 2. Control Layer Integration
+pub struct MutableArtisanFormatter {
+    start_time: Instant,
+    last_bt: f32,
+    bt_history: Vec<f32>,  // Same issue
+}
+```
 
-| Component | File | Integration Point |
-|-----------|------|------------------|
-| RoasterControl | `src/control/roaster_refactored.rs` | Uses `Box<dyn Heater>` - no changes needed |
-| ServiceContainer | `src/application/service_container.rs` | No changes needed |
+**Problem:** `Vec<f32>` requires heap allocation (`#![no_std]` incompatibility), and the history is limited to 5 samples anyway.
 
-### 3. Test Infrastructure Integration
+**v4.5 Solution:** Replace `Vec<f32>` with fixed-size array:
 
-| Component | File | Integration Point |
-|-----------|------|------------------|
-| Test stubs | `tests/common/mod.rs` | New module, exports `StubHeater`, `StubFan`, etc. |
-| Existing tests | `tests/*.rs` | Refactor to use shared stubs |
+```rust
+// Proposed: Fixed-size array (no heap allocation)
+const BT_HISTORY_SIZE: usize = 5;
+
+pub struct ArtisanFormatter {
+    start_time: Instant,
+    last_bt: f32,
+    bt_history: [f32; BT_HISTORY_SIZE],  // FIXED SIZE - no allocation
+    bt_history_len: usize,                // Track actual used slots
+}
+
+pub struct MutableArtisanFormatter {
+    start_time: Instant,
+    last_bt: f32,
+    bt_history: [f32; BT_HISTORY_SIZE],
+    bt_history_len: usize,
+}
+```
+
+**Integration Points:**
+
+| Component | File | Change Type |
+|-----------|------|-------------|
+| `ArtisanFormatter` | `src/output/artisan.rs` | Modify — replace Vec with [f32; 5] |
+| `MutableArtisanFormatter` | `src/output/artisan.rs` | Modify — replace Vec with [f32; 5] |
+| `compute_ror_from_history()` | `src/output/artisan.rs` | Modify — adapt to fixed-size |
+| `update_bt_history()` | `src/output/artisan.rs` | Modify — circular buffer or shift |
+
+**Data Flow (Unchanged):**
+
+```
+SystemStatus (bean_temp)
+    ↓
+ArtisanFormatter::format() or MutableArtisanFormatter::format()
+    ↓
+update_bt_history() → compute_ror_from_history()
+    ↓
+CSV string: "time,ET,BT,ROR,Gas"
+```
+
+**Build Order:**
+1. Modify `ArtisanFormatter` struct and methods
+2. Modify `MutableArtisanFormatter` struct and methods
+3. Update unit tests to reflect new API
+4. Verify host tests pass: `cargo test`
+5. Verify no_std compatibility: `cargo check --target riscv32`
 
 ---
 
-## Data Flow
+### Task 4: Command Processing — Match Decomposition
 
-### SSR Control Flow (Unchanged by Refactoring)
+**Current State:**
 
+```rust
+// src/control/roaster_refactored.rs - Lines 205-241
+pub fn process_command(
+    &mut self,
+    command: RoasterCommand,
+    current_time: Instant,
+) -> Result<(), RoasterError> {
+    // Direct match on command type - 36+ branches
+    match command {
+        RoasterCommand::StopRoast => { ... }
+        RoasterCommand::SetHeaterManual(value) => { ... }
+        RoasterCommand::SetFanManual(value) => { ... }
+        // ... 30+ more variants
+        RoasterCommand::IncreaseHeater => { ... }
+        RoasterCommand::DecreaseHeater => { ... }
+        // ... more
+    }
+}
 ```
-Artisan Command (OT1 75)
-    ↓
-RoasterControl::handle_command()
-    ↓
-Heater::set_power(duty)         ← Trait abstraction
-    ↓
-SsrControlBase::set_percentage()
-    ↓
-PWM channel set_duty() + monitor_ledc_after_set()
-    ↓
-SystemStatus updated with hardware status
+
+Additionally, `process_artisan_command()` (lines 533-660) has another large match with ~15 branches.
+
+**v4.5 Solution:** The handler pattern already exists in `handlers.rs`:
+
+```rust
+// Current: handlers.rs already has the pattern we need
+pub struct TemperatureCommandHandler { ... }
+pub struct SafetyCommandHandler { ... }
+pub struct ArtisanCommandHandler { ... }
+pub struct SystemCommandHandler { ... }
+
+// roaster_refactored.rs already uses this pattern:
+let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
+    &mut self.safety_handler,
+    &mut self.temp_handler,
+    &mut self.artisan_handler,
+    &mut self.system_handler,
+];
+
+for handler in &mut handlers {
+    if handler.can_handle(command) {
+        return handler.handle_command(command, current_time, &mut self.status);
+    }
+}
 ```
 
-The refactoring preserves this flow; only the internal SSR implementation changes.
+**Refactoring Options:**
 
-### Test Flow with Shared Stubs
+| Option | Description | Trade-off |
+|--------|-------------|-----------|
+| A: Expand handler pattern | Use existing handlers for ALL commands | Requires adding more commands to handlers |
+| B: Command groups | Split into `process_roaster_command()` and `process_artisan_command()` | Better separation, less duplication |
+| C: Command enum optimization | Use `#[derive)]` macros for match exhaustiveness | Compile-time help, not runtime improvement |
 
-```
-Test
-    ↓
-Create StubHeater with configured behavior
-    ↓
-Inject into RoasterControl (or test component)
-    ↓
-Execute test actions
-    ↓
-Assert on StubHeater state / output channels
-    ↓
-reset_channels() for next test
-```
+**Recommended: Option A** — The handler chain already exists; just expand it to cover all commands rather than having special-case handling in `RoasterControl::process_command()`.
+
+**Integration Points:**
+
+| Component | File | Change Type |
+|-----------|------|-------------|
+| `RoasterControl::process_command()` | `src/control/roaster_refactored.rs` | Refactor — delegate ALL to handlers |
+| `RoasterControl::process_artisan_command()` | `src/control/roaster_refactored.rs` | Refactor — may integrate into main flow |
+| `TemperatureCommandHandler` | `src/control/handlers.rs` | May need more command coverage |
+| `ArtisanCommandHandler` | `src/control/handlers.rs` | May need more command coverage |
+
+**Commands to Migrate to Handlers:**
+
+Currently in `roaster_refactored.rs` direct handling:
+- `SetHeaterManual` — already in `ArtisanCommandHandler`
+- `SetFanManual` — already in `ArtisanCommandHandler`
+- `IncreaseHeater` — already in `ArtisanCommandHandler`
+- `DecreaseHeater` — already in `ArtisanCommandHandler`
+
+The main `process_command` already delegates properly. The task is verifying this pattern is complete.
 
 ---
 
 ## Build Order and Dependencies
 
-### Phase 1: SSR Refactoring
+### Phase 1: Verify v4.4 Foundation (No Changes)
 
-1. **Create `SsrControlBase`** in `src/hardware/ssr.rs`
-   - Move shared state fields from both structs
-   - Move `detect_heat_source()`, `periodic_check()`, `set_percentage()` implementations
-   - Move getter methods
+```bash
+# Verify SSR base structure
+cargo check --target riscv32
 
-2. **Refactor `SsrControlSimple`** to use base
-   - Replace inline implementation with delegation to base
-   - Keep `Heater` impl that calls
+# Verify test stubs exist
+cargo test --no-run
 
-3. **Refactor `SsrControl`** to use base
-   - Replace inline implementation with delegation to base base methods
-   - Keep enable pin storage (structural requirement)
-   - Keep `Heater` impl that calls base methods
+# Quick sanity check
+cargo check
+```
 
-4. **Verify compilation**
-   ```bash
-   cargo check --target riscv32
-   # host tests
-   cargo check
-   ```
+### Phase 2: Formatter Optimization
 
-5. **Run existing tests**
-   ```bash
-   cargo test
-   ```
+```bash
+# 1. Modify artisan.rs - replace Vec with [f32; 5]
+# 2. Update compute_ror_from_history signature
+# 3. Update update_bt_history logic
+# 4. Run unit tests
+cargo test artisan
 
-### Phase 2: Test Infrastructure
+# 5. Verify embedded build
+cargo check --target riscv32
+```
 
-1. **Create `tests/common/mod.rs`**
-   - Define `StubHeater`, `StubFan`, `StubThermometer`
-   - Include `reset_channels()`, `collect_output()` helpers
+### Phase 3: Test Infrastructure Usage
 
-2. **Migrate `ssr_monitor.rs` to use shared stubs**
-   - Remove inline `FakeDetectPin`, `FakeLedcChannel`
-   - Import from `tests_common`
+```bash
+# 1. Migrate ssr_monitor.rs to use tests/common/mod.rs
+# 2. Run tests
+cargo test ssr_monitor
 
-3. **Migrate other test files**
-   - Identify tests using inline stubs
-   - Refactor to use shared implementations
+# 3. Migrate remaining test files
+# 4. Full test suite
+cargo test
+```
 
-4. **Run full test suite**
-   ```bash
-   cargo test
-   ```
+### Phase 4: Command Processing Verification
+
+```bash
+# 1. Audit process_command for any remaining direct handling
+# 2. Ensure all commands go through handler chain
+# 3. Run integration tests
+cargo test --test artisan_integration_test
+
+# 4. Full test suite
+cargo test
+```
 
 ---
 
-## Component Summary
+## Integration Matrix
 
-### New Components
+### New vs Modified Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `SsrControlBase` | `src/hardware/ssr.rs` | Shared SSR state and logic |
-| `tests/common/mod.rs` | `tests/common/mod.rs` | Shared test stubs |
+| Component | Type | Reason |
+|-----------|------|--------|
+| `ArtisanFormatter.bt_history` | Modify | Vec → [f32; 5] |
+| `MutableArtisanFormatter.bt_history` | Modify | Vec → [f32; 5] |
+| `tests/common/mod.rs` | Existing | Use in more tests |
+| `tests/ssr_monitor.rs` | Modify | Use shared stubs |
+| `process_command()` | Verify | Ensure handler delegation complete |
 
-### Modified Components
-
-| Component | Change Type | Purpose |
-|-----------|-------------|---------|
-| `SsrControl` | Refactor | Delegate to base |
-| `SsrControlSimple` | Refactor | Delegate to base |
-| `tests/ssr_monitor.rs` | Refactor | Use shared stubs |
-| Other test files | Refactor | Use shared stubs |
-
-### Unchanged Components
+### Unchanged Components (Already Complete)
 
 | Component | Reason |
 |-----------|--------|
-| `Heater` trait | Already correct abstraction |
-| `RoasterControl` | Works with trait |
-| `ServiceContainer` | No SSR-specific changes needed |
+| `SsrControlBase` | v4.4 already complete |
+| `StatusGetters` trait | v4.4 already complete |
+| `HeatSourceDetector` trait | v4.4 already complete |
+| `PeriodicCheck` trait | v4.4 already complete |
+| `StubHeater`, `StubFan`, `StubThermometer` | v4.4 already complete |
+| Handler pattern (`RoasterCommandHandler`) | Already implemented |
 
 ---
 
@@ -296,31 +391,22 @@ reset_channels() for next test
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| SSR refactoring pattern | HIGH | Base struct pattern is well-established in Rust, no technical blockers |
-| Test infrastructure design | HIGH | Mirrors existing patterns in mock_uart.rs and mock_usb_driver.rs |
-| Integration with control layer | HIGH | Trait abstraction already in place, no changes needed |
-| Build order | HIGH | Clear dependency chain, can verify at each step |
-
----
-
-## Risks and Mitigations
-
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Breaking existing SSR behavior | Medium | Keep public API identical, verify all tests pass |
-| Trait method signature changes | Low | Heater trait is stable; base struct is internal |
-| Test migration effort | Low | Can do incrementally, verify after each file |
+| SSR refactoring (v4.4) | HIGH | Already complete, v4.5 may be verification |
+| Test infrastructure | HIGH | Stubs exist, integration is straightforward |
+| Formatter optimization | HIGH | Vec→array is well-understood pattern |
+| Command processing | HIGH | Handler pattern already exists |
 
 ---
 
 ## Sources
 
-- Current implementation: `src/hardware/ssr.rs` (lines 85-473)
-- Heater trait: `src/control/traits.rs` (lines 16-28)
-- RoasterControl usage: `src/control/roaster_refactored.rs` (lines 30-31, 64)
-- Mock patterns: `tests/mock_uart.rs`, `tests/mock_usb_driver.rs`
+- SSR implementation: `src/hardware/ssr.rs` (650 lines)
+- Test stubs: `tests/common/mod.rs` (317 lines)
+- Formatter: `src/output/artisan.rs` (603 lines)
+- Command processing: `src/control/roaster_refactored.rs` (722 lines)
+- Handler pattern: `src/control/handlers.rs` (471 lines)
 
 ---
 
-*Architecture research for: LibreRoaster v4.4 SSR Refactoring*  
-*Researched: 2026-02-24*
+*Architecture research for: LibreRoaster v4.5 Refactoring Tasks*  
+*Researched: 2026-02-28*

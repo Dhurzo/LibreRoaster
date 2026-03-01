@@ -13,7 +13,10 @@ mod target_impl {
 
     #[allow(unsafe_code)]
     mod fixture_catalog {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/max31856_sequences.rs"));
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/max31856_sequences.rs"
+        ));
     }
 
     static REGRESSION_TRIGGER: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
@@ -161,9 +164,9 @@ mod target_impl {
             let start = Instant::now();
 
             while Instant::now().duration_since(start) < duration {
-                if let Err(err) = ServiceContainer::get_instance().with_watchdog(|watchdog| {
-                    watchdog.feed_async(0.0)
-                }) {
+                if let Err(err) = ServiceContainer::get_instance()
+                    .with_watchdog(|watchdog| watchdog.feed_async(0.0))
+                {
                     warn!("Regression watchdog feed failed: {:?}", err);
                 }
 

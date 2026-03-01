@@ -2,61 +2,20 @@
 
 extern crate std;
 
+#[path = "common/mod.rs"]
+mod tests_common;
+
 use libreroaster::config::{ArtisanCommand, RoasterState, SsrHardwareStatus, SystemStatus};
-use libreroaster::control::traits::{Fan, Heater, Thermometer};
 use libreroaster::control::{RoasterControl, RoasterError};
 use libreroaster::output::artisan::ArtisanFormatter;
 use std::boxed::Box;
-
-#[derive(Default)]
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-#[derive(Default)]
-struct StubFan {
-    speed: f32,
-}
-
-impl Fan for StubFan {
-    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.speed = duty;
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct StubThermometer {
-    temp: f32,
-}
-
-impl Thermometer for StubThermometer {
-    fn read_temperature(&mut self) -> Result<f32, RoasterError> {
-        Ok(self.temp)
-    }
-}
+use tests_common::{build_test_control, StubFan, StubHeater};
 
 fn build_control() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }),
-        Box::new(StubFan::default()),
-    )
-    .expect("RoasterControl should build with stubs")
+    let heater = StubHeater::new();
+    heater.set_status(SsrHardwareStatus::Available);
+
+    build_test_control(Box::new(heater), Box::new(StubFan::new()))
 }
 
 #[test]

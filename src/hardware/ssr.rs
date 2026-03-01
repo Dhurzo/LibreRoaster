@@ -127,6 +127,50 @@ impl SsrControlBase {
             is_pwm_enabled: true,
         }
     }
+
+    /// Detect heat source using a closure to read the detection pin.
+    /// This eliminates duplicate code in SsrControl and SsrControlSimple.
+    pub fn detect_heat_source<F, E>(
+        &mut self,
+        current_time: u32,
+        mut read_pin: F,
+    ) -> Result<(), SsrError>
+    where
+        F: FnMut() -> Result<bool, E>,
+    {
+        match read_pin() {
+            Ok(is_detected) => {
+                let new_status = if is_detected {
+                    SsrHardwareStatus::Available
+                } else {
+                    SsrHardwareStatus::NotDetected
+                };
+
+                if new_status != self.hardware_status {
+                    match new_status {
+                        SsrHardwareStatus::Available => {
+                            info!("Heat source detected - SSR heating operational");
+                        }
+                        SsrHardwareStatus::NotDetected => {
+                            warn!("Heat source not detected - SSR commands work but no heat generated");
+                        }
+                        _ => {}
+                    }
+                    self.hardware_status = new_status;
+                }
+
+                self.last_detection_check = Some(current_time);
+                Ok(())
+            }
+            Err(_) => {
+                if self.hardware_status != SsrHardwareStatus::Error {
+                    error!("SSR detection pin error - switching to error state");
+                    self.hardware_status = SsrHardwareStatus::Error;
+                }
+                Err(SsrError::InputError)
+            }
+        }
+    }
 }
 
 impl StatusGetters for SsrControlBase {
@@ -211,38 +255,8 @@ where
     }
 
     fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
-        match self.detection_pin.is_low() {
-            Ok(is_detected) => {
-                let new_status = if is_detected {
-                    SsrHardwareStatus::Available
-                } else {
-                    SsrHardwareStatus::NotDetected
-                };
-
-                if new_status != self.base.hardware_status {
-                    match new_status {
-                        SsrHardwareStatus::Available => {
-                            info!("Heat source detected - SSR heating operational");
-                        }
-                        SsrHardwareStatus::NotDetected => {
-                            warn!("Heat source not detected - SSR commands work but no heat generated");
-                        }
-                        _ => {}
-                    }
-                    self.base.hardware_status = new_status;
-                }
-
-                self.base.last_detection_check = Some(current_time);
-                Ok(())
-            }
-            Err(_) => {
-                if self.base.hardware_status != SsrHardwareStatus::Error {
-                    error!("SSR detection pin error - switching to error state");
-                    self.base.hardware_status = SsrHardwareStatus::Error;
-                }
-                Err(SsrError::InputError)
-            }
-        }
+        self.base
+            .detect_heat_source(current_time, || self.detection_pin.is_low())
     }
 
     pub fn get_current_duty(&self) -> u16 {
@@ -327,38 +341,8 @@ where
     }
 
     fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
-        match self.detection_pin.is_low() {
-            Ok(is_detected) => {
-                let new_status = if is_detected {
-                    SsrHardwareStatus::Available
-                } else {
-                    SsrHardwareStatus::NotDetected
-                };
-
-                if new_status != self.base.hardware_status {
-                    match new_status {
-                        SsrHardwareStatus::Available => {
-                            info!("Heat source detected - SSR heating operational");
-                        }
-                        SsrHardwareStatus::NotDetected => {
-                            warn!("Heat source not detected - SSR commands work but no heat generated");
-                        }
-                        _ => {}
-                    }
-                    self.base.hardware_status = new_status;
-                }
-
-                self.base.last_detection_check = Some(current_time);
-                Ok(())
-            }
-            Err(_) => {
-                if self.base.hardware_status != SsrHardwareStatus::Error {
-                    error!("SSR detection pin error - switching to error state");
-                    self.base.hardware_status = SsrHardwareStatus::Error;
-                }
-                Err(SsrError::InputError)
-            }
-        }
+        self.base
+            .detect_heat_source(current_time, || self.detection_pin.is_low())
     }
 
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {

@@ -1,9 +1,9 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
+use crate::hardware::static_sync::SyncCell;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
-use crate::hardware::static_sync::SyncCell;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use crate::log_channel;
 use crate::logging::channel::Channel;

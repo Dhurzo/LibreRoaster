@@ -9,9 +9,9 @@ pub mod ledc_guard;
 pub mod max31856;
 pub mod sensors;
 pub mod shared_spi;
-pub mod static_sync;
 #[cfg(target_arch = "riscv32")]
 pub mod ssr;
+pub mod static_sync;
 pub mod uart;
 #[cfg(target_arch = "riscv32")]
 #[path = "usb_cdc/mod.rs"]

@@ -37,3 +37,6 @@ pub mod input;
 pub mod logging;
 pub mod output;
 pub mod safety;
+
+#[cfg(not(target_arch = "riscv32"))]
+pub mod common;

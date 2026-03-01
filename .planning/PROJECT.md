@@ -10,6 +10,37 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Current State
 
+v4.1 Documentation Update is shipped. The documentation backlog now matches the live code (pinouts, targets, build/test instructions), the watchdog/LEDC/regression instrumentation surfaces SAFETY telemetry, and automation hooks for REG/STATUS/STAT are linked directly from the README and instrumentation guide.
+
+- Verified CLN-01…OBS-03 through phases 62-69 and the audit evidence captured inside `.planning/milestones/v4.1-ROADMAP.md`.
+- WatchdogFeeder, LEDC guard, and OverTempTestRunner now report `SAFETY WATCHDOG`, `SAFETY LEDC-GUARD`, and `SAFETY OT-REGRESSION` while keeping `run_overtemp_regression` private behind `regression_task`.
+- README/FLASH_GUIDE/ARTISAN_CONNECTION now describe automated REG/STATUS/STAT wiring and point automation readers at `internalDoc/INSTRUMENTATION_README.MD`.
+
+## Next Milestone Goals
+
+- `/gsd-new-milestone` to define requirements for v4.2 Anti-windup integral (Phase 70+).
+- Harden the 100 ms control loop with anti-windup integration, derivative-on-measurement, deterministic sampling, and centralized MAX31856 conversion helpers.
+- Capture watchdog/guard telemetry plans, regression harness improvements, and automation hook verifications before shipping v4.2.
+
+<details>
+<summary>Previous project context</summary>
+
+## Current Milestone: v4.5 Alta Prioridad
+
+**Goal:** Complete SSR deduplication, unify test stubs, reduce allocations in formatter, and refactor process_artisan_command to use handler pattern.
+
+**Target features:**
+- Extract detect_heat_source() to SsrControlBase (trait default method or base implementation)
+- Migrate local test stubs from command_idempotence.rs, fan_serialization.rs, mock_uart_integration.rs to crate::common::*
+- Replace Vec<f32> BT history with heapless::Deque<f32, 5> and alloc::format! with core::write! in heapless::String
+- Refactor process_artisan_command() match (~100 lines) to delegate to ArtisanCommandHandler
+
+**Status:** In progress
+
+---
+
+## Current State
+
 v4.4 SSR Refactoring & Test Stubs is shipped. SsrControlBase extracted with ~90 lines of duplicated code eliminated, both SSR types now implement focused traits (HeatSourceDetector, PeriodicCheck, StatusGetters), and shared test stubs module created in tests/common/mod.rs.
 
 - Verified SSR-01, SSR-02, SSR-03, SSR-04, SSR-05, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05 requirements via the SSR refactoring and test infrastructure efforts.
@@ -136,7 +167,10 @@ v4.3 Code Cleanup is shipped. Documentation cleanup, instrumentation automation,
 
 ### Active
 
-(None — start `/gsd-new-milestone` to define v4.5 requirements)
+- [ ] SSR-06: Extract detect_heat_source() to SsrControlBase with trait default method or base implementation
+- [ ] TEST-06: Migrate local test stubs from command_idempotence.rs, fan_serialization.rs, mock_uart_integration.rs to crate::common::*
+- [ ] PERF-03: Replace Vec<f32> BT history with heapless::Deque<f32, 5> and alloc::format! with core::write! in heapless::String
+- [ ] REF-01: Refactor process_artisan_command() match (~100 lines) to delegate to ArtisanCommandHandler
 
 ### Out of Scope
 
@@ -285,4 +319,6 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 
 ---
 
-*Last updated: 2026-02-25 — v4.4 milestone shipped*
+*Last updated: 2026-02-28 — v4.5 milestone started*
+
+</details>

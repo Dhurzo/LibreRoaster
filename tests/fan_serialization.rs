@@ -2,13 +2,16 @@
 
 extern crate std;
 
-use libreroaster::config::{ArtisanCommand, RoasterState, SsrHardwareStatus, SystemStatus};
-use libreroaster::control::traits::{Fan, Heater, Thermometer};
+use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
+use libreroaster::control::traits::Fan;
 use libreroaster::control::{RoasterControl, RoasterError};
 use std::boxed::Box;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
+#[path = "common/mod.rs"]
+mod tests_common;
+use tests_common::{build_test_control, StubHeater};
 
 /// Thread-local tracking of guard state for serialization verification
 static GUARD_BUSY: AtomicBool = AtomicBool::new(false);
@@ -51,45 +54,12 @@ impl Fan for StubFanWithTracking {
     }
 }
 
-/// Stub heater with tracking
-#[derive(Default)]
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-#[derive(Default)]
-struct StubThermometer {
-    temp: f32,
-}
-
-impl Thermometer for StubThermometer {
-    fn read_temperature(&mut self) -> Result<f32, RoasterError> {
-        Ok(self.temp)
-    }
-}
-
 /// Build RoasterControl with tracking fan
 fn build_control_with_tracking_fan() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }),
+    build_test_control(
+        Box::new(StubHeater::new()),
         Box::new(StubFanWithTracking::new()),
     )
-    .expect("RoasterControl should build with stubs")
 }
 
 #[test]
