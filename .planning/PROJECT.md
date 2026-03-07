@@ -8,19 +8,23 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
+## Current Milestone: v5.0 Auditoria integral de calidad Rust
+
+**Goal:** Auditar y refactorizar de forma segura el firmware para eliminar codigo muerto, mejorar practicas Rust/SOLID y confirmar que el control de tostadora real via Artisan Scope sigue siendo viable.
+
+**Target features:**
+- Analisis completo del codigo para detectar y eliminar codigo muerto sin romper funcionalidad.
+- Refuerzo de buenas practicas de Rust en arquitectura, errores, ownership y limites de modulos.
+- Revision y ajuste de diseno para cumplir SOLID de manera razonable en un firmware embebido.
+- Verificacion del flujo de control real (Artisan Scope -> firmware -> actuadores) con criterios observables.
+
 ## Current State
 
-v4.1 Documentation Update is shipped. The documentation backlog now matches the live code (pinouts, targets, build/test instructions), the watchdog/LEDC/regression instrumentation surfaces SAFETY telemetry, and automation hooks for REG/STATUS/STAT are linked directly from the README and instrumentation guide.
+v4.5 Alta Prioridad esta en tramo final (fases 77-80), con SSR deduplication, test stubs compartidos y optimizacion de memoria ya entregados, y la migracion completa del handler pattern en cierre.
 
-- Verified CLN-01…OBS-03 through phases 62-69 and the audit evidence captured inside `.planning/milestones/v4.1-ROADMAP.md`.
-- WatchdogFeeder, LEDC guard, and OverTempTestRunner now report `SAFETY WATCHDOG`, `SAFETY LEDC-GUARD`, and `SAFETY OT-REGRESSION` while keeping `run_overtemp_regression` private behind `regression_task`.
-- README/FLASH_GUIDE/ARTISAN_CONNECTION now describe automated REG/STATUS/STAT wiring and point automation readers at `internalDoc/INSTRUMENTATION_README.MD`.
-
-## Next Milestone Goals
-
-- `/gsd-new-milestone` to define requirements for v4.2 Anti-windup integral (Phase 70+).
-- Harden the 100 ms control loop with anti-windup integration, derivative-on-measurement, deterministic sampling, and centralized MAX31856 conversion helpers.
-- Capture watchdog/guard telemetry plans, regression harness improvements, and automation hook verifications before shipping v4.2.
+- Fases 77-79 completadas y verificadas en `.planning/ROADMAP.md`.
+- Fase 80 en progreso, manteniendo compatibilidad de comandos Artisan existentes.
+- Base lista para iniciar el siguiente milestone de calidad integral (v5.0).
 
 <details>
 <summary>Previous project context</summary>
@@ -167,10 +171,11 @@ v4.3 Code Cleanup is shipped. Documentation cleanup, instrumentation automation,
 
 ### Active
 
-- [ ] SSR-06: Extract detect_heat_source() to SsrControlBase with trait default method or base implementation
-- [ ] TEST-06: Migrate local test stubs from command_idempotence.rs, fan_serialization.rs, mock_uart_integration.rs to crate::common::*
-- [ ] PERF-03: Replace Vec<f32> BT history with heapless::Deque<f32, 5> and alloc::format! with core::write! in heapless::String
-- [ ] REF-01: Refactor process_artisan_command() match (~100 lines) to delegate to ArtisanCommandHandler
+- [ ] QUAL-01: Identificar y catalogar codigo muerto por modulo con evidencia de uso/no-uso antes de eliminar
+- [ ] QUAL-02: Eliminar codigo muerto y rutas obsoletas manteniendo compatibilidad funcional y cobertura de pruebas
+- [ ] RUST-01: Aplicar mejoras de buenas practicas Rust en ownership, errores, API boundaries y consistencia en modulos
+- [ ] SOLID-01: Evaluar y ajustar componentes clave para cumplir SOLID de manera razonable en contexto embebido
+- [ ] HW-01: Verificar que Artisan Scope puede controlar una tostadora real usando este firmware y documentar evidencia
 
 ### Out of Scope
 
@@ -319,6 +324,6 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 
 ---
 
-*Last updated: 2026-02-28 — v4.5 milestone started*
+*Last updated: 2026-03-07 — v5.0 milestone started*
 
 </details>
