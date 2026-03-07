@@ -1,0 +1,135 @@
+{
+  "git_rev": "1eeac0210ea470c2908bc8a075730a8e1c81184f",
+  "git_branch": "feature/clean-up",
+  "toolchain": "stable-x86_64-unknown-linux-gnu",
+  "captured_at": "2026-03-07T12:48:11Z",
+  "inventory_timestamp": "20260307T124811Z",
+  "entries": [
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "struct `SyncPointer` is never constructed",
+      "rendered": "warning: struct `SyncPointer` is never constructed\n   --> src/hardware/usb_cdc/driver.rs:149:8\n    |\n149 | struct SyncPointer<T>(UnsafeCell<T>);\n    |        ^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/hardware/usb_cdc/driver.rs",
+        "line": 149,
+        "column": 8,
+        "label": null
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "associated items `new` and `get` are never used",
+      "rendered": "warning: associated items `new` and `get` are never used\n   --> src/hardware/usb_cdc/driver.rs:154:14\n    |\n153 | impl<T> SyncPointer<T> {\n    | ---------------------- associated items in this implementation\n154 |     const fn new(ptr: T) -> Self {\n    |              ^^^\n...\n158 |     fn get(&self) -> *mut T {\n    |        ^^^\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/hardware/usb_cdc/driver.rs",
+        "line": 153,
+        "column": 1,
+        "label": "associated items in this implementation"
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "associated function `compute_ror_from_history` is never used",
+      "rendered": "warning: associated function `compute_ror_from_history` is never used\n  --> src/output/artisan.rs:59:8\n   |\n29 | impl ArtisanFormatter {\n   | --------------------- associated function in this implementation\n...\n59 |     fn compute_ror_from_history(history: &[f32]) -> f32 {\n   |        ^^^^^^^^^^^^^^^^^^^^^^^^\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/output/artisan.rs",
+        "line": 29,
+        "column": 1,
+        "label": "associated function in this implementation"
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "function `create_test_status` is never used",
+      "rendered": "warning: function `create_test_status` is never used\n   --> src/control/handlers.rs:356:8\n    |\n356 |     fn create_test_status() -> SystemStatus {\n    |        ^^^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/control/handlers.rs",
+        "line": 356,
+        "column": 8,
+        "label": null
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "struct `SyncPointer` is never constructed",
+      "rendered": "warning: struct `SyncPointer` is never constructed\n   --> src/hardware/usb_cdc/driver.rs:149:8\n    |\n149 | struct SyncPointer<T>(UnsafeCell<T>);\n    |        ^^^^^^^^^^^\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/hardware/usb_cdc/driver.rs",
+        "line": 149,
+        "column": 8,
+        "label": null
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "associated items `new` and `get` are never used",
+      "rendered": "warning: associated items `new` and `get` are never used\n   --> src/hardware/usb_cdc/driver.rs:154:14\n    |\n153 | impl<T> SyncPointer<T> {\n    | ---------------------- associated items in this implementation\n154 |     const fn new(ptr: T) -> Self {\n    |              ^^^\n...\n158 |     fn get(&self) -> *mut T {\n    |        ^^^\n\n",
+      "target": "libreroaster",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "src/hardware/usb_cdc/driver.rs",
+        "line": 153,
+        "column": 1,
+        "label": "associated items in this implementation"
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "static `TEST_TIME_TICKS` is never used",
+      "rendered": "warning: static `TEST_TIME_TICKS` is never used\n  --> tests/mock_uart_integration.rs:38:8\n   |\n38 | static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);\n   |        ^^^^^^^^^^^^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\n",
+      "target": "mock_uart_integration",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "tests/mock_uart_integration.rs",
+        "line": 38,
+        "column": 8,
+        "label": null
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "struct `TestFixture` is never constructed",
+      "rendered": "warning: struct `TestFixture` is never constructed\n  --> tests/regression_status.rs:19:8\n   |\n19 | struct TestFixture {\n   |        ^^^^^^^^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\n",
+      "target": "regression_status",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "tests/regression_status.rs",
+        "line": 19,
+        "column": 8,
+        "label": null
+      }
+    },
+    {
+      "code": "dead_code",
+      "level": "warning",
+      "message": "function `advance_time` is never used",
+      "rendered": "warning: function `advance_time` is never used\n  --> tests/multiplexer_tests.rs:28:4\n   |\n28 | fn advance_time(seconds: u64) {\n   |    ^^^^^^^^^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\n",
+      "target": "multiplexer_tests",
+      "package": "path+file:///home/juan/Repos/LibreRoaster#libreroaster@0.1.0",
+      "span": {
+        "file": "tests/multiplexer_tests.rs",
+        "line": 28,
+        "column": 4,
+        "label": null
+      }
+    }
+  ]
+}
