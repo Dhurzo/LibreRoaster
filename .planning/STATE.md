@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 82 instrumentation for dead code cleanup and risk guidance.
+**Current focus:** Phase 82 dependency audit automation and allowlisted cleanup guidance.
 
 ## Current Position
 
 Phase: 82 of 85 (Dead Code and Dependency Cleanup)
-Plan: 1 of 3
+Plan: 3 of 3
 Status: In progress
-Last activity: 2026-03-07 — Completed 82-01-PLAN.md.
+Last activity: 2026-03-07 — Completed 82-03-PLAN.md
 
-Progress: [██████░░░░] 60%
+Progress: [██████████] 98% (117/119 plans complete)
 
 ## Performance Metrics
 
@@ -32,7 +32,7 @@ Progress: [██████░░░░] 60%
 | 79 | 5/5 | 5 | n/a |
 | 80 | 1/4 | 4 | in progress |
 | 81 | 3/3 | 3 | Phase complete |
-| 82 | 1/3 | 3 | In progress |
+| 82 | 3/3 | 3 | In progress |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
@@ -51,6 +51,9 @@ Progress: [██████░░░░] 60%
 - Ratchet updates require both version bump (semver) and human-readable changelog entry
 - Clippy-driven dead-code inventory now records Git/toolchain metadata plus a stable pointer for downstream automation.
 - Risk guidance now ties each high/medium/low bucket to specific inventory spans and required evidence before removal.
+- Run `cargo machete` with `--with-metadata --skip-target-dir` and gate on exit codes so the audit prints logs even when unused crates are reported.
+- Run `cargo +nightly udeps --quiet` after cleaning artifacts so duplicate-lang-item errors do not block the nightly audit.
+- Allowlist the crates that udeps flags today (`embassy-usb`, `embedded-hal-bus`, `embedded-io`, `libm`, `static_cell`) so every audit run can justify their retention.
 
 ### Pending Todos
 
@@ -63,6 +66,6 @@ Progress: [██████░░░░] 60%
 
 ## Session Continuity
 
-Last session: 2026-03-07T12:49:03Z
-Stopped at: Completed 82-01-PLAN.md (dead-code inventory + risk guidance)
+Last session: 2026-03-07T12:58:37Z
+Stopped at: Completed 82-03-PLAN.md
 Resume file: None
