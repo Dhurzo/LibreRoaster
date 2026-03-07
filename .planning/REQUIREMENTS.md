@@ -58,23 +58,23 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QG-01 | Phase TBD | Pending |
-| QG-02 | Phase TBD | Pending |
-| DC-01 | Phase TBD | Pending |
-| DC-02 | Phase TBD | Pending |
-| DC-03 | Phase TBD | Pending |
-| RUST-01 | Phase TBD | Pending |
-| RUST-02 | Phase TBD | Pending |
-| SOLID-01 | Phase TBD | Pending |
-| SOLID-02 | Phase TBD | Pending |
-| HW-01 | Phase TBD | Pending |
-| HW-02 | Phase TBD | Pending |
+| QG-01 | Phase 81 | Pending |
+| QG-02 | Phase 81 | Pending |
+| DC-01 | Phase 82 | Pending |
+| DC-02 | Phase 82 | Pending |
+| DC-03 | Phase 82 | Pending |
+| RUST-01 | Phase 83 | Pending |
+| RUST-02 | Phase 83 | Pending |
+| SOLID-01 | Phase 84 | Pending |
+| SOLID-02 | Phase 84 | Pending |
+| HW-01 | Phase 85 | Pending |
+| HW-02 | Phase 85 | Pending |
 
 **Coverage:**
 - v5.0 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-07*
-*Last updated: 2026-03-07 after milestone v5.0 scoping*
+*Last updated: 2026-03-07 after milestone v5.0 roadmap mapping*

@@ -2,7 +2,7 @@
 
 ## Overview
 
-v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requirements.)
+v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, Rust/SOLID refactoring discipline, and real-hardware validation without changing protocol semantics.
 
 ## Milestones
 
@@ -11,8 +11,83 @@ v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requireme
 - ✅ **v4.3 Code Cleanup** — Phases 73-74 (shipped 2026-02-24)
 - ✅ **v4.4 SSR Refactoring & Test Stubs** — Phases 75-76 (shipped 2026-02-25) — *[details](milestones/v4.4-ROADMAP.md)*
 - 🚧 **v4.5 Alta Prioridad** — Phases 77-80 (in progress)
+- 📋 **v5.0 Auditoria integral de calidad Rust** — Phases 81-85 (planned)
 
 ## Phases
+
+### 📋 v5.0 Auditoria integral de calidad Rust (Planned)
+
+**Milestone Goal:** Auditar y refactorizar el firmware de forma segura para eliminar codigo muerto, reforzar practicas Rust/SOLID y validar que el control real desde Artisan Scope sigue siendo viable.
+
+### Phase 81: Quality Baseline and Ratcheting Policy
+**Goal**: Users can run a reproducible quality gate baseline with module-criticality ratchets that tighten quality without blocking lower-risk work.
+**Depends on**: Phase 80
+**Requirements**: QG-01, QG-02
+**Success Criteria**:
+1. User can run one documented baseline command sequence and get deterministic pass/fail results for format, curated lint, and tests.
+2. User can see an explicit quality policy that applies stricter gates to safety/control/protocol modules before lower-risk modules.
+3. User can fail a gate intentionally and observe actionable output that identifies the failing module and policy rule.
+4. User can rerun gates after fixes and confirm policy ratchet behavior remains reproducible.
+**Plans**: TBD
+
+Plans:
+- [ ] 81-01 — To be defined
+
+### Phase 82: Dead Code and Dependency Cleanup
+**Goal**: Users can remove dead code and unused dependencies in controlled batches with evidence-backed safety and no behavior regressions.
+**Depends on**: Phase 81
+**Requirements**: DC-01, DC-02, DC-03
+**Success Criteria**:
+1. User can review a dead-code inventory by module with risk classification and evidence for why each candidate is safe or unsafe to remove.
+2. User can execute small-batch dead-code removals and verify no regressions via tests and baseline behavior checks.
+3. User can run dependency-audit workflow (`machete`/`udeps`) and see unused dependencies plus documented allowlisted exceptions.
+4. User can trace each removal batch to evidence artifacts that justify deletion decisions.
+**Plans**: TBD
+
+Plans:
+- [ ] 82-01 — To be defined
+
+### Phase 83: Rust Modernization and Unsafe Surface Audit
+**Goal**: Users can modernize Rust code mechanically while preserving behavior and maintaining clear justification for remaining unsafe surfaces.
+**Depends on**: Phase 82
+**Requirements**: RUST-01, RUST-02
+**Success Criteria**:
+1. User can run curated modernization passes (idioms/clippy/cargo-fix scope) and observe no protocol or control-flow behavior changes.
+2. User can compare before/after behavior checks and confirm outputs remain semantically equivalent for existing command flows.
+3. User can inspect an up-to-date unsafe surface register that lists active unsafe attributes/blocks with current justification and status.
+4. User can identify which unsafe cases were removed, retained, or narrowed after modernization.
+**Plans**: TBD
+
+Plans:
+- [ ] 83-01 — To be defined
+
+### Phase 84: SOLID Seam Hardening and Fault Injection
+**Goal**: Users can validate cleaner responsibility boundaries across handlers/hardware/control seams while preserving safety ordering under normal and faulted conditions.
+**Depends on**: Phase 83
+**Requirements**: SOLID-01, SOLID-02
+**Success Criteria**:
+1. User can observe that handler, hardware, and control responsibilities are separated at agreed high-value seams without breaking command behavior.
+2. User can run watchdog/guard/comms fault-injection scenarios and observe expected safe-system responses.
+3. User can verify safety/manual authority ordering remains intact after seam adjustments.
+4. User can confirm control-loop behavior remains stable under fault and recovery scenarios.
+**Plans**: TBD
+
+Plans:
+- [ ] 84-01 — To be defined
+
+### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
+**Goal**: Users can prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
+**Depends on**: Phase 84
+**Requirements**: HW-01, HW-02
+**Success Criteria**:
+1. User can review and apply numeric acceptance thresholds for command-to-actuator latency, response envelope, and safety counters.
+2. User can execute a real-hardware validation run where Artisan Scope commands drive roaster outputs through this firmware.
+3. User can compare measured run data against thresholds and determine pass/fail unambiguously.
+4. User can package validation evidence (logs/transcripts/measurements) suitable for milestone signoff.
+**Plans**: TBD
+
+Plans:
+- [ ] 85-01 — To be defined
 
 <details>
 <summary>🚧 v4.5 Alta Prioridad (In Progress)</summary>
@@ -128,15 +203,20 @@ v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requireme
 | 78    | v4.5      | 1/1   | Complete    | 2026-02-28 |
 | 79    | v4.5      | 5/5   | ✓ Complete | 2026-02-28 |
 | 80    | v4.5      | 1/4   | In progress | — |
+| 81    | v5.0      | 0/TBD | Not started | — |
+| 82    | v5.0      | 0/TBD | Not started | — |
+| 83    | v5.0      | 0/TBD | Not started | — |
+| 84    | v5.0      | 0/TBD | Not started | — |
+| 85    | v5.0      | 0/TBD | Not started | — |
 
 ---
 
 ## Coverage
 
-- **v4.5 requirements:** 4 total
-- **Mapped to phases:** 4 (100%)
+- **v5.0 requirements:** 11 total
+- **Mapped to phases:** 11 (100%)
 - **Unmapped:** 0
 
 ---
 
-*Ready for planning: `/gsd-plan-phase 77`*
+*Ready for planning: `/gsd-plan-phase 81`*
