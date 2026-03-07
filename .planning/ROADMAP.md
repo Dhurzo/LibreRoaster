@@ -41,15 +41,19 @@ Plans:
 **Goal**: Users can remove dead code and unused dependencies in controlled batches with evidence-backed safety and no behavior regressions.
 **Depends on**: Phase 81
 **Requirements**: DC-01, DC-02, DC-03
+**Status**: ✓ Complete (2026-03-07)
+**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/82-dead-code-and-dependency-cleanup/82-dead-code-and-dependency-cleanup-VERIFICATION.md
 **Success Criteria**:
 1. User can review a dead-code inventory by module with risk classification and evidence for why each candidate is safe or unsafe to remove.
 2. User can execute small-batch dead-code removals and verify no regressions via tests and baseline behavior checks.
 3. User can run dependency-audit workflow (`machete`/`udeps`) and see unused dependencies plus documented allowlisted exceptions.
 4. User can trace each removal batch to evidence artifacts that justify deletion decisions.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 82-01 — To be defined
+- [x] 82-01 — Establish dead-code inventory instrumentation and risk guidance ✓ COMPLETE
+- [x] 82-02 — Create removal batch workflow with verification evidence ✓ COMPLETE
+- [x] 82-03 — Automate dependency audits and allowlisted exceptions ✓ COMPLETE
 
 ### Phase 83: Rust Modernization and Unsafe Surface Audit
 **Goal**: Users can modernize Rust code mechanically while preserving behavior and maintaining clear justification for remaining unsafe surfaces.
@@ -208,7 +212,7 @@ Plans:
 | 79    | v4.5      | 5/5   | ✓ Complete | 2026-02-28 |
 | 80    | v4.5      | 1/4   | In progress | — |
 | 81    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
-| 82    | v5.0      | 0/TBD | Not started | — |
+| 82    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 83    | v5.0      | 0/TBD | Not started | — |
 | 84    | v5.0      | 0/TBD | Not started | — |
 | 85    | v5.0      | 0/TBD | Not started | — |

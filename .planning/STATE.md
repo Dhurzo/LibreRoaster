@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 82 dependency audit automation and allowlisted cleanup guidance.
+**Current focus:** Phase 82 verification and handover for dead-code + dependency cleanup.
 
 ## Current Position
 
 Phase: 82 of 85 (Dead Code and Dependency Cleanup)
 Plan: 3 of 3
-Status: In progress
-Last activity: 2026-03-07 — Completed 82-02-PLAN.md
+Status: Complete (verified)
+Last activity: 2026-03-07 — Phase 82 verified; 6/6 must-haves passed.
 
-Progress: [██████████] 99% (118/119 plans complete)
+Progress: [██████████] 100% (119/119 plans complete)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 15 (phase 82-01 added)
+- Total plans completed: 16 (phase 82 complete)
 - Average duration: mixed; recent phases include both quick gap-closures and deeper refactors
 - Total execution time: cumulative multi-milestone history (see roadmap progress table)
 
@@ -32,12 +32,12 @@ Progress: [██████████] 99% (118/119 plans complete)
 | 79 | 5/5 | 5 | n/a |
 | 80 | 1/4 | 4 | in progress |
 | 81 | 3/3 | 3 | Phase complete |
-| 82 | 3/3 | 3 | In progress |
+| 82 | 3/3 | 3 | Phase complete |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
 - v5.0 shifts execution focus from feature delivery to audit-grade quality hardening and hardware evidence.
-- Dead-code instrumentation and risk guidance are now feeding evidence into the cleanup workflow.
+- Dead-code instrumentation/removal gating plus dependency audits now have executable workflows backed by audit logs.
 
 ## Accumulated Context
 
@@ -58,7 +58,7 @@ Progress: [██████████] 99% (118/119 plans complete)
 ### Pending Todos
 
 - Complete remaining phase 80 plans (v4.5) while preserving Artisan command compatibility.
-- Phase 82 underway; next up is 82-03 (dependency audits and allowlisted exceptions).
+- Kick off Phase 83: Rust Modernization and Unsafe Surface Audit.
 
 ### Blockers/Concerns
 
@@ -66,6 +66,6 @@ Progress: [██████████] 99% (118/119 plans complete)
 
 ## Session Continuity
 
-Last session: 2026-03-07T13:06:06Z
-Stopped at: Completed 82-02-PLAN.md
+Last session: 2026-03-07T13:11:00Z
+Stopped at: Phase 82 verified (6/6 must-haves) — ready for Phase 83.
 Resume file: None

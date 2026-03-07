@@ -60,9 +60,9 @@
 |-------------|-------|--------|
 | QG-01 | Phase 81 | Complete |
 | QG-02 | Phase 81 | Complete |
-| DC-01 | Phase 82 | Pending |
-| DC-02 | Phase 82 | Pending |
-| DC-03 | Phase 82 | Pending |
+| DC-01 | Phase 82 | Complete |
+| DC-02 | Phase 82 | Complete |
+| DC-03 | Phase 82 | Complete |
 | RUST-01 | Phase 83 | Pending |
 | RUST-02 | Phase 83 | Pending |
 | SOLID-01 | Phase 84 | Pending |
