@@ -7,8 +7,8 @@
 
 ### Quality Gates
 
-- [ ] **QG-01**: User can rely on a reproducible quality baseline (`cargo fmt --check`, curated `clippy`, and test gates) with explicit pass/fail policy.
-- [ ] **QG-02**: User can enforce a ratcheting quality policy by module criticality (safety/control/protocol first) without blocking lower-risk modules initially.
+- [x] **QG-01**: User can rely on a reproducible quality baseline (`cargo fmt --check`, curated `clippy`, and test gates) with explicit pass/fail policy.
+- [x] **QG-02**: User can enforce a ratcheting quality policy by module criticality (safety/control/protocol first) without blocking lower-risk modules initially.
 
 ### Dead Code
 
@@ -58,8 +58,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QG-01 | Phase 81 | Pending |
-| QG-02 | Phase 81 | Pending |
+| QG-01 | Phase 81 | Complete |
+| QG-02 | Phase 81 | Complete |
 | DC-01 | Phase 82 | Pending |
 | DC-02 | Phase 82 | Pending |
 | DC-03 | Phase 82 | Pending |
