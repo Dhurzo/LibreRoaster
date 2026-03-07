@@ -1,51 +1,80 @@
-# Requirements: LibreRoaster v4.5
-> ✅ v4.1 Documentation Update requirements archived to `.planning/milestones/v4.1-REQUIREMENTS.md`. The section below now tracks the active v4.5 goals.
+# Requirements: LibreRoaster v5.0
 
-**Defined:** 2026-02-28
+**Defined:** 2026-03-07
 **Core Value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## v4.5 Requirements
+## v5.0 Requirements
 
-### SSR Deduplication
+### Quality Gates
 
-- [x] **SSR-06**: Extract detect_heat_source() method from SsrControl and SsrControlSimple into SsrControlBase as trait default method or base implementation, eliminating ~30 lines of duplicate code
+- [ ] **QG-01**: User can rely on a reproducible quality baseline (`cargo fmt --check`, curated `clippy`, and test gates) with explicit pass/fail policy.
+- [ ] **QG-02**: User can enforce a ratcheting quality policy by module criticality (safety/control/protocol first) without blocking lower-risk modules initially.
 
-### Test Infrastructure
+### Dead Code
 
-- [x] **TEST-06**: Migrate StubHeater, StubFan, StubThermometer from tests/common/mod.rs to src/common/mod.rs with pub(crate) visibility, enabling library code to use them
+- [ ] **DC-01**: User can review a module-by-module dead code inventory with risk level and evidence of use/non-use before removals.
+- [ ] **DC-02**: User can remove dead code in small batches and verify no functional regressions through tests and behavior checks.
+- [ ] **DC-03**: User can identify and clean unused dependencies through a controlled `machete`/`udeps` workflow with an explicit allowlist for intentional exceptions.
 
-### Memory Optimization
+### Rust Best Practices
 
-- [x] **PERF-03**: Replace Vec<f32> BT history in ArtisanFormatter with heapless::Deque<f32, 5> and replace alloc::format! with core::write! in heapless::String, eliminating heap allocation in hot path
+- [ ] **RUST-01**: User can apply mechanical Rust modernization (idioms/clippy/cargo-fix curated pass) with no observable semantic behavior change.
+- [ ] **RUST-02**: User can audit active `unsafe` attributes/surfaces and maintain updated justification/status for each remaining case.
 
-### Handler Pattern
+### SOLID (Pragmatic)
 
-- [x] **REF-01**: Refactor process_artisan_command() match statement (~125 lines in roaster_refactored.rs) to delegate to ArtisanCommandHandler following existing RoasterCommandHandler trait pattern from handlers.rs
+- [ ] **SOLID-01**: User can improve separation of responsibilities at high-value seams (handlers/hardware/control boundaries) while preserving safety ordering and loop behavior.
+- [ ] **SOLID-02**: User can run fault-injection scenarios for watchdog/guard/comms paths and verify expected safe behavior.
+
+### Hardware Real Validation
+
+- [ ] **HW-01**: User can define numeric acceptance thresholds for real control behavior (command-to-actuator latency, response envelope, safety counters).
+- [ ] **HW-02**: User can validate on real hardware that Artisan Scope controls a real roaster with this firmware within the defined thresholds.
+
+## Future Requirements (Deferred)
+
+### Rust Best Practices
+
+- **RUST-03**: User can normalize cross-module error taxonomy and boundary contracts for all major subsystems.
+
+### SOLID (Pragmatic)
+
+- **SOLID-03**: User can use an end-to-end traceability matrix (`command -> queue -> actuator -> telemetry -> guard`) for regression triage.
+
+### Hardware Real Validation
+
+- **HW-03**: User can run artifact-backed HIL scenarios with golden outputs and retention policy for release audits.
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Adding new Artisan commands | Beyond refactoring scope |
-| PID control implementation | Not part of v4.5 |
-| Binary size reduction beyond heapless | Current size acceptable |
-| WiFi/Web UI | Long-term roadmap |
+| Big-bang architecture rewrite for strict SOLID purity | High regression risk in safety-critical runtime paths |
+| Enabling all strict clippy groups globally in one pass | Excessive churn/noise for brownfield hardening milestone |
+| Protocol semantic redesign during v5.0 | Would mix behavior change with hardening and blur regressions |
+| Full hardware lab orchestration platform | Too large for this milestone; deferred after pragmatic HIL path |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PERF-03 | Phase 77 | Complete |
-| SSR-06 | Phase 78 | Complete |
-| TEST-06 | Phase 79 | Complete |
-| REF-01 | Phase 80 | Complete |
+| QG-01 | Phase TBD | Pending |
+| QG-02 | Phase TBD | Pending |
+| DC-01 | Phase TBD | Pending |
+| DC-02 | Phase TBD | Pending |
+| DC-03 | Phase TBD | Pending |
+| RUST-01 | Phase TBD | Pending |
+| RUST-02 | Phase TBD | Pending |
+| SOLID-01 | Phase TBD | Pending |
+| SOLID-02 | Phase TBD | Pending |
+| HW-01 | Phase TBD | Pending |
+| HW-02 | Phase TBD | Pending |
 
 **Coverage:**
-- v4.5 requirements: 4 total
-- Mapped to phases: 4
-- Unmapped: 0
-- **Verification:** REF-01 verified 3/3 must-haves via `.planning/phases/80-handler-pattern/80-VERIFICATION.md` after targeted handler-path tests.
+- v5.0 requirements: 11 total
+- Mapped to phases: 0
+- Unmapped: 11
 
 ---
-*Requirements defined: 2026-02-28*
-*Last updated: 2026-02-28 after phase 77 completion*
+*Requirements defined: 2026-03-07*
+*Last updated: 2026-03-07 after milestone v5.0 scoping*
