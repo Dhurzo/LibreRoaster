@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 81 planning for v5.0 quality baseline and ratcheting policy.
+**Current focus:** Phase 82 instrumentation for dead code cleanup and risk guidance.
 
 ## Current Position
 
-Phase: 81 of 85 (Quality Baseline and Ratcheting Policy)
-Plan: 3 of 3
-Status: Complete (verified)
-Last activity: 2026-03-07 — Phase 81 verified; 7/7 must-haves passed.
+Phase: 82 of 85 (Dead Code and Dependency Cleanup)
+Plan: 1 of 3
+Status: In progress
+Last activity: 2026-03-07 — Completed 82-01-PLAN.md.
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
-**Velocity:**
-- Total plans completed: 14 (phase 81-01 added)
+- **Velocity:**
+- Total plans completed: 15 (phase 82-01 added)
 - Average duration: mixed; recent phases include both quick gap-closures and deeper refactors
 - Total execution time: cumulative multi-milestone history (see roadmap progress table)
 
@@ -32,10 +32,12 @@ Progress: [██████████] 100%
 | 79 | 5/5 | 5 | n/a |
 | 80 | 1/4 | 4 | in progress |
 | 81 | 3/3 | 3 | Phase complete |
+| 82 | 1/3 | 3 | In progress |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
 - v5.0 shifts execution focus from feature delivery to audit-grade quality hardening and hardware evidence.
+- Dead-code instrumentation and risk guidance are now feeding evidence into the cleanup workflow.
 
 ## Accumulated Context
 
@@ -47,11 +49,13 @@ Progress: [██████████] 100%
 - Tiered enforcement: T1 blocks (safety/control/protocol), T2/T3 informational for gradual ratcheting
 - Policy-first quality: Define contract (QG-POLICY v1.0.0) before automation
 - Ratchet updates require both version bump (semver) and human-readable changelog entry
+- Clippy-driven dead-code inventory now records Git/toolchain metadata plus a stable pointer for downstream automation.
+- Risk guidance now ties each high/medium/low bucket to specific inventory spans and required evidence before removal.
 
 ### Pending Todos
 
 - Complete remaining phase 80 plans (v4.5) while preserving Artisan command compatibility.
-- Phase 81 complete - ready for Phase 82: Dead Code and Dependency Cleanup
+- Phase 82 underway; next up is 82-02 (dead-code removal workflow with evidence tracing).
 
 ### Blockers/Concerns
 
@@ -59,6 +63,6 @@ Progress: [██████████] 100%
 
 ## Session Continuity
 
-Last session: 2026-03-07
-Stopped at: Completed 81-03-PLAN.md (intentional failure drills - phase complete)
+Last session: 2026-03-07T12:49:03Z
+Stopped at: Completed 82-01-PLAN.md (dead-code inventory + risk guidance)
 Resume file: None
