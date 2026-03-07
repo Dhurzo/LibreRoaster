@@ -28,10 +28,12 @@ v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, R
 2. User can see an explicit quality policy that applies stricter gates to safety/control/protocol modules before lower-risk modules.
 3. User can fail a gate intentionally and observe actionable output that identifies the failing module and policy rule.
 4. User can rerun gates after fixes and confirm policy ratchet behavior remains reproducible.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 81-01 — To be defined
+- [x] 81-01-PLAN.md — Define versioned quality policy artifacts, tier mapping, and ratchet governance ✓ COMPLETE
+- [ ] 81-02-PLAN.md — Implement deterministic baseline orchestrator with policy-aware compact reporting
+- [ ] 81-03-PLAN.md — Add intentional-failure selfcheck fixtures and fail/rerun reproducibility drill
 
 ### Phase 82: Dead Code and Dependency Cleanup
 **Goal**: Users can remove dead code and unused dependencies in controlled batches with evidence-backed safety and no behavior regressions.
@@ -203,7 +205,7 @@ Plans:
 | 78    | v4.5      | 1/1   | Complete    | 2026-02-28 |
 | 79    | v4.5      | 5/5   | ✓ Complete | 2026-02-28 |
 | 80    | v4.5      | 1/4   | In progress | — |
-| 81    | v5.0      | 0/TBD | Not started | — |
+| 81    | v5.0      | 1/3   | In progress | 2026-03-07 |
 | 82    | v5.0      | 0/TBD | Not started | — |
 | 83    | v5.0      | 0/TBD | Not started | — |
 | 84    | v5.0      | 0/TBD | Not started | — |

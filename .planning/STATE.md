@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 81 of 85 (Quality Baseline and Ratcheting Policy)
-Plan: 0 of TBD
-Status: Ready to plan
-Last activity: 2026-03-07 — v5.0 roadmap created (phases 81-85) with full requirement mapping.
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-03-07 — Completed 81-01-PLAN.md (quality baseline policy artifacts)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [░░░░░░░░░░] 1%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13 (phases 77-79 completed; phase 80 in progress)
+- Total plans completed: 14 (phase 81-01 added)
 - Average duration: mixed; recent phases include both quick gap-closures and deeper refactors
 - Total execution time: cumulative multi-milestone history (see roadmap progress table)
 
@@ -31,6 +31,7 @@ Progress: [░░░░░░░░░░] 0%
 | 78 | 1/1 | 1 | n/a |
 | 79 | 5/5 | 5 | n/a |
 | 80 | 1/4 | 4 | in progress |
+| 81 | 1/3 | 3 | in progress |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
@@ -43,11 +44,14 @@ Progress: [░░░░░░░░░░] 0%
 - v5.0 is structured as five dependency-ordered phases: quality baseline, dead-code cleanup, Rust modernization, SOLID seam hardening, and real-hardware validation.
 - Requirement coverage is strict: each v5.0 requirement maps to exactly one phase (11/11, no duplicates).
 - Hardware signoff is gated by explicit numeric thresholds before real-roaster validation execution.
+- Tiered enforcement: T1 blocks (safety/control/protocol), T2/T3 informational for gradual ratcheting
+- Policy-first quality: Define contract (QG-POLICY v1.0.0) before automation
+- Ratchet updates require both version bump (semver) and human-readable changelog entry
 
 ### Pending Todos
 
 - Complete remaining phase 80 plans (v4.5) while preserving Artisan command compatibility.
-- Start `/gsd-plan-phase 81` to detail baseline gates and ratcheting policy.
+- Execute remaining phase 81 plans (81-02 baseline orchestrator, 81-03 reproducibility drills)
 
 ### Blockers/Concerns
 
@@ -56,5 +60,5 @@ Progress: [░░░░░░░░░░] 0%
 ## Session Continuity
 
 Last session: 2026-03-07
-Stopped at: v5.0 roadmap creation complete; next action is phase 81 planning.
+Stopped at: Completed 81-01-PLAN.md (quality baseline policy artifacts)
 Resume file: None
