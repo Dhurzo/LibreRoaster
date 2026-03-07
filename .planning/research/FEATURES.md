@@ -1,202 +1,136 @@
-# Feature Research: v4.5 Refactoring Tasks
+# Feature Research: LibreRoaster v5.0 Quality Hardening
 
-**Domain:** Embedded Firmware Refactoring (ESP32-C3 Coffee Roaster)
-**Researched:** 2026-02-28
-**Project:** LibreRoaster v4.5 - SSR deduplication continuation from v4.4
-**Confidence:** HIGH (codebase verified)
+**Domain:** Brownfield embedded Rust firmware quality hardening (coffee roaster controller)
+**Researched:** 2026-03-07
+**Project:** LibreRoaster v5.0
+**Confidence:** MEDIUM-HIGH
 
----
+## Feature Landscape
 
-## Executive Summary
+### Table Stakes (Must Have)
 
-This document analyzes the four refactoring tasks specified for v4.5. Unlike typical feature work, these are code quality improvements that:
+These are expected in a mature embedded Rust firmware hardening milestone. Missing these usually leads to recurring defects, slower onboarding, and unsafe refactors.
 
-- Eliminate duplication in SSR control
-- Improve test infrastructure accessibility
-- Remove heap allocations from hot paths
-- Extend existing handler pattern to Artisan commands
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Quality gate baseline (lint + formatting + fail policy)** | Mature Rust firmware teams codify baseline quality gates (`cargo fmt --check`, clippy sets, warning policy) so quality is enforced continuously, not by manual review. | MEDIUM | Dependencies: host/integration tests already in place; dual-channel queue + control modules must compile under stricter lints. Behavior in brownfield: start warn-only per module, then ratchet to deny in CI. |
+| **Codebase audit inventory (module ownership + risk map)** | Brownfield hardening needs an explicit map of hot paths, unsafe-adjacent areas, and stale modules before deleting/refactoring code. | MEDIUM | Dependencies: existing Artisan protocol processing, safety instrumentation, SSR/fan control, and queue processing paths. Behavior: inventory first, edits second. |
+| **Dead code elimination workflow (not one-shot deletion)** | Mature teams treat dead code removal as a pipeline: compiler lint signals, dependency-level checks, then behavior-preserving removals with test/hardware verification. | MEDIUM | Dependencies: existing host/integration tests are the first safety net; real-hardware validation is the second. Use `dead_code` lint + `cargo +nightly udeps` for unused dependencies, with explicit allowlist for intentional dormant items. |
+| **Rust best-practices uplift pass** | Brownfield firmware accumulates style and API drift. A structured uplift (`cargo fix`, edition idioms, clippy cleanup, error/context normalization) is table stakes for maintainability. | MEDIUM | Dependencies: all existing feature areas, especially protocol handlers and safety reporting. Behavior: prefer mechanical transforms first, then semantic cleanups. |
+| **Pragmatic SOLID alignment at hardware seams** | In embedded Rust, SOLID is expected mainly at boundaries (drivers, control strategies, command handlers), not as strict OO purity across all modules. | HIGH | Dependencies: existing SSR/Fan architecture, command processing handlers, dual-channel comm abstractions. Behavior: extract traits where hardware swap/testing needs it; avoid architecture churn in proven loops. |
+| **Hardware realism validation path (HIL smoke path)** | Mature firmware hardening does not stop at host tests. It defines a repeatable path where host tooling (Artisan Scope) drives a real roaster and validates telemetry + safety invariants. | HIGH | Dependencies: Artisan protocol + telemetry output, watchdog/guard reporting, queue processing, SSR/Fan control loop. Behavior: scripted scenario set with pass/fail thresholds and rollback criteria. |
 
-Each task has clear technical outcomes and bounded scope.
+### Differentiators (Engineering Advantage)
 
----
+These are not strictly required for v5.0 completion, but they materially improve reliability velocity and auditability.
 
-## Table Stakes (Must Achieve)
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **Ratcheting lint policy by module criticality** | Lets the team harden critical safety/control modules first without blocking lower-risk areas; improves adoption vs. all-at-once deny policies. | MEDIUM | Start with safety + control + protocol modules; expand to full workspace after warning burn-down. |
+| **Traceability matrix: command -> queue -> actuator -> telemetry -> guard events** | Makes regressions explainable and shortens incident triage when behavior differs between host tests and hardware runs. | HIGH | Builds on existing dual-channel communication and telemetry instrumentation. |
+| **Artifact-backed HIL runs (scenario scripts + golden outputs)** | Converts hardware testing from tribal/manual process into repeatable evidence suitable for release gates and future regressions. | HIGH | Pair Artisan Scope scenario files with expected telemetry/safety envelopes and retain run artifacts per release. |
+| **Fault-injection hardening scenarios** | Competitive reliability gain: validates watchdog/guard behavior under dropped messages, queue pressure, and sensor anomalies before field exposure. | HIGH | Depends directly on existing watchdog/guard reporting and queue processing architecture. |
 
-Essential outcomes for v4.5 to be considered successful. These are refactoring prerequisites.
+### Anti-Features (Deliberately Avoid)
 
-| Refactoring | Expected Outcome | Complexity | Dependencies |
-|-------------|------------------|------------|--------------|
-| **Task 1: Extract detect_heat_source() to SsrControlBase** | Eliminates ~30 lines of duplicate code. Both `SsrControl` (lines 213-246) and `SsrControlSimple` (lines 329-362) have identical implementations. Moving to `SsrControlBase` removes duplication. | LOW | None - pure extraction |
-| **Task 2: Migrate test stubs to crate::common::*** | Stubs (`StubHeater`, `StubFan`, `StubThermometer`) move from `tests/common/mod.rs` to `src/common/mod.rs`. Makes stubs accessible to library code for mocking in integration tests. | LOW | None - structural change |
-| **Task 3: Replace Vec<f32> with heapless::Deque<f32, 5>** | `ArtisanFormatter.bt_history` uses fixed-size deque. Current code at artisan.rs:51-55 manually manages 5-element sliding window with Vec (calls `remove(0)` which is O(n)). Deque does this in O(1). | LOW | None - drop-in replacement |
-| **Task 4: Refactor process_artisan_command() to handler pattern** | Large match statement (roaster_refactored.rs:533-657, ~125 lines) extracted to handler structs. Uses existing `RoasterCommandHandler` trait pattern from `handlers.rs`. | MEDIUM | Requires extending handlers.rs pattern |
+These are common quality-hardening traps in brownfield firmware.
 
----
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **Big-bang architecture rewrite for "perfect SOLID"** | Looks like the fastest route to clean design. | High regression risk in control/safety loops; burns schedule on structural churn rather than defect removal. | Incremental seam extraction at high-leverage boundaries only. |
+| **Enable all strict clippy groups globally on day one** | Signals rigor quickly. | `pedantic`/`restriction` contain intentionally noisy rules; creates churn and team fatigue, especially in legacy modules. | Curated lint profile with documented allowlist and ratchet plan. |
+| **Delete anything flagged as unused without runtime validation** | Appears to reduce complexity fast. | Firmware often has conditionally used paths (feature flags, board-specific, recovery flows). Blind deletion can break field behavior. | Two-stage deletion: static signal + scenario verification (tests + HIL). |
+| **Overbuild a full hardware lab orchestration platform in v5.0** | Promise of perfect automated realism. | Tooling scope can eclipse the hardening objective. | Keep a pragmatic scripted HIL path first; automate further in follow-up milestone. |
+| **Refactor public protocol semantics during hardening** | Tempting to "clean up" protocol while touching handlers. | Changes external behavior and muddies regression attribution for quality milestone. | Freeze protocol semantics; harden implementation, tests, and observability only. |
 
-## Differentiators (Value-Adding Improvements)
+## Feature Dependencies
 
-Benefits beyond basic refactoring - nice-to-have outcomes.
+```text
+Existing foundation (already built):
+  Artisan command processing + telemetry
+  Safety instrumentation + watchdog/guard reporting
+  Dual-channel communications + queue processing
+  SSR/Fan control architecture + host/integration tests
 
-| Refactoring | Value Proposition | Complexity | Notes |
-|-------------|-------------------|------------|-------|
-| **detect_heat_source extraction** | Enables unified periodic health check across SSR implementations. Future: consistent timing logic. | LOW | Adds `HeatSourceDetector` trait to base |
-| **crate::common migration** | Enables doctests and example binaries to use stubs. Better documentation through runnable examples. | LOW | Requires `pub(crate)` visibility |
-| **heapless::Deque** | Zero-allocation, no_std compatible. Paves way for `#![no_std]` builds. Cargo.toml already has heapless v0.9.2. | LOW | Matches 5-element window in current code |
-| **Handler pattern for ArtisanCommand** | Individual handlers testable in isolation. Enables future middleware (logging, rate limiting). | MEDIUM | Follows existing RoasterCommandHandler pattern |
+[Quality gate baseline]
+    └──enables──> [Dead code elimination workflow]
+    └──enables──> [Best-practices uplift pass]
 
----
+[Best-practices uplift pass]
+    └──enables──> [Pragmatic SOLID seam extraction]
 
-## Anti-Features (What NOT To Do)
+[Dead code elimination workflow]
+    └──requires──> [Host/integration test coverage confidence]
+    └──requires──> [Hardware realism validation path]
 
-Common mistakes during these refactorings - avoid these approaches.
-
-| Anti-Pattern | Why Problematic | Correct Approach |
-|--------------|-----------------|------------------|
-| **Adding new functionality during refactoring** | Scope creep. v4.5 should only refactor existing code. | Complete extraction first, new features in separate milestones |
-| **Changing public API signatures** | Breaks existing callers. v4.5 must be drop-in replacement. | Preserve trait bounds and method signatures |
-| **Replacing Vec<f32> with Deque<f32, N> where N != 5** | Current code explicitly manages 5-element window. Different capacity changes semantics. | Use `Deque<f32, 5>` to match current sliding window |
-| **Creating new handler trait for ArtisanCommand** | Already has `RoasterCommandHandler` in handlers.rs. Duplication. | Extend existing trait with ArtisanCommand variants |
-| **Moving stubs without pub visibility** | Must be `pub(crate)` to be usable across modules. | Ensure `pub(crate)` visibility in src/common/mod.rs |
-
----
-
-## Refactoring Dependencies
-
-```
-[Task 3: heapless::Deque]
-    └── No dependencies - pure replacement
-
-[Task 1: detect_heat_source extraction]
-    └── No dependencies - pure extraction
-
-[Task 2: crate::common migration]
-    └── No dependencies - structural change
-
-[Task 4: handler pattern refactor]
-        └── optional──> [Task 1: detect_heat_source] (if handler needs heat source detection)
-        └── optional──> [Task 2: crate::common] (if new tests need stubs)
+[Hardware realism validation path]
+    └──requires──> [Artisan protocol + telemetry]
+    └──requires──> [Safety/watchdog instrumentation]
+    └──requires──> [Dual-channel queue correctness]
+    └──requires──> [SSR/Fan control behavior]
 ```
 
 ### Dependency Notes
 
-- **Tasks 1-3 are independent** - can be completed in any order
-- **Task 4 (handler pattern)** has optional dependencies on Tasks 1 and 2
-- **No blocking dependencies** - all four can proceed in parallel
+- **Dead code elimination depends on both test tiers:** host/integration tests catch immediate regressions, while real-hardware runs catch timing/actuation edge cases not visible in host-only tests.
+- **SOLID alignment depends on existing architecture seams:** most value comes from tightening current boundaries (handlers, hardware traits), not adding new abstraction layers.
+- **Hardware realism is an end-to-end dependency consumer:** it validates all existing core features together and should be the acceptance gate for hardening changes touching control or safety paths.
 
----
+## MVP Recommendation (v5.0)
 
-## Current vs Expected State
+Prioritize these for milestone completion:
 
-### Task 1: detect_heat_source()
+1. **Quality gate baseline + ratchet policy** - establish enforceable standards and prevent quality backsliding.
+2. **Codebase audit + dead code elimination workflow** - reduce maintenance drag without blind deletions.
+3. **Best-practices uplift + targeted SOLID seam alignment** - improve maintainability in high-change/high-risk modules.
+4. **Hardware realism validation path with Artisan Scope** - verify hardening on real roaster behavior before closeout.
 
-| Aspect | Current (v4.4) | Expected (v4.5) |
-|--------|---------------|-----------------|
-| Implementation count | 2 (SsrControl, SsrControlSimple) | 1 (SsrControlBase) |
-| Lines duplicated | ~30 lines | 0 lines |
-| Trait usage | HeatSourceDetector trait exists | Base struct implements directly |
+Defer to post-v5.0:
 
-### Task 2: Test stubs location
+- **Fully automated lab orchestration** - valuable, but beyond pragmatic scope for first hardening release.
+- **Global strict lint saturation in one pass** - adopt through ratcheting once top-risk modules stabilize.
 
-| Aspect | Current (v4.4) | Expected (v4.5) |
-|--------|---------------|-----------------|
-| Module path | `tests/common/mod.rs` | `src/common/mod.rs` |
-| Visibility | test-only | `pub(crate)` |
-| Usable from library | No | Yes |
+## Feature Prioritization Matrix
 
-### Task 3: bt_history type
+| Feature | User/Engineering Value | Implementation Cost | Priority |
+|---------|-------------------------|---------------------|----------|
+| Quality gate baseline + ratchet | HIGH | MEDIUM | P1 |
+| Audit + dead code elimination workflow | HIGH | MEDIUM | P1 |
+| Hardware realism validation path (HIL smoke) | HIGH | HIGH | P1 |
+| Best-practices uplift pass | HIGH | MEDIUM | P1 |
+| Pragmatic SOLID seam alignment | MEDIUM-HIGH | HIGH | P2 |
+| Fault-injection scenario suite | MEDIUM-HIGH | HIGH | P2 |
+| Full lab automation platform | MEDIUM | HIGH | P3 |
 
-| Aspect | Current (v4.4) | Expected (v4.5) |
-|--------|---------------|-----------------|
-| Type | `Vec<f32>` | `heapless::Deque<f32, 5>` |
-| Allocation | Heap (dynamic) | Stack (fixed) |
-| Remove(0) complexity | O(n) | O(1) amortized |
-
-### Task 4: process_artisan_command()
-
-| Aspect | Current (v4.4) | Expected (v4.5) |
-|--------|---------------|-----------------|
-| Implementation | 125-line match in RoasterControl | Handler structs delegating |
-| Testability | Requires full RoasterControl | Handlers testable in isolation |
-| Extensibility | Modify large function | Add new handler |
-
----
-
-## MVP Definition (v4.5 Scope)
-
-### Must Complete
-
-- [ ] **Task 1:** `detect_heat_source()` extracted to SsrControlBase - no duplicate implementations
-- [ ] **Task 2:** Test stubs migrated to `crate::common::*` with `pub(crate)` visibility
-- [ ] **Task 3:** No `Vec<f32>` in artisan.rs, uses `heapless::Deque<f32, 5>`
-- [ ] **Task 4:** `process_artisan_command()` delegates to handler structs
-
-### Completion Criteria
-
-Each refactoring is complete when:
-
-1. **Task 1:** Both `SsrControl` and `SsrControlSimple` call base implementation - verify no duplicate `detect_heat_source` methods
-2. **Task 2:** Stubs accessible via `crate::common::{StubHeater, StubFan, StubThermometer}`
-3. **Task 3:** Binary size unchanged (fixed capacity equals same memory usage)
-4. **Task 4:** Match statement removed from RoasterControl, handlers registered
-
-### Testing Requirements
-
-- [ ] All existing tests pass after refactoring
-- [ ] No new compiler warnings
-- [ ] Binary size change < 1KB (embedded constraint)
-- [ ] No runtime behavioral changes (same outputs for same inputs)
-
----
-
-## Prioritization Matrix
-
-| Refactoring | Code Quality Impact | Risk | Priority |
-|-------------|---------------------|------|----------|
-| Task 3: Vec→Deque | HIGH - eliminates heap in hot path | LOW | P1 |
-| Task 1: detect_heat_source | MEDIUM - removes duplication | LOW | P1 |
-| Task 2: crate::common | MEDIUM - enables better testing | LOW | P2 |
-| Task 4: Handler pattern | MEDIUM - enables extensibility | MEDIUM | P2 |
-
-**Priority Rationale:**
-
-- P1 tasks have clear, bounded scope and low risk - should be completed first
-- P2 tasks require more architectural decisions (handler trait design for ArtisanCommand)
-- All tasks are independent enough to parallelize
-
----
-
-## Feature Interactions
-
-### With Existing v4.4 Features v4.4 Feature
-
-| | Interaction with v4.5 Tasks |
-|--------------|------------------------------|
-| SsrControlBase extracted (v4.4) | Task 1 extends this pattern further |
-| Test stubs in tests/common (v4.4) | Task 2 moves these to library |
-| ArtisanFormatter with READ response (v4.4) | Task 3 improves its implementation |
-| Handler pattern in handlers.rs (v4.4) | Task 4 extends this pattern |
-
-### Testing Strategy
-
-- **Task 1:** Existing unit tests in `src/hardware/ssr.rs` should pass without modification
-- **Task 2:** Update test imports to use new module path
-- **Task 3:** Unit tests in artisan.rs verify same ROR calculations
-- **Task 4:** Existing integration tests verify command processing unchanged
-
----
+**Priority key:**
+- P1: Required for v5.0 hardening exit criteria
+- P2: Strongly recommended if schedule allows
+- P3: Follow-up milestone
 
 ## Sources
 
-- **Codebase verified:**
-  - `src/hardware/ssr.rs` - lines 87-156 (SsrControlBase), 213-246, 329-362 (detect_heat_source)
-  - `tests/common/mod.rs` - lines 1-317 (test stubs)
-  - `src/output/artisan.rs` - lines 25, 51-55 (Vec<f32> usage)
-  - `src/control/roaster_refactored.rs` - lines 533-657 (process_artisan_command)
-  - `src/control/handlers.rs` - lines 1-471 (existing handler pattern)
-- **Cargo.toml:** heapless v0.9.2 already in dependencies
-- **Template:** /home/juan/.config/opencode/get-shit-done/templates/research-project/FEATURES.md
+Primary (HIGH confidence):
+
+- Rust compiler lint reference (`dead_code`, `unused_*`, warning levels): https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html
+- Clippy lint categories and operational guidance: https://doc.rust-lang.org/clippy/
+- Cargo automated fixes and edition migration workflow: https://doc.rust-lang.org/cargo/commands/cargo-fix.html
+- Cargo profiles and build policy controls: https://doc.rust-lang.org/cargo/reference/profiles.html
+- Rust 2024 edition timing/reference: https://doc.rust-lang.org/nightly/edition-guide/rust-2024/index.html
+- Embedded HAL design goals and trait-boundary guidance: https://docs.rs/embedded-hal/latest/embedded_hal/
+- Embedded test harness on real targets (`embedded-test` + `probe-rs run` model): https://docs.rs/embedded-test/latest/embedded_test/
+
+Supporting (MEDIUM confidence):
+
+- `cargo-udeps` usage and constraints (nightly needed to run): https://github.com/est31/cargo-udeps
+- `cargo-llvm-cov` capabilities/limits and CI thresholds: https://github.com/taiki-e/cargo-llvm-cov
+- `probe-rs` ecosystem maturity and host-target debugging tooling: https://github.com/probe-rs/probe-rs
+- Rust API design recommendations (pragmatic maintainability over dogma): https://rust-lang.github.io/api-guidelines/
+- `defmt` ecosystem and embedded logging/test context: https://defmt.ferrous-systems.com/
+
+Notes on confidence:
+
+- Google search tool was unavailable in this environment (403), so ecosystem trend claims are based on official docs and major project documentation rather than broad web survey.
 
 ---
-
-*Feature research for: LibreRoaster v4.5 refactoring tasks*
-*Researched: 2026-02-28*
+*Feature research for: LibreRoaster v5.0 quality audit/hardening*
+*Researched: 2026-03-07*
