@@ -114,6 +114,7 @@ Plans:
 **Depends on**: Phase 85
 **Requirements**: SOLID-02, HW-01
 **Status**: ✓ Complete (2026-03-08)
+**Verification:** ✅ `passed` — score 3/3 must-haves verified; report: .planning/phases/86-fix-integration-regression-p84-p85/86-VERIFICATION.md
 **Success Criteria**:
 1. `tests/fault_injection_scenarios.rs` and `tests/regression_status.rs` handle 18-column STATUS output.
 2. `SystemStatus` struct initialization in tests matches current implementation.
@@ -264,7 +265,7 @@ Plans:
 | 83    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
-| 86    | v5.0      | 0/1   | pending    | — |
+| 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
 | 87    | v5.0      | 0/1   | pending    | — |
 | 88    | v5.0      | 0/1   | pending    | — |
 

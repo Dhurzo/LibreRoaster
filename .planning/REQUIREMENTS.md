@@ -12,9 +12,9 @@
 
 ### Dead Code
 
-- [ ] **DC-01**: User can review a module-by-module dead code inventory with risk level and evidence of use/non-use before removals.
-- [ ] **DC-02**: User can remove dead code in small batches and verify no functional regressions through tests and behavior checks.
-- [ ] **DC-03**: User can identify and clean unused dependencies through a controlled `machete`/`udeps` workflow with an explicit allowlist for intentional exceptions.
+- [x] **DC-01**: User can review a module-by-module dead code inventory with risk level and evidence of use/non-use before removals.
+- [x] **DC-02**: User can remove dead code in small batches and verify no functional regressions through tests and behavior checks.
+- [x] **DC-03**: User can identify and clean unused dependencies through a controlled `machete`/`udeps` workflow with an explicit allowlist for intentional exceptions.
 
 ### Rust Best Practices
 
@@ -28,8 +28,8 @@
 
 ### Hardware Real Validation
 
-- [ ] **HW-01**: User can define numeric acceptance thresholds for real control behavior (command-to-actuator latency, response envelope, safety counters).
-- [ ] **HW-02**: User can validate on real hardware that Artisan Scope controls a real roaster with this firmware within the defined thresholds.
+- [x] **HW-01**: User can define numeric acceptance thresholds for real control behavior (command-to-actuator latency, response envelope, safety counters).
+- [x] **HW-02**: User can validate on real hardware that Artisan Scope controls a real roaster with this firmware within the defined thresholds.
 
 ## Future Requirements (Deferred)
 
@@ -66,8 +66,8 @@
 | RUST-01 | Phase 83, 87 | Complete/Pending |
 | RUST-02 | Phase 83 | Complete |
 | SOLID-01 | Phase 84, 88 | Complete/Pending |
-| SOLID-02 | Phase 84, 86 | Complete/Pending |
-| HW-01 | Phase 85, 86 | Complete/Pending |
+| SOLID-02 | Phase 84, 86 | Complete |
+| HW-01 | Phase 85, 86 | Complete |
 | HW-02 | Phase 85 | Complete |
 
 **Coverage:**

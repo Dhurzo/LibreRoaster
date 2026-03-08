@@ -1,7 +1,9 @@
 extern crate alloc;
 
 use crate::application::service_container::{ContainerError, ServiceContainer};
-use crate::application::stage_instrumentation::{GuardState, StageName, StageReporter, WatchdogState};
+use crate::application::stage_instrumentation::{
+    GuardState, StageName, StageReporter, WatchdogState,
+};
 use crate::config::SystemStatus;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
