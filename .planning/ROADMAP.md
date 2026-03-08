@@ -129,11 +129,16 @@ Plans:
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
 **Depends on**: Phase 86
 **Requirements**: QG-01, RUST-01
-**Status**: pending
+**Status**: In progress
 **Success Criteria**:
 1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
 2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
 3. Policy ratchets (Tier 1/2) are enforced during automated cleanup runs.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy
+- [ ] 87-02-PLAN.md — Integrate quality baseline into modernization and regression scripts
 
 ### Phase 88: Architecture Alignment and UNITS Refactor
 **Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.
@@ -266,7 +271,7 @@ Plans:
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
-| 87    | v5.0      | 0/1   | pending    | — |
+| 87 | v5.0 | 2/2 | In progress | — |
 | 88    | v5.0      | 0/1   | pending    | — |
 
 ---
