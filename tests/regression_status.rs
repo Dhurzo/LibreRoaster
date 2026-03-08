@@ -383,3 +383,170 @@ mod status_tail_determinism {
         );
     }
 }
+
+mod fault_injection_metadata {
+    use super::*;
+
+    /// Test that STATUS tail includes correct watchdog_feed_ok for fault scenarios
+    #[test]
+    fn test_status_watchdog_metadata_for_fault_scenarios() {
+        // Test healthy watchdog scenario (WD-01 equivalent)
+        let mut healthy_status = SystemStatus::default();
+        healthy_status.watchdog_feed_ok = true;
+        healthy_status.watchdog_consecutive_failures = 0;
+        healthy_status.watchdog_last_failure = None;
+
+        let formatted = ArtisanFormatter::format_status_response(&healthy_status);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        // Column 4 is watchdog_flag (1 = healthy)
+        assert_eq!(parts[4], "1", "Watchdog healthy: flag should be 1");
+        // Column 5 is failure_count
+        assert_eq!(parts[5], "0", "Watchdog healthy: failure_count should be 0");
+
+        // Test failed watchdog scenario (WD-03 equivalent)
+        let mut failed_status = SystemStatus::default();
+        failed_status.watchdog_feed_ok = false;
+        failed_status.watchdog_consecutive_failures = 3;
+        failed_status.watchdog_last_failure = Some("feed_failed");
+
+        let formatted = ArtisanFormatter::format_status_response(&failed_status);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        assert_eq!(parts[4], "0", "Watchdog failed: flag should be 0");
+        assert_eq!(parts[5], "3", "Watchdog failed: failure_count should be 3");
+        assert_eq!(
+            parts[6], "feed_failed",
+            "Watchdog failed: reason should be feed_failed"
+        );
+    }
+
+    /// Test that STATUS tail includes correct ledc_guard_timeouts
+    #[test]
+    fn test_status_guard_timeout_metadata() {
+        // Test no guard timeouts (GD-01 equivalent)
+        let mut no_timeout_status = SystemStatus::default();
+        no_timeout_status.ledc_guard_timeouts = 0;
+
+        let formatted = ArtisanFormatter::format_status_response(&no_timeout_status);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        // Column 7 is guard_timeouts
+        assert_eq!(parts[7], "0", "No guard timeouts: should be 0");
+
+        // Test multiple guard timeouts (GD-03 equivalent)
+        let mut timeout_status = SystemStatus::default();
+        timeout_status.ledc_guard_timeouts = 5;
+
+        let formatted = ArtisanFormatter::format_status_response(&timeout_status);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        assert_eq!(parts[7], "5", "Guard timeouts: should be 5");
+    }
+
+    /// Test that fault_condition is correctly reflected in STATUS
+    #[test]
+    fn test_status_fault_condition_metadata() {
+        // Test no fault condition
+        let mut no_fault = SystemStatus::default();
+        no_fault.fault_condition = false;
+        no_fault.watchdog_feed_ok = true;
+        no_fault.ledc_guard_timeouts = 0;
+
+        let formatted = ArtisanFormatter::format_status_response(&no_fault);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        // Column 4 is watchdog_flag (watchdog healthy)
+        assert_eq!(parts[4], "1", "No fault: watchdog should be 1");
+        // Column 7 is guard_timeouts
+        assert_eq!(parts[7], "0", "No fault: guard_timeouts should be 0");
+
+        // Test fault condition from watchdog failure
+        let mut watchdog_fault = SystemStatus::default();
+        watchdog_fault.fault_condition = true;
+        watchdog_fault.watchdog_feed_ok = false;
+        watchdog_fault.watchdog_consecutive_failures = 3;
+
+        let formatted = ArtisanFormatter::format_status_response(&watchdog_fault);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        assert_eq!(parts[4], "0", "Watchdog fault: flag should be 0");
+        assert_eq!(parts[5], "3", "Watchdog fault: failures should be 3");
+
+        // Test fault condition from guard timeouts
+        let mut guard_fault = SystemStatus::default();
+        guard_fault.fault_condition = true;
+        guard_fault.watchdog_feed_ok = true;
+        guard_fault.ledc_guard_timeouts = 10;
+
+        let formatted = ArtisanFormatter::format_status_response(&guard_fault);
+        let parts: Vec<&str> = formatted.split(',').collect();
+
+        assert_eq!(parts[4], "1", "Guard fault: watchdog should still be 1");
+        assert_eq!(parts[7], "10", "Guard fault: timeouts should be 10");
+    }
+
+    /// Test that STATUS columns remain deterministic with fault metadata
+    #[test]
+    fn test_status_columns_deterministic_with_faults() {
+        // Run multiple times to verify determinism
+        for _ in 0..5 {
+            let mut status = SystemStatus::default();
+            status.watchdog_feed_ok = false;
+            status.watchdog_consecutive_failures = 2;
+            status.watchdog_last_failure = Some("feed_failed");
+            status.ledc_guard_timeouts = 3;
+            status.fault_condition = true;
+
+            let formatted = ArtisanFormatter::format_status_response(&status);
+            let parts: Vec<&str> = formatted.split(',').collect();
+
+            assert_eq!(parts.len(), 16, "Should have exactly 16 columns");
+            assert_eq!(parts[4], "0", "Column 4 should be 0");
+            assert_eq!(parts[5], "2", "Column 5 should be 2");
+            assert_eq!(parts[6], "feed_failed", "Column 6 should be feed_failed");
+            assert_eq!(parts[7], "3", "Column 7 should be 3");
+        }
+    }
+
+    /// Verify fault metadata matches SCENARIO_MATRIX.md expectations
+    #[test]
+    fn test_fault_scenario_metadata_matches_matrix() {
+        // WD-01: Watchdog OK, no guard timeouts
+        let mut wd01 = SystemStatus::default();
+        wd01.watchdog_feed_ok = true;
+        wd01.watchdog_consecutive_failures = 0;
+        wd01.ledc_guard_timeouts = 0;
+        wd01.fault_condition = false;
+
+        let formatted = ArtisanFormatter::format_status_response(&wd01);
+        let parts: Vec<&str> = formatted.split(',').collect();
+        assert_eq!(parts[4], "1", "WD-01: watchdog_flag = 1");
+        assert_eq!(parts[5], "0", "WD-01: failure_count = 0");
+        assert_eq!(parts[7], "0", "WD-01: guard_timeouts = 0");
+
+        // WD-03: Watchdog failed, multiple failures, fault condition
+        let mut wd03 = SystemStatus::default();
+        wd03.watchdog_feed_ok = false;
+        wd03.watchdog_consecutive_failures = 3;
+        wd03.ledc_guard_timeouts = 0;
+        wd03.fault_condition = true;
+
+        let formatted = ArtisanFormatter::format_status_response(&wd03);
+        let parts: Vec<&str> = formatted.split(',').collect();
+        assert_eq!(parts[4], "0", "WD-03: watchdog_flag = 0");
+        assert_eq!(parts[5], "3", "WD-03: failure_count = 3");
+
+        // GD-03: Watchdog OK, multiple guard timeouts, fault condition
+        let mut gd03 = SystemStatus::default();
+        gd03.watchdog_feed_ok = true;
+        gd03.watchdog_consecutive_failures = 0;
+        gd03.ledc_guard_timeouts = 5;
+        gd03.fault_condition = true;
+
+        let formatted = ArtisanFormatter::format_status_response(&gd03);
+        let parts: Vec<&str> = formatted.split(',').collect();
+        assert_eq!(parts[4], "1", "GD-03: watchdog_flag = 1");
+        assert_eq!(parts[7], "5", "GD-03: guard_timeouts = 5");
+    }
+}
