@@ -1,8 +1,7 @@
-# LibreRoaster Hardware Validation Report
+# LibreRoaster Hardware Validation Report: {{SIGN_OFF}}
 
 **Run ID:** {{RUN_ID}}
 **Date:** {{DATE}}
-**Result:** SIGN-OFF: {{SIGN_OFF}}
 
 ## Executive Summary
 
