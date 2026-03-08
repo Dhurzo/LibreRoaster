@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use crate::application::service_container::{ContainerError, ServiceContainer};
+use crate::application::stage_instrumentation::{GuardState, StageName, StageReporter, WatchdogState};
 use crate::config::SystemStatus;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
@@ -89,11 +90,17 @@ pub async fn control_loop_task() {
     let mut was_continuous = false;
     let mut last_guard_total_timeouts = ledc_guard::total_timeouts();
     let mut stage_tracker = StageTracker::new();
+    let stage_reporter = StageReporter::new();
+    // Track previous tick's watchdog state for stage instrumentation (not yet known in first tick)
+    let mut prev_watchdog_state = WatchdogState::None;
 
     loop {
         let tick_start = Instant::now();
         stage_tracker.start_tick(tick_start);
         let current_time = tick_start;
+
+        let guard_total_timeouts = ledc_guard::total_timeouts();
+        let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
 
         while let Ok(command) = cmd_channel.try_receive() {
             if let crate::config::ArtisanCommand::RunRegression = command {
@@ -140,6 +147,21 @@ pub async fn control_loop_task() {
         let sensor_err = ServiceContainer::roaster_async_sensor_read().await.err();
         let sensor_elapsed_ms = stage_tracker.elapsed().as_millis();
 
+        // Report stage instrumentation (watchdog state not yet known, use previous tick's state)
+        let sensor_guard = if guard_timeout_happened {
+            GuardState::Timeout
+        } else {
+            GuardState::Ok
+        };
+        if let Some(report) = stage_reporter.report_simple(
+            StageName::SensorRead,
+            sensor_elapsed_ms,
+            sensor_guard,
+            prev_watchdog_state,
+        ) {
+            let _ = output_channel.try_send(report);
+        }
+
         if sensor_err.is_none() {
             debug!(
                 "stage=SensorRead elapsed={}ms Sensors: BT: {:.1}°C, ET: {:.1}°C",
@@ -159,9 +181,6 @@ pub async fn control_loop_task() {
         }
 
         // Do sync control update separately
-        let guard_total_timeouts = ledc_guard::total_timeouts();
-        let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
-
         stage_tracker.set_stage(ControlLoopStage::ControlUpdate);
         let control_snapshot = match ServiceContainer::with_roaster_async(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| match roaster
@@ -197,6 +216,22 @@ pub async fn control_loop_task() {
             };
 
         let control_elapsed_ms = stage_tracker.elapsed().as_millis();
+
+        // Report ControlUpdate stage instrumentation
+        let control_guard = if guard_timeout_happened {
+            GuardState::Timeout
+        } else {
+            GuardState::Ok
+        };
+        if let Some(report) = stage_reporter.report_simple(
+            StageName::ControlUpdate,
+            control_elapsed_ms,
+            control_guard,
+            prev_watchdog_state,
+        ) {
+            let _ = output_channel.try_send(report);
+        }
+
         if let Some(snapshot) = control_snapshot {
             if let Some(status) = control_status {
                 debug!(
@@ -258,6 +293,21 @@ pub async fn control_loop_task() {
                 "stage=LedcWrite elapsed={}ms guard_timeout_happened={} guard_timeouts={}",
                 ledc_elapsed_ms, guard_timeout_happened, guard_total_timeouts
             );
+        }
+
+        // Report LedcWrite stage instrumentation
+        let ledc_guard = if guard_timeout_happened {
+            GuardState::Timeout
+        } else {
+            GuardState::Ok
+        };
+        if let Some(report) = stage_reporter.report_simple(
+            StageName::LedcWrite,
+            ledc_elapsed_ms,
+            ledc_guard,
+            prev_watchdog_state,
+        ) {
+            let _ = output_channel.try_send(report);
         }
 
         stage_tracker.set_stage(ControlLoopStage::WatchdogFeed);
@@ -324,6 +374,32 @@ pub async fn control_loop_task() {
         };
 
         let watchdog_elapsed_ms = stage_tracker.elapsed().as_millis();
+
+        // Report WatchdogFeed stage instrumentation (now we know the watchdog state)
+        let wd_guard = if guard_timeout_happened {
+            GuardState::Timeout
+        } else {
+            GuardState::Ok
+        };
+        let wd_state = if watchdog_snapshot.feed_ok {
+            WatchdogState::Ok
+        } else {
+            WatchdogState::Fail
+        };
+        let failure_marker = watchdog_snapshot.last_failure;
+        if let Some(report) = stage_reporter.report(
+            StageName::WatchdogFeed,
+            watchdog_elapsed_ms,
+            wd_guard,
+            wd_state,
+            failure_marker,
+        ) {
+            let _ = output_channel.try_send(report);
+        }
+
+        // Update previous watchdog state for next tick
+        prev_watchdog_state = wd_state;
+
         if watchdog_snapshot.last_failure.is_some() {
             if let Some(status) = control_status {
                 debug!(
@@ -399,6 +475,27 @@ pub async fn control_loop_task() {
         }
 
         let telemetry_elapsed_ms = stage_tracker.elapsed().as_millis();
+
+        // Report TelemetryEmit stage instrumentation
+        let telemetry_guard = if guard_timeout_happened {
+            GuardState::Timeout
+        } else {
+            GuardState::Ok
+        };
+        let telemetry_wd = if watchdog_snapshot.feed_ok {
+            WatchdogState::Ok
+        } else {
+            WatchdogState::Fail
+        };
+        if let Some(report) = stage_reporter.report_simple(
+            StageName::TelemetryEmit,
+            telemetry_elapsed_ms,
+            telemetry_guard,
+            telemetry_wd,
+        ) {
+            let _ = output_channel.try_send(report);
+        }
+
         if let Some(status) = status_for_output {
             debug!(
                 "stage=TelemetryEmit elapsed={}ms telemetry_sent={} guard_timeout={} watchdog_failure={:?} saturation_active={} integrator_clamped={} derivative_available={}",

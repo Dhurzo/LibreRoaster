@@ -562,12 +562,18 @@ mod artisan_command_handler_tests {
     #[test]
     fn test_can_handle_increase_heater() {
         let handler = ArtisanCommandHandler::new();
-        assert!(handler.can_handle(RoasterCommand::IncreaseHeater));
+        assert!(RoasterCommandHandler::can_handle(
+            &handler,
+            RoasterCommand::IncreaseHeater
+        ));
     }
 
     #[test]
     fn test_can_handle_decrease_heater() {
         let handler = ArtisanCommandHandler::new();
-        assert!(handler.can_handle(RoasterCommand::DecreaseHeater));
+        assert!(RoasterCommandHandler::can_handle(
+            &handler,
+            RoasterCommand::DecreaseHeater
+        ));
     }
 }
