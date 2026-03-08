@@ -111,7 +111,16 @@ pub async fn control_loop_task() {
 
             let _ = ServiceContainer::with_roaster_async(
                 |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
-                    match roaster.process_artisan_command(command) {
+                    let start_time = Instant::now();
+                    let result = roaster.process_artisan_command(command);
+                    let latency = start_time.elapsed().as_micros() as u32;
+
+                    roaster.status_mut().command_latency_us = latency;
+                    if latency > roaster.status_mut().max_command_latency_us {
+                        roaster.status_mut().max_command_latency_us = latency;
+                    }
+
+                    match result {
                         Ok(()) => {
                             debug!("Processed Artisan command successfully");
 
