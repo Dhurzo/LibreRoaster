@@ -105,7 +105,7 @@ Plans:
 
 Plans:
 - [x] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation ✓ COMPLETE
-- [ ] 85-02-PLAN.md — HIL Validation Runner Implementation
+- [x] 85-02-PLAN.md — HIL Validation Runner Implementation ✓ COMPLETE
 - [ ] 85-03-PLAN.md — Real Hardware Validation Execution
 
 <details>
