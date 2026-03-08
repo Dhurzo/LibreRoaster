@@ -72,7 +72,7 @@ impl ArtisanFormatter {
 
     fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<8> {
         let mut buf = HeaplessString::<8>::new();
-        core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10).unwrap();
+        let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
         buf
     }
 
@@ -84,7 +84,7 @@ impl ArtisanFormatter {
         gas: f32,
     ) -> HeaplessString<32> {
         let mut buf = HeaplessString::<32>::new();
-        core::write!(
+        let _ = core::write!(
             &mut buf,
             "{},{:.1},{:.1},{:.2},{:.1}",
             time_str,
@@ -92,8 +92,7 @@ impl ArtisanFormatter {
             bt,
             ror,
             gas
-        )
-        .unwrap();
+        );
         buf
     }
 
