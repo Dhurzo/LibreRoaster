@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 82 verification and handover for dead-code + dependency cleanup.
+**Current focus:** Phase 84 SOLID seam hardening - ports-and-policies implementation.
 
 ## Current Position
 
-Phase: 82 of 85 (Dead Code and Dependency Cleanup)
-Plan: 3 of 3
-Status: Complete (verified)
-Last activity: 2026-03-07 — Phase 82 verified; 6/6 must-haves passed.
+Phase: 84 of 85 (SOLID Seam Hardening and Fault Injection)
+Plan: 1 of 3
+Status: In progress
+Last activity: 2026-03-08 — Completed 84-01-PLAN.md (ports-and-policies contracts)
 
-Progress: [██████████] 100% (119/119 plans complete)
+Progress: [██████████] 100% (120/119 plans complete)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 16 (phase 82 complete)
+- Total plans completed: 20 (phase 84 started)
 - Average duration: mixed; recent phases include both quick gap-closures and deeper refactors
 - Total execution time: cumulative multi-milestone history (see roadmap progress table)
 
@@ -33,11 +33,14 @@ Progress: [██████████] 100% (119/119 plans complete)
 | 80 | 1/4 | 4 | in progress |
 | 81 | 3/3 | 3 | Phase complete |
 | 82 | 3/3 | 3 | Phase complete |
+| 83 | 3/3 | 3 | Phase complete |
+| 84 | 1/3 | 3 | In progress |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
 - v5.0 shifts execution focus from feature delivery to audit-grade quality hardening and hardware evidence.
 - Dead-code instrumentation/removal gating plus dependency audits now have executable workflows backed by audit logs.
+- Phase 84 introduces ports-and-policies pattern to centralize hardware authority.
 
 ## Accumulated Context
 
@@ -54,11 +57,12 @@ Progress: [██████████] 100% (119/119 plans complete)
 - Run `cargo machete` with `--with-metadata --skip-target-dir` and gate on exit codes so the audit prints logs even when unused crates are reported.
 - Run `cargo +nightly udeps --quiet` after cleaning artifacts so duplicate-lang-item errors do not block the nightly audit.
 - Allowlist the crates that udeps flags today (`embassy-usb`, `embedded-hal-bus`, `embedded-io`, `libm`, `static_cell`) so every audit run can justify their retention.
+- Handler policy evaluation returns outcomes without hardware writes; RoasterControl is single writer.
 
 ### Pending Todos
 
-- Complete remaining phase 80 plans (v4.5) while preserving Artisan command compatibility.
-- Kick off Phase 83: Rust Modernization and Unsafe Surface Audit.
+- Phase 84-02: Add stage instrumentation reporter for 100ms loop.
+- Phase 84-03: Lock down fault-injection harness and STATUS evidence matrix.
 
 ### Blockers/Concerns
 
@@ -66,6 +70,6 @@ Progress: [██████████] 100% (119/119 plans complete)
 
 ## Session Continuity
 
-Last session: 2026-03-07T13:11:00Z
-Stopped at: Phase 82 verified (6/6 must-haves) — ready for Phase 83.
+Last session: 2026-03-08T12:59:00Z
+Stopped at: Completed 84-01-PLAN.md (ports-and-policies contracts)
 Resume file: None
