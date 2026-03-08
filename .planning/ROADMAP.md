@@ -95,15 +95,18 @@ Plans:
 **Goal**: Users can prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
 **Depends on**: Phase 84
 **Requirements**: HW-01, HW-02
+**Status**: Ready to execute
 **Success Criteria**:
 1. User can review and apply numeric acceptance thresholds for command-to-actuator latency, response envelope, and safety counters.
 2. User can execute a real-hardware validation run where Artisan Scope commands drive roaster outputs through this firmware.
 3. User can compare measured run data against thresholds and determine pass/fail unambiguously.
 4. User can package validation evidence (logs/transcripts/measurements) suitable for milestone signoff.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 85-01 — To be defined
+- [ ] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation
+- [ ] 85-02-PLAN.md — HIL Validation Runner Implementation
+- [ ] 85-03-PLAN.md — Real Hardware Validation Execution
 
 <details>
 <summary>🚧 v4.5 Alta Prioridad (In Progress)</summary>
@@ -223,7 +226,7 @@ Plans:
 | 82    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 83    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
-| 85    | v5.0      | 0/TBD | Not started | — |
+| 85    | v5.0      | 0/3   | Not started | — |
 
 ---
 
