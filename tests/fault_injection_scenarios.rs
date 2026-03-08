@@ -199,6 +199,8 @@ fn status_for_scenario(scenario: Scenario) -> SystemStatus {
         saturation_active: true,
         integrator_clamped: true,
         derivative_available: true,
+        command_latency_us: 0,
+        max_command_latency_us: 0,
     }
 }
 
@@ -230,11 +232,11 @@ mod scenario_tests {
                 scenario.id
             );
 
-            // Must have expected column count (16 columns per SCENARIO_MATRIX.md)
+            // Must have expected column count (18 columns per SCENARIO_MATRIX.md)
             assert_eq!(
                 parts.len(),
-                16,
-                "Scenario {} STATUS should have 16 columns, got {}",
+                18,
+                "Scenario {} STATUS should have 18 columns, got {}",
                 scenario.id,
                 parts.len()
             );
