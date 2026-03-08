@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 85 - Hardware Acceptance Thresholds and Real Roaster Validation.
+**Current focus:** Phase 87 - Wire Modernization to Quality Policy.
 
 ## Current Position
 
-Phase: 86 of 88 (Fix Integration Regression (P84 <-> P85))
-Plan: 1 of 1 in current phase
-Status: Phase complete
-Last activity: 2026-03-08 — Completed 86-01-PLAN.md
+Phase: 87 of 88 (Wire Modernization to Quality Policy)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-03-08 — Completed 87-01-PLAN.md
 
-Progress: [██████████] 100%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -42,6 +42,8 @@ Progress: [██████████] 100%
 - [85-03] Performed simulated validation instead of physical hardware run due to lack of hardware access.
 - [86-01] Updated all integration test assertions to expect 18 columns in STATUS output.
 - [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
+- [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
+- [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
 
 ### Pending Todos
 
@@ -53,6 +55,6 @@ Progress: [██████████] 100%
 
 ## Session Continuity
 
-Last session: 2026-03-08T14:55:00Z
-Stopped at: Completed 86-01-PLAN.md
+Last session: 2026-03-08T15:41:03Z
+Stopped at: Completed 87-01-PLAN.md
 Resume file: None

@@ -137,7 +137,7 @@ Plans:
 **Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy
+- [x] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy ✓ COMPLETE
 - [ ] 87-02-PLAN.md — Integrate quality baseline into modernization and regression scripts
 
 ### Phase 88: Architecture Alignment and UNITS Refactor
@@ -271,7 +271,7 @@ Plans:
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
-| 87 | v5.0 | 2/2 | In progress | — |
+| 87 | v5.0 | 1/2 | In progress | — |
 | 88    | v5.0      | 0/1   | pending    | — |
 
 ---
