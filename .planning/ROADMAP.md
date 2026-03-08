@@ -119,6 +119,10 @@ Plans:
 2. `SystemStatus` struct initialization in tests matches current implementation.
 3. Assertions for CSV column counts match 18-field telemetry layout.
 4. Fix verified using `scripts/quality-baseline.sh` orchestrator.
+**Plans**: 1 plan
+
+Plans:
+- [ ] 86-01-PLAN.md — Restore broken integration tests and fault-injection scenarios after the 18-column STATUS expansion
 
 ### Phase 87: Wire Modernization to Quality Policy (P81 <-> P83)
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
