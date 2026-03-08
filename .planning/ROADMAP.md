@@ -59,15 +59,19 @@ Plans:
 **Goal**: Users can modernize Rust code mechanically while preserving behavior and maintaining clear justification for remaining unsafe surfaces.
 **Depends on**: Phase 82
 **Requirements**: RUST-01, RUST-02
+**Status**: ✓ Complete (2026-03-07)
+**Verification:** ✅ `passed` — report: .planning/phases/83-rust-modernization-and-unsafe-surface-audit/83-VERIFICATION.md
 **Success Criteria**:
 1. User can run curated modernization passes (idioms/clippy/cargo-fix scope) and observe no protocol or control-flow behavior changes.
 2. User can compare before/after behavior checks and confirm outputs remain semantically equivalent for existing command flows.
 3. User can inspect an up-to-date unsafe surface register that lists active unsafe attributes/blocks with current justification and status.
 4. User can identify which unsafe cases were removed, retained, or narrowed after modernization.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 83-01 — To be defined
+- [x] 83-01 — Build modernization automation + doc ✓ COMPLETE
+- [x] 83-02 — Capture unsafe register + summary ✓ COMPLETE
+- [x] 83-03 — Regression verification guide + runner ✓ COMPLETE
 
 ### Phase 84: SOLID Seam Hardening and Fault Injection
 **Goal**: Users can validate cleaner responsibility boundaries across handlers/hardware/control seams while preserving safety ordering under normal and faulted conditions.
@@ -78,10 +82,12 @@ Plans:
 2. User can run watchdog/guard/comms fault-injection scenarios and observe expected safe-system responses.
 3. User can verify safety/manual authority ordering remains intact after seam adjustments.
 4. User can confirm control-loop behavior remains stable under fault and recovery scenarios.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 84-01 — To be defined
+- [ ] 84-01 — Harden handler/hardware policy boundary via ports-and-policies traits
+- [x] 84-02 — Add stage instrumentation reporter for the 100 ms loop ✓ COMPLETE
+- [ ] 84-03 — Lock down the fault-injection harness and STATUS evidence matrix
 
 ### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
 **Goal**: Users can prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
