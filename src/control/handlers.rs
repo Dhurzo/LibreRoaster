@@ -1,3 +1,6 @@
+use super::policies::{
+    ManualCommandPolicy, ManualPolicyOutcome, SafetyPolicy, SafetyPolicyOutcome,
+};
 use super::{RoasterCommandHandler, RoasterError};
 use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
 use crate::control::pid::{CoffeeRoasterPid, PidFeedback};
@@ -196,6 +199,42 @@ impl RoasterCommandHandler for SafetyCommandHandler {
     }
 }
 
+impl SafetyPolicy for SafetyCommandHandler {
+    fn evaluate(
+        &mut self,
+        command: RoasterCommand,
+        status: &mut SystemStatus,
+    ) -> SafetyPolicyOutcome {
+        match command {
+            RoasterCommand::EmergencyStop => {
+                let outcome = SafetyPolicyOutcome::emergency("Manual emergency stop");
+                outcome.apply_to_status(status);
+                self.emergency_flag = true;
+                warn!("EMERGENCY SHUTDOWN: Manual emergency stop");
+                outcome
+            }
+
+            RoasterCommand::ArtisanEmergencyStop => {
+                let outcome = SafetyPolicyOutcome::emergency("Artisan+ emergency stop");
+                outcome.apply_to_status(status);
+                self.emergency_flag = true;
+                warn!("EMERGENCY SHUTDOWN: Artisan+ emergency stop");
+                outcome
+            }
+
+            _ => SafetyPolicyOutcome::normal(),
+        }
+    }
+
+    fn is_emergency_active(&self) -> bool {
+        self.emergency_flag
+    }
+
+    fn clear_emergency(&mut self) {
+        self.emergency_flag = false;
+    }
+}
+
 pub struct ArtisanCommandHandler {
     manual_heater: f32,
     manual_fan: f32,
@@ -309,6 +348,80 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
             }
 
             _ => Err(RoasterError::InvalidState),
+        }
+    }
+
+    fn can_handle(&self, command: RoasterCommand) -> bool {
+        matches!(
+            command,
+            RoasterCommand::SetHeaterManual(_)
+                | RoasterCommand::SetFanManual(_)
+                | RoasterCommand::IncreaseHeater
+                | RoasterCommand::DecreaseHeater
+        )
+    }
+}
+
+impl ManualCommandPolicy for ArtisanCommandHandler {
+    fn evaluate(
+        &mut self,
+        command: RoasterCommand,
+        status: &mut SystemStatus,
+    ) -> ManualPolicyOutcome {
+        match command {
+            RoasterCommand::SetHeaterManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual heater value above 100%: {}", value);
+                    return ManualPolicyOutcome::failed("Invalid heater value: >100%");
+                }
+
+                self.manual_heater = value as f32;
+                let outcome = ManualPolicyOutcome::heater(value as f32);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ manual heater set to: {}%", value);
+                outcome
+            }
+
+            RoasterCommand::SetFanManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual fan value above 100%: {}", value);
+                    return ManualPolicyOutcome::failed("Invalid fan value: >100%");
+                }
+
+                self.manual_fan = value as f32;
+                let outcome = ManualPolicyOutcome::fan(value as f32);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ manual fan set to: {}%", value);
+                outcome
+            }
+
+            RoasterCommand::IncreaseHeater => {
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, 1);
+                self.manual_heater = new_value;
+
+                let outcome = ManualPolicyOutcome::heater(new_value);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ UP: heater increased to {:.0}%", new_value);
+                outcome
+            }
+
+            RoasterCommand::DecreaseHeater => {
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, -1);
+                self.manual_heater = new_value;
+
+                let outcome = ManualPolicyOutcome::heater(new_value);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
+                outcome
+            }
+
+            _ => ManualPolicyOutcome::failed("Command not handled by ManualCommandPolicy"),
         }
     }
 
