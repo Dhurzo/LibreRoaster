@@ -67,8 +67,8 @@
 | RUST-02 | Phase 83 | Complete |
 | SOLID-01 | Phase 84 | Complete |
 | SOLID-02 | Phase 84 | Complete |
-| HW-01 | Phase 85 | Pending |
-| HW-02 | Phase 85 | Pending |
+| HW-01 | Hardware Acceptance Thresholds | Complete |
+| HW-02 | Real-Hardware Validation Run | Complete |
 
 **Coverage:**
 - v5.0 requirements: 11 total

@@ -11,7 +11,7 @@ v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, R
 - ✅ **v4.3 Code Cleanup** — Phases 73-74 (shipped 2026-02-24)
 - ✅ **v4.4 SSR Refactoring & Test Stubs** — Phases 75-76 (shipped 2026-02-25) — *[details](milestones/v4.4-ROADMAP.md)*
 - 🚧 **v4.5 Alta Prioridad** — Phases 77-80 (in progress)
-- 🚧 **v5.0 Auditoria integral de calidad Rust** — Phases 81-85 (in progress)
+- ✅ **v5.0 Auditoria integral de calidad Rust** — Phases 81-85 (shipped 2026-03-08)
 
 ## Phases
 
@@ -92,6 +92,8 @@ Plans:
 - [x] 84-03 — Lock down the fault-injection harness and STATUS evidence matrix ✓ COMPLETE
 
 ### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
+**Status**: ✓ Complete (2026-03-08)
+**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/85-hardware-acceptance-thresholds-and-real-roaster-validation/85-VERIFICATION.md
 **Goal**: Prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
 **Depends on**: Phase 84
 **Requirements**: HW-01, HW-02
