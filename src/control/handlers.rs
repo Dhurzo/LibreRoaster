@@ -226,6 +226,13 @@ impl SafetyPolicy for SafetyCommandHandler {
         }
     }
 
+    fn can_handle(&self, command: RoasterCommand) -> bool {
+        matches!(
+            command,
+            RoasterCommand::EmergencyStop | RoasterCommand::ArtisanEmergencyStop
+        )
+    }
+
     fn is_emergency_active(&self) -> bool {
         self.emergency_flag
     }

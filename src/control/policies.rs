@@ -217,6 +217,9 @@ pub trait SafetyPolicy: Send {
         status: &mut SystemStatus,
     ) -> SafetyPolicyOutcome;
 
+    /// Check if this policy can handle the given command.
+    fn can_handle(&self, command: RoasterCommand) -> bool;
+
     /// Check if emergency is currently active.
     fn is_emergency_active(&self) -> bool;
 
