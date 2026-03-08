@@ -92,10 +92,10 @@ Plans:
 - [x] 84-03 — Lock down the fault-injection harness and STATUS evidence matrix ✓ COMPLETE
 
 ### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
-**Goal**: Users can prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
+**Goal**: Prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
 **Depends on**: Phase 84
 **Requirements**: HW-01, HW-02
-**Status**: Ready to execute
+**Status**: In progress
 **Success Criteria**:
 1. User can review and apply numeric acceptance thresholds for command-to-actuator latency, response envelope, and safety counters.
 2. User can execute a real-hardware validation run where Artisan Scope commands drive roaster outputs through this firmware.
@@ -104,7 +104,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation
+- [x] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation ✓ COMPLETE
 - [ ] 85-02-PLAN.md — HIL Validation Runner Implementation
 - [ ] 85-03-PLAN.md — Real Hardware Validation Execution
 
@@ -226,7 +226,7 @@ Plans:
 | 82    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 83    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
-| 85    | v5.0      | 0/3   | Not started | — |
+| 85    | v5.0      | 1/3   | In progress | — |
 
 ---
 

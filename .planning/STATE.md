@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 85 of 85 (Hardware Acceptance Thresholds and Real Roaster Validation)
-Plan: 1 of TBD
-Status: Ready to plan
-Last activity: 2026-03-08 — Completed Phase 84 (SOLID Seam Hardening and Fault Injection)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-03-08 — Completed 85-01-PLAN.md
 
-Progress: [████████░░] 81% (9/11 requirements complete)
+Progress: [██████████] 81% (9/11 requirements complete)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 20 (phase 84 started)
+- Total plans completed: 21 (phase 85 started)
 - Average duration: mixed; recent phases include both quick gap-closures and deeper refactors
 - Total execution time: cumulative multi-milestone history (see roadmap progress table)
 
@@ -34,7 +34,8 @@ Progress: [████████░░] 81% (9/11 requirements complete)
 | 81 | 3/3 | 3 | Phase complete |
 | 82 | 3/3 | 3 | Phase complete |
 | 83 | 3/3 | 3 | Phase complete |
-| 84 | 1/3 | 3 | In progress |
+| 84 | 3/3 | 3 | Phase complete |
+| 85 | 1/3 | 3 | In progress |
 
 **Recent Trend:**
 - Architecture cleanup work is stabilizing command handling and shared test infrastructure.
@@ -58,6 +59,8 @@ Progress: [████████░░] 81% (9/11 requirements complete)
 - Run `cargo +nightly udeps --quiet` after cleaning artifacts so duplicate-lang-item errors do not block the nightly audit.
 - Allowlist the crates that udeps flags today (`embassy-usb`, `embedded-hal-bus`, `embedded-io`, `libm`, `static_cell`) so every audit run can justify their retention.
 - Handler policy evaluation returns outcomes without hardware writes; RoasterControl is single writer.
+- [85-01] Define latency as µs delta between command dequeue and handler completion to isolate processing overhead.
+- [85-01] Extend STATUS response to 18 fields for ground truth performance analysis.
 
 ### Pending Todos
 
@@ -69,6 +72,6 @@ Progress: [████████░░] 81% (9/11 requirements complete)
 
 ## Session Continuity
 
-Last session: 2026-03-08T13:11:17Z
-Stopped at: Completed 84-03-PLAN.md (fault-injection harness and STATUS evidence matrix)
+Last session: 2026-03-08T14:25:20Z
+Stopped at: Completed 85-01-PLAN.md
 Resume file: None
