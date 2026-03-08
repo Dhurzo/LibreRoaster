@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 84 of 85 (SOLID Seam Hardening and Fault Injection)
-Plan: 2 of 3
-Status: In progress
-Last activity: 2026-03-08 — Completed 84-02-PLAN.md (stage instrumentation)
+Phase: 85 of 85 (Hardware Acceptance Thresholds and Real Roaster Validation)
+Plan: 1 of TBD
+Status: Ready to plan
+Last activity: 2026-03-08 — Completed Phase 84 (SOLID Seam Hardening and Fault Injection)
 
-Progress: [█████████░] 98%
+Progress: [████████░░] 81% (9/11 requirements complete)
 
 ## Performance Metrics
 

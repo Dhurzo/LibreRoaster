@@ -18,13 +18,13 @@
 
 ### Rust Best Practices
 
-- [ ] **RUST-01**: User can apply mechanical Rust modernization (idioms/clippy/cargo-fix curated pass) with no observable semantic behavior change.
-- [ ] **RUST-02**: User can audit active `unsafe` attributes/surfaces and maintain updated justification/status for each remaining case.
+- [x] **RUST-01**: User can apply mechanical Rust modernization (idioms/clippy/cargo-fix curated pass) with no observable semantic behavior change.
+- [x] **RUST-02**: User can audit active `unsafe` attributes/surfaces and maintain updated justification/status for each remaining case.
 
 ### SOLID (Pragmatic)
 
-- [ ] **SOLID-01**: User can improve separation of responsibilities at high-value seams (handlers/hardware/control boundaries) while preserving safety ordering and loop behavior.
-- [ ] **SOLID-02**: User can run fault-injection scenarios for watchdog/guard/comms paths and verify expected safe behavior.
+- [x] **SOLID-01**: User can improve separation of responsibilities at high-value seams (handlers/hardware/control boundaries) while preserving safety ordering and loop behavior.
+- [x] **SOLID-02**: User can run fault-injection scenarios for watchdog/guard/comms paths and verify expected safe behavior.
 
 ### Hardware Real Validation
 
@@ -63,10 +63,10 @@
 | DC-01 | Phase 82 | Complete |
 | DC-02 | Phase 82 | Complete |
 | DC-03 | Phase 82 | Complete |
-| RUST-01 | Phase 83 | Pending |
-| RUST-02 | Phase 83 | Pending |
-| SOLID-01 | Phase 84 | Pending |
-| SOLID-02 | Phase 84 | Pending |
+| RUST-01 | Phase 83 | Complete |
+| RUST-02 | Phase 83 | Complete |
+| SOLID-01 | Phase 84 | Complete |
+| SOLID-02 | Phase 84 | Complete |
 | HW-01 | Phase 85 | Pending |
 | HW-02 | Phase 85 | Pending |
 
