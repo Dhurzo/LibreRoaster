@@ -174,6 +174,8 @@ pub struct SystemStatus {
     pub saturation_active: bool,
     pub integrator_clamped: bool,
     pub derivative_available: bool,
+    pub command_latency_us: u32,
+    pub max_command_latency_us: u32,
 }
 
 impl Default for SystemStatus {
@@ -204,6 +206,8 @@ impl Default for SystemStatus {
             saturation_active: false,
             integrator_clamped: false,
             derivative_available: false,
+            command_latency_us: 0,
+            max_command_latency_us: 0,
         }
     }
 }

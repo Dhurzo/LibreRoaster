@@ -175,9 +175,11 @@ impl ArtisanFormatter {
         let saturation_flag = if status.saturation_active { 1 } else { 0 };
         let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
         let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
+        let command_latency = status.command_latency_us;
+        let max_command_latency = status.max_command_latency_us;
 
         format!(
-            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{}",
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{}",
             et,
             bt,
             heater,
@@ -193,7 +195,9 @@ impl ArtisanFormatter {
             derivative_value,
             saturation_flag,
             integrator_clamp_flag,
-            derivative_available_flag
+            derivative_available_flag,
+            command_latency,
+            max_command_latency
         )
     }
 
@@ -375,11 +379,13 @@ mod tests {
         status.overtemp_regression_active = true;
         status.ssr_output = 88.0;
         status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
 
         let output = ArtisanFormatter::format_status_response(&status);
 
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 16);
+        assert_eq!(parts.len(), 18);
 
         assert_eq!(parts[0], "120.3");
         assert_eq!(parts[1], "150.5");
@@ -397,6 +403,8 @@ mod tests {
         assert_eq!(parts[13], "1");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "1");
+        assert_eq!(parts[16], "1250");
+        assert_eq!(parts[17], "5000");
     }
 
     #[test]
@@ -409,7 +417,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 16);
+        assert_eq!(parts.len(), 18);
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "0");
@@ -427,7 +435,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 16);
+        assert_eq!(parts.len(), 18);
         assert_eq!(parts[11], "51.2");
         assert_eq!(parts[12], "0.73");
         assert_eq!(parts[13], "1");
@@ -442,7 +450,7 @@ mod tests {
 
         assert!(output.contains(",none,"));
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 16);
+        assert_eq!(parts.len(), 18);
         assert_eq!(parts[12], "0.00");
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "0");
