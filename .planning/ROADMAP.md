@@ -129,12 +129,12 @@ Plans:
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
 **Depends on**: Phase 86
 **Requirements**: QG-01, RUST-01
-**Status**: In progress
+**Status**: planned
 **Success Criteria**:
 1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
 2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
 3. Policy ratchets (Tier 1/2) are enforced during automated cleanup runs.
-**Plans**: 2 plans
+**Plans**: 2 plans in 2 waves
 
 Plans:
 - [ ] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy
