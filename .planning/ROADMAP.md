@@ -113,7 +113,7 @@ Plans:
 **Goal**: Restore broken regression tests and fault-injection scenarios after the 18-column STATUS expansion.
 **Depends on**: Phase 85
 **Requirements**: SOLID-02, HW-01
-**Status**: pending
+**Status**: ✓ Complete (2026-03-08)
 **Success Criteria**:
 1. `tests/fault_injection_scenarios.rs` and `tests/regression_status.rs` handle 18-column STATUS output.
 2. `SystemStatus` struct initialization in tests matches current implementation.
@@ -122,7 +122,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 86-01-PLAN.md — Restore broken integration tests and fault-injection scenarios after the 18-column STATUS expansion
+- [x] 86-01-PLAN.md — Restore broken integration tests and fault-injection scenarios after the 18-column STATUS expansion ✓ COMPLETE
 
 ### Phase 87: Wire Modernization to Quality Policy (P81 <-> P83)
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.

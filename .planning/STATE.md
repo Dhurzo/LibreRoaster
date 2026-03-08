@@ -9,11 +9,10 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 85 of 85 (Hardware Acceptance Thresholds and Real Roaster Validation)
-Status: ✓ Complete
-Plan: 3 of 3 in current phase
+Phase: 86 of 88 (Fix Integration Regression (P84 <-> P85))
+Plan: 1 of 1 in current phase
 Status: Phase complete
-Last activity: 2026-03-08 — Completed Milestone v5.0 (Auditoria integral de calidad Rust)
+Last activity: 2026-03-08 — Completed 86-01-PLAN.md
 
 Progress: [██████████] 100%
 
@@ -41,6 +40,8 @@ Progress: [██████████] 100%
 - ArtisanFormatter now produces 18 CSV fields for the STATUS command.
 - [85-02] Used csv module instead of pandas for analysis to avoid dependency installation issues in externally managed environment.
 - [85-03] Performed simulated validation instead of physical hardware run due to lack of hardware access.
+- [86-01] Updated all integration test assertions to expect 18 columns in STATUS output.
+- [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
 
 ### Pending Todos
 
@@ -52,6 +53,6 @@ Progress: [██████████] 100%
 
 ## Session Continuity
 
-Last session: 2026-03-08T14:40:00Z
-Stopped at: Completed 85-03-PLAN.md
+Last session: 2026-03-08T14:55:00Z
+Stopped at: Completed 86-01-PLAN.md
 Resume file: None

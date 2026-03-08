@@ -23,22 +23,24 @@ use heapless::{Deque, String as HeaplessString};
 pub struct ArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Deque<f32, 5>,
+}
+
+impl Default for ArtisanFormatter {
+    fn default() -> Self {
+        Self {
+            start_time: Instant::now(),
+            last_bt: 0.0,
+        }
+    }
 }
 
 impl ArtisanFormatter {
     pub fn new() -> Self {
-        Self {
-            start_time: Instant::now(),
-            last_bt: 0.0,
-            bt_history: Deque::<f32, 5>::new(),
-        }
+        Self::default()
     }
 
     pub fn reset(&mut self) {
-        self.start_time = Instant::now();
-        self.last_bt = 0.0;
-        self.bt_history = Deque::<f32, 5>::new();
+        *self = Self::default();
     }
 
     fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
@@ -216,19 +218,23 @@ pub struct MutableArtisanFormatter {
     bt_history: Deque<f32, 5>,
 }
 
-impl MutableArtisanFormatter {
-    pub fn new() -> Self {
+impl Default for MutableArtisanFormatter {
+    fn default() -> Self {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
             bt_history: Deque::<f32, 5>::new(),
         }
     }
+}
+
+impl MutableArtisanFormatter {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn reset(&mut self) {
-        self.start_time = Instant::now();
-        self.last_bt = 0.0;
-        self.bt_history = Deque::<f32, 5>::new();
+        *self = Self::default();
     }
 
     pub fn format(&mut self, status: &SystemStatus) -> Result<AllocString, OutputError> {
