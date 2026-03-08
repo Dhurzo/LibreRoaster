@@ -11,7 +11,7 @@ v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, R
 - ✅ **v4.3 Code Cleanup** — Phases 73-74 (shipped 2026-02-24)
 - ✅ **v4.4 SSR Refactoring & Test Stubs** — Phases 75-76 (shipped 2026-02-25) — *[details](milestones/v4.4-ROADMAP.md)*
 - 🚧 **v4.5 Alta Prioridad** — Phases 77-80 (in progress)
-- ✅ **v5.0 Auditoria integral de calidad Rust** — Phases 81-85 (shipped 2026-03-08)
+- 🚧 **v5.0 Auditoria integral de calidad Rust** — Phases 81-88 (in progress)
 
 ## Phases
 
@@ -92,13 +92,11 @@ Plans:
 - [x] 84-03 — Lock down the fault-injection harness and STATUS evidence matrix ✓ COMPLETE
 
 ### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
-**Status**: ✓ Complete (2026-03-08)
-**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/85-hardware-acceptance-thresholds-and-real-roaster-validation/85-VERIFICATION.md
 **Goal**: Prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
 **Depends on**: Phase 84
 **Requirements**: HW-01, HW-02
 **Status**: ✓ Complete (2026-03-08)
-**Verification:** ✅ `passed` — Simulated hardware validation passed (Latency, Watchdog); report: .planning/phases/85-hardware-acceptance-thresholds-and-real-roaster-validation/85-EVIDENCE-REPORT.md
+**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/85-hardware-acceptance-thresholds-and-real-roaster-validation/85-VERIFICATION.md
 **Success Criteria**:
 1. User can review and apply numeric acceptance thresholds for command-to-actuator latency, response envelope, and safety counters.
 2. User can execute a real-hardware validation run where Artisan Scope commands drive roaster outputs through this firmware.
@@ -110,6 +108,38 @@ Plans:
 - [x] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation ✓ COMPLETE
 - [x] 85-02-PLAN.md — HIL Validation Runner Implementation ✓ COMPLETE
 - [x] 85-03-PLAN.md — Real Hardware Validation Execution ✓ COMPLETE
+
+### Phase 86: Fix Integration Regression (P84 <-> P85)
+**Goal**: Restore broken regression tests and fault-injection scenarios after the 18-column STATUS expansion.
+**Depends on**: Phase 85
+**Requirements**: SOLID-02, HW-01
+**Status**: pending
+**Success Criteria**:
+1. `tests/fault_injection_scenarios.rs` and `tests/regression_status.rs` handle 18-column STATUS output.
+2. `SystemStatus` struct initialization in tests matches current implementation.
+3. Assertions for CSV column counts match 18-field telemetry layout.
+4. Fix verified using `scripts/quality-baseline.sh` orchestrator.
+
+### Phase 87: Wire Modernization to Quality Policy (P81 <-> P83)
+**Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
+**Depends on**: Phase 86
+**Requirements**: QG-01, RUST-01
+**Status**: pending
+**Success Criteria**:
+1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
+2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
+3. Policy ratchets (Tier 1/2) are enforced during automated cleanup runs.
+
+### Phase 88: Architecture Alignment and UNITS Refactor
+**Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.
+**Depends on**: Phase 87
+**Requirements**: SOLID-01, QG-02
+**Status**: pending
+**Success Criteria**:
+1. `src/application/stage_instrumentation.rs` promoted to Tier 1 in quality policy.
+2. `UNITS` command refactored to implement `ManualCommandPolicy` trait.
+3. Legacy match branch for `UNITS` removed from `RoasterControl::process_command`.
+4. System remains architecturally consistent at the policy/handler boundary.
 
 <details>
 <summary>🚧 v4.5 Alta Prioridad (In Progress)</summary>
@@ -229,7 +259,10 @@ Plans:
 | 82    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 83    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
-| 85    | v5.0      | 1/3   | In progress | — |
+| 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
+| 86    | v5.0      | 0/1   | pending    | — |
+| 87    | v5.0      | 0/1   | pending    | — |
+| 88    | v5.0      | 0/1   | pending    | — |
 
 ---
 
