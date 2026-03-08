@@ -50,15 +50,15 @@ fn fault_fixture() -> FixtureReading {
 }
 
 fn expected_warm_status() -> &'static str {
-    "25.0,150.0,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,0.24,1,1,1"
+    "25.0,150.0,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,0.24,1,1,1,0,0"
 }
 
 fn expected_cold_status() -> &'static str {
-    "0.0,-10.2,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,0.08,0,0,1"
+    "0.0,-10.2,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,0.08,0,0,1,0,0"
 }
 
 fn expected_fault_status() -> &'static str {
-    "100.0,0.0,0.0,0.0,1,0,none,0,1,0.0,0.0,0.0,0.00,0,0,0"
+    "100.0,0.0,0.0,0.0,1,0,none,0,1,0.0,0.0,0.0,0.00,0,0,0,0,0"
 }
 
 /// Create a SystemStatus from fixture reading and additional status fields
@@ -98,6 +98,8 @@ fn status_from_sample(
         saturation_active,
         integrator_clamped,
         derivative_available,
+        command_latency_us: 0,
+        max_command_latency_us: 0,
     }
 }
 
@@ -129,9 +131,9 @@ mod regression_snapshots {
         // Format using ArtisanFormatter
         let formatted = ArtisanFormatter::format_status_response(&status);
 
-        // Compare to expected (16 columns)
+        // Compare to expected (18 columns)
         let parts: Vec<&str> = formatted.split(',').collect();
-        assert_eq!(parts.len(), 16, "STATUS must have exactly 16 columns");
+        assert_eq!(parts.len(), 18, "STATUS must have exactly 18 columns");
 
         // Verify against expected
         let expected = expected_warm_status();
@@ -213,7 +215,7 @@ mod column_order_verification {
 
     /// Verify all fixtures produce the same column count
     #[test]
-    fn test_all_fixtures_produce_16_columns() {
+    fn test_all_fixtures_produce_18_columns() {
         let fixtures = [
             ("warm", warm_fixture(), expected_warm_status()),
             ("cold", cold_fixture(), expected_cold_status()),
@@ -236,8 +238,8 @@ mod column_order_verification {
 
             assert_eq!(
                 parts.len(),
-                16,
-                "{} fixture produced {} columns, expected 16",
+                18,
+                "{} fixture produced {} columns, expected 18",
                 name,
                 parts.len()
             );
@@ -263,6 +265,7 @@ mod column_order_verification {
         // 7: guard_timeouts, 8: regression_flag
         // 9: pv, 10: mv, 11: integrator, 12: derivative
         // 13: saturation, 14: integrator_clamp, 15: derivative_available
+        // 16: command_latency, 17: max_command_latency
 
         assert_eq!(parts[0], "25.0", "Column 0 (env_temp) should be 25.0");
         assert_eq!(parts[1], "150.0", "Column 1 (bean_temp) should be 150.0");
@@ -282,6 +285,11 @@ mod column_order_verification {
         assert_eq!(
             parts[15], "1",
             "Column 15 (derivative_available) should be 1"
+        );
+        assert_eq!(parts[16], "0", "Column 16 (command_latency) should be 0");
+        assert_eq!(
+            parts[17], "0",
+            "Column 17 (max_command_latency) should be 0"
         );
     }
 }
@@ -501,7 +509,7 @@ mod fault_injection_metadata {
             let formatted = ArtisanFormatter::format_status_response(&status);
             let parts: Vec<&str> = formatted.split(',').collect();
 
-            assert_eq!(parts.len(), 16, "Should have exactly 16 columns");
+            assert_eq!(parts.len(), 18, "Should have exactly 18 columns");
             assert_eq!(parts[4], "0", "Column 4 should be 0");
             assert_eq!(parts[5], "2", "Column 5 should be 2");
             assert_eq!(parts[6], "feed_failed", "Column 6 should be feed_failed");
