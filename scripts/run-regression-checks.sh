@@ -5,6 +5,9 @@ RUN_ID=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}
 LOG_DIR="logs/regression/$RUN_ID"
 mkdir -p "$LOG_DIR"
 
+echo "Running quality baseline checks before regression tests..."
+scripts/quality-baseline.sh
+
 log_test() {
   NAME=$1
   shift
