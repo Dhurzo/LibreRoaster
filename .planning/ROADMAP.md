@@ -129,7 +129,7 @@ Plans:
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
 **Depends on**: Phase 86
 **Requirements**: QG-01, RUST-01
-**Status**: planned
+**Status**: complete
 **Success Criteria**:
 1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
 2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
@@ -138,7 +138,7 @@ Plans:
 
 Plans:
 - [x] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy ✓ COMPLETE
-- [ ] 87-02-PLAN.md — Integrate quality baseline into modernization and regression scripts
+- [x] 87-02-PLAN.md — Integrate quality baseline into modernization and regression scripts ✓ COMPLETE
 
 ### Phase 88: Architecture Alignment and UNITS Refactor
 **Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.

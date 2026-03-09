@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 87 of 88 (Wire Modernization to Quality Policy)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-03-08 — Completed 87-01-PLAN.md
+Plan: 2 of 2 in current phase
+Status: Phase complete
+Last activity: 2026-03-09 — Completed 87-02-PLAN.md
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Progress: [█████████░] 90%
 - [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
 - [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
 - [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
+- [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
 
 ### Pending Todos
 
@@ -55,6 +56,6 @@ Progress: [█████████░] 90%
 
 ## Session Continuity
 
-Last session: 2026-03-08T15:41:03Z
-Stopped at: Completed 87-01-PLAN.md
+Last session: 2026-03-09T06:08:52Z
+Stopped at: Completed 87-02-PLAN.md
 Resume file: None
