@@ -5,14 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 87 - Wire Modernization to Quality Policy.
+**Current focus:** Phase 88 - Architecture Alignment and UNITS Refactor complete - v5.0 milestone complete
 
 ## Current Position
 
-Phase: 87 of 88 (Wire Modernization to Quality Policy)
-Plan: 2 of 2 in current phase
+Phase: 88 of 88 (Architecture Alignment and UNITS Refactor)
+Plan: 1 of 1 in current phase
 Status: Phase complete
-Last activity: 2026-03-09 — Completed 87-02-PLAN.md
+Last activity: 2026-03-09 — Completed 88-01-PLAN.md
 
 Progress: [██████████] 100%
 
@@ -45,6 +45,8 @@ Progress: [██████████] 100%
 - [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
 - [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
 - [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
+- [88-01] Promoted stage_instrumentation.rs to Tier 1 in quality policy.
+- [88-01] Refactored UNITS command to use ManualCommandPolicy pattern via forward_artisan_manual_command.
 
 ### Pending Todos
 

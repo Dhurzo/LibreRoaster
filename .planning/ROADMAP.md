@@ -10,12 +10,12 @@ v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, R
 - ✅ **v4.2 Anti-windup integral** — Phases 70-72 (shipped 2026-02-24)
 - ✅ **v4.3 Code Cleanup** — Phases 73-74 (shipped 2026-02-24)
 - ✅ **v4.4 SSR Refactoring & Test Stubs** — Phases 75-76 (shipped 2026-02-25) — *[details](milestones/v4.4-ROADMAP.md)*
-- 🚧 **v4.5 Alta Prioridad** — Phases 77-80 (in progress)
-- 🚧 **v5.0 Auditoria integral de calidad Rust** — Phases 81-88 (in progress)
+- ✅ **v4.5 Alta Prioridad** — Phases 77-80 (shipped 2026-03-09)
+- ✅ **v5.0 Auditoria integral de calidad Rust** — Phases 81-88 (shipped 2026-03-09)
 
 ## Phases
 
-### 🚧 v5.0 Auditoria integral de calidad Rust (In Progress)
+### ✅ v5.0 Auditoria integral de calidad Rust (Complete)
 
 **Milestone Goal:** Auditar y refactorizar el firmware de forma segura para eliminar codigo muerto, reforzar practicas Rust/SOLID y validar que el control real desde Artisan Scope sigue siendo viable.
 
@@ -145,7 +145,8 @@ Plans:
 **Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.
 **Depends on**: Phase 87
 **Requirements**: SOLID-01, QG-02
-**Status**: 🚧 in progress
+**Status**: ✓ Complete (2026-03-09)
+**Verification:** ✅ `passed` — score 4/4 must-haves verified; report: .planning/phases/88-architecture-alignment-and-units-refactor/88-VERIFICATION.md
 **Plans**: 1 plan
 
 Plans:
@@ -278,7 +279,7 @@ Plans:
 | 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
 | 87 | v5.0 | 2/2 | ✓ Complete | 2026-03-09 |
-| 88    | v5.0      | 0/1   | pending    | — |
+| 88    | v5.0      | 1/1   | ✓ Complete | 2026-03-09 |
 
 ---
 
