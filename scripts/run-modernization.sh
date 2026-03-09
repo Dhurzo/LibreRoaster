@@ -20,6 +20,8 @@ STEP_COUNTER=1
 
 dump_step fmt cargo fmt
 
+dump_step quality_baseline scripts/quality-baseline.sh
+
 dump_step fix cargo fix --allow-dirty --allow-staged
 
 dump_step clippy cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
