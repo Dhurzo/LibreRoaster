@@ -58,12 +58,12 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QG-01 | Phase 81, 87 | Complete/Pending |
-| QG-02 | Phase 81, 88 | Complete/Pending |
+| QG-01 | Phase 81, 87 | Complete |
+| QG-02 | Phase 81, 88 | Complete |
 | DC-01 | Phase 82 | Complete |
 | DC-02 | Phase 82 | Complete |
 | DC-03 | Phase 82 | Complete |
-| RUST-01 | Phase 83, 87 | Complete/Pending |
+| RUST-01 | Phase 83, 87 | Complete |
 | RUST-02 | Phase 83 | Complete |
 | SOLID-01 | Phase 84, 88 | Complete/Pending |
 | SOLID-02 | Phase 84, 86 | Complete |

@@ -129,7 +129,8 @@ Plans:
 **Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
 **Depends on**: Phase 86
 **Requirements**: QG-01, RUST-01
-**Status**: complete
+**Status**: ✓ Complete (2026-03-09)
+**Verification:** ✅ `passed` — score 3/3 must-haves verified; report: .planning/phases/87-wire-modernization-to-quality-policy/87-VERIFICATION.md
 **Success Criteria**:
 1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
 2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
@@ -271,7 +272,7 @@ Plans:
 | 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
 | 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
-| 87 | v5.0 | 1/2 | In progress | — |
+| 87 | v5.0 | 2/2 | ✓ Complete | 2026-03-09 |
 | 88    | v5.0      | 0/1   | pending    | — |
 
 ---
