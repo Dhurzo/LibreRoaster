@@ -74,6 +74,7 @@ modules = [
     "src/input/parser.rs",
     "src/output/artisan.rs",
     "src/config/**",
+    "src/application/stage_instrumentation.rs",  # NEW: promoted to T1
 ]
 
 [tiers.t2_core]
@@ -82,9 +83,9 @@ blocking = false
 description = "Core application modules - secondary criticality"
 modules = [
     "src/hardware/**",
-    "src/application/**",
     "src/input/multiplexer.rs",
     "src/output/traits.rs",
+    # src/application/** removed - only specific files now in T1
 ]
 
 [tiers.t3_support]

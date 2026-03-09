@@ -2,7 +2,9 @@ use super::policies::{
     ManualCommandPolicy, ManualPolicyOutcome, SafetyPolicy, SafetyPolicyOutcome,
 };
 use super::{RoasterCommandHandler, RoasterError};
-use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
+use crate::config::{
+    RoasterCommand, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings,
+};
 use crate::control::pid::{CoffeeRoasterPid, PidFeedback};
 use crate::control::OutputController;
 use embassy_time::Instant;
@@ -245,6 +247,7 @@ impl SafetyPolicy for SafetyCommandHandler {
 pub struct ArtisanCommandHandler {
     manual_heater: f32,
     manual_fan: f32,
+    temp_settings: TemperatureSettings,
 }
 
 impl ArtisanCommandHandler {
@@ -252,6 +255,7 @@ impl ArtisanCommandHandler {
         Self {
             manual_heater: 0.0,
             manual_fan: 0.0,
+            temp_settings: TemperatureSettings::default(),
         }
     }
 
@@ -428,6 +432,25 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                 outcome
             }
 
+            RoasterCommand::SetUnits(is_fahrenheit) => {
+                let scale = if is_fahrenheit {
+                    TemperatureScale::Fahrenheit
+                } else {
+                    TemperatureScale::Celsius
+                };
+                self.temp_settings.set_scale(scale);
+                info!("Artisan+ units set to: {:?}", scale);
+                ManualPolicyOutcome {
+                    heater_target: None,
+                    fan_target: None,
+                    pid_enabled: None,
+                    artisan_control: None,
+                    clear_manual: false,
+                    success: true,
+                    error_message: None,
+                }
+            }
+
             _ => ManualPolicyOutcome::failed("Command not handled by ManualCommandPolicy"),
         }
     }
@@ -439,6 +462,7 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                 | RoasterCommand::SetFanManual(_)
                 | RoasterCommand::IncreaseHeater
                 | RoasterCommand::DecreaseHeater
+                | RoasterCommand::SetUnits(_)
         )
     }
 }

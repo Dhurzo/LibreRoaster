@@ -673,13 +673,9 @@ impl RoasterControl {
                 info!("Artisan regression command received");
             }
             crate::config::ArtisanCommand::Units(is_fahrenheit) => {
-                let scale = if is_fahrenheit {
-                    TemperatureScale::Fahrenheit
-                } else {
-                    TemperatureScale::Celsius
-                };
-                self.temp_settings.set_scale(scale);
-                debug!("Units command received - scale set to {:?}", scale);
+                // Convert to RoasterCommand and forward through policy
+                let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
+                return self.forward_artisan_manual_command(cmd, current_time);
             }
             crate::config::ArtisanCommand::Filt(_) => {
                 debug!("Filt command received - initialization handled by multiplexer");

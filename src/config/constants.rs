@@ -91,6 +91,7 @@ pub enum RoasterCommand {
     ArtisanEmergencyStop,
     IncreaseHeater,
     DecreaseHeater,
+    SetUnits(bool), // true = Fahrenheit, false = Celsius
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
