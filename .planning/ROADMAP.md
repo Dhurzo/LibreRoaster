@@ -145,7 +145,12 @@ Plans:
 **Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.
 **Depends on**: Phase 87
 **Requirements**: SOLID-01, QG-02
-**Status**: pending
+**Status**: 🚧 in progress
+**Plans**: 1 plan
+
+Plans:
+- [x] 88-01-PLAN.md — Promote stage_instrumentation.rs to Tier 1 and wire UNITS through ManualCommandPolicy
+
 **Success Criteria**:
 1. `src/application/stage_instrumentation.rs` promoted to Tier 1 in quality policy.
 2. `UNITS` command refactored to implement `ManualCommandPolicy` trait.
