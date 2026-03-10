@@ -32,6 +32,7 @@ pub struct SensorFault {
 }
 
 impl SensorFault {
+    #[allow(dead_code)]
     fn from_register(fault: u8) -> Self {
         let has_fault = fault & 0x1F != 0;
         Self {
@@ -45,6 +46,7 @@ impl SensorFault {
         }
     }
 
+    #[allow(dead_code)]
     fn from_max31856_error(error: &Max31856Error) -> Self {
         match error {
             Max31856Error::CommunicationError => Self {
@@ -95,11 +97,13 @@ impl SensorSample {
     }
 }
 
+#[allow(dead_code)]
 enum SensorChannel {
     Bean,
     Env,
 }
 
+#[allow(dead_code)]
 type SensorChannelResult = Result<(f32, SensorFault), Max31856Error>;
 
 #[cfg(feature = "regression")]
@@ -215,6 +219,7 @@ impl SensorConversionHub {
         ))
     }
 
+    #[allow(dead_code)]
     fn build_sample(
         &mut self,
         timestamp: Instant,
@@ -239,6 +244,7 @@ impl SensorConversionHub {
         Ok(sample)
     }
 
+    #[allow(dead_code)]
     fn resolve_channel(
         &self,
         channel: SensorChannel,

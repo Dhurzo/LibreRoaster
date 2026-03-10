@@ -58,6 +58,7 @@ impl ArtisanFormatter {
         let _ = history.push_back(current_bt);
     }
 
+    #[allow(dead_code)]
     fn compute_ror_from_history(history: &[f32]) -> f32 {
         if history.len() < 2 {
             0.0

@@ -42,6 +42,7 @@ pub struct RoasterControl {
 
     /// Temperature scale preference storage
     /// Tracks UNITS command preference (Celsius/Fahrenheit) without conversion
+    #[allow(dead_code)]
     temp_settings: TemperatureSettings,
 }
 
