@@ -1,9 +1,10 @@
+use crate::memory::ERROR_MSG_MAX_LEN;
 use core::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
     Temperature {
-        message: heapless::String<256>,
+        message: heapless::String<ERROR_MSG_MAX_LEN>,
         source: TemperatureError,
     },
 
@@ -203,13 +204,17 @@ impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {
         match err {
             crate::control::RoasterError::TemperatureOutOfRange => AppError::Temperature {
-                message: heapless::String::<256>::try_from("Temperature out of range")
-                    .unwrap_or_default(),
+                message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
+                    "Temperature out of range",
+                )
+                .unwrap_or_default(),
                 source: TemperatureError::OutOfRange,
             },
             crate::control::RoasterError::SensorFault => AppError::Temperature {
-                message: heapless::String::<256>::try_from("Temperature sensor fault")
-                    .unwrap_or_default(),
+                message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
+                    "Temperature sensor fault",
+                )
+                .unwrap_or_default(),
                 source: TemperatureError::SensorFault,
             },
             crate::control::RoasterError::InvalidState => AppError::Control {
@@ -267,7 +272,7 @@ mod tests {
     #[test]
     fn test_error_categorization() {
         let temp_err = AppError::Temperature {
-            message: heapless::String::<256>::try_from("Test").unwrap_or_default(),
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
             source: TemperatureError::OutOfRange,
         };
         assert_eq!(temp_err.category(), "temperature");
@@ -287,7 +292,7 @@ mod tests {
     #[test]
     fn test_user_messages() {
         let err = AppError::Temperature {
-            message: heapless::String::<256>::try_from("Test").unwrap_or_default(),
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
             source: TemperatureError::SensorFault,
         };
         assert_eq!(err.user_message(), "Temperature sensor malfunction");

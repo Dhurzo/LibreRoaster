@@ -1,4 +1,6 @@
 extern crate alloc;
+use alloc::format;
+use alloc::string::String;
 
 /// Artisan standard CSV protocol formatter
 ///
@@ -11,10 +13,27 @@ extern crate alloc;
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
 /// - Gas: SSR output percentage (0-100) as heater control
+// Artisan protocol formatter for LibreRoaster
+//
+// This module handles formatting of temperature data and commands according to the
+// Artisan roasting software protocol. All formatting operations use heapless
+// types to ensure predictable memory usage and deterministic timing.
+//
+// # Memory Strategy
+//
+// This module is classified as **HOT PATH**:
+// - All formatting operations occur during real-time temperature reporting
+// - Uses heapless types with fixed capacities to prevent allocations
+// - No dynamic memory allocation during normal operation
+//
+// ## Memory Usage
+//
+// - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (5 samples)
+// - `REPORT_BUFFER_SIZE`: Temperature report formatting (32 chars)
+// - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
 use crate::config::SystemStatus;
+use crate::memory::{BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, TIME_FORMAT_SIZE};
 use crate::output::traits::{OutputError, OutputFormatter};
-use alloc::format;
-use alloc::string::String as AllocString;
 use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
@@ -51,7 +70,7 @@ impl ArtisanFormatter {
         }
     }
 
-    fn update_bt_history(history: &mut Deque<f32, 5>, current_bt: f32) {
+    fn update_bt_history(history: &mut Deque<f32, BT_HISTORY_SIZE>, current_bt: f32) {
         if history.len() >= 5 {
             let _ = history.pop_front();
         }
@@ -73,8 +92,8 @@ impl ArtisanFormatter {
         }
     }
 
-    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<8> {
-        let mut buf = HeaplessString::<8>::new();
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
+        let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
         let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
         buf
     }
@@ -85,8 +104,8 @@ impl ArtisanFormatter {
         bt: f32,
         ror: f32,
         gas: f32,
-    ) -> HeaplessString<32> {
-        let mut buf = HeaplessString::<32>::new();
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(
             &mut buf,
             "{},{:.1},{:.1},{:.2},{:.1}",
@@ -109,7 +128,7 @@ impl ArtisanFormatter {
 }
 
 impl OutputFormatter for ArtisanFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<AllocString, OutputError> {
+    fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -123,12 +142,12 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = Self::format_time(elapsed_secs, elapsed_ms);
         let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(AllocString::from(line.as_str()))
+        Ok(String::from(line.as_str()))
     }
 }
 
 impl ArtisanFormatter {
-    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> AllocString {
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -142,7 +161,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_read_response_full(status: &SystemStatus) -> AllocString {
+    pub fn format_read_response_full(status: &SystemStatus) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -157,7 +176,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_status_response(status: &SystemStatus) -> AllocString {
+    pub fn format_status_response(status: &SystemStatus) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -204,11 +223,11 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_chan_ack(channel: u16) -> AllocString {
+    pub fn format_chan_ack(channel: u16) -> String {
         format!("#{}", channel)
     }
 
-    pub fn format_err(code: u8, message: &str) -> AllocString {
+    pub fn format_err(code: u8, message: &str) -> String {
         format!("ERR {} {}", code, message)
     }
 }
@@ -216,7 +235,7 @@ impl ArtisanFormatter {
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Deque<f32, 5>,
+    bt_history: Deque<f32, BT_HISTORY_SIZE>,
 }
 
 impl Default for MutableArtisanFormatter {
@@ -238,7 +257,7 @@ impl MutableArtisanFormatter {
         *self = Self::default();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<AllocString, OutputError> {
+    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -251,7 +270,7 @@ impl MutableArtisanFormatter {
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(AllocString::from(line.as_str()))
+        Ok(String::from(line.as_str()))
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {

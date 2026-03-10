@@ -35,6 +35,7 @@ pub mod error;
 pub mod hardware;
 pub mod input;
 pub mod logging;
+pub mod memory;
 pub mod output;
 pub mod safety;
 

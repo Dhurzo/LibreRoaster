@@ -15,7 +15,7 @@ use core::fmt::Write;
 use embassy_executor::task;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
-use heapless::String;
+use heapless::{String, Vec};
 use log::{debug, info, warn};
 
 #[derive(Clone, Copy, Debug)]
@@ -604,9 +604,11 @@ pub async fn dual_output_task() {
     }
 }
 
-fn append_crlf(payload: &str) -> alloc::vec::Vec<u8> {
-    let mut bytes = payload.as_bytes().to_vec();
-    bytes.extend_from_slice(b"\r\n");
+fn append_crlf(payload: &str) -> heapless::Vec<u8, 1024> {
+    let mut bytes = heapless::Vec::<u8, 1024>::new();
+    if bytes.extend_from_slice(payload.as_bytes()).is_ok() {
+        let _ = bytes.extend_from_slice(b"\r\n");
+    }
     bytes
 }
 
