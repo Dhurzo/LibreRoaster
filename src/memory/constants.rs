@@ -18,14 +18,14 @@ pub const ARTISAN_CMD_MAX_LEN: usize = 64;
 /// Tamaño para buffers de reporte de temperatura
 ///
 /// Usado para formateo de datos de temperatura que se envían
-/// a Artisan o otros sistemas de monitoreo.
-pub const REPORT_BUFFER_SIZE: usize = 32;
+/// a Artisan u otros sistemas de monitoreo.
+pub const REPORT_BUFFER_SIZE: usize = 64;
 
 /// Tamaño para historial de temperatura BT (Bean Temperature)
 ///
 /// Usado para tracking de temperatura en el módulo Artisan
 /// para cálculos de derivadas y tendencias.
-pub const BT_HISTORY_SIZE: usize = 5;
+pub const BT_HISTORY_SIZE: usize = ROR_WINDOW_SIZE;
 
 /// Tamaño máximo para nombres de etapa o estados
 ///
@@ -117,6 +117,24 @@ pub const TIME_FORMAT_SIZE: usize = 8;
 /// ocurrir durante operaciones de seguridad.
 pub const SAFETY_ERROR_MSG_MAX_LEN: usize = 128;
 
+/// Tamaño de ventana para cálculo de ROR (Rate of Rise)
+///
+/// Número de muestras de temperatura utilizadas para calcular
+/// la tasa de aumento de temperatura con ventana deslizante.
+pub const ROR_WINDOW_SIZE: usize = 10;
+
+/// Coeficiente de filtrado IIR para ROR
+///
+/// Alpha para el filtro IIR que suaviza el cálculo de ROR.
+/// Valores típicos: 0.1-0.4 (mayor = más suave, menos sensible)
+pub const ROR_FILTER_ALPHA: f32 = 0.25;
+
+/// Mínimo de muestras para calcular ROR
+///
+/// Número mínimo de muestras requeridas en el historial
+/// antes de poder calcular un valor de ROR válido.
+pub const ROR_MIN_SAMPLES: usize = 2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,13 +149,18 @@ mod tests {
         assert!(ARTISAN_CMD_MAX_LEN <= 256);
 
         assert!(REPORT_BUFFER_SIZE > 0);
-        assert!(REPORT_BUFFER_SIZE <= 128);
+        assert!(REPORT_BUFFER_SIZE <= 256); // Increased buffer size
 
         assert!(BT_HISTORY_SIZE > 0);
         assert!(BT_HISTORY_SIZE <= 32); // Historial razonable
 
         assert!(COMMAND_BUFFER_SIZE >= RESPONSE_BUFFER_SIZE / 2);
         assert!(RESPONSE_BUFFER_SIZE <= 1024); // Buffer de respuesta manejable
+
+        // Verificar constantes de ROR
+        assert!(ROR_WINDOW_SIZE >= ROR_MIN_SAMPLES);
+        assert!(ROR_FILTER_ALPHA > 0.0 && ROR_FILTER_ALPHA < 1.0);
+        assert!(ROR_MIN_SAMPLES >= 2);
 
         // Verificar que los tamaños sean potencias de 2 o múltiplos comúnmente usados
         assert!(ERROR_MSG_MAX_LEN % 8 == 0 || ERROR_MSG_MAX_LEN == 128);

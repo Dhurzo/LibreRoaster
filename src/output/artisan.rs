@@ -32,7 +32,9 @@ use alloc::string::String;
 // - `REPORT_BUFFER_SIZE`: Temperature report formatting (32 chars)
 // - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
 use crate::config::SystemStatus;
-use crate::memory::{BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, TIME_FORMAT_SIZE};
+use crate::memory::{
+    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
+};
 use crate::output::traits::{OutputError, OutputFormatter};
 use core::fmt::Write;
 use embassy_time::Instant;
@@ -71,7 +73,7 @@ impl ArtisanFormatter {
     }
 
     fn update_bt_history(history: &mut Deque<f32, BT_HISTORY_SIZE>, current_bt: f32) {
-        if history.len() >= 5 {
+        if history.len() >= BT_HISTORY_SIZE {
             let _ = history.pop_front();
         }
         let _ = history.push_back(current_bt);
@@ -230,12 +232,59 @@ impl ArtisanFormatter {
     pub fn format_err(code: u8, message: &str) -> String {
         format!("ERR {} {}", code, message)
     }
+
+    // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
+
+    pub fn calculate_weighted_ror(history: &[f32]) -> f32 {
+        if history.len() < ROR_MIN_SAMPLES {
+            return 0.0;
+        }
+
+        let mut weighted_sum = 0.0;
+        let mut weight_sum = 0.0;
+
+        // Linear weighting: recent samples count more
+        for (i, &temp) in history.iter().enumerate() {
+            let weight = (i + 1) as f32; // Linear progression: 1, 2, 3, ..., n
+            weighted_sum += temp * weight;
+            weight_sum += weight;
+        }
+
+        let weighted_temp = weighted_sum / weight_sum;
+        (weighted_temp - history[0]) / (history.len() - 1) as f32
+    }
+
+    pub fn apply_iir_filter(instantaneous_ror: f32, last_filtered: f32, alpha: f32) -> f32 {
+        // IIR filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+        alpha * instantaneous_ror + (1.0 - alpha) * last_filtered
+    }
+
+    pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
+        if history.len() < 3 {
+            return false;
+        }
+
+        let mean = history.iter().sum::<f32>() / history.len() as f32;
+        let variance = history
+            .iter()
+            .map(|&v| {
+                let diff = v - mean;
+                diff * diff
+            })
+            .sum::<f32>()
+            / history.len() as f32;
+        let std_dev = libm::sqrtf(variance);
+
+        // 2-sigma rule: values more than 2 standard deviations from mean are outliers
+        (current_temp - mean).abs() > 2.0 * std_dev
+    }
 }
 
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
     bt_history: Deque<f32, BT_HISTORY_SIZE>,
+    last_filtered_ror: f32,
 }
 
 impl Default for MutableArtisanFormatter {
@@ -243,7 +292,8 @@ impl Default for MutableArtisanFormatter {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
-            bt_history: Deque::<f32, 5>::new(),
+            bt_history: Deque::<f32, BT_HISTORY_SIZE>::new(),
+            last_filtered_ror: 0.0,
         }
     }
 }
@@ -285,18 +335,27 @@ impl MutableArtisanFormatter {
             return 0.0;
         }
 
-        self.last_bt = current_bt;
-        ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        // Check for outliers before updating history
+        let (front, back) = self.bt_history.as_slices();
+        if !ArtisanFormatter::is_temperature_outlier(current_bt, front)
+            && !ArtisanFormatter::is_temperature_outlier(current_bt, back)
+        {
+            self.last_bt = current_bt;
+            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        } else {
+            // Skip this outlier reading, return last filtered value
+            return self.last_filtered_ror;
+        }
 
         // Compute ROR from Deque history using as_slices
         let (front, back) = self.bt_history.as_slices();
         let combined_len = front.len() + back.len();
-        if combined_len < 2 {
+        if combined_len < ROR_MIN_SAMPLES {
             return 0.0;
         }
 
         // Build a temporary array for ROR calculation
-        let mut history_arr = [0.0f32; 5];
+        let mut history_arr = [0.0f32; BT_HISTORY_SIZE];
         for (i, &v) in front.iter().enumerate() {
             history_arr[i] = v;
         }
@@ -304,9 +363,20 @@ impl MutableArtisanFormatter {
             history_arr[front.len() + i] = v;
         }
 
-        let first_bt = history_arr[0];
-        let last_bt = history_arr[combined_len - 1];
-        (last_bt - first_bt) / (combined_len as f32 - 1.0)
+        let usable_history = &history_arr[..combined_len];
+
+        // Hybrid approach: Calculate weighted moving average ROR
+        let weighted_ror = ArtisanFormatter::calculate_weighted_ror(usable_history);
+
+        // Apply IIR filter for smoothing
+        let filtered_ror = ArtisanFormatter::apply_iir_filter(
+            weighted_ror,
+            self.last_filtered_ror,
+            ROR_FILTER_ALPHA,
+        );
+
+        self.last_filtered_ror = filtered_ror;
+        filtered_ror
     }
 }
 
