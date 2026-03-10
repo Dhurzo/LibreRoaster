@@ -21,8 +21,6 @@ use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
-#[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::config::Config as TimerConfig;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::TimerIFace;
