@@ -1,412 +1,247 @@
-# Architecture Research: v4.5 Refactoring Tasks
+# Architecture Research
 
-**Project:** LibreRoaster v4.5 Refactoring
-**Researched:** 2026-02-28
+**Domain:** Embedded firmware quality hardening (Embassy async, ESP32-C3 roaster control)
+**Researched:** 2026-03-07
 **Confidence:** HIGH
 
-## Executive Summary
-
-This architecture research addresses four refactoring tasks for LibreRoaster v4.5 that build upon the v4.4 foundation:
-
-1. **SSR Control Enhancement**: Extend the `SsrControlBase` pattern with formal trait delegation
-2. **Test Infrastructure Usage**: Integrate existing `tests/common/mod.rs` stubs
-3. **Formatter Optimization**: Replace `Vec<f32>` BT history with fixed-size array for embedded compatibility
-4. **Command Processing Refactor**: Decompose large match statement in `roaster_refactored.rs`
-
-All refactoring tasks integrate with the existing v4.4 architecture without requiring fundamental architectural changes.
-
----
-
-## Current Architecture (v4.4 Baseline)
+## Standard Architecture
 
 ### System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Application Layer                             │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │              RoasterControl (roaster_refactored.rs)          │  │
-│  │  - State management (RoasterState, SystemStatus)           │  │
-│  │  - Command processing (process_command)                      │  │
-│  │  - PID control coordination                                  │  │
-│  └──────────────────────────┬────────────────────────────────────┘  │
-├─────────────────────────────┴────────────────────────────────────────┤
-│                        Control Layer                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │ Temperature  │  │   Safety     │  │     Artisan          │   │
-│  │   Handler    │  │   Handler    │  │     Handler          │   │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘   │
-│         │                 │                      │                │
-│  ┌──────┴─────────────────┴──────────────────────┴───────────┐  │
-│  │              Heater Trait (traits.rs)                        │  │
-│  │  - set_power(duty) -> Result                                │  │
-│  │  - get_status() -> SsrHardwareStatus                        │  │
-│  └──────────────────────────┬───────────────────────────────────┘  │
-├─────────────────────────────┴────────────────────────────────────────┤
-│                        Hardware Layer                                 │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │           SsrControlBase (hardware/ssr.rs)                  │  │
-│  │  ┌─────────────────────────────────────────────────────┐   │  │
-│  │  │ SsrControl<'a, PIN, DETECT, PWM>                    │   │  │
-│  │  │ SsrControlSimple<'a, DETECT, PWM>                   │   │  │
-│  │  └─────────────────────────────────────────────────────┘   │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │    Fan       │  │   Sensors    │  │      USB/UART        │   │
-│  │  (ledc_bus)  │  │  (max31856)  │  │    (communication)   │   │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                     Host/Validation Layer (new in v5.0)                   │
+├────────────────────────────────────────────────────────────────────────────┤
+│  Audit inventory   Quality gates   Hardware evidence pack (Artisan Scope) │
+│  (dead code map)   (lint/test/RT)  (command trace + telemetry + logs)     │
+└───────────────────────────────┬────────────────────────────────────────────┘
+                                │ does not run in control loop
+┌───────────────────────────────▼────────────────────────────────────────────┐
+│                     Runtime Firmware (existing)                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  UART/USB reader tasks -> command queues -> multiplexer -> artisan_channel│
+│                                      │                                     │
+│                                      ▼                                     │
+│                       control_loop_task (100 ms cadence)                   │
+│                    process_artisan_command/process_command                 │
+│                                      │                                     │
+│                [Safety | Temperature | Artisan | System handlers]          │
+│                                      │                                     │
+│                 apply_guarded_heater + fan set_speed + watchdog feed       │
+│                                      │                                     │
+│            formatter/read status -> output_channel -> dual_output_task      │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Responsibilities
 
-| Component | Responsibility | Current Implementation |
-|-----------|----------------|----------------------|
-| `RoasterControl` | Main state machine, command routing | `src/control/roaster_refactored.rs` (722 lines) |
-| `SsrControlBase` | SSR state and logic extraction | `src/hardware/ssr.rs` (lines 87-156) |
-| `Heater` trait | Hardware abstraction | `src/control/traits.rs` (lines 16-28) |
-| `ArtisanFormatter` | CSV output formatting | `src/output/artisan.rs` (603 lines) |
-| `tests/common/mod.rs` | Shared test stubs | `tests/common/mod.rs` (317 lines) |
+| Component | Responsibility | Typical Implementation |
+|-----------|----------------|------------------------|
+| `ServiceContainer` | Shared state + channels + async/sync access boundaries | `src/application/service_container.rs` with `EmbassyMutex` + `critical_section::Mutex` |
+| `control_loop_task` | Deterministic orchestration (sensor/control/watchdog/telemetry) | `src/application/tasks.rs` 100 ms loop with stage tracking |
+| `RoasterControl` + handlers | Command semantics, PID/manual transitions, safety control paths | `src/control/roaster_refactored.rs`, `src/control/handlers.rs` |
+| Transport ingestion | Parse + queue + mux isolation per channel | `src/hardware/uart/tasks.rs`, `src/hardware/usb_cdc/tasks.rs`, `src/input/multiplexer.rs` |
+| v5.0 quality layer (new) | Audit workflow, regression gates, hardware evidence packaging | New `.planning/quality/`, `tests/hardware/`, and validation scripts/docs |
 
----
+## Recommended Project Structure
 
-## v4.5 Refactoring Tasks
+```
+.planning/
+├── quality/
+│   ├── dead-code-inventory.md       # Candidate removals with evidence and owner
+│   ├── dependency-map.md            # Module dependency map and refactor seams
+│   └── gate-results/                # Per-run quality gate outputs
+├── research/
+│   └── ARCHITECTURE.md              # This document
+tests/
+├── hardware/
+│   ├── artisan-scope-checklist.md   # Manual validation checklist
+│   └── evidence-template.md         # Required artifacts for HW-01 proof
+└── ... existing host tests ...
+src/
+├── control/
+│   ├── roaster_refactored.rs        # Existing orchestration, incrementally slimmed
+│   ├── handlers.rs                  # Existing command handlers, preserve authority
+│   └── (new) command_router.rs      # Optional thin seam before handler chain
+├── safety/
+│   └── regression.rs                # Existing regression trigger path
+└── application/
+    └── tasks.rs                     # Existing cadence-critical loop, avoid heavy changes
+```
 
-### Task 1: SSR Control — Trait Delegation Enhancement
+### Structure Rationale
 
-**Current State (v4.4):**
+- **`.planning/quality/`:** Keeps refactor evidence and dead-code decisions out of runtime code and provides rollback context.
+- **`tests/hardware/`:** Creates a repeatable, auditable evidence path for Artisan Scope without mixing manual procedures into unit tests.
+- **`src/control/` seam-first updates:** Limits blast radius by extracting interfaces before moving behavior.
 
+## Architectural Patterns
+
+### Pattern 1: Shadow-First Dead-Code Removal
+
+**What:** Mark candidates, map inbound callers, then remove in small batches guarded by target-specific checks.
+**When to use:** Any cleanup touching control, safety, transport, or shared container state.
+**Trade-offs:** Slower than bulk deletion, but much lower regression risk for real-time firmware.
+
+**Example:**
 ```rust
-// src/hardware/ssr.rs - SsrControlBase already exists
-pub struct SsrControlBase {
-    pub(crate) hardware_status: SsrHardwareStatus,
-    pub(crate) current_duty: u16,
-    pub(crate) last_duty_delta_ticks: i16,
-    pub(crate) retry_count: u8,
-    pub(crate) last_detection_check: Option<u32>,
-    pub(crate) is_pwm_enabled: bool,
-}
+// Step 1: deprecate + redirect
+#[deprecated(note = "v5.0 cleanup candidate; remove after gate pass")]
+pub fn legacy_path(...) { new_path(...) }
+
+// Step 2: remove only after host + target gates are green
 ```
 
-**v4.5 Enhancement:**
-The v4.4 already provides `StatusGetters` trait. The v4.5 may extend this with:
-- `HeatSourceDetector` trait (already exists at lines 98-100)
-- `PeriodicCheck` trait (already exists at lines 104-106)
-- Formal delegation macros for reduce boilerplate
+### Pattern 2: SOLID via Ports-and-Policies (incremental)
 
-**Integration Points:**
+**What:** Keep hardware adapters (`Heater`, `Fan`, sensor hub) as ports; move command policy logic to handlers/router seams.
+**When to use:** Large functions where policy and I/O are intertwined (`process_artisan_command`, `update_control` edges).
+**Trade-offs:** Adds indirection, but improves testability and dead-code detection clarity.
 
-| Component | File | Change Type |
-|-----------|------|-------------|
-| `SsrControlBase` | `src/hardware/ssr.rs` | Already complete (v4.4) |
-| `StatusGetters` trait | `src/hardware/ssr.rs` | Already complete (v4.4) |
-| `HeatSourceDetector` | `src/hardware/ssr.rs` | Already complete (v4.4) |
-| `PeriodicCheck` | `src/hardware/ssr.rs` | Already complete (v4.4) |
-
-**Build Impact:** None — v4.4 already completed this work.
-
----
-
-### Task 2: Test Infrastructure Integration
-
-**Current State (v4.4):**
-
+**Example:**
 ```rust
-// tests/common/mod.rs - Already created
-pub struct StubHeater {
-    pub calls: RefCell<Vec<HeaterCall>>,
-    pub status: RefCell<SsrHardwareStatus>,
+pub trait ManualCommandPolicy {
+    fn on_heater(&mut self, value: u8, status: &mut SystemStatus) -> Result<(), RoasterError>;
 }
 
-pub struct StubFan {
-    pub calls: RefCell<Vec<FanCall>>,
-    pub speed: RefCell<f32>,
-}
-
-pub struct StubThermometer {
-    pub calls: RefCell<Vec<ThermometerCall>>,
-    pub temp: RefCell<f32>,
-}
+// Handler remains authoritative; RoasterControl applies outputs after policy success.
 ```
 
-**v4.5 Task:**
-Use the existing test stubs in more test files rather than defining inline mocks.
+### Pattern 3: Out-of-Band Quality Gates
 
-**Integration Points:**
+**What:** Run lint/test/timing checks outside the 100 ms loop; only expose lightweight counters in runtime state.
+**When to use:** Any quality hardening effort that could add overhead in control path.
+**Trade-offs:** Requires better tooling discipline, but preserves deterministic behavior.
 
-| Component | File | Current Usage | v4.5 Target |
-|-----------|------|---------------|-------------|
-| `StubHeater` | `tests/common/mod.rs` | Limited | Expand usage |
-| `StubFan` | `tests/common/mod.rs` | Limited | Expand usage |
-| `StubThermometer` | `tests/common/mod.rs` | Limited | Expand usage |
+## Data Flow
 
-**Files to Update:**
-- `tests/ssr_monitor.rs` — inline `FakeDetectPin`, `FakeLedcChannel`
-- `tests/command_errors.rs` — inline command builders
-- `tests/fan_serialization.rs` — inline fan mocks
-
-**Build Order:**
-1. Verify `tests/common/mod.rs` compiles: `cargo test --no-run`
-2. Migrate one test file at a time
-3. Run tests after each migration
-
----
-
-### Task 3: Formatter — BT History Optimization
-
-**Current State:**
-
-```rust
-// src/output/artisan.rs
-pub struct ArtisanFormatter {
-    start_time: Instant,
-    last_bt: f32,
-    bt_history: Vec<f32>,  // DYNAMIC ALLOCATION - problematic for embedded
-}
-
-pub struct MutableArtisanFormatter {
-    start_time: Instant,
-    last_bt: f32,
-    bt_history: Vec<f32>,  // Same issue
-}
-```
-
-**Problem:** `Vec<f32>` requires heap allocation (`#![no_std]` incompatibility), and the history is limited to 5 samples anyway.
-
-**v4.5 Solution:** Replace `Vec<f32>` with fixed-size array:
-
-```rust
-// Proposed: Fixed-size array (no heap allocation)
-const BT_HISTORY_SIZE: usize = 5;
-
-pub struct ArtisanFormatter {
-    start_time: Instant,
-    last_bt: f32,
-    bt_history: [f32; BT_HISTORY_SIZE],  // FIXED SIZE - no allocation
-    bt_history_len: usize,                // Track actual used slots
-}
-
-pub struct MutableArtisanFormatter {
-    start_time: Instant,
-    last_bt: f32,
-    bt_history: [f32; BT_HISTORY_SIZE],
-    bt_history_len: usize,
-}
-```
-
-**Integration Points:**
-
-| Component | File | Change Type |
-|-----------|------|-------------|
-| `ArtisanFormatter` | `src/output/artisan.rs` | Modify — replace Vec with [f32; 5] |
-| `MutableArtisanFormatter` | `src/output/artisan.rs` | Modify — replace Vec with [f32; 5] |
-| `compute_ror_from_history()` | `src/output/artisan.rs` | Modify — adapt to fixed-size |
-| `update_bt_history()` | `src/output/artisan.rs` | Modify — circular buffer or shift |
-
-**Data Flow (Unchanged):**
+### Request Flow (runtime, preserved)
 
 ```
-SystemStatus (bean_temp)
+[Artisan Scope/UART/USB Command]
     ↓
-ArtisanFormatter::format() or MutableArtisanFormatter::format()
+[uart_reader_task | usb_reader_task]
     ↓
-update_bt_history() → compute_ror_from_history()
+[CommandQueue + Multiplexer]
     ↓
-CSV string: "time,ET,BT,ROR,Gas"
+[artisan_channel]
+    ↓
+[control_loop_task]
+    ↓
+[RoasterControl::process_artisan_command -> process_command -> handlers]
+    ↓
+[apply_guarded_heater / fan.set_speed / watchdog + STATUS/READ formatting]
 ```
 
-**Build Order:**
-1. Modify `ArtisanFormatter` struct and methods
-2. Modify `MutableArtisanFormatter` struct and methods
-3. Update unit tests to reflect new API
-4. Verify host tests pass: `cargo test`
-5. Verify no_std compatibility: `cargo check --target riscv32`
+### State Management (v5.0 additions)
 
----
-
-### Task 4: Command Processing — Match Decomposition
-
-**Current State:**
-
-```rust
-// src/control/roaster_refactored.rs - Lines 205-241
-pub fn process_command(
-    &mut self,
-    command: RoasterCommand,
-    current_time: Instant,
-) -> Result<(), RoasterError> {
-    // Direct match on command type - 36+ branches
-    match command {
-        RoasterCommand::StopRoast => { ... }
-        RoasterCommand::SetHeaterManual(value) => { ... }
-        RoasterCommand::SetFanManual(value) => { ... }
-        // ... 30+ more variants
-        RoasterCommand::IncreaseHeater => { ... }
-        RoasterCommand::DecreaseHeater => { ... }
-        // ... more
-    }
-}
+```
+[SystemStatus + queue/lock metrics]
+    ↓
+[Host gate runner captures snapshots]
+    ↓
+[.planning/quality/gate-results/*.md + hardware evidence bundle]
 ```
 
-Additionally, `process_artisan_command()` (lines 533-660) has another large match with ~15 branches.
+### Key Data Flows
 
-**v4.5 Solution:** The handler pattern already exists in `handlers.rs`:
+1. **Safety-critical control flow:** command -> handler authority -> guarded actuation -> status snapshot, unchanged except seam extraction.
+2. **Quality evidence flow (new):** tests/log snapshots/manual Artisan Scope run -> structured artifacts -> milestone audit decision.
 
-```rust
-// Current: handlers.rs already has the pattern we need
-pub struct TemperatureCommandHandler { ... }
-pub struct SafetyCommandHandler { ... }
-pub struct ArtisanCommandHandler { ... }
-pub struct SystemCommandHandler { ... }
+## Scaling Considerations
 
-// roaster_refactored.rs already uses this pattern:
-let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
-    &mut self.safety_handler,
-    &mut self.temp_handler,
-    &mut self.artisan_handler,
-    &mut self.system_handler,
-];
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| Current (single-board dev + host tests) | Keep monolithic runtime; add only host-side quality tooling |
+| Multi-board validation bench | Add board-profiled evidence templates and per-board gate result partitions |
+| Ongoing milestone cadence | Automate quality gate matrix and require evidence artifacts before cleanup merges |
 
-for handler in &mut handlers {
-    if handler.can_handle(command) {
-        return handler.handle_command(command, current_time, &mut self.status);
-    }
-}
-```
+### Scaling Priorities
 
-**Refactoring Options:**
+1. **First bottleneck:** confidence in dead-code safety; solve with module-level inventory + dependency map before deletion.
+2. **Second bottleneck:** proving real-world behavior after refactors; solve with repeatable Artisan Scope evidence package.
 
-| Option | Description | Trade-off |
-|--------|-------------|-----------|
-| A: Expand handler pattern | Use existing handlers for ALL commands | Requires adding more commands to handlers |
-| B: Command groups | Split into `process_roaster_command()` and `process_artisan_command()` | Better separation, less duplication |
-| C: Command enum optimization | Use `#[derive)]` macros for match exhaustiveness | Compile-time help, not runtime improvement |
+## Anti-Patterns
 
-**Recommended: Option A** — The handler chain already exists; just expand it to cover all commands rather than having special-case handling in `RoasterControl::process_command()`.
+### Anti-Pattern 1: Big-Bang Refactor in `RoasterControl`
 
-**Integration Points:**
+**What people do:** Rewrite `process_artisan_command` + handler boundaries in one large PR.
+**Why it's wrong:** Breaks traceability and makes safety regressions hard to isolate.
+**Do this instead:** Extract seams first, move one command family at a time, verify after each slice.
 
-| Component | File | Change Type |
-|-----------|------|-------------|
-| `RoasterControl::process_command()` | `src/control/roaster_refactored.rs` | Refactor — delegate ALL to handlers |
-| `RoasterControl::process_artisan_command()` | `src/control/roaster_refactored.rs` | Refactor — may integrate into main flow |
-| `TemperatureCommandHandler` | `src/control/handlers.rs` | May need more command coverage |
-| `ArtisanCommandHandler` | `src/control/handlers.rs` | May need more command coverage |
+### Anti-Pattern 2: Quality Checks Inside Control Path
 
-**Commands to Migrate to Handlers:**
+**What people do:** Add heavy diagnostics, allocations, or verbose formatting inside 100 ms tick.
+**Why it's wrong:** Risks missed deadlines and false watchdog/safety behavior changes.
+**Do this instead:** Keep runtime metrics minimal; perform analysis in host tests and post-run tooling.
 
-Currently in `roaster_refactored.rs` direct handling:
-- `SetHeaterManual` — already in `ArtisanCommandHandler`
-- `SetFanManual` — already in `ArtisanCommandHandler`
-- `IncreaseHeater` — already in `ArtisanCommandHandler`
-- `DecreaseHeater` — already in `ArtisanCommandHandler`
+## Integration Points
 
-The main `process_command` already delegates properly. The task is verifying this pattern is complete.
+### External Services
 
----
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| Artisan Scope (operator UI) | Existing serial protocol over USB/UART | Primary HW-01 validation driver; no protocol expansion required for v5.0 |
+| Host CI/local runner (new) | `cargo check/test/clippy` + scripted artifact capture | Must include both host and `riscv32` checks to avoid host-only confidence |
 
-## Build Order and Dependencies
+### Internal Boundaries
 
-### Phase 1: Verify v4.4 Foundation (No Changes)
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| `hardware/*/tasks` <-> `ServiceContainer` | queues + channels | Preserve queue/multiplexer semantics while adding gate instrumentation |
+| `control_loop_task` <-> `RoasterControl` | direct async closure call | Keep cadence-critical path stable; prefer wrapper seams over internal rewrites |
+| `RoasterControl` <-> handlers | handler chain (`RoasterCommandHandler`) | Keep `ArtisanCommandHandler` authoritative for manual outputs |
+| `RoasterControl` <-> heater/fan/watchdog | trait calls + status snapshots | Any refactor must preserve `apply_guarded_heater` and watchdog ordering |
+| runtime telemetry <-> evidence artifacts (new) | STATUS/READ/log capture | New docs/scripts consume outputs without mutating runtime behavior |
 
-```bash
-# Verify SSR base structure
-cargo check --target riscv32
+## New vs Modified Components for v5.0
 
-# Verify test stubs exist
-cargo test --no-run
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `.planning/quality/dead-code-inventory.md` | New | Dead-code candidates with usage evidence and removal order |
+| `.planning/quality/dependency-map.md` | New | Module coupling map to guide SOLID seam extraction |
+| `tests/hardware/artisan-scope-checklist.md` | New | Manual real-roaster validation checklist with pass/fail criteria |
+| `tests/hardware/evidence-template.md` | New | Standardized artifact pack format for milestone audits |
+| `src/control/roaster_refactored.rs` | Modified (incremental) | Extract router/policy seams without changing command semantics |
+| `src/application/tasks.rs` | Modified (minimal) | Keep stage/watchdog/status capture stable; only add lightweight hooks if needed |
+| existing host tests (`tests/*`) | Modified/extended | Convert into quality gates for cleanup + SOLID refactor confidence |
 
-# Quick sanity check
-cargo check
-```
+## Suggested Build Order (Minimize Regression Risk)
 
-### Phase 2: Formatter Optimization
+1. **Baseline freeze + guardrails**
+   - Capture current host/target green baseline (`cargo test`, `cargo check --target riscv32imc-unknown-none-elf`, clippy).
+   - Record current safety/timing signals from `control_loop_task` logs and STATUS fields.
 
-```bash
-# 1. Modify artisan.rs - replace Vec with [f32; 5]
-# 2. Update compute_ror_from_history signature
-# 3. Update update_bt_history logic
-# 4. Run unit tests
-cargo test artisan
+2. **Dead-code audit only (no removals yet)**
+   - Produce `dead-code-inventory.md` and dependency map from actual call sites.
+   - Classify candidates: runtime-critical, test-only, legacy/docs-only.
 
-# 5. Verify embedded build
-cargo check --target riscv32
-```
+3. **Low-risk removals first**
+   - Remove isolated dead code (unreferenced helpers/docs-only branches) in tiny PRs.
+   - Run full gate matrix after each batch, including transport and concurrency tests.
 
-### Phase 3: Test Infrastructure Usage
+4. **SOLID seam extraction before behavior movement**
+   - Introduce thin routing/policy seams around command handling.
+   - Keep command behavior byte-for-byte equivalent, verified by existing integration suites.
 
-```bash
-# 1. Migrate ssr_monitor.rs to use tests/common/mod.rs
-# 2. Run tests
-cargo test ssr_monitor
+5. **Incremental behavior refactor behind proven seams**
+   - Move one command family at a time; keep `ArtisanCommandHandler` and safety ordering authoritative.
+   - Re-verify watchdog, SSR guard, queue depth, and lock-depth tests on each step.
 
-# 3. Migrate remaining test files
-# 4. Full test suite
-cargo test
-```
-
-### Phase 4: Command Processing Verification
-
-```bash
-# 1. Audit process_command for any remaining direct handling
-# 2. Ensure all commands go through handler chain
-# 3. Run integration tests
-cargo test --test artisan_integration_test
-
-# 4. Full test suite
-cargo test
-```
-
----
-
-## Integration Matrix
-
-### New vs Modified Components
-
-| Component | Type | Reason |
-|-----------|------|--------|
-| `ArtisanFormatter.bt_history` | Modify | Vec → [f32; 5] |
-| `MutableArtisanFormatter.bt_history` | Modify | Vec → [f32; 5] |
-| `tests/common/mod.rs` | Existing | Use in more tests |
-| `tests/ssr_monitor.rs` | Modify | Use shared stubs |
-| `process_command()` | Verify | Ensure handler delegation complete |
-
-### Unchanged Components (Already Complete)
-
-| Component | Reason |
-|-----------|--------|
-| `SsrControlBase` | v4.4 already complete |
-| `StatusGetters` trait | v4.4 already complete |
-| `HeatSourceDetector` trait | v4.4 already complete |
-| `PeriodicCheck` trait | v4.4 already complete |
-| `StubHeater`, `StubFan`, `StubThermometer` | v4.4 already complete |
-| Handler pattern (`RoasterCommandHandler`) | Already implemented |
-
----
-
-## Confidence Assessment
-
-| Area | Confidence | Notes |
-|------|------------|-------|
-| SSR refactoring (v4.4) | HIGH | Already complete, v4.5 may be verification |
-| Test infrastructure | HIGH | Stubs exist, integration is straightforward |
-| Formatter optimization | HIGH | Vec→array is well-understood pattern |
-| Command processing | HIGH | Handler pattern already exists |
-
----
+6. **Hardware evidence phase (HW-01)**
+   - Execute Artisan Scope checklist on real hardware.
+   - Store artifact bundle (commands sent, serial responses, safety logs, observed actuator behavior).
+   - Only close milestone once host gates and hardware evidence both pass.
 
 ## Sources
 
-- SSR implementation: `src/hardware/ssr.rs` (650 lines)
-- Test stubs: `tests/common/mod.rs` (317 lines)
-- Formatter: `src/output/artisan.rs` (603 lines)
-- Command processing: `src/control/roaster_refactored.rs` (722 lines)
-- Handler pattern: `src/control/handlers.rs` (471 lines)
+- Project milestone context: `.planning/PROJECT.md`
+- Runtime orchestration: `src/application/tasks.rs`, `src/application/service_container.rs`, `src/application/app_builder.rs`
+- Control boundaries: `src/control/roaster_refactored.rs`, `src/control/handlers.rs`
+- Transport and mux: `src/hardware/uart/tasks.rs`, `src/hardware/usb_cdc/tasks.rs`, `src/input/multiplexer.rs`, `src/input/parser.rs`
+- Existing instrumentation and regression hooks: `src/safety/regression.rs`, `src/application/queue_metrics.rs`
+- Existing hardware verification references: `tests/TEST-01-SSR-Guard.md`, `tests/dual_channel_verification.md`, `internalDoc/ARTISAN_CONNECTION.md`
 
 ---
-
-*Architecture research for: LibreRoaster v4.5 Refactoring Tasks*  
-*Researched: 2026-02-28*
+*Architecture research for: LibreRoaster v5.0 quality hardening*
+*Researched: 2026-03-07*

@@ -26,7 +26,7 @@ impl QueueProcessorMetrics {
             if depth > current_max {
                 self.max_depth.borrow(cs).set(depth);
             }
-            if depth >= QUEUE_DEPTH_BACKLOG_THRESHOLD && depth > 0 {
+            if depth >= QUEUE_DEPTH_BACKLOG_THRESHOLD {
                 let current_backlog = self.backlog_events.borrow(cs).get();
                 self.backlog_events.borrow(cs).set(current_backlog + 1);
             }

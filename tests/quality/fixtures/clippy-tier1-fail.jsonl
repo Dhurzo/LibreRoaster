@@ -1,0 +1,1 @@
+{"fmt_status": 0, "clippy_findings": [{"file_path": "src/control/roaster.rs", "line": 42, "column": 10, "rule": "clippy::unwrap_used", "message": "unwrapping a Result value, which may be an Err", "severity": "warning", "tier": "t1_critical"}], "test_status": 0}

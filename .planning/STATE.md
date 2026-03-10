@@ -2,64 +2,65 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-01)
+See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Planning v4.2 Anti-windup integral (Phase 70+)
+**Current focus:** Phase 88 - Architecture Alignment and UNITS Refactor complete - v5.0 milestone complete
 
 ## Current Position
 
-Phase: Planning next milestone (v4.2 Anti-windup integral)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-03-01 — v4.1 Documentation Update shipped
+Phase: 88 of 88 (Architecture Alignment and UNITS Refactor)
+Plan: 1 of 1 in current phase
+Status: Phase complete
+Last activity: 2026-03-09 — Completed 88-01-PLAN.md
 
-Progress: [█████] 100% (8 phases, 11 plans delivered)
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
-**Velocity:**
-- Total plans completed: 11 (v4.1 milestone)
-- Average duration: ~10 min/plan
-- Total execution time: ~1.5 hours (phases 62-69)
+- **Velocity:**
+- Total plans completed: 27 (all v5.0 phases complete: 81-88)
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 62    | 3/3   | 3     | ~12 min  |
-| 63    | 1/1   | 1     | ~3 min   |
-| 64    | 1/1   | 1     | ~1 min   |
-| 65    | 2/2   | 2     | ~5 min   |
-| 66    | 1/1   | 1     | ~4 min   |
-| 67    | 1/1   | 1     | ~0 min (verification) |
-| 68    | 1/1   | 1     | ~1 min   |
-| 69    | 1/1   | 1     | ~4 min   |
-
-- **Recent Trend:**
-- v4.1 documentation and instrumentation milestone shipped; watchdog, LEDC guard, and automation hooks now explicitly documented.
-- Preparing v4.2 anti-windup integral requirements and plans.
+| 81 | 3/3 | 3 | Phase complete |
+| 82 | 3/3 | 3 | Phase complete |
+| 83 | 3/3 | 3 | Phase complete |
+| 84 | 3/3 | 3 | Phase complete |
+| 85 | 3/3 | 3 | Phase complete |
+| 86 | 1/1 | 1 | Phase complete |
+| 87 | 2/2 | 2 | Phase complete |
+| 88 | 1/1 | 1 | Phase complete |
 
 ## Accumulated Context
 
 ### Decisions
 
-- Documented REG/STATUS/STAT automation hooks next to the command table and linked directly to `internalDoc/INSTRUMENTATION_README.MD` so automation readers can decode the payload and regression telemetry updates.
-- Instrumentation now surfaces watchdog/guard/regression state through `SAFETY WATCHDOG`, `SAFETY LEDC-GUARD`, and `SAFETY OT-REGRESSION` telemetry while `SystemStatus` mirrors the counters.
-- WatchdogFeeder, LEDC guard, and regression runner services share ServiceContainer wiring so hardware handles stay serialized and the watchdog remains fed.
-- Regression helper API stays private while `regression_task`/`request_regression` remain public, satisfying the safety surface audit.
+- v5.0 signoff is gated by explicit numeric thresholds (thresholds.json) and instrumented firmware (command_latency_us).
+- Latency measurement is performed in the application layer (control_loop_task) to avoid circular dependencies.
+- ArtisanFormatter now produces 18 CSV fields for the STATUS command.
+- [85-02] Used csv module instead of pandas for analysis to avoid dependency installation issues in externally managed environment.
+- [85-03] Performed simulated validation instead of physical hardware run due to lack of hardware access.
+- [86-01] Updated all integration test assertions to expect 18 columns in STATUS output.
+- [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
+- [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
+- [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
+- [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
+- [88-01] Promoted stage_instrumentation.rs to Tier 1 in quality policy.
+- [88-01] Refactored UNITS command to use ManualCommandPolicy pattern via forward_artisan_manual_command.
 
 ### Pending Todos
 
-- Draft v4.2 Anti-windup integral requirements (`/gsd-new-milestone`).
-- Plan phases 70-72 to harden the 100 ms control loop (anti-windup, derivative-on-measurement, deterministic sampling) and update instrumentation hooks.
+- None (Milestone v5.0 complete)
 
 ### Blockers/Concerns
 
-- None — documentation, safety, and instrumentation verification complete.
+- None (Phase 88 and Milestone v5.0 validated)
 
 ## Session Continuity
 
-Last session: 2026-03-01 11:45:00Z
-Stopped at: v4.1 Documentation Update milestone complete (phases 62-69)
+Last session: 2026-03-09T06:08:52Z
+Stopped at: Completed 87-02-PLAN.md
 Resume file: None

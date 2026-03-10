@@ -1,11 +1,10 @@
-#![no_std]
+#![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
 #![deny(
     clippy::mem_forget,
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for duration of a data transfer."
 )]
-#[cfg(target_arch = "riscv32")]
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
@@ -19,6 +18,7 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::config::Config as TimerConfig;
@@ -41,7 +41,9 @@ use static_cell::StaticCell;
 extern crate alloc;
 
 // StaticCells for safe static initialization (replaces unsafe make_static)
+#[cfg(target_arch = "riscv32")]
 static SSR_CELL: StaticCell<SsrControlSimple> = StaticCell::new();
+#[cfg(target_arch = "riscv32")]
 static FAN_CELL: StaticCell<FanController> = StaticCell::new();
 
 #[cfg(target_arch = "riscv32")]
@@ -67,6 +69,7 @@ use esp_bootloader_esp_idf;
 #[cfg(target_arch = "riscv32")]
 use critical_section;
 
+#[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[cfg(target_arch = "riscv32")]

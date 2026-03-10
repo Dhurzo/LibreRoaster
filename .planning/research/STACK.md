@@ -1,284 +1,122 @@
-# Stack Research: v4.5 Refactoring Tasks
+# Stack Research
 
-**Project:** LibreRoaster (ESP32-C3 Coffee Roaster Firmware)  
-**Researched:** 2026-02-28  
-**Focus:** Stack additions/changes for v4.5 refactoring tasks (SSR deduplication, test stub unification, heapless migration, command handler delegation)  
+**Domain:** Embedded Rust firmware quality hardening (v5.0)
+**Researched:** 2026-03-07
 **Confidence:** HIGH
-
----
-
-## Executive Summary
-
-All four v4.5 refactoring tasks can be completed with **zero new dependencies**. The heapless crate (v0.9.2, already in use) provides the `Deque<f32, N>` type needed for Task 3, and the other tasks are pure refactoring requiring no dependency changes.
-
----
 
 ## Recommended Stack
 
-### Current Dependencies (v4.4)
+### Core Technologies
 
-| Category | Current Version | Status |
-|----------|-----------------|--------|
-| heapless | 0.9.2 | Latest stable (August 2025) |
-| embedded-hal | 1.0.0 | Stable |
-| embassy-rs | 0.5.0+ | In use |
-| portable-atomic | 1.13 | In use |
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| Rust toolchain pin | `1.88.0` stable + `nightly` (tools-only) | Deterministic lint/build behavior for ESP32-C3 while still enabling nightly-only audits | `esp-hal 1.0.0` has `rust-version = 1.88.0`; pinning avoids drift from `stable` moving under us. Nightly is needed only for `cargo-udeps` execution, not firmware builds. |
+| `cargo-udeps` | `0.1.60` | High-signal unused dependency detection | Best catch for truly unused Cargo deps in CI, but requires nightly to run; ideal as scheduled/PR quality gate, not every local build. |
+| `cargo-nextest` | `0.9.129` | Reliable host test orchestration + machine-readable reports | Better failure isolation/retries/reporting than plain `cargo test`; fits existing host-test strategy for regression-proof refactors. |
+| `cargo-llvm-cov` | `0.8.4` | Coverage baseline and fail-under gates during dead-code removal | Gives line/region coverage and integrates with `cargo nextest`; use as safety net before deleting questionable paths. |
+| `cargo-modules` | `0.25.0` | Module-boundary visualization and cycle/orphan detection | Practical governance tool for SOLID-oriented refactors in Rust: structure/dependency/orphan views make boundary regressions visible. |
+| `cargo-deny` | `0.19.0` | Dependency policy (advisories, source constraints, duplicate crate control) | Keeps cleanup/refactors from silently increasing supply-chain risk while dependency graph changes. |
 
-**Conclusion:** All dependencies are current. No version changes or additions needed.
+### Supporting Libraries
 
----
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `serialport` (dev-dependency) | `4.8.1` | Host-side serial session capture against real firmware ports | Use in a dedicated hardware validation harness to emit timestamped command/response evidence from USB CDC or UART. |
+| `csv` (dev-dependency) | `1.4.0` | Deterministic evidence artifacts consumable by auditors | Use with `serialport` harness to write command/result timelines (`STATUS`, `READ`, `OT1`, `IO3`, `START/STOP`) for HW-01 evidence packs. |
+| `cargo-machete` | `0.9.1` | Fast stable pre-check for unused dependencies | Use as a fast local/PR preflight before the deeper nightly `cargo-udeps` pass. |
+| `cargo-geiger` | `0.13.0` | Unsafe usage trend tracking during refactors | Keep as an audit metric so SOLID-driven refactors do not grow unsafe surface unexpectedly. |
 
-## Task-by-Task Analysis
+### Development Tools
 
-### Task 1: Extract detect_heat_source() to SsrControlBase
-
-**Current state:**
-- `SsrControlBase` exists in `src/hardware/ssr.rs` with common fields (lines 87-94)
-- Both `SsrControl` and `SsrControlSimple` have identical `detect_heat_source()` implementations (lines 213-246 and 329-361)
-- `HeatSourceDetector` trait exists (lines 98-100) but both structs implement it separately
-
-**Refactoring approach:**
-- Move `detect_heat_source()` logic to `SsrControlBase` as a public method
-- Both `SsrControl` and `SsrControlSimple` delegate to `self.base.detect_heat_source(current_time)`
-- Follow the existing `StatusGetters` pattern already established in v4.4
-
-**Pattern to follow:**
-```rust
-// SsrControlBase gets the method
-impl SsrControlBase {
-    pub fn detect_heat_source<D: InputPin>(
-        &mut self, 
-        detection_pin: &mut D, 
-        current_time: u32
-    ) -> Result<(), SsrError> {
-        // Move existing logic here
-    }
-}
-
-// SsrControl delegates
-impl<'a, PIN, DETECT, PWM> SsrControl<'a, PIN, DETECT, PWM> {
-    pub fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
-        self.base.detect_heat_source(&mut self.detection_pin, current_time)
-    }
-}
-```
-
-**Stack impact:** None. Pure refactoring.
-
----
-
-### Task 2: Migrate test stubs from local files to crate::common::*
-
-**Current state:**
-- `tests/common/mod.rs` contains `StubHeater`, `StubFan`, `StubThermometer` with call tracking via `RefCell<Vec<T>>`
-- Multiple test files define their own local stub implementations (duplicate code)
-
-**Refactoring approach:**
-- Create `src/common/mod.rs` that re-exports from test stubs for library-level access
-- OR: Move shared stubs to `src/common/` for use by both library and tests
-
-**Existing stub pattern (already working):**
-```rust
-pub struct StubHeater {
-    pub calls: RefCell<Vec<HeaterCall>>,
-    pub status: RefCell<SsrHardwareStatus>,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.calls.borrow_mut().push(HeaterCall::SetPower(duty));
-        Ok(())
-    }
-}
-```
-
-**Stack impact:** None. `RefCell` is already in use for test stubs.
-
----
-
-### Task 3: Replace Vec<f32> with heapless::Deque<f32, 5>
-
-**Current state:**
-- `MutableArtisanFormatter` uses `bt_history: Vec<f32>` (line 193 in `src/output/artisan.rs`)
-- Manual ring buffer logic: `if history.len() >= 5 { history.remove(0); }` (lines 51-56)
-
-**heapless::Deque API (already available in 0.9.x):**
-
-```rust
-use heapless::Deque;
-
-// Create with capacity 5
-let mut bt_history: Deque<f32, 5> = Deque::new();
-
-// Replace manual ring buffer:
-// Old: if history.len() >= 5 { history.remove(0); } history.push(current_bt);
-// New:
-if bt_history.len() == bt_history.capacity() {
-    bt_history.pop_front(); // Remove oldest element
-}
-bt_history.push_back(current_bt).unwrap(); // Cannot fail with capacity 5
-
-// Iterate for ROR calculation
-for val in &bt_history { /* ... */ }
-```
-
-**Required methods (all available in heapless 0.9.x):**
-| Method | Purpose |
-|--------|---------|
-| `new()` | Constructor |
-| `push_back()` | Add element to back |
-| `pop_front()` | Remove oldest element |
-| `len()` | Current count |
-| `capacity()` | Maximum capacity |
-| `&self` iteration | Front-to-back iteration |
-
-**Migration example:**
-```rust
-// Before
-bt_history: Vec<f32>,
-
-// After  
-bt_history: Deque<f32, 5>,
-```
-
-**Stack impact:** None. `Deque` is exported by existing heapless 0.9.2 dependency.
-
----
-
-### Task 4: Refactor process_artisan_command() to delegate to ArtisanCommandHandler
-
-**Current state:**
-- `ArtisanCommandHandler` already exists in `src/control/handlers.rs` (lines 217-342)
-- `RoasterCommandHandler` trait already defined in `src/control/abstractions.rs` (lines 51-60)
-- `RoasterRefactored` has `process_artisan_command()` method
-
-**Refactoring approach:**
-- Ensure `RoasterRefactored` stores an `ArtisanCommandHandler` instance
-- `process_artisan_command()` delegates to `handler.handle_command(command, current_time, status)`
-
-**Existing pattern:**
-```rust
-impl RoasterCommandHandler for ArtisanCommandHandler {
-    fn handle_command(
-        &mut self,
-        command: RoasterCommand,
-        current_time: Instant,
-        status: &mut SystemStatus,
-    ) -> Result<(), RoasterError> {
-        match command {
-            RoasterCommand::SetHeaterManual(value) => { /* ... */ }
-            RoasterCommand::SetFanManual(value) => { /* ... */ }
-            // ...
-        }
-    }
-
-    fn can_handle(&self, command: RoasterCommand) -> bool {
-        matches!(command, RoasterCommand::SetHeaterManual(_) | /* ... */)
-    }
-}
-```
-
-**Stack impact:** None. All types already exist.
-
----
-
-## Explicitly NOT Needed
-
-| Dependency | Reason |
-|------------|--------|
-| New heapless version | 0.9.2 is latest stable |
-| `refcell` | Already have `core::cell::RefCell` in std/alloc |
-| `parking_lot` | Not needed; critical-section handles embedded concurrency |
-| `anyhow` | Error handling uses custom `RoasterError` enum |
-| `thiserror` | Manual error implementation already in place |
-
----
-
-## Integration with Existing Patterns
-
-### Trait Delegation Pattern (v4.4)
-
-The v4.4 SSR extraction established the delegation pattern:
-
-```rust
-impl StatusGetters for SsrControlBase {
-    fn get_hardware_status(&self) -> SsrHardwareStatus {
-        self.hardware_status
-    }
-}
-
-impl StatusGetters for SsrControl<'a, PIN, DETECT, PWM> {
-    fn get_hardware_status(&self) -> SsrHardwareStatus {
-        StatusGetters::get_hardware_status(&self.base) // Delegate
-    }
-}
-```
-
-**v4.5 should follow the same pattern** for `detect_heat_source()`.
-
-### Test Stub Pattern (v4.4)
-
-Existing test stubs use `RefCell<Vec<T>>` for interior mutability:
-
-```rust
-pub struct StubHeater {
-    pub calls: RefCell<Vec<HeaterCall>>,
-    pub status: RefCell<SsrHardwareStatus>,
-}
-```
-
-This pattern works and requires no changes.
-
----
-
-## Verification: heapless Version
-
-| Source | Version | Status |
-|--------|---------|--------|
-| crates.io | 0.9.2 | Latest stable (2025-08-20 release) |
-| docs.rs | 0.9.2 | Current |
-| Cargo.toml | 0.9.2 | Already in use |
-
-**Conclusion:** heapless is already at the latest stable version. No upgrade needed.
-
----
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `clippy` + existing `clippy.toml` | Best-practice enforcement (ownership, error handling, API shape) | Keep current denies (`unwrap_used`, `expect_used`, `panic`) and add staged profile for `pedantic`/selected `nursery` lints as warnings first, then promote stable wins. |
+| Rustc lint policy (`[lints.rust]`) | Dead-code and boundary hardening at compile time | Explicitly enforce `dead_code`, `unused_must_use`, `unreachable_pub`, `unsafe_op_in_unsafe_fn`; use targeted `#[allow]` only with rationale. |
+| `nextest` profile config (`.config/nextest.toml`) | Deterministic CI behavior and test evidence outputs | Add profile-level timeouts/retries and JUnit output for roadmap audit artifacts. |
 
 ## Installation
 
-### No new dependencies required
+```bash
+# Keep firmware toolchain deterministic
+rustup toolchain install 1.88.0
+rustup toolchain install nightly
 
-All v4.5 refactoring tasks use existing dependencies:
+# Quality hardening tools
+cargo +stable install --locked cargo-nextest@0.9.129
+cargo +stable install --locked cargo-llvm-cov@0.8.4
+cargo +stable install --locked cargo-deny@0.19.0
+cargo +stable install --locked cargo-machete@0.9.1
+cargo +stable install --locked cargo-modules@0.25.0
+cargo +stable install --locked cargo-geiger@0.13.0
+cargo +stable install --locked cargo-udeps@0.1.60
 
-```toml
-# Current Cargo.toml - no changes needed
-heapless = "0.9.2"  # Already provides Deque<f32, N>
+# Typical execution split
+cargo +stable machete
+cargo +nightly udeps --all-targets --all-features
 ```
 
----
+## Integration with Current LibreRoaster Workflow
 
-## Confidence Assessment
+- Keep firmware build/test baseline unchanged (`cargo build --target riscv32imc-unknown-none-elf`, existing host tests), then layer quality tooling as separate gates.
+- Add a `quality-audit` pipeline that runs in this order: `clippy` -> `machete` -> `udeps` -> `nextest` -> `llvm-cov` -> `geiger` -> `cargo deny check`.
+- Run `udeps` and `llvm-cov` primarily on host-target test matrix first; only include embedded target where signal is proven useful.
+- Reuse existing instrumentation docs/flows (`internalDoc/INSTRUMENTATION_README.MD`) and add a host-side hardware-evidence harness that writes CSV artifacts under a predictable evidence folder.
+- Treat SOLID governance as measurable architecture hygiene: snapshot `cargo modules structure/dependencies` before and after refactors and require no new cycles/orphans unless justified.
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| heapless Deque availability | HIGH | Verified in 0.9.x docs; matches use case |
-| SSR delegation pattern | HIGH | Already established in v4.4 |
-| Test stub migration | HIGH | Pattern exists in tests/common/mod.rs |
-| Command handler delegation | HIGH | ArtisanCommandHandler already exists |
-| No new deps needed | HIGH | All functionality available in current stack |
+## Alternatives Considered
 
----
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| `cargo-udeps` + nightly | Only `cargo-machete` | Use only `machete` if team cannot run nightly in CI; accept lower precision and more manual review. |
+| `cargo-nextest` | `cargo test` only | Keep plain `cargo test` for smallest local loops; use `nextest` in CI/audit paths requiring retries, partitioning, and reports. |
+| `serialport`+`csv` Rust harness | Manual Artisan screenshots only | Screenshots are acceptable for quick smoke checks, but not for reproducible HW-01 evidence or timeline correlation. |
+
+## What NOT to Use
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| Migrating runtime logging to `defmt` for this milestone | v4.x decision already validated `log + esp-println`; switching now adds risk with no direct value to dead-code/SOLID goals | Keep logging stack unchanged; focus on quality gates and refactor governance. |
+| `anyhow`/`thiserror` in firmware hot path | Broad dynamic error plumbing can blur embedded error boundaries and increase coupling during SOLID refactors | Keep explicit domain errors (`RoasterError` family) and improve conversion boundaries incrementally. |
+| Single-tool dead-code judgment | Any one tool misses cases (e.g., codegen/feature-gated/re-export paths) and can cause unsafe deletions | Combine rustc lints + `machete` + `udeps` + coverage + targeted manual review. |
+| Heavy formal-methods tooling as gate (Prusti/Kani/MIRAI) | Valuable but high setup and CI cost for current milestone scope; can block delivery | Defer formal methods to a later safety-assurance milestone after v5.0 cleanup baseline is stable. |
+
+## Stack Patterns by Variant
+
+**If running local fast feedback (developer loop):**
+- Use `cargo clippy`, `cargo machete`, `cargo nextest run`.
+- Because these give high signal quickly without nightly/toolchain friction.
+
+**If running PR/CI quality gates:**
+- Add `cargo +nightly udeps`, `cargo llvm-cov --fail-under-lines <target>`, `cargo deny check`, and `cargo geiger` trend capture.
+- Because dead-code deletion and boundary refactors need stronger non-regression evidence before merge.
+
+**If running hardware validation evidence capture (HW-01):**
+- Run host harness with `serialport` + `csv` while executing Artisan Scope control actions.
+- Because reproducible command/telemetry traces are auditable and roadmap-friendly, unlike ad-hoc screenshots.
+
+## Version Compatibility
+
+| Package A | Compatible With | Notes |
+|-----------|-----------------|-------|
+| `esp-hal@1.0.0` | `rustc@1.88.0` | Crate declares `rust-version: 1.88.0`; this should anchor firmware toolchain pinning. |
+| `cargo-deny@0.19.0` | `rustc@1.88+` | Matches current firmware toolchain floor. |
+| `cargo-llvm-cov@0.8.4` | `rustc@1.87+` | Compatible with pinned 1.88 toolchain. |
+| `cargo-modules@0.25.0` | `rustc@1.86+` | Safe for current environment. |
+| `cargo-udeps@0.1.60` | `nightly` runtime | Compiles on stable, but execution requires nightly (`cargo +nightly udeps`). |
 
 ## Sources
 
-- [heapless crate documentation](https://docs.rs/heapless/latest/heapless/deque/index.html) — Deque API confirmed in 0.9.x
-- [heapless v0.9.1 release announcement](https://blog.rust-embedded.org/heapless-091/) — Latest stable release (August 2025)
-- Code analysis:
-  - `src/hardware/ssr.rs` — SsrControlBase, detect_heat_source() implementations
-  - `src/output/artisan.rs` — Vec<f32> bt_history usage
-  - `tests/common/mod.rs` — Existing test stub pattern
-  - `src/control/handlers.rs` — ArtisanCommandHandler implementation
+- https://docs.espressif.com/projects/rust/esp-hal/latest/ and `cargo info esp-hal` — verified `esp-hal` version/MSRV alignment.
+- https://github.com/est31/cargo-udeps — verified nightly runtime requirement and current release.
+- https://github.com/bnjbvr/cargo-machete — verified stable fast unused-dependency workflow and limitations.
+- https://github.com/nextest-rs/nextest and https://nexte.st — verified current `cargo-nextest` release and CI-oriented usage.
+- https://github.com/taiki-e/cargo-llvm-cov — verified coverage features, `nextest` integration, and current release.
+- https://github.com/EmbarkStudios/cargo-deny — verified dependency governance checks and current release.
+- https://github.com/regexident/cargo-modules — verified structure/dependency/orphan analysis commands.
+- https://github.com/geiger-rs/cargo-geiger — verified unsafe usage audit positioning.
+- https://docs.rs/serialport and https://docs.rs/csv — verified host evidence-capture crate capabilities.
+- `internalDoc/INSTRUMENTATION_README.MD` and `internalDoc/ARTISAN_CONNECTION.md` — integration context for existing serial/instrumentation flow.
 
 ---
-
-_*Stack research for: LibreRoaster v4.5 refactoring tasks*_
-_*Researched: 2026-02-28*_
+*Stack research for: LibreRoaster v5.0 quality hardening milestone*
+*Researched: 2026-03-07*

@@ -91,46 +91,35 @@ pub enum RoasterCommand {
     ArtisanEmergencyStop,
     IncreaseHeater,
     DecreaseHeater,
+    SetUnits(bool), // true = Fahrenheit, false = Celsius
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SsrHardwareStatus {
     Available,
+    #[default]
     NotDetected,
     Error,
 }
 
-impl Default for SsrHardwareStatus {
-    fn default() -> Self {
-        Self::NotDetected
-    }
-}
-
 /// Temperature scale preference for Artisan protocol
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TemperatureScale {
+    #[default]
     Celsius,
     Fahrenheit,
 }
 
-impl Default for TemperatureScale {
-    fn default() -> Self {
-        TemperatureScale::Celsius
-    }
-}
-
 /// Temperature settings storage
 /// Tracks temperature scale preference without applying conversion
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TemperatureSettings {
     scale: TemperatureScale,
 }
 
 impl TemperatureSettings {
     pub fn new() -> Self {
-        Self {
-            scale: TemperatureScale::default(),
-        }
+        Self::default()
     }
 
     pub fn get_scale(&self) -> TemperatureScale {
@@ -174,6 +163,8 @@ pub struct SystemStatus {
     pub saturation_active: bool,
     pub integrator_clamped: bool,
     pub derivative_available: bool,
+    pub command_latency_us: u32,
+    pub max_command_latency_us: u32,
 }
 
 impl Default for SystemStatus {
@@ -204,6 +195,8 @@ impl Default for SystemStatus {
             saturation_active: false,
             integrator_clamped: false,
             derivative_available: false,
+            command_latency_us: 0,
+            max_command_latency_us: 0,
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requirements.)
+v5.0 is the active quality-hardening milestone focused on audit-grade cleanup, Rust/SOLID refactoring discipline, and real-hardware validation without changing protocol semantics.
 
 ## Milestones
 
@@ -10,9 +10,153 @@ v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requireme
 - ✅ **v4.2 Anti-windup integral** — Phases 70-72 (shipped 2026-02-24)
 - ✅ **v4.3 Code Cleanup** — Phases 73-74 (shipped 2026-02-24)
 - ✅ **v4.4 SSR Refactoring & Test Stubs** — Phases 75-76 (shipped 2026-02-25) — *[details](milestones/v4.4-ROADMAP.md)*
-- 🚧 **v4.5 Alta Prioridad** — Phases 77-80 (in progress)
+- ✅ **v4.5 Alta Prioridad** — Phases 77-80 (shipped 2026-03-09)
+- ✅ **v5.0 Auditoria integral de calidad Rust** — Phases 81-88 (shipped 2026-03-09)
 
 ## Phases
+
+### ✅ v5.0 Auditoria integral de calidad Rust (Complete)
+
+**Milestone Goal:** Auditar y refactorizar el firmware de forma segura para eliminar codigo muerto, reforzar practicas Rust/SOLID y validar que el control real desde Artisan Scope sigue siendo viable.
+
+### Phase 81: Quality Baseline and Ratcheting Policy
+**Goal**: Users can run a reproducible quality gate baseline with module-criticality ratchets that tighten quality without blocking lower-risk work.
+**Depends on**: Phase 80
+**Requirements**: QG-01, QG-02
+**Status**: ✓ Complete (2026-03-07)
+**Verification:** ✅ `passed` — score 7/7 must-haves verified; report: .planning/phases/81-quality-baseline-and-ratcheting-policy/81-VERIFICATION.md
+**Success Criteria**:
+1. User can run one documented baseline command sequence and get deterministic pass/fail results for format, curated lint, and tests.
+2. User can see an explicit quality policy that applies stricter gates to safety/control/protocol modules before lower-risk modules.
+3. User can fail a gate intentionally and observe actionable output that identifies the failing module and policy rule.
+4. User can rerun gates after fixes and confirm policy ratchet behavior remains reproducible.
+**Plans**: 3 plans
+
+Plans:
+- [x] 81-01-PLAN.md — Define versioned quality policy artifacts, tier mapping, and ratchet governance ✓ COMPLETE
+- [x] 81-02-PLAN.md — Implement deterministic baseline orchestrator with policy-aware compact reporting ✓ COMPLETE
+- [x] 81-03-PLAN.md — Add intentional-failure selfcheck fixtures and fail/rerun reproducibility drill ✓ COMPLETE
+
+### Phase 82: Dead Code and Dependency Cleanup
+**Goal**: Users can remove dead code and unused dependencies in controlled batches with evidence-backed safety and no behavior regressions.
+**Depends on**: Phase 81
+**Requirements**: DC-01, DC-02, DC-03
+**Status**: ✓ Complete (2026-03-07)
+**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/82-dead-code-and-dependency-cleanup/82-dead-code-and-dependency-cleanup-VERIFICATION.md
+**Success Criteria**:
+1. User can review a dead-code inventory by module with risk classification and evidence for why each candidate is safe or unsafe to remove.
+2. User can execute small-batch dead-code removals and verify no regressions via tests and baseline behavior checks.
+3. User can run dependency-audit workflow (`machete`/`udeps`) and see unused dependencies plus documented allowlisted exceptions.
+4. User can trace each removal batch to evidence artifacts that justify deletion decisions.
+**Plans**: 3 plans
+
+Plans:
+- [x] 82-01 — Establish dead-code inventory instrumentation and risk guidance ✓ COMPLETE
+- [x] 82-02 — Create removal batch workflow with verification evidence ✓ COMPLETE
+- [x] 82-03 — Automate dependency audits and allowlisted exceptions ✓ COMPLETE
+
+### Phase 83: Rust Modernization and Unsafe Surface Audit
+**Goal**: Users can modernize Rust code mechanically while preserving behavior and maintaining clear justification for remaining unsafe surfaces.
+**Depends on**: Phase 82
+**Requirements**: RUST-01, RUST-02
+**Status**: ✓ Complete (2026-03-07)
+**Verification:** ✅ `passed` — report: .planning/phases/83-rust-modernization-and-unsafe-surface-audit/83-VERIFICATION.md
+**Success Criteria**:
+1. User can run curated modernization passes (idioms/clippy/cargo-fix scope) and observe no protocol or control-flow behavior changes.
+2. User can compare before/after behavior checks and confirm outputs remain semantically equivalent for existing command flows.
+3. User can inspect an up-to-date unsafe surface register that lists active unsafe attributes/blocks with current justification and status.
+4. User can identify which unsafe cases were removed, retained, or narrowed after modernization.
+**Plans**: 3 plans
+
+Plans:
+- [x] 83-01 — Build modernization automation + doc ✓ COMPLETE
+- [x] 83-02 — Capture unsafe register + summary ✓ COMPLETE
+- [x] 83-03 — Regression verification guide + runner ✓ COMPLETE
+
+### Phase 84: SOLID Seam Hardening and Fault Injection
+**Goal**: Users can validate cleaner responsibility boundaries across handlers/hardware/control seams while preserving safety ordering under normal and faulted conditions.
+**Depends on**: Phase 83
+**Requirements**: SOLID-01, SOLID-02
+**Status**: ✓ Complete (2026-03-08)
+**Verification:** ✅ `passed` — score 3/3 must-haves verified; report: .planning/phases/84-solid-seam-hardening-and-fault-injection/84-VERIFICATION.md
+**Success Criteria**:
+1. User can observe that handler, hardware, and control responsibilities are separated at agreed high-value seams without breaking command behavior.
+2. User can run watchdog/guard/comms fault-injection scenarios and observe expected safe-system responses.
+3. User can verify safety/manual authority ordering remains intact after seam adjustments.
+4. User can confirm control-loop behavior remains stable under fault and recovery scenarios.
+**Plans**: 3 plans
+
+Plans:
+- [x] 84-01 — Harden handler/hardware policy boundary via ports-and-policies traits ✓ COMPLETE
+- [x] 84-02 — Add stage instrumentation reporter for the 100 ms loop ✓ COMPLETE
+- [x] 84-03 — Lock down the fault-injection harness and STATUS evidence matrix ✓ COMPLETE
+
+### Phase 85: Hardware Acceptance Thresholds and Real Roaster Validation
+**Goal**: Prove on real hardware that Artisan Scope controls a real roaster within explicit acceptance thresholds.
+**Depends on**: Phase 84
+**Requirements**: HW-01, HW-02
+**Status**: ✓ Complete (2026-03-08)
+**Verification:** ✅ `passed` — score 6/6 must-haves verified; report: .planning/phases/85-hardware-acceptance-thresholds-and-real-roaster-validation/85-VERIFICATION.md
+**Success Criteria**:
+1. User can review and apply numeric acceptance thresholds for command-to-actuator latency, response envelope, and safety counters.
+2. User can execute a real-hardware validation run where Artisan Scope commands drive roaster outputs through this firmware.
+3. User can compare measured run data against thresholds and determine pass/fail unambiguously.
+4. User can package validation evidence (logs/transcripts/measurements) suitable for milestone signoff.
+**Plans**: 3 plans
+
+Plans:
+- [x] 85-01-PLAN.md — Threshold Definition and Firmware Instrumentation ✓ COMPLETE
+- [x] 85-02-PLAN.md — HIL Validation Runner Implementation ✓ COMPLETE
+- [x] 85-03-PLAN.md — Real Hardware Validation Execution ✓ COMPLETE
+
+### Phase 86: Fix Integration Regression (P84 <-> P85)
+**Goal**: Restore broken regression tests and fault-injection scenarios after the 18-column STATUS expansion.
+**Depends on**: Phase 85
+**Requirements**: SOLID-02, HW-01
+**Status**: ✓ Complete (2026-03-08)
+**Verification:** ✅ `passed` — score 3/3 must-haves verified; report: .planning/phases/86-fix-integration-regression-p84-p85/86-VERIFICATION.md
+**Success Criteria**:
+1. `tests/fault_injection_scenarios.rs` and `tests/regression_status.rs` handle 18-column STATUS output.
+2. `SystemStatus` struct initialization in tests matches current implementation.
+3. Assertions for CSV column counts match 18-field telemetry layout.
+4. Fix verified using `scripts/quality-baseline.sh` orchestrator.
+**Plans**: 1 plan
+
+Plans:
+- [x] 86-01-PLAN.md — Restore broken integration tests and fault-injection scenarios after the 18-column STATUS expansion ✓ COMPLETE
+
+### Phase 87: Wire Modernization to Quality Policy (P81 <-> P83)
+**Goal**: Enforce quality-baseline policy within automated modernization scripts to ensure no policy bypass.
+**Depends on**: Phase 86
+**Requirements**: QG-01, RUST-01
+**Status**: ✓ Complete (2026-03-09)
+**Verification:** ✅ `passed` — score 3/3 must-haves verified; report: .planning/phases/87-wire-modernization-to-quality-policy/87-VERIFICATION.md
+**Success Criteria**:
+1. `run-modernization.sh` calls `scripts/quality-baseline.sh` for all audit checks.
+2. `run-regression-checks.sh` calls `scripts/quality-baseline.sh`.
+3. Policy ratchets (Tier 1/2) are enforced during automated cleanup runs.
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [x] 87-01-PLAN.md — Establish core quality baseline script and global Clippy policy ✓ COMPLETE
+- [x] 87-02-PLAN.md — Integrate quality baseline into modernization and regression scripts ✓ COMPLETE
+
+### Phase 88: Architecture Alignment and UNITS Refactor
+**Goal**: Align system instrumentation with safety tiers and refactor the UNITS command into the ManualCommandPolicy trait.
+**Depends on**: Phase 87
+**Requirements**: SOLID-01, QG-02
+**Status**: ✓ Complete (2026-03-09)
+**Verification:** ✅ `passed` — score 4/4 must-haves verified; report: .planning/phases/88-architecture-alignment-and-units-refactor/88-VERIFICATION.md
+**Plans**: 1 plan
+
+Plans:
+- [x] 88-01-PLAN.md — Promote stage_instrumentation.rs to Tier 1 and wire UNITS through ManualCommandPolicy
+
+**Success Criteria**:
+1. `src/application/stage_instrumentation.rs` promoted to Tier 1 in quality policy.
+2. `UNITS` command refactored to implement `ManualCommandPolicy` trait.
+3. Legacy match branch for `UNITS` removed from `RoasterControl::process_command`.
+4. System remains architecturally consistent at the policy/handler boundary.
 
 <details>
 <summary>🚧 v4.5 Alta Prioridad (In Progress)</summary>
@@ -128,15 +272,23 @@ v4.5 is the next milestone. (Start with `/gsd-new-milestone` to define requireme
 | 78    | v4.5      | 1/1   | Complete    | 2026-02-28 |
 | 79    | v4.5      | 5/5   | ✓ Complete | 2026-02-28 |
 | 80    | v4.5      | 1/4   | In progress | — |
+| 81    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
+| 82    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
+| 83    | v5.0      | 3/3   | ✓ Complete | 2026-03-07 |
+| 84    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
+| 85    | v5.0      | 3/3   | ✓ Complete | 2026-03-08 |
+| 86    | v5.0      | 1/1   | ✓ Complete | 2026-03-08 |
+| 87 | v5.0 | 2/2 | ✓ Complete | 2026-03-09 |
+| 88    | v5.0      | 1/1   | ✓ Complete | 2026-03-09 |
 
 ---
 
 ## Coverage
 
-- **v4.5 requirements:** 4 total
-- **Mapped to phases:** 4 (100%)
+- **v5.0 requirements:** 11 total
+- **Mapped to phases:** 11 (100%)
 - **Unmapped:** 0
 
 ---
 
-*Ready for planning: `/gsd-plan-phase 77`*
+*Ready for planning: `/gsd-plan-phase 81`*

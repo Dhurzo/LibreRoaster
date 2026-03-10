@@ -1,3 +1,6 @@
+use super::policies::{
+    ManualCommandPolicy, ManualPolicyOutcome, SafetyPolicy, SafetyPolicyOutcome,
+};
 use super::{RoasterCommandHandler, RoasterError};
 use crate::config::*;
 use crate::control::handlers::{
@@ -211,37 +214,113 @@ impl RoasterControl {
             return self.stop_streaming();
         }
 
-        let mut handlers: [&mut dyn RoasterCommandHandler; 4] = [
-            &mut self.safety_handler,
-            &mut self.temp_handler,
-            &mut self.artisan_handler,
-            &mut self.system_handler,
-        ];
+        // Try policy-based handling first (new pattern)
+        // Safety policy evaluation
+        if SafetyPolicy::can_handle(&self.safety_handler, command) {
+            let outcome = self.safety_handler.evaluate(command, &mut self.status);
+            self.status.fault_condition = outcome.emergency_active;
+
+            if outcome.emergency_active {
+                // Apply hardware writes for emergency
+                self.apply_safety_outcome(&outcome, current_time)?;
+                return Err(RoasterError::TemperatureOutOfRange);
+            }
+            return Ok(());
+        }
+
+        // Manual command policy evaluation
+        if ManualCommandPolicy::can_handle(&self.artisan_handler, command) {
+            let outcome = self.artisan_handler.evaluate(command, &mut self.status);
+
+            if outcome.success {
+                // RoasterControl is the single writer - apply hardware after policy evaluation
+                self.apply_policy_outcome(&outcome, current_time)?;
+                return Ok(());
+            } else {
+                return Err(RoasterError::InvalidState);
+            }
+        }
+
+        // Fall back to legacy handler for non-policy commands (TemperatureHandler, SystemHandler)
+        let mut handlers: [&mut dyn RoasterCommandHandler; 2] =
+            [&mut self.temp_handler, &mut self.system_handler];
 
         for handler in &mut handlers {
             if handler.can_handle(command) {
-                let result = handler.handle_command(command, current_time, &mut self.status);
-
-                self.status.fault_condition = self.safety_handler.is_emergency_active();
-                if result.is_ok() {
-                    if matches!(
-                        command,
-                        RoasterCommand::SetHeaterManual(_)
-                            | RoasterCommand::IncreaseHeater
-                            | RoasterCommand::DecreaseHeater
-                    ) {
-                        self.apply_manual_heater(current_time)?;
-                    } else if matches!(command, RoasterCommand::SetFanManual(_)) {
-                        self.apply_manual_fan()?;
-                    }
-                }
-
-                return result;
+                return handler.handle_command(command, current_time, &mut self.status);
             }
         }
 
         warn!("No handler found for command: {:?}", command);
         Err(RoasterError::InvalidState)
+    }
+
+    /// Apply policy outcome to hardware - RoasterControl is the single writer
+    fn apply_policy_outcome(
+        &mut self,
+        outcome: &ManualPolicyOutcome,
+        current_time: Instant,
+    ) -> Result<(), RoasterError> {
+        // Log policy input for instrumentation
+        debug!(
+            "Policy outcome: heater={:?}, fan={:?}, pid={:?}, artisan={:?}",
+            outcome.heater_target, outcome.fan_target, outcome.pid_enabled, outcome.artisan_control
+        );
+
+        // Apply heater if specified
+        if let Some(heater) = outcome.heater_target {
+            self.temp_handler.disable_pid();
+            self.status.pid_enabled = false;
+            self.status.artisan_control = true;
+            self.temp_handler
+                .get_output_manager_mut()
+                .enable_continuous_output();
+
+            self.apply_guarded_heater(heater, current_time, true)?;
+            self.status.ssr_hardware_status = self.heater.get_status();
+        }
+
+        // Apply fan if specified
+        if let Some(fan) = outcome.fan_target {
+            self.status.artisan_control = true;
+            self.status.pid_enabled = false;
+            self.temp_handler
+                .get_output_manager_mut()
+                .enable_continuous_output();
+
+            self.fan
+                .set_speed(fan)
+                .map_err(|_| RoasterError::HardwareError)?;
+            self.status.fan_output = fan;
+            self.status.ssr_hardware_status = self.heater.get_status();
+        }
+
+        Ok(())
+    }
+
+    /// Apply safety outcome to hardware - RoasterControl is the single writer
+    fn apply_safety_outcome(
+        &mut self,
+        outcome: &SafetyPolicyOutcome,
+        _current_time: Instant,
+    ) -> Result<(), RoasterError> {
+        // Log safety policy for instrumentation
+        warn!(
+            "Safety outcome: emergency={}, fault={}, reason={:?}",
+            outcome.emergency_active, outcome.fault_condition, outcome.reason
+        );
+
+        if outcome.zero_ssr {
+            let _ = self.heater.set_power(0.0);
+            self.capture_ssr_monitor_metrics();
+        }
+
+        if outcome.disable_pid {
+            self.temp_handler.disable_pid();
+            self.status.pid_enabled = false;
+        }
+
+        Ok(())
     }
 
     fn is_streaming(&self) -> bool {
@@ -278,54 +357,6 @@ impl RoasterControl {
             .map_err(|_| RoasterError::HardwareError)?;
 
         self.status.ssr_hardware_status = self.heater.get_status();
-
-        Ok(())
-    }
-
-    fn apply_manual_heater(&mut self, current_time: Instant) -> Result<(), RoasterError> {
-        let manual_value = self.artisan_handler.get_manual_heater().clamp(0.0, 100.0);
-
-        self.temp_handler.disable_pid();
-        self.status.pid_enabled = false;
-        self.status.artisan_control = true;
-        self.temp_handler
-            .get_output_manager_mut()
-            .enable_continuous_output();
-
-        self.apply_guarded_heater(manual_value, current_time, true)?;
-
-        self.status.ssr_hardware_status = self.heater.get_status();
-
-        info!(
-            "Artisan+ manual heater applied to {:.1}% (manual mode enabled)",
-            manual_value
-        );
-
-        Ok(())
-    }
-
-    fn apply_manual_fan(&mut self) -> Result<(), RoasterError> {
-        let fan_value = self.artisan_handler.get_manual_fan().clamp(0.0, 100.0);
-        self.status.artisan_control = true;
-        self.status.pid_enabled = false;
-
-        self.temp_handler
-            .get_output_manager_mut()
-            .enable_continuous_output();
-
-        self.fan
-            .set_speed(fan_value)
-            .map_err(|_| RoasterError::HardwareError)?;
-
-        // Track commanded fan output; hardware drivers may optionally expose readback.
-        self.status.fan_output = fan_value;
-
-        self.status.ssr_hardware_status = self.heater.get_status();
-
-        info!(
-            "Artisan+ manual fan applied to {:.1}% (manual mode enabled)",
-            fan_value
-        );
 
         Ok(())
     }
@@ -642,13 +673,9 @@ impl RoasterControl {
                 info!("Artisan regression command received");
             }
             crate::config::ArtisanCommand::Units(is_fahrenheit) => {
-                let scale = if is_fahrenheit {
-                    TemperatureScale::Fahrenheit
-                } else {
-                    TemperatureScale::Celsius
-                };
-                self.temp_settings.set_scale(scale);
-                debug!("Units command received - scale set to {:?}", scale);
+                // Convert to RoasterCommand and forward through policy
+                let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
+                return self.forward_artisan_manual_command(cmd, current_time);
             }
             crate::config::ArtisanCommand::Filt(_) => {
                 debug!("Filt command received - initialization handled by multiplexer");

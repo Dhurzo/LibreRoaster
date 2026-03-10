@@ -1,0 +1,115 @@
+# Quality Baseline Policy
+# Deterministic gate execution contract for LibreRoaster v5.0 quality gates
+
+[policy]
+# Unique identifier for this quality policy
+policy_id = "QG-POLICY"
+# Semantic version for ratchet governance
+policy_version = "1.0.0"
+
+# Gate execution order - must run in this exact sequence
+# Each gate must pass before proceeding to the next
+gate_order = ["fmt", "clippy", "test"]
+
+[output]
+# Compact output mode for baseline runs
+output_mode = "compact"
+# Report ALL failures, not just the first one
+collect_all_failures = true
+
+[gates.fmt]
+# Formatting gate - rustfmt check
+command = "cargo fmt --all -- --check"
+description = "Code formatting validation"
+# Lockfile enforcement for deterministic runs
+lockfile_policy = "locked"
+
+[gates.clippy]
+# Linting gate - curated clippy checks
+# Note: Using curated flags rather than -D warnings to allow tiered enforcement
+command = "cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic"
+description = "Linting with embedded-specific rules"
+lockfile_policy = "locked"
+
+[gates.test]
+# Test gate - unit and integration tests only
+# Note: Explicit scope avoids embedded-only targets that fail on host
+command = "cargo test --locked --lib --tests --no-fail-fast"
+description = "Unit and integration test execution"
+lockfile_policy = "locked"
+
+# Test scope: host-safe only (--lib --tests, not --all-targets)
+# This excludes doctests and embedded binary compilation
+[gate_settings.test]
+scope = "lib_and_tests"
+doctests = false
+all_features = false
+
+# Ratchet governance rules
+[ratchet]
+# Every ratchet update requires both:
+# 1. Policy version bump (semver)
+# 2. Human-readable changelog entry
+version_bump_required = true
+changelog_entry_required = true
+
+# Cadence: ratchet changes should be batched and applied together
+# Recommended: Review and apply ratchets at phase boundaries
+
+# =============================================================================
+# Criticality Tiers
+# =============================================================================
+# Tier 1 (Blocking): High-criticality safety/control/protocol modules
+# Tier 2 (Informational): Core application modules  
+# Tier 3 (Informational): Support and test infrastructure
+
+[tiers.t1_critical]
+# Blocking tier - failures here BLOCK the baseline
+blocking = true
+description = "Safety, control, and protocol modules - highest criticality"
+# Module mapping for Tier 1
+modules = [
+    "src/safety/**",
+    "src/control/**",
+    "src/input/parser.rs",
+    "src/output/artisan.rs",
+    "src/config/**",
+    "src/application/stage_instrumentation.rs",  # NEW: promoted to T1
+]
+
+[tiers.t2_core]
+# Non-blocking tier - failures here are informational only
+blocking = false
+description = "Core application modules - secondary criticality"
+modules = [
+    "src/hardware/**",
+    "src/input/multiplexer.rs",
+    "src/output/traits.rs",
+    # src/application/** removed - only specific files now in T1
+]
+
+[tiers.t3_support]
+# Non-blocking tier - failures here are informational only
+blocking = false
+description = "Support and test infrastructure - lowest criticality"
+modules = [
+    "src/logging/**",
+    "src/common/**",
+    "tests/**",
+]
+
+# =============================================================================
+# Rule Identifier Naming Convention
+# =============================================================================
+# Findings include a stable policy reference in format: QG-{GATE}-{TIER}
+# Examples: QG-CLIPPY-T1, QG-TEST-T2, QG-FMT-T3
+# This allows tracing any failure back to the policy version that defined it
+
+[rule_identifiers]
+# Format: QG-{GATE}-{TIER}
+# GATE: fmt, clippy, test
+# TIERS: T1 (critical), T2 (core), T3 (support)
+
+prefix = "QG"
+tier_suffix = true
+gate_suffix = true

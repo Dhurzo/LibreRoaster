@@ -1,5 +1,10 @@
+use super::policies::{
+    ManualCommandPolicy, ManualPolicyOutcome, SafetyPolicy, SafetyPolicyOutcome,
+};
 use super::{RoasterCommandHandler, RoasterError};
-use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
+use crate::config::{
+    RoasterCommand, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings,
+};
 use crate::control::pid::{CoffeeRoasterPid, PidFeedback};
 use crate::control::OutputController;
 use embassy_time::Instant;
@@ -196,9 +201,53 @@ impl RoasterCommandHandler for SafetyCommandHandler {
     }
 }
 
+impl SafetyPolicy for SafetyCommandHandler {
+    fn evaluate(
+        &mut self,
+        command: RoasterCommand,
+        status: &mut SystemStatus,
+    ) -> SafetyPolicyOutcome {
+        match command {
+            RoasterCommand::EmergencyStop => {
+                let outcome = SafetyPolicyOutcome::emergency("Manual emergency stop");
+                outcome.apply_to_status(status);
+                self.emergency_flag = true;
+                warn!("EMERGENCY SHUTDOWN: Manual emergency stop");
+                outcome
+            }
+
+            RoasterCommand::ArtisanEmergencyStop => {
+                let outcome = SafetyPolicyOutcome::emergency("Artisan+ emergency stop");
+                outcome.apply_to_status(status);
+                self.emergency_flag = true;
+                warn!("EMERGENCY SHUTDOWN: Artisan+ emergency stop");
+                outcome
+            }
+
+            _ => SafetyPolicyOutcome::normal(),
+        }
+    }
+
+    fn can_handle(&self, command: RoasterCommand) -> bool {
+        matches!(
+            command,
+            RoasterCommand::EmergencyStop | RoasterCommand::ArtisanEmergencyStop
+        )
+    }
+
+    fn is_emergency_active(&self) -> bool {
+        self.emergency_flag
+    }
+
+    fn clear_emergency(&mut self) {
+        self.emergency_flag = false;
+    }
+}
+
 pub struct ArtisanCommandHandler {
     manual_heater: f32,
     manual_fan: f32,
+    temp_settings: TemperatureSettings,
 }
 
 impl ArtisanCommandHandler {
@@ -206,6 +255,7 @@ impl ArtisanCommandHandler {
         Self {
             manual_heater: 0.0,
             manual_fan: 0.0,
+            temp_settings: TemperatureSettings::default(),
         }
     }
 
@@ -319,6 +369,100 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
                 | RoasterCommand::SetFanManual(_)
                 | RoasterCommand::IncreaseHeater
                 | RoasterCommand::DecreaseHeater
+        )
+    }
+}
+
+impl ManualCommandPolicy for ArtisanCommandHandler {
+    fn evaluate(
+        &mut self,
+        command: RoasterCommand,
+        status: &mut SystemStatus,
+    ) -> ManualPolicyOutcome {
+        match command {
+            RoasterCommand::SetHeaterManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual heater value above 100%: {}", value);
+                    return ManualPolicyOutcome::failed("Invalid heater value: >100%");
+                }
+
+                self.manual_heater = value as f32;
+                let outcome = ManualPolicyOutcome::heater(value as f32);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ manual heater set to: {}%", value);
+                outcome
+            }
+
+            RoasterCommand::SetFanManual(value) => {
+                if value > 100 {
+                    warn!("Ignoring manual fan value above 100%: {}", value);
+                    return ManualPolicyOutcome::failed("Invalid fan value: >100%");
+                }
+
+                self.manual_fan = value as f32;
+                let outcome = ManualPolicyOutcome::fan(value as f32);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ manual fan set to: {}%", value);
+                outcome
+            }
+
+            RoasterCommand::IncreaseHeater => {
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, 1);
+                self.manual_heater = new_value;
+
+                let outcome = ManualPolicyOutcome::heater(new_value);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ UP: heater increased to {:.0}%", new_value);
+                outcome
+            }
+
+            RoasterCommand::DecreaseHeater => {
+                let current = status.ssr_output;
+                let new_value = Self::apply_heater_delta(current, -1);
+                self.manual_heater = new_value;
+
+                let outcome = ManualPolicyOutcome::heater(new_value);
+                outcome.apply_to_status(status);
+
+                info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
+                outcome
+            }
+
+            RoasterCommand::SetUnits(is_fahrenheit) => {
+                let scale = if is_fahrenheit {
+                    TemperatureScale::Fahrenheit
+                } else {
+                    TemperatureScale::Celsius
+                };
+                self.temp_settings.set_scale(scale);
+                info!("Artisan+ units set to: {:?}", scale);
+                ManualPolicyOutcome {
+                    heater_target: None,
+                    fan_target: None,
+                    pid_enabled: None,
+                    artisan_control: None,
+                    clear_manual: false,
+                    success: true,
+                    error_message: None,
+                }
+            }
+
+            _ => ManualPolicyOutcome::failed("Command not handled by ManualCommandPolicy"),
+        }
+    }
+
+    fn can_handle(&self, command: RoasterCommand) -> bool {
+        matches!(
+            command,
+            RoasterCommand::SetHeaterManual(_)
+                | RoasterCommand::SetFanManual(_)
+                | RoasterCommand::IncreaseHeater
+                | RoasterCommand::DecreaseHeater
+                | RoasterCommand::SetUnits(_)
         )
     }
 }
@@ -442,12 +586,18 @@ mod artisan_command_handler_tests {
     #[test]
     fn test_can_handle_increase_heater() {
         let handler = ArtisanCommandHandler::new();
-        assert!(handler.can_handle(RoasterCommand::IncreaseHeater));
+        assert!(RoasterCommandHandler::can_handle(
+            &handler,
+            RoasterCommand::IncreaseHeater
+        ));
     }
 
     #[test]
     fn test_can_handle_decrease_heater() {
         let handler = ArtisanCommandHandler::new();
-        assert!(handler.can_handle(RoasterCommand::DecreaseHeater));
+        assert!(RoasterCommandHandler::can_handle(
+            &handler,
+            RoasterCommand::DecreaseHeater
+        ));
     }
 }
