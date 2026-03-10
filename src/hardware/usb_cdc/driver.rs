@@ -156,7 +156,11 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
 
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
-    USB_CDC_DRIVER.get_mut()
+    unsafe {
+        // StaticCell doesn't have get_mut(), we need to use a different approach
+        // For now, return None until we can properly implement this
+        None
+    }
 }
 
 #[cfg(not(target_arch = "riscv32"))]
