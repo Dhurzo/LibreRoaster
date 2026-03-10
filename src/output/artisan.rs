@@ -1,12 +1,5 @@
 extern crate alloc;
 
-use crate::config::SystemStatus;
-use crate::output::traits::{OutputError, OutputFormatter};
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-use embassy_time::Instant;
-
 /// Artisan standard CSV protocol formatter
 ///
 /// Implements the standard Artisan serial protocol format:
@@ -18,26 +11,36 @@ use embassy_time::Instant;
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
 /// - Gas: SSR output percentage (0-100) as heater control
+use crate::config::SystemStatus;
+use crate::output::traits::{OutputError, OutputFormatter};
+use alloc::format;
+use alloc::string::String as AllocString;
+use core::fmt::Write;
+use embassy_time::Instant;
+use heapless::{Deque, String as HeaplessString};
+
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Vec<f32>, // 5 samples for ROR calculation
+}
+
+impl Default for ArtisanFormatter {
+    fn default() -> Self {
+        Self {
+            start_time: Instant::now(),
+            last_bt: 0.0,
+        }
+    }
 }
 
 impl ArtisanFormatter {
     pub fn new() -> Self {
-        Self {
-            start_time: Instant::now(),
-            last_bt: 0.0,
-            bt_history: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn reset(&mut self) {
-        self.start_time = Instant::now();
-        self.last_bt = 0.0;
-        self.bt_history.clear();
+        *self = Self::default();
     }
 
     fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
@@ -48,11 +51,11 @@ impl ArtisanFormatter {
         }
     }
 
-    fn update_bt_history(history: &mut Vec<f32>, current_bt: f32) {
+    fn update_bt_history(history: &mut Deque<f32, 5>, current_bt: f32) {
         if history.len() >= 5 {
-            history.remove(0);
+            let _ = history.pop_front();
         }
-        history.push(current_bt);
+        let _ = history.push_back(current_bt);
     }
 
     fn compute_ror_from_history(history: &[f32]) -> f32 {
@@ -69,17 +72,43 @@ impl ArtisanFormatter {
         }
     }
 
-    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> String {
-        format!("{}.{:02}", elapsed_secs, elapsed_ms / 10)
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<8> {
+        let mut buf = HeaplessString::<8>::new();
+        let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
+        buf
     }
 
-    fn format_artisan_line(time_str: &str, et: f32, bt: f32, ror: f32, gas: f32) -> String {
-        format!("{},{:.1},{:.1},{:.2},{:.1}", time_str, et, bt, ror, gas)
+    fn format_artisan_line(
+        time_str: &str,
+        et: f32,
+        bt: f32,
+        ror: f32,
+        gas: f32,
+    ) -> HeaplessString<32> {
+        let mut buf = HeaplessString::<32>::new();
+        let _ = core::write!(
+            &mut buf,
+            "{},{:.1},{:.1},{:.2},{:.1}",
+            time_str,
+            et,
+            bt,
+            ror,
+            gas
+        );
+        buf
+    }
+
+    fn normalize_read_value(value: f32) -> f32 {
+        if value.is_finite() {
+            value
+        } else {
+            0.0
+        }
     }
 }
 
 impl OutputFormatter for ArtisanFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
+    fn format(&self, status: &SystemStatus) -> Result<AllocString, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -93,70 +122,122 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = Self::format_time(elapsed_secs, elapsed_ms);
         let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(line)
+        Ok(AllocString::from(line.as_str()))
     }
 }
 
 impl ArtisanFormatter {
-    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> AllocString {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(fan_speed);
         format!(
             "{:.1},{:.1},{:.1},{:.1}",
-            status.env_temp,   // ET
-            status.bean_temp,  // BT
-            status.ssr_output, // Power (heater)
-            fan_speed          // Fan
+            et,     // ET
+            bt,     // BT
+            heater, // Power (heater)
+            fan     // Fan
         )
     }
 
-    /// Format full READ response per Artisan spec
-    /// Format: ET,BT,ET2,BT2,ambient,fan,heater\r\n
-    /// ET2, BT2, ambient return -1 as placeholders (unused channels)
-    pub fn format_read_response_full(status: &SystemStatus) -> String {
+    pub fn format_read_response_full(status: &SystemStatus) -> AllocString {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(status.fan_output);
+        // 4-value format: ET, BT, HEATER, FAN
         format!(
-            "{:.1},{:.1},-1,-1,-1,{:.1},{:.1}\r\n",
-            status.env_temp,   // ET
-            status.bean_temp,  // BT
-            status.fan_output, // Fan
-            status.ssr_output  // Heater
+            "{:.1},{:.1},{:.1},{:.1}",
+            et,     // ET
+            bt,     // BT
+            heater, // Heater
+            fan     // Fan
         )
     }
 
-    /// Format CHAN acknowledgment response per Artisan spec
-    /// Returns response starting with '#' prefix
-    pub fn format_chan_ack(channel: u16) -> String {
+    pub fn format_status_response(status: &SystemStatus) -> AllocString {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(status.fan_output);
+        let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
+        let failure_count = status.watchdog_consecutive_failures;
+        let failure_reason = status.watchdog_last_failure.unwrap_or("none");
+        let guard_timeouts = status.ledc_guard_timeouts;
+        let regression_flag = if status.overtemp_regression_active {
+            1
+        } else {
+            0
+        };
+        let pv = Self::normalize_read_value(status.pv);
+        let mv = Self::normalize_read_value(status.mv);
+        let integrator_value = Self::normalize_read_value(status.integrator_value);
+        let derivative_value = Self::normalize_read_value(status.derivative_rate);
+        let saturation_flag = if status.saturation_active { 1 } else { 0 };
+        let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
+        let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
+        let command_latency = status.command_latency_us;
+        let max_command_latency = status.max_command_latency_us;
+
+        format!(
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{}",
+            et,
+            bt,
+            heater,
+            fan,
+            watchdog_flag,
+            failure_count,
+            failure_reason,
+            guard_timeouts,
+            regression_flag,
+            pv,
+            mv,
+            integrator_value,
+            derivative_value,
+            saturation_flag,
+            integrator_clamp_flag,
+            derivative_available_flag,
+            command_latency,
+            max_command_latency
+        )
+    }
+
+    pub fn format_chan_ack(channel: u16) -> AllocString {
         format!("#{}", channel)
     }
 
-    /// Format ERR response per Artisan spec
-    /// Format: "ERR code message"
-    pub fn format_err(code: u8, message: &str) -> String {
+    pub fn format_err(code: u8, message: &str) -> AllocString {
         format!("ERR {} {}", code, message)
     }
 }
 
-/// Mutable version for proper ROR calculation
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Vec<f32>,
+    bt_history: Deque<f32, 5>,
+}
+
+impl Default for MutableArtisanFormatter {
+    fn default() -> Self {
+        Self {
+            start_time: Instant::now(),
+            last_bt: 0.0,
+            bt_history: Deque::<f32, 5>::new(),
+        }
+    }
 }
 
 impl MutableArtisanFormatter {
     pub fn new() -> Self {
-        Self {
-            start_time: Instant::now(),
-            last_bt: 0.0,
-            bt_history: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn reset(&mut self) {
-        self.start_time = Instant::now();
-        self.last_bt = 0.0;
-        self.bt_history.clear();
+        *self = Self::default();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
+    pub fn format(&mut self, status: &SystemStatus) -> Result<AllocString, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -164,20 +245,48 @@ impl MutableArtisanFormatter {
         let bt = status.bean_temp;
         let gas = status.ssr_output; // SSR output as gas control
 
-        let _delta_bt = ArtisanFormatter::calculate_delta_bt(bt, self.last_bt);
-        self.last_bt = bt;
-
         let ror = self.calculate_ror(bt);
 
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(line)
+        Ok(AllocString::from(line.as_str()))
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
+        if self.last_bt == 0.0 {
+            self.last_bt = current_bt;
+            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+            return 0.0;
+        }
+
+        if current_bt == self.last_bt {
+            self.last_bt = current_bt;
+            return 0.0;
+        }
+
+        self.last_bt = current_bt;
         ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
-        ArtisanFormatter::compute_ror_from_history(&self.bt_history)
+
+        // Compute ROR from Deque history using as_slices
+        let (front, back) = self.bt_history.as_slices();
+        let combined_len = front.len() + back.len();
+        if combined_len < 2 {
+            return 0.0;
+        }
+
+        // Build a temporary array for ROR calculation
+        let mut history_arr = [0.0f32; 5];
+        for (i, &v) in front.iter().enumerate() {
+            history_arr[i] = v;
+        }
+        for (i, &v) in back.iter().enumerate() {
+            history_arr[front.len() + i] = v;
+        }
+
+        let first_bt = history_arr[0];
+        let last_bt = history_arr[combined_len - 1];
+        (last_bt - first_bt) / (combined_len as f32 - 1.0)
     }
 }
 
@@ -185,8 +294,8 @@ impl MutableArtisanFormatter {
 mod tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
+    use alloc::vec;
 
-    /// Helper function to create a SystemStatus with known values for testing
     fn create_test_status() -> SystemStatus {
         SystemStatus {
             state: RoasterState::Stable,
@@ -199,11 +308,30 @@ mod tests {
             artisan_control: false,
             fault_condition: false,
             ssr_hardware_status: SsrHardwareStatus::Available,
+            ssr_last_duty_delta_ticks: 0,
+            ssr_retry_count: 0,
+            ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
+            ..SystemStatus::default()
         }
     }
 
-    /// TEST-07: Verify format_read_response produces correct CSV format
-    /// Format: "ET,BT,Power,Fan" (comma-separated with one decimal place)
+    fn create_instrumented_status() -> SystemStatus {
+        let mut status = create_test_status();
+        status.pv = 150.5;
+        status.mv = 88.5;
+        status.integrator_value = 37.1;
+        status.derivative_rate = -0.42;
+        status.saturation_active = true;
+        status.integrator_clamped = true;
+        status.derivative_available = true;
+        status
+    }
+
     #[test]
     fn test_format_read_response() {
         let status = create_test_status();
@@ -211,25 +339,21 @@ mod tests {
 
         let output = ArtisanFormatter::format_read_response(&status, fan_speed);
 
-        // Expected format: "120.3,150.5,75.0,25.0" (ET,BT,Power,Fan)
         assert_eq!(output, "120.3,150.5,75.0,25.0");
 
-        // Verify all four comma-separated values are present
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 4);
 
-        // Verify each value matches expected
-        assert_eq!(parts[0], "120.3"); // ET
-        assert_eq!(parts[1], "150.5"); // BT
-        assert_eq!(parts[2], "75.0"); // Power
-        assert_eq!(parts[3], "25.0"); // Fan
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "75.0");
+        assert_eq!(parts[3], "25.0");
     }
 
-    /// TEST-07b: Verify format_read_response does not clamp values
     #[test]
     fn test_format_read_response_out_of_range_values() {
         let mut status = create_test_status();
-        status.ssr_output = 123.45;
+        status.ssr_output = 123.46;
         let fan_speed = -7.6;
 
         let output = ArtisanFormatter::format_read_response(&status, fan_speed);
@@ -238,8 +362,107 @@ mod tests {
         assert_eq!(output.split(',').count(), 4);
     }
 
-    /// TEST-08: Verify format produces correct Artisan CSV line format
-    /// Format: "time,ET,BT,ROR,Gas"
+    #[test]
+    fn test_format_read_response_invalid_values() {
+        let mut status = create_test_status();
+        status.env_temp = f32::NAN;
+        status.ssr_output = f32::INFINITY;
+        let fan_speed = 25.0;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "0.0,150.5,0.0,25.0");
+        assert_eq!(output.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_status_response_columns_order() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 18);
+
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "88.0");
+        assert_eq!(parts[3], "42.0");
+        assert_eq!(parts[4], "0");
+        assert_eq!(parts[5], "3");
+        assert_eq!(parts[6], "timeout");
+        assert_eq!(parts[7], "7");
+        assert_eq!(parts[8], "1");
+        assert_eq!(parts[9], "150.5");
+        assert_eq!(parts[10], "88.5");
+        assert_eq!(parts[11], "37.1");
+        assert_eq!(parts[12], "-0.42");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "1");
+        assert_eq!(parts[16], "1250");
+        assert_eq!(parts[17], "5000");
+    }
+
+    #[test]
+    fn test_format_status_response_flags_reflect_system_status() {
+        let mut status = create_test_status();
+        status.saturation_active = false;
+        status.integrator_clamped = true;
+        status.derivative_available = false;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 18);
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "0");
+    }
+
+    #[test]
+    fn test_format_status_response_derivative_integrator_values_reflect_system_status() {
+        let mut status = create_test_status();
+        status.integrator_value = 51.2;
+        status.derivative_rate = 0.73;
+        status.saturation_active = true;
+        status.integrator_clamped = false;
+        status.derivative_available = true;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 18);
+        assert_eq!(parts[11], "51.2");
+        assert_eq!(parts[12], "0.73");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "1");
+    }
+
+    #[test]
+    fn test_format_status_response_none_reason() {
+        let status = create_test_status();
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        assert!(output.contains(",none,"));
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 18);
+        assert_eq!(parts[12], "0.00");
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "0");
+    }
+
     #[test]
     fn test_format_csv_output() {
         let formatter = ArtisanFormatter::new();
@@ -248,26 +471,24 @@ mod tests {
         let result = formatter.format(&status);
 
         assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = match result {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
 
-        // Verify all five comma-separated fields are present
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 5);
 
-        // Verify field order: time, ET, BT, ROR, Gas
-        // Time should start with digits and decimal
         assert!(parts[0].starts_with(|c: char| c.is_ascii_digit()));
-        // ET should be 120.3
         assert_eq!(parts[1], "120.3");
-        // BT should be 150.5
         assert_eq!(parts[2], "150.5");
-        // ROR should be 0.00 (two decimal places for rate of rise)
         assert_eq!(parts[3], "0.00");
-        // Gas should be 75.0
         assert_eq!(parts[4], "75.0");
     }
 
-    /// TEST-09a: Verify ROR calculation from BT history - empty history
     #[test]
     fn test_ror_calculation_empty_history() {
         let history: Vec<f32> = vec![];
@@ -275,30 +496,24 @@ mod tests {
         assert_eq!(ror, 0.0);
     }
 
-    /// TEST-09b: Verify ROR calculation from BT history - two samples
     #[test]
     fn test_ror_calculation_two_samples() {
-        let history = vec![100.0, 105.0]; // 5.0 change over 1 interval
+        let history = vec![100.0, 105.0];
         let ror = ArtisanFormatter::compute_ror_from_history(&history);
-        assert_eq!(ror, 5.0); // (105.0 - 100.0) / (2 - 1) = 5.0
+        assert_eq!(ror, 5.0);
     }
 
-    /// TEST-09c: Verify ROR calculation from BT history - five samples
     #[test]
     fn test_ror_calculation_five_samples() {
-        // BT values: [100, 102, 104, 106, 108]
-        // Expected ROR: (108 - 100) / (5 - 1) = 8.0 / 4 = 2.0
         let history = vec![100.0, 102.0, 104.0, 106.0, 108.0];
         let ror = ArtisanFormatter::compute_ror_from_history(&history);
         assert_eq!(ror, 2.0);
     }
 
-    /// TEST-09d: Verify MutableArtisanFormatter accumulates BT history for ROR
     #[test]
     fn test_mutable_formatter_ror() {
         let mut formatter = MutableArtisanFormatter::new();
 
-        // First call - should have ROR = 0.0 (no history)
         let status1 = SystemStatus {
             bean_temp: 100.0,
             env_temp: 120.0,
@@ -307,11 +522,16 @@ mod tests {
         };
         let result1 = formatter.format(&status1);
         assert!(result1.is_ok());
-        let output1 = result1.unwrap();
+        let output1 = match result1 {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result1): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
         let parts1: Vec<&str> = output1.split(',').collect();
-        assert_eq!(parts1[3], "0.00"); // ROR should be 0.0 initially
+        assert_eq!(parts1[3], "0.00");
 
-        // Second call - ROR should be delta from first call
         let status2 = SystemStatus {
             bean_temp: 102.0,
             env_temp: 121.0,
@@ -320,53 +540,44 @@ mod tests {
         };
         let result2 = formatter.format(&status2);
         assert!(result2.is_ok());
-        // Note: With 2 samples, ROR = (102 - 100) / 1 = 2.0
     }
 
-    /// TEST-10a: Verify time format - seconds only
     #[test]
     fn test_time_format_seconds_only() {
         let time = ArtisanFormatter::format_time(5, 0);
         assert_eq!(time, "5.00");
     }
 
-    /// TEST-10b: Verify time format - seconds with milliseconds
     #[test]
     fn test_time_format_with_milliseconds() {
         let time = ArtisanFormatter::format_time(5, 50);
         assert_eq!(time, "5.05");
     }
 
-    /// TEST-10c: Verify time format - zero seconds with milliseconds
     #[test]
     fn test_time_format_zero_seconds() {
         let time = ArtisanFormatter::format_time(0, 150);
         assert_eq!(time, "0.15");
     }
 
-    /// TEST-10d: Verify time format - capped at two decimal places
     #[test]
     fn test_time_format_capped_decimals() {
-        // 999ms / 10 = 99 (should cap at 99)
         let time = ArtisanFormatter::format_time(10, 999);
         assert_eq!(time, "10.99");
     }
 
-    /// TEST-10e: Verify time format - typical value
     #[test]
     fn test_time_format_typical_value() {
         let time = ArtisanFormatter::format_time(123, 456);
         assert_eq!(time, "123.45");
     }
 
-    /// TEST-11a: Verify format_chan_ack produces correct output
     #[test]
     fn test_format_chan_ack() {
         let result = ArtisanFormatter::format_chan_ack(1200);
         assert_eq!(result, "#1200");
     }
 
-    /// TEST-11b: Verify format_chan_ack with different channel values
     #[test]
     fn test_format_chan_ack_various_values() {
         assert_eq!(ArtisanFormatter::format_chan_ack(1), "#1");
@@ -374,14 +585,12 @@ mod tests {
         assert_eq!(ArtisanFormatter::format_chan_ack(0), "#0");
     }
 
-    /// TEST-12a: Verify format_err produces correct output
     #[test]
     fn test_format_err() {
         let result = ArtisanFormatter::format_err(1, "Unknown command");
         assert_eq!(result, "ERR 1 Unknown command");
     }
 
-    /// TEST-12b: Verify format_err with various codes and messages
     #[test]
     fn test_format_err_various() {
         assert_eq!(
@@ -391,47 +600,15 @@ mod tests {
         assert_eq!(ArtisanFormatter::format_err(0, "Success"), "ERR 0 Success");
     }
 
-    // Phase 18: Command & Response Protocol Tests
-
-    /// TEST-18-01a: Verify format_read_response_full produces 7 comma-separated values
     #[test]
-    fn test_format_read_response_seven_values() {
+    fn test_format_read_response_four_values() {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        // Response should contain 7 comma-separated values
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
-        assert_eq!(parts.len(), 7, "READ response must have exactly 7 values");
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 4, "READ response must have exactly 4 values");
     }
 
-    /// TEST-18-01b: Verify unused channels return -1 placeholders
-    #[test]
-    fn test_unused_channels_return_negative_one() {
-        let status = create_test_status();
-        let response = ArtisanFormatter::format_read_response_full(&status);
-
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
-
-        // ET2 (index 2), BT2 (index 3), ambient (index 4) should be -1
-        assert_eq!(parts[2], "-1", "ET2 placeholder should be -1");
-        assert_eq!(parts[3], "-1", "BT2 placeholder should be -1");
-        assert_eq!(parts[4], "-1", "ambient placeholder should be -1");
-    }
-
-    /// TEST-18-01c: Verify response terminates with CRLF
-    #[test]
-    fn test_response_terminates_with_crlf() {
-        let status = create_test_status();
-        let response = ArtisanFormatter::format_read_response_full(&status);
-
-        // Response must end with \r\n
-        assert!(
-            response.ends_with("\r\n"),
-            "READ response must terminate with CRLF"
-        );
-    }
-
-    /// TEST-18-01d: Verify format_read_response_full uses actual status values
     #[test]
     fn test_format_read_response_full_uses_status_values() {
         let mut status = create_test_status();
@@ -442,12 +619,37 @@ mod tests {
 
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        let parts: Vec<&str> = response.trim_end().split(',').collect();
+        let parts: Vec<&str> = response.split(',').collect();
 
-        // Verify actual values are used
         assert_eq!(parts[0], "125.5", "ET should use env_temp");
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
-        assert_eq!(parts[5], "60.0", "Fan should use fan_output");
-        assert_eq!(parts[6], "80.0", "Heater should use ssr_output");
+        assert_eq!(parts[2], "80.0", "Heater should use ssr_output");
+        assert_eq!(parts[3], "60.0", "Fan should use fan_output");
+    }
+
+    #[test]
+    fn test_format_read_response_full_invalid_values() {
+        let mut status = create_test_status();
+        status.bean_temp = f32::NEG_INFINITY;
+        status.fan_output = f32::NAN;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        assert_eq!(response, "120.3,0.0,75.0,0.0");
+        assert_eq!(response.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_read_response_full_one_decimal_format() {
+        let mut status = create_test_status();
+        status.fan_output = 75.0;
+        status.ssr_output = 100.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        let parts: Vec<&str> = response.split(',').collect();
+
+        assert_eq!(parts[2], "100.0", "Heater must show one decimal (100.0)");
+        assert_eq!(parts[3], "75.0", "Fan must show one decimal (75.0)");
     }
 }

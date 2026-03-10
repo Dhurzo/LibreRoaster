@@ -13,12 +13,15 @@ use embassy_time::Instant;
 use heapless::String;
 
 use libreroaster::application::service_container::ServiceContainer;
-use libreroaster::config::{ArtisanCommand, RoasterState, SsrHardwareStatus, SystemStatus};
-use libreroaster::control::traits::{Fan, Heater, Thermometer};
-use libreroaster::control::{RoasterControl, RoasterError};
+use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
+use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
 use libreroaster::input::ArtisanInput;
 use libreroaster::output::artisan::ArtisanFormatter;
+
+#[path = "common/mod.rs"]
+mod tests_common;
+use tests_common::{build_test_control, StubFan, StubHeater};
 
 struct TestCriticalSection;
 
@@ -26,7 +29,7 @@ critical_section::set_impl!(TestCriticalSection);
 
 unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn acquire() -> RawRestoreState {
-        ()
+        false
     }
 
     unsafe fn release(_restore_state: RawRestoreState) {}
@@ -34,73 +37,8 @@ unsafe impl critical_section::Impl for TestCriticalSection {
 
 static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
 
-#[no_mangle]
-fn _embassy_time_now() -> u64 {
-    TEST_TIME_TICKS.fetch_add(1, Ordering::Relaxed)
-}
-
-#[no_mangle]
-fn _embassy_time_schedule_wake(_at: u64, _waker: &core::task::Waker) {}
-
-struct StubHeater {
-    power: f32,
-    status: SsrHardwareStatus,
-}
-
-impl Heater for StubHeater {
-    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.power = duty;
-        Ok(())
-    }
-
-    fn get_status(&self) -> SsrHardwareStatus {
-        self.status
-    }
-}
-
-impl Default for StubHeater {
-    fn default() -> Self {
-        Self {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }
-    }
-}
-
-#[derive(Default)]
-struct StubFan {
-    speed: f32,
-}
-
-impl Fan for StubFan {
-    fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
-        self.speed = duty;
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct StubThermometer {
-    temp: f32,
-}
-
-impl Thermometer for StubThermometer {
-    fn read_temperature(&mut self) -> Result<f32, RoasterError> {
-        Ok(self.temp)
-    }
-}
-
 fn build_control() -> RoasterControl {
-    RoasterControl::new(
-        Box::new(StubHeater {
-            power: 0.0,
-            status: SsrHardwareStatus::Available,
-        }),
-        Box::new(StubFan::default()),
-        Box::new(StubThermometer { temp: 25.0 }),
-        Box::new(StubThermometer { temp: 30.0 }),
-    )
-    .expect("RoasterControl should build with stubs")
+    build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
 fn init_service_container() {
@@ -109,7 +47,11 @@ fn init_service_container() {
 
     critical_section::with(|cs| {
         let container = ServiceContainer::get_instance();
-        container.roaster.borrow(cs).borrow_mut().replace(roaster);
+        container
+            .roaster_sync
+            .borrow(cs)
+            .borrow_mut()
+            .replace(roaster);
         container
             .artisan_input
             .borrow(cs)

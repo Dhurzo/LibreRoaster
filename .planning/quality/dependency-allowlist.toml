@@ -1,0 +1,34 @@
+[[allow]]
+package = "serde"
+reason = "Build script config serialization still needs serde_json even though remaining crates appear unused to machete/udeps."
+expires = "2026-06-30"
+
+[[allow]]
+package = "embedded-hal"
+reason = "Temporary dependency for the hardware evidence harness; will be reviewed after DC-02 batch completes."
+expires = "2026-12-31"
+
+[[allow]]
+package = "embassy-usb"
+reason = "Used by the embedded Async USB transport even though udeps reports it unused under the current host-only audit."
+expires = "2026-12-31"
+
+[[allow]]
+package = "embedded-hal-bus"
+reason = "Used by the hardware instrumentation helpers and intentionally kept until the bus split is verified."
+expires = "2026-12-31"
+
+[[allow]]
+package = "embedded-io"
+reason = "Needed by the shared UART/USB IO adapters even though the host audit runner cannot trace their usage."
+expires = "2026-12-31"
+
+[[allow]]
+package = "libm"
+reason = "Math helpers consumed by build-time constants and `no_std` interpolation; flagged by udeps incorrectly."
+expires = "2026-12-31"
+
+[[allow]]
+package = "static_cell"
+reason = "Core static helpers are lightly used by instrumentation but reported unused by host-only tooling; revisit after DC-02."
+expires = "2026-12-31"

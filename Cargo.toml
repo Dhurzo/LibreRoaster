@@ -15,7 +15,9 @@ path = "examples/artisan_test.rs"
 default = []
 std = ["embedded-hal-02"]
 test = ["std"]
+async-lock-depth-metrics = []
 embedded = []
+regression = ["embedded-hal-mock"]
 
 [[bin]]
 name = "libreroaster"
@@ -24,22 +26,29 @@ required-features = ["embedded"]
 
 [dependencies]
 # Core dependencies - available for all targets
-heapless         = "0.8.0"
+heapless         = "0.9.2"
 embedded-hal     = "1.0.0"
 embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", optional = true }
 embedded-hal-bus = "0.2.0"
 embedded-io       = "0.7.1"
+embedded-io-async = "0.6.1"
 embassy-time     = "0.5.0"
+embassy-usb     = "0.5.0"
 critical-section = "1.2.0"
-static_cell      = "2.1.1"
+static_cell = "2.1.1"
 log              = "0.4.27"
 embassy-sync     = "0.6.1"
+embassy-executor = { version = "0.9.1", features = ["log"] }
+portable-atomic = "1.13"
+libm = "0.2"
+embedded-hal-mock = { version = "0.11.1", optional = true }
 
 # Logging - esp_println for direct UART0 output
 
 # ESP-specific dependencies - only for embedded target
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 esp-hal = { version = "~1.0", features = ["esp32c3", "log-04", "unstable"] }
+esp32c3 = "0.31.0"
 
 esp-rtos = { version = "0.2.0", features = [
   "embassy",
@@ -67,9 +76,7 @@ esp-backtrace = { version = "0.18.1", features = [
 ] }
 esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
 # for more networking protocol support see https://crates.io/crates/edge-net
-embassy-executor = { version = "0.9.1", features = ["log", "arch-riscv32"] }
 riscv-rt = { version = "0.16.0" }
-embassy-time = { version = "0.5.0", features = ["log"] }
 esp-radio = { version = "0.17.0", features = [
   "esp-alloc",
   "esp32c3",
@@ -93,20 +100,14 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 ] }
 
 critical-section = "1.2.0"
-static_cell      = "2.1.1"
-embassy-sync     = "0.6.1"
-
-
 
 [dev-dependencies]
 # Test dependencies
 log = "0.4.27"
-critical-section = "1.2.0"
-static_cell      = "2.1.1"
+critical-section = { version = "1.2.0", features = ["std"] }
+static_cell = "2.1.1"
 embassy-sync = "0.6.1"
-
-
-
+futures = { version = "0.3", features = ["thread-pool"] }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -142,5 +143,3 @@ fallible_impl_from = "deny"
 # Run: cargo geiger --all-targets
 # See: .planning/phases/31-linting-audit/geiger-report.md
 # Note: cargo-geiger doesn't integrate with [lints.rust] - use CLI instead
-
-

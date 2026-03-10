@@ -1,45 +1,66 @@
-# STATE: LibreRoaster
-
-**Updated:** 2026-02-05
+# Project State
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-03-07)
+
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Ready for next milestone
+**Current focus:** Phase 88 - Architecture Alignment and UNITS Refactor complete - v5.0 milestone complete
 
 ## Current Position
 
-Milestone: v2.0 Code Quality Audit
-Status: Complete
-Last activity: 2026-02-05 — v2.0 milestone complete
+Phase: 88 of 88 (Architecture Alignment and UNITS Refactor)
+Plan: 1 of 1 in current phase
+Status: Phase complete
+Last activity: 2026-03-09 — Completed 88-01-PLAN.md
 
-### Milestone Summary
+Progress: [██████████] 100%
 
-| Phase | Status | Plans |
-|-------|--------|-------|
-| 31-linting-audit | ✓ Complete | 3/3 |
+## Performance Metrics
 
-### Accumulated Decisions
+- **Velocity:**
+- Total plans completed: 27 (all v5.0 phases complete: 81-88)
 
-| Phase | Decision | Rationale |
-|-------|----------|-----------|
-| 31-01 | Dual clippy config (Cargo.toml + clippy.toml) | Portability + project-specific thresholds |
-| 31-01 | allow-unwrap-in-tests=true | Tests can use unwrap for test logic |
-| 31-02 | Grep-based unsafe analysis | cargo-geiger embedded feature complexity |
-| 31-02 | cargo unsafe-check alias | Avoids shadowing cargo-geiger subcommand |
+**By Phase:**
 
-## Blockers/Concerns
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 81 | 3/3 | 3 | Phase complete |
+| 82 | 3/3 | 3 | Phase complete |
+| 83 | 3/3 | 3 | Phase complete |
+| 84 | 3/3 | 3 | Phase complete |
+| 85 | 3/3 | 3 | Phase complete |
+| 86 | 1/1 | 1 | Phase complete |
+| 87 | 2/2 | 2 | Phase complete |
+| 88 | 1/1 | 1 | Phase complete |
 
-- None currently
+## Accumulated Context
 
-## Next Steps
+### Decisions
 
-1. ✅ v2.0 Code Quality Audit COMPLETE
-2. Ready for `/gsd-new-milestone` — start next milestone
-3. Issue inventory: internalDoc/CODE_QUALITY_ISSUES.md (31 issues)
-4. Remediation guide: internalDoc/CODE_QUALITY_REMEDIATION.md
+- v5.0 signoff is gated by explicit numeric thresholds (thresholds.json) and instrumented firmware (command_latency_us).
+- Latency measurement is performed in the application layer (control_loop_task) to avoid circular dependencies.
+- ArtisanFormatter now produces 18 CSV fields for the STATUS command.
+- [85-02] Used csv module instead of pandas for analysis to avoid dependency installation issues in externally managed environment.
+- [85-03] Performed simulated validation instead of physical hardware run due to lack of hardware access.
+- [86-01] Updated all integration test assertions to expect 18 columns in STATUS output.
+- [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
+- [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
+- [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
+- [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
+- [88-01] Promoted stage_instrumentation.rs to Tier 1 in quality policy.
+- [88-01] Refactored UNITS command to use ManualCommandPolicy pattern via forward_artisan_manual_command.
 
----
+### Pending Todos
 
-*Milestone: v2.0 complete (2026-02-05)*
-*Next: /gsd-new-milestone*
+- None (Milestone v5.0 complete)
+
+### Blockers/Concerns
+
+- None (Phase 88 and Milestone v5.0 validated)
+
+## Session Continuity
+
+Last session: 2026-03-09T06:08:52Z
+Stopped at: Completed 87-02-PLAN.md
+Resume file: None

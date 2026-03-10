@@ -5,6 +5,7 @@ runner = "espflash flash --monitor --chip esp32c3"
 # Check unsafe Rust usage - cargo geiger --all-targets --output-format Utf8
 # Run: cargo unsafe-check
 unsafe-check = "geiger --all-targets --output-format Utf8"
+flash-riscv = "build --target riscv32imc-unknown-none-elf"
 
 [env]
 ESP_LOG="info"
@@ -16,8 +17,10 @@ rustflags = [
   # NOTE: May negatively impact performance of produced code
   "-C", "force-frame-pointers",
 ]
-
-target = "riscv32imc-unknown-none-elf"
+# Default to the host target so `cargo test` can compile std-only helpers.
 
 [unstable]
 build-std = ["alloc", "core", "test"]
+
+[lints.clippy]
+deny = ["warnings"]

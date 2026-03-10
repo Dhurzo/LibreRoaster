@@ -1,0 +1,7 @@
+{
+  "max_command_latency_ms": 250,
+  "avg_command_latency_ms": 100,
+  "thermal_envelope_deg": 5.0,
+  "max_watchdog_consecutive_fails": 0,
+  "max_ledc_guard_timeouts": 5
+}

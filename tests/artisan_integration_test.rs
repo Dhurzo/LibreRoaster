@@ -39,6 +39,10 @@ fn create_test_status() -> SystemStatus {
         artisan_control: false,
         fault_condition: false,
         ssr_hardware_status: SsrHardwareStatus::Available,
+        ssr_last_duty_delta_ticks: 0,
+        ssr_retry_count: 0,
+        ssr_cycle_guard_busy_until_ms: 0,
+        ..SystemStatus::default()
     }
 }
 
@@ -273,6 +277,81 @@ fn test_ror_calculation_across_reads() {
     println!("   ✅ ROR calculation verified across multiple readings");
 }
 
+/// TEST-INT-09: ROR stays zero until BT changes after two samples
+#[test]
+fn test_ror_zero_until_bt_change() {
+    println!("TEST-INT-09: ROR zero until BT change");
+
+    let mut formatter = MutableArtisanFormatter::new();
+
+    let status1 = create_minimal_status(100.0, 120.0, 50.0);
+    let output1 = formatter
+        .format(&status1)
+        .expect("First reading should format");
+    let ror1: f32 = output1
+        .split(',')
+        .nth(3)
+        .expect("ROR field present")
+        .parse()
+        .expect("ROR parseable");
+    assert!(ror1.abs() < 0.01, "First reading ROR should be 0.0");
+
+    let status2 = create_minimal_status(100.0, 120.0, 50.0);
+    let output2 = formatter
+        .format(&status2)
+        .expect("Second reading should format");
+    let ror2: f32 = output2
+        .split(',')
+        .nth(3)
+        .expect("ROR field present")
+        .parse()
+        .expect("ROR parseable");
+    assert!(ror2.abs() < 0.01, "Second reading ROR should be 0.0");
+
+    let status3 = create_minimal_status(101.0, 120.0, 50.0);
+    let output3 = formatter
+        .format(&status3)
+        .expect("Third reading should format");
+    let ror3: f32 = output3
+        .split(',')
+        .nth(3)
+        .expect("ROR field present")
+        .parse()
+        .expect("ROR parseable");
+    assert!(ror3 > 0.0, "ROR should be non-zero after BT change");
+
+    println!("   ✅ ROR remains zero until BT changes");
+}
+
+/// TEST-INT-10: ROR resets to zero after formatter reset
+#[test]
+fn test_ror_reset_behavior() {
+    println!("TEST-INT-10: ROR reset behavior");
+
+    let mut formatter = MutableArtisanFormatter::new();
+
+    let status1 = create_minimal_status(100.0, 120.0, 50.0);
+    let _ = formatter
+        .format(&status1)
+        .expect("First reading should format");
+
+    formatter.reset();
+
+    let status2 = create_minimal_status(101.0, 120.0, 50.0);
+    let output2 = formatter
+        .format(&status2)
+        .expect("Reading after reset should format");
+    let ror2: f32 = output2
+        .split(',')
+        .nth(3)
+        .expect("ROR field present")
+        .parse()
+        .expect("ROR parseable");
+    assert!(ror2.abs() < 0.01, "ROR should reset to 0.0");
+
+    println!("   ✅ ROR resets to zero after formatter reset");
+}
+
 /// TEST-INT-06: Error handling in integration flow
 #[test]
 fn test_error_handling_integration() {
@@ -407,4 +486,24 @@ fn test_complete_flow() {
         incoming_command, command, response
     );
     println!("   ✅ All stages executed successfully");
+}
+
+/// TEST-INT-11: READ response has no CRLF terminators
+#[test]
+fn test_read_response_has_no_terminators() {
+    println!("TEST-INT-11: READ response terminator-free");
+
+    let status = create_test_status();
+    let response = ArtisanFormatter::format_read_response_full(&status);
+
+    assert!(
+        !response.contains('\r'),
+        "READ response should not contain carriage returns"
+    );
+    assert!(
+        !response.contains('\n'),
+        "READ response should not contain newlines"
+    );
+
+    println!("   ✅ READ response is terminator-free");
 }

@@ -2,105 +2,140 @@
 // These pins are optimized for the ESP32-C3 capabilities and coffee roaster application
 // Note: GPIO2, GPIO8, GPIO9 are strapping pins and are NOT used to avoid boot issues
 
-// GPIO Pin Assignments for ESP32-C3 Coffee Roaster
-pub const SPI_SCLK_PIN: u8 = 7; // SPI Clock for MAX31856
-pub const SPI_MOSI_PIN: u8 = 5; // SPI MOSI for MAX31856
-pub const SPI_MISO_PIN: u8 = 6; // SPI MISO for MAX31856
-pub const THERMOCOUPLE_BT_CS_PIN: u8 = 4; // Bean Temperature Chip Select
-pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3; // Environment Temperature Chip Select
-pub const SSR_CONTROL_PIN: u8 = 10; // Solid State Relay Control (GPIO10 - safe, non-strapping)
-pub const HEAT_DETECTION_PIN: u8 = 1; // Heat source detection pin (input with pull-up)
-pub const FAN_PWM_PIN: u8 = 9; // Fan PWM Control (GPIO9 - strapping but safe for SPI boot)
-pub const UART_TX_PIN: u8 = 20; // UART Transmit to Artisan+
-pub const UART_RX_PIN: u8 = 21; // UART Receive from Artisan+
+pub const SPI_SCLK_PIN: u8 = 7;
+pub const SPI_MOSI_PIN: u8 = 5;
+pub const SPI_MISO_PIN: u8 = 6;
+pub const THERMOCOUPLE_BT_CS_PIN: u8 = 4;
+pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3;
+pub const SSR_CONTROL_PIN: u8 = 10;
+pub const HEAT_DETECTION_PIN: u8 = 1;
+pub const FAN_PWM_PIN: u8 = 9;
+pub const UART_TX_PIN: u8 = 20;
+pub const UART_RX_PIN: u8 = 21;
 
-// PWM Configuration
-pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000; // 25kHz for DC fan motor
-pub const SSR_PWM_FREQUENCY_HZ: u32 = 1; // 1Hz for heating element (slow PWM)
-pub const FAN_LEDC_CHANNEL: u8 = 0; // LEDC Channel 0 for Fan
-pub const SSR_LEDC_CHANNEL: u8 = 1; // LEDC Channel 1 for SSR
-pub const SSR_PWM_RESOLUTION: u8 = 8; // 8-bit resolution (0-255 duty levels)
+pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
+pub const SSR_PWM_FREQUENCY_HZ: u32 = 1;
+pub const FAN_LEDC_CHANNEL: u8 = 0;
+pub const SSR_LEDC_CHANNEL: u8 = 1;
+pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (~1Hz zero-crossing)
+pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25kHz silent operation)
+pub const SSR_PWM_RESOLUTION: u8 = 8;
+pub const SSR_CYCLE_GUARD_MS: u32 = 1000;
+pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
 
-// Hardware Configuration
-pub const PWM_FREQUENCY: u32 = 1000; // Legacy constant (deprecated in favor of SSR_PWM_FREQUENCY_HZ)
+pub const PWM_FREQUENCY: u32 = 1000;
 
-// Temperature Settings
-pub const DEFAULT_TARGET_TEMP: f32 = 225.0; // Default roasting temperature in Celsius
-pub const MAX_SAFE_TEMP: f32 = 250.0; // Maximum safe temperature limit
-pub const MIN_TEMP: f32 = 0.0; // Minimum temperature reading
-pub const MAX_TEMP: f32 = 300.0; // Maximum temperature reading range
-pub const MIN_VALID_TEMP: f32 = 0.0; // Minimum valid temperature
-pub const MAX_VALID_TEMP: f32 = 300.0; // Maximum valid temperature
+pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
+pub const MAX_SAFE_TEMP: f32 = 250.0;
+pub const MIN_TEMP: f32 = 0.0;
+pub const MAX_TEMP: f32 = 300.0;
+pub const MIN_VALID_TEMP: f32 = 0.0;
+pub const MAX_VALID_TEMP: f32 = 300.0;
 
-// Control Settings
-pub const PID_SAMPLE_TIME_MS: u32 = 100; // 10Hz sampling frequency (100ms)
-pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160; // MAX31856 conversion time + margin
+pub const PID_SAMPLE_TIME_MS: u32 = 100;
+pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 
-// Safety Settings
-pub const OVERTEMP_THRESHOLD: f32 = 260.0; // Emergency shutdown temperature
-pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000; // Timeout for temperature sensor validity
-pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100; // Timeout for SSR heat source detection
-pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 5000; // Interval to check heat source availability
+pub const OVERTEMP_THRESHOLD: f32 = 260.0;
+pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
+pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
+pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 5000;
 
-// Calibration Constants (can be adjusted per thermocouple)
-pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0; // Bean temperature calibration offset
-pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0; // Environment temperature calibration offset
+pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
+pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
 
-// Output/Serial Configuration
-pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000; // 1Hz default output frequency
+pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
 
-// Roaster State Machine
+/// Control loop is expected to feed the Task Watchdog at this cadence.
+pub const WATCHDOG_FEED_INTERVAL_MS: u64 = 100;
+pub const LEDC_GUARD_TIMEOUT_MS: u64 = 40;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {
-    Idle,          // System ready, heating off
-    Heating,       // Temperature ramping to target
-    Stable,        // Temperature at target, roasting
-    Cooling,       // Cooling down after roast
-    Fault,         // System in fault state
-    EmergencyStop, // Emergency shutdown
-    Error,         // Error state
+    Idle,
+    Heating,
+    Stable,
+    Cooling,
+    Fault,
+    EmergencyStop,
+    Error,
 }
 
-// Artisan+ Input Commands (from Artisan software)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtisanCommand {
-    ReadStatus,     // READ -> ET,BT,Power,Fan
-    StartRoast,     // START -> Begin roasting and continuous output
-    SetHeater(u8),  // OT1 x (0-100%)
-    SetFan(u8),     // IO3 x (0-100%)
-    EmergencyStop,  // STOP
-    IncreaseHeater, // UP - increase heater by 5%
-    DecreaseHeater, // DOWN - decrease heater by 5%
-    // Initialization handshake commands (Phase 17)
-    Chan(u16),   // CHAN;channel_id - Channel configuration from Artisan
-    Units(bool), // UNITS;C | UNITS;F - Temperature unit (true = Fahrenheit, false = Celsius)
-    Filt(u8),    // FILT;filter_value - Filter setting value
+    ReadStatus,
+    StatusReport,
+    StartRoast,
+    SetHeater(u8),
+    SetFan(u8),
+    /// OT2 command with fan speed (0-100, decimals rounded, clamped silently)
+    /// bool indicates if original value was out of range (triggers heater stop)
+    SetFanSpeed(u8, bool),
+    EmergencyStop,
+    IncreaseHeater,
+    DecreaseHeater,
+    Chan(u16),
+    Units(bool),
+    Filt(u8),
+    RunRegression,
 }
 
-// Roaster Control Commands (internal)
 #[derive(Debug, Clone, Copy)]
 pub enum RoasterCommand {
-    StartRoast(f32),      // Start roasting with target temperature
-    StopRoast,            // Stop current roast
-    SetTemperature(f32),  // Set target temperature
-    EmergencyStop,        // Immediate shutdown
-    Reset,                // Reset system
-    SetHeaterManual(u8),  // Manual heater control (overrides PID)
-    SetFanManual(u8),     // Manual fan control
-    ArtisanEmergencyStop, // Artisan+ specific stop
-    IncreaseHeater,       // UP - increase heater by 5% with clamping
-    DecreaseHeater,       // DOWN - decrease heater by 5% with clamping
+    StartRoast(f32),
+    StopRoast,
+    SetTemperature(f32),
+    EmergencyStop,
+    Reset,
+    SetHeaterManual(u8),
+    SetFanManual(u8),
+    ArtisanEmergencyStop,
+    IncreaseHeater,
+    DecreaseHeater,
+    SetUnits(bool), // true = Fahrenheit, false = Celsius
 }
 
-// SSR Hardware Status
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SsrHardwareStatus {
-    Available,   // Heat source detected and operational
-    NotDetected, // No heat source connected
-    Error,       // Hardware communication error
+    Available,
+    #[default]
+    NotDetected,
+    Error,
 }
 
-// System Status Information
+/// Temperature scale preference for Artisan protocol
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum TemperatureScale {
+    #[default]
+    Celsius,
+    Fahrenheit,
+}
+
+/// Temperature settings storage
+/// Tracks temperature scale preference without applying conversion
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TemperatureSettings {
+    scale: TemperatureScale,
+}
+
+impl TemperatureSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get_scale(&self) -> TemperatureScale {
+        self.scale
+    }
+
+    pub fn set_scale(&mut self, scale: TemperatureScale) {
+        self.scale = scale;
+    }
+
+    /// Check if scale is Fahrenheit
+    pub fn is_fahrenheit(&self) -> bool {
+        matches!(self.scale, TemperatureScale::Fahrenheit)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SystemStatus {
     pub state: RoasterState,
@@ -113,6 +148,23 @@ pub struct SystemStatus {
     pub artisan_control: bool,
     pub fault_condition: bool,
     pub ssr_hardware_status: SsrHardwareStatus,
+    pub ssr_last_duty_delta_ticks: i16,
+    pub ssr_retry_count: u8,
+    pub ssr_cycle_guard_busy_until_ms: u64,
+    pub watchdog_feed_ok: bool,
+    pub watchdog_last_failure: Option<&'static str>,
+    pub watchdog_consecutive_failures: u8,
+    pub ledc_guard_timeouts: u16,
+    pub overtemp_regression_active: bool,
+    pub pv: f32,
+    pub mv: f32,
+    pub integrator_value: f32,
+    pub derivative_rate: f32,
+    pub saturation_active: bool,
+    pub integrator_clamped: bool,
+    pub derivative_available: bool,
+    pub command_latency_us: u32,
+    pub max_command_latency_us: u32,
 }
 
 impl Default for SystemStatus {
@@ -127,7 +179,24 @@ impl Default for SystemStatus {
             pid_enabled: false,
             artisan_control: false,
             fault_condition: false,
-            ssr_hardware_status: SsrHardwareStatus::NotDetected, // Default to undetected
+            ssr_hardware_status: SsrHardwareStatus::NotDetected,
+            ssr_last_duty_delta_ticks: 0,
+            ssr_retry_count: 0,
+            ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
+            pv: 0.0,
+            mv: 0.0,
+            integrator_value: 0.0,
+            derivative_rate: 0.0,
+            saturation_active: false,
+            integrator_clamped: false,
+            derivative_available: false,
+            command_latency_us: 0,
+            max_command_latency_us: 0,
         }
     }
 }
