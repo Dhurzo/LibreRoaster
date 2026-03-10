@@ -11,6 +11,7 @@ use crate::control::traits::{Fan, Heater};
 use crate::control::SsrCycleGuard;
 use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
+
 use log::{debug, error, info, warn};
 
 use crate::hardware::sensors::{SensorConversionHub, SensorSample};
@@ -42,6 +43,7 @@ pub struct RoasterControl {
 
     /// Temperature scale preference storage
     /// Tracks UNITS command preference (Celsius/Fahrenheit) without conversion
+    #[allow(dead_code)]
     temp_settings: TemperatureSettings,
 }
 
@@ -652,7 +654,7 @@ impl RoasterControl {
                 );
 
                 // Validate response has 4 comma-separated values
-                let parts: alloc::vec::Vec<&str> = response.split(',').collect();
+                let parts: heapless::Vec<&str, 8> = response.split(',').collect();
                 if response.trim().is_empty() || parts.len() != 4 {
                     error!(
                         "Malformed READ response from ArtisanFormatter: expected 4 values, got {}",

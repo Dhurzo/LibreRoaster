@@ -1,4 +1,6 @@
 extern crate alloc;
+use alloc::format;
+use alloc::string::String;
 
 /// Artisan standard CSV protocol formatter
 ///
@@ -11,10 +13,29 @@ extern crate alloc;
 /// - BT: Bean temperature (°C)  
 /// - ROR: Rate of rise (°C/s) - calculated as moving average
 /// - Gas: SSR output percentage (0-100) as heater control
+// Artisan protocol formatter for LibreRoaster
+//
+// This module handles formatting of temperature data and commands according to the
+// Artisan roasting software protocol. All formatting operations use heapless
+// types to ensure predictable memory usage and deterministic timing.
+//
+// # Memory Strategy
+//
+// This module is classified as **HOT PATH**:
+// - All formatting operations occur during real-time temperature reporting
+// - Uses heapless types with fixed capacities to prevent allocations
+// - No dynamic memory allocation during normal operation
+//
+// ## Memory Usage
+//
+// - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (5 samples)
+// - `REPORT_BUFFER_SIZE`: Temperature report formatting (32 chars)
+// - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
 use crate::config::SystemStatus;
+use crate::memory::{
+    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
+};
 use crate::output::traits::{OutputError, OutputFormatter};
-use alloc::format;
-use alloc::string::String as AllocString;
 use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
@@ -51,13 +72,14 @@ impl ArtisanFormatter {
         }
     }
 
-    fn update_bt_history(history: &mut Deque<f32, 5>, current_bt: f32) {
-        if history.len() >= 5 {
+    fn update_bt_history(history: &mut Deque<f32, BT_HISTORY_SIZE>, current_bt: f32) {
+        if history.len() >= BT_HISTORY_SIZE {
             let _ = history.pop_front();
         }
         let _ = history.push_back(current_bt);
     }
 
+    #[allow(dead_code)]
     fn compute_ror_from_history(history: &[f32]) -> f32 {
         if history.len() < 2 {
             0.0
@@ -72,8 +94,8 @@ impl ArtisanFormatter {
         }
     }
 
-    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<8> {
-        let mut buf = HeaplessString::<8>::new();
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
+        let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
         let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
         buf
     }
@@ -84,8 +106,8 @@ impl ArtisanFormatter {
         bt: f32,
         ror: f32,
         gas: f32,
-    ) -> HeaplessString<32> {
-        let mut buf = HeaplessString::<32>::new();
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(
             &mut buf,
             "{},{:.1},{:.1},{:.2},{:.1}",
@@ -108,7 +130,7 @@ impl ArtisanFormatter {
 }
 
 impl OutputFormatter for ArtisanFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<AllocString, OutputError> {
+    fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -122,12 +144,12 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = Self::format_time(elapsed_secs, elapsed_ms);
         let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(AllocString::from(line.as_str()))
+        Ok(String::from(line.as_str()))
     }
 }
 
 impl ArtisanFormatter {
-    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> AllocString {
+    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -141,7 +163,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_read_response_full(status: &SystemStatus) -> AllocString {
+    pub fn format_read_response_full(status: &SystemStatus) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -156,7 +178,7 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_status_response(status: &SystemStatus) -> AllocString {
+    pub fn format_status_response(status: &SystemStatus) -> String {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -203,19 +225,66 @@ impl ArtisanFormatter {
         )
     }
 
-    pub fn format_chan_ack(channel: u16) -> AllocString {
+    pub fn format_chan_ack(channel: u16) -> String {
         format!("#{}", channel)
     }
 
-    pub fn format_err(code: u8, message: &str) -> AllocString {
+    pub fn format_err(code: u8, message: &str) -> String {
         format!("ERR {} {}", code, message)
+    }
+
+    // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
+
+    pub fn calculate_weighted_ror(history: &[f32]) -> f32 {
+        if history.len() < ROR_MIN_SAMPLES {
+            return 0.0;
+        }
+
+        let mut weighted_sum = 0.0;
+        let mut weight_sum = 0.0;
+
+        // Linear weighting: recent samples count more
+        for (i, &temp) in history.iter().enumerate() {
+            let weight = (i + 1) as f32; // Linear progression: 1, 2, 3, ..., n
+            weighted_sum += temp * weight;
+            weight_sum += weight;
+        }
+
+        let weighted_temp = weighted_sum / weight_sum;
+        (weighted_temp - history[0]) / (history.len() - 1) as f32
+    }
+
+    pub fn apply_iir_filter(instantaneous_ror: f32, last_filtered: f32, alpha: f32) -> f32 {
+        // IIR filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+        alpha * instantaneous_ror + (1.0 - alpha) * last_filtered
+    }
+
+    pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
+        if history.len() < 3 {
+            return false;
+        }
+
+        let mean = history.iter().sum::<f32>() / history.len() as f32;
+        let variance = history
+            .iter()
+            .map(|&v| {
+                let diff = v - mean;
+                diff * diff
+            })
+            .sum::<f32>()
+            / history.len() as f32;
+        let std_dev = libm::sqrtf(variance);
+
+        // 2-sigma rule: values more than 2 standard deviations from mean are outliers
+        (current_temp - mean).abs() > 2.0 * std_dev
     }
 }
 
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
-    bt_history: Deque<f32, 5>,
+    bt_history: Deque<f32, BT_HISTORY_SIZE>,
+    last_filtered_ror: f32,
 }
 
 impl Default for MutableArtisanFormatter {
@@ -223,7 +292,8 @@ impl Default for MutableArtisanFormatter {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
-            bt_history: Deque::<f32, 5>::new(),
+            bt_history: Deque::<f32, BT_HISTORY_SIZE>::new(),
+            last_filtered_ror: 0.0,
         }
     }
 }
@@ -237,7 +307,7 @@ impl MutableArtisanFormatter {
         *self = Self::default();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<AllocString, OutputError> {
+    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -250,7 +320,7 @@ impl MutableArtisanFormatter {
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(AllocString::from(line.as_str()))
+        Ok(String::from(line.as_str()))
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {
@@ -265,18 +335,27 @@ impl MutableArtisanFormatter {
             return 0.0;
         }
 
-        self.last_bt = current_bt;
-        ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        // Check for outliers before updating history
+        let (front, back) = self.bt_history.as_slices();
+        if !ArtisanFormatter::is_temperature_outlier(current_bt, front)
+            && !ArtisanFormatter::is_temperature_outlier(current_bt, back)
+        {
+            self.last_bt = current_bt;
+            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+        } else {
+            // Skip this outlier reading, return last filtered value
+            return self.last_filtered_ror;
+        }
 
         // Compute ROR from Deque history using as_slices
         let (front, back) = self.bt_history.as_slices();
         let combined_len = front.len() + back.len();
-        if combined_len < 2 {
+        if combined_len < ROR_MIN_SAMPLES {
             return 0.0;
         }
 
         // Build a temporary array for ROR calculation
-        let mut history_arr = [0.0f32; 5];
+        let mut history_arr = [0.0f32; BT_HISTORY_SIZE];
         for (i, &v) in front.iter().enumerate() {
             history_arr[i] = v;
         }
@@ -284,9 +363,20 @@ impl MutableArtisanFormatter {
             history_arr[front.len() + i] = v;
         }
 
-        let first_bt = history_arr[0];
-        let last_bt = history_arr[combined_len - 1];
-        (last_bt - first_bt) / (combined_len as f32 - 1.0)
+        let usable_history = &history_arr[..combined_len];
+
+        // Hybrid approach: Calculate weighted moving average ROR
+        let weighted_ror = ArtisanFormatter::calculate_weighted_ror(usable_history);
+
+        // Apply IIR filter for smoothing
+        let filtered_ror = ArtisanFormatter::apply_iir_filter(
+            weighted_ror,
+            self.last_filtered_ror,
+            ROR_FILTER_ALPHA,
+        );
+
+        self.last_filtered_ror = filtered_ror;
+        filtered_ror
     }
 }
 

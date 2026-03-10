@@ -1,10 +1,11 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
-use crate::hardware::static_sync::SyncCell;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
+use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::Duration;
 use embassy_time::Timer;
@@ -20,28 +21,35 @@ pub const COMMAND_PIPE_SIZE: usize = 256;
 /// Size of the UART event queue for buffering incoming bytes
 pub const EVENT_QUEUE_SIZE: usize = 256;
 
-static COMMAND_PIPE: SyncCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>> =
-    SyncCell::new(None);
-static RX_BUFFER: SyncCell<Option<CircularBuffer>> = SyncCell::new(None);
+static COMMAND_PIPE: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>>,
+> = BlockingMutex::new(RefCell::new(None));
+static RX_BUFFER: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<CircularBuffer>>> =
+    BlockingMutex::new(RefCell::new(None));
 /// Buffered event queue for UART input - separates I/O from parsing
-static EVENT_QUEUE: SyncCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>> = SyncCell::new(None);
+static EVENT_QUEUE: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
+> = BlockingMutex::new(RefCell::new(None));
 /// Command queue for FIFO processing - reject-on-full behavior
-static COMMAND_QUEUE: SyncCell<
-    Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>,
-> = SyncCell::new(None);
+static COMMAND_QUEUE: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>>,
+> = BlockingMutex::new(RefCell::new(None));
+
+fn take_pipe() -> Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> {
+    COMMAND_PIPE.lock(|cell| cell.borrow_mut().take())
+}
 
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn uart_reader_task() {
     let mut rbuf: [u8; 64] = [0u8; 64];
 
-    critical_section::with(|_| unsafe {
-        *COMMAND_PIPE.get() = Some(Pipe::new());
-        *RX_BUFFER.get() = Some(CircularBuffer::new());
-        // Initialize the event queue for buffering UART input
-        *EVENT_QUEUE.get() = Some(Deque::new());
-        // Initialize the command queue for FIFO processing
-        *COMMAND_QUEUE.get() = Some(CommandQueue::new());
-    });
+    COMMAND_PIPE.lock(|cell| *cell.borrow_mut() = Some(Pipe::new()));
+    RX_BUFFER.lock(|cell| *cell.borrow_mut() = Some(CircularBuffer::new()));
+    EVENT_QUEUE.lock(|cell| *cell.borrow_mut() = Some(Deque::new()));
+    COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
 
     Timer::after(Duration::from_millis(10)).await;
 
@@ -68,10 +76,9 @@ pub async fn uart_reader_task() {
 /// Push received bytes to the event queue
 /// Uses heapless Deque for no-std compatible buffering
 fn push_to_event_queue(data: &[u8]) {
-    critical_section::with(|_| unsafe {
-        if let Some(queue) = (*EVENT_QUEUE.get()).as_mut() {
+    EVENT_QUEUE.lock(|cell| {
+        if let Some(queue) = cell.borrow_mut().as_mut() {
             for &byte in data {
-                // Drop oldest if queue is full (ring buffer behavior)
                 if queue.len() >= EVENT_QUEUE_SIZE {
                     let _ = queue.pop_front();
                 }
@@ -83,10 +90,8 @@ fn push_to_event_queue(data: &[u8]) {
 
 /// Process complete lines (0x0D terminated) from the event queue
 fn process_event_queue() {
-    // We need to find a complete line (0x0D) and extract it
-    // First, check if there's a terminator in the queue
-    let has_terminator = critical_section::with(|_| unsafe {
-        if let Some(queue) = (*EVENT_QUEUE.get()).as_ref() {
+    let has_terminator = EVENT_QUEUE.lock(|cell| {
+        if let Some(queue) = cell.borrow().as_ref() {
             queue.iter().any(|&b| b == 0x0D)
         } else {
             false
@@ -94,17 +99,15 @@ fn process_event_queue() {
     });
 
     if has_terminator {
-        // Extract the complete line including terminator
         let mut command_data: Vec<u8, 64> = Vec::new();
         let mut extracted = false;
 
-        critical_section::with(|_| unsafe {
-            if let Some(queue) = (*EVENT_QUEUE.get()).as_mut() {
-                // Extract bytes up to and including the terminator
+        EVENT_QUEUE.lock(|cell| {
+            if let Some(queue) = cell.borrow_mut().as_mut() {
                 while let Some(byte) = queue.pop_front() {
                     let _ = command_data.push(byte);
                     if byte == 0x0D {
-                        break; // Stop at terminator
+                        break;
                     }
                 }
                 extracted = true;
@@ -141,6 +144,7 @@ fn handle_command_data_internal(data: &[u8]) {
         Ok(cmd) => {
             let mut depth = 0;
             let mut should_process = true;
+            let mut use_channel = false;
 
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
@@ -150,22 +154,22 @@ fn handle_command_data_internal(data: &[u8]) {
                 }
 
                 if should_process {
-                    // Push to command queue for FIFO processing
-                    // On queue full: silently drop command (no response sent - Artisan times out)
-                    if let Some(queue) = unsafe { (*COMMAND_QUEUE.get()).as_mut() } {
-                        match queue.try_push(cmd) {
-                            Ok(()) => {
-                                // Command queued successfully - will be processed by queue processor
+                    COMMAND_QUEUE.lock(|cell| {
+                        if let Some(queue) = cell.borrow_mut().as_mut() {
+                            match queue.try_push(cmd) {
+                                Ok(()) => {
+                                    depth = queue.len();
+                                }
+                                Err(QueueError::Full) => {
+                                    debug!("UART command queue full, rejecting command");
+                                    use_channel = true;
+                                }
                             }
-                            Err(QueueError::Full) => {
-                                // Queue full - reject silently (no response sent)
-                                debug!("UART command queue full, rejecting command");
-                            }
+                        } else {
+                            use_channel = true;
                         }
-                        depth = queue.len();
-                    } else {
-                        // Compatibility path (tests / host helpers): if queue is not initialized,
-                        // forward directly to the command channel.
+                    });
+                    if use_channel {
                         let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
                     }
                 }
@@ -210,10 +214,13 @@ pub async fn uart_writer_task() {
 
     Timer::after(Duration::from_millis(20)).await;
 
+    let pipe = match take_pipe() {
+        Some(p) => p,
+        None => return,
+    };
+
     loop {
-        if let Some(pipe) = unsafe { (*COMMAND_PIPE.get()).as_ref() } {
-            pipe.read(&mut wbuf).await;
-        }
+        pipe.read(&mut wbuf).await;
 
         if let Some(uart) = get_uart_driver() {
             let len = wbuf.iter().take_while(|&&b| b != 0).count();
@@ -247,9 +254,8 @@ pub async fn queue_processor_task() {
     Timer::after(Duration::from_millis(50)).await;
 
     loop {
-        // Try to pop a command from the queue and send to artisan_channel
-        let (cmd_opt, queue_depth) = critical_section::with(|_| unsafe {
-            if let Some(queue) = (*COMMAND_QUEUE.get()).as_mut() {
+        let (cmd_opt, queue_depth) = COMMAND_QUEUE.lock(|cell| {
+            if let Some(queue) = cell.borrow_mut().as_mut() {
                 let cmd = queue.pop();
                 let depth = queue.len();
                 (cmd, depth)
@@ -271,8 +277,8 @@ pub async fn queue_processor_task() {
 
 // Keep legacy function for compatibility - now delegates to queue-based processing
 pub fn process_command_data(data: &[u8]) {
-    let event_queue_initialized =
-        critical_section::with(|_| unsafe { (*EVENT_QUEUE.get()).as_ref().is_some() });
+    let event_queue_initialized = EVENT_QUEUE
+        .lock(|cell| cell.borrow().as_ref().is_some());
 
     if event_queue_initialized {
         // Standard path: enqueue bytes and process complete frames.

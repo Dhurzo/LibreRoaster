@@ -3,6 +3,7 @@ mod target_impl {
     use crate::application::service_container::{ContainerError, ServiceContainer};
     use crate::config::{ArtisanCommand, SystemStatus, WATCHDOG_FEED_INTERVAL_MS};
     use crate::hardware::sensors::conversion::{FixtureReading, SensorConversionHub, SensorSample};
+    use crate::memory::SAFETY_ERROR_MSG_MAX_LEN;
     use crate::output::artisan::ArtisanFormatter;
     use embassy_executor::{task, Spawner};
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -147,7 +148,7 @@ mod target_impl {
                         );
                     }
 
-                    if let Ok(mut buffer) = heapless::String::<128>::try_from(line.as_str()) {
+                    if let Ok(mut buffer) = heapless::String::<crate::memory::SAFETY_ERROR_MSG_MAX_LEN>::try_from(line.as_str()) {
                         let _ = ServiceContainer::get_output_channel().try_send(buffer);
                     }
                 }

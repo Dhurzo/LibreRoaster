@@ -9,8 +9,23 @@
 //! - Hardware authority stays centralized in RoasterControl
 //! - Policy logic can be refactored without touching hardware code
 //! - Testing can verify policy decisions independently of hardware
+//!
+//! # Memory Strategy
+//!
+//! This module is classified as **INITIALIZATION** with some **MIXED** operations:
+//! - Policy evaluation typically occurs during command processing (not hot path)
+//! - Error message creation uses heapless to prevent allocations in critical paths
+//! - Most operations use stack-only primitives
+//!
+//! ## Memory Usage
+//!
+//! - `error_message`: `heapless::String<POLICY_MSG_MAX_LEN>` for predictable memory
+//! - `reason`: `heapless::String<POLICY_MSG_MAX_LEN>` for safety messages
+//! - All other fields: primitives (f32, bool, Option) with no allocations
 
 use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
+use crate::memory::POLICY_MSG_MAX_LEN;
+use heapless::String;
 
 /// Outcome of a manual command policy evaluation.
 ///
@@ -32,7 +47,7 @@ pub struct ManualPolicyOutcome {
     /// Policy evaluation was successful
     pub success: bool,
     /// Optional error message if policy evaluation failed
-    pub error_message: Option<alloc::string::String>,
+    pub error_message: Option<String<POLICY_MSG_MAX_LEN>>,
 }
 
 impl ManualPolicyOutcome {
@@ -96,7 +111,7 @@ impl ManualPolicyOutcome {
             artisan_control: None,
             clear_manual: false,
             success: false,
-            error_message: Some(alloc::string::String::from(message)),
+            error_message: String::try_from(message).ok(),
         }
     }
 
@@ -138,7 +153,7 @@ pub struct SafetyPolicyOutcome {
     /// Hardware status to set
     pub ssr_hardware_status: Option<SsrHardwareStatus>,
     /// Reason for emergency (if any)
-    pub reason: Option<alloc::string::String>,
+    pub reason: Option<String<POLICY_MSG_MAX_LEN>>,
 }
 
 impl SafetyPolicyOutcome {
@@ -162,7 +177,7 @@ impl SafetyPolicyOutcome {
             zero_ssr: true,
             disable_pid: true,
             ssr_hardware_status: Some(SsrHardwareStatus::Error),
-            reason: Some(alloc::string::String::from(reason)),
+            reason: String::try_from(reason).ok(),
         }
     }
 
