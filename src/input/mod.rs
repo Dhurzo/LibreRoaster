@@ -132,10 +132,6 @@ impl ArtisanInput {
 
 #[cfg(target_arch = "riscv32")]
 pub fn start_uart_tasks(spawner: &embassy_executor::Spawner) -> Result<(), InputError> {
-    critical_section::with(|_| unsafe {
-        COMMAND_PIPE = Some(Pipe::new());
-    });
-
     spawner
         .spawn(uart_reader_task())
         .map_err(|_| InputError::UartError)?;

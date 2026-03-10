@@ -1,4 +1,6 @@
+use core::cell::UnsafeCell;
 use core::fmt;
+use static_cell::StaticCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
@@ -33,19 +35,37 @@ impl UartDriver {
     }
 }
 
-static mut UART_INSTANCE: Option<UartDriver> = None;
+static UART_DRIVER: StaticCell<Option<UartDriver>> = StaticCell::new();
+
+struct SyncPointer<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for SyncPointer<T> {}
+
+impl<T> SyncPointer<T> {
+    const fn new(ptr: T) -> Self {
+        Self(UnsafeCell::new(ptr))
+    }
+
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
+static UART_PTR: SyncPointer<core::ptr::NonNull<Option<UartDriver>>> =
+    SyncPointer::new(core::ptr::NonNull::dangling());
 
 pub fn init_uart(_uart0: ()) -> Result<(), UartError> {
-    critical_section::with(|_| unsafe {
-        UART_INSTANCE = Some(UartDriver::new());
-    });
-
+    let value = UART_DRIVER.init(Some(UartDriver::new()));
+    unsafe { *UART_PTR.get() = core::ptr::NonNull::new_unchecked(value) };
     Ok(())
 }
 
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
-    #[allow(static_mut_refs)]
     unsafe {
-        UART_INSTANCE.as_mut()
+        let opt_ptr = &mut *UART_PTR.get();
+        if let Some(ptr) = opt_ptr.as_mut() {
+            return Some(ptr);
+        }
+        None
     }
 }
