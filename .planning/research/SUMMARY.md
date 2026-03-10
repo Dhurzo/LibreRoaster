@@ -65,7 +65,7 @@ The architecture recommendation is to keep runtime paths stable and add an out-o
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on research, the v4.5 refactoring tasks can be organized into a single coherent release:
 
 ### Phase 1: Baseline Freeze and Gate Foundation
 **Rationale:** Every later change depends on stable contracts and measurable guardrails.

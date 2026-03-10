@@ -22,7 +22,7 @@
 
 ---
 
-## Critical Pitfalls
+## Overview
 
 ### Pitfall 1: "Dead" Code Removal Breaks Linker/Runtime Side-Effects
 
@@ -208,7 +208,7 @@ Edition/lint migration is applied mechanically to embedded-specific constructs.
 
 ---
 
-## Moderate Pitfalls
+**Phase to address:** Phase 1 (SSR deduplication) — verify Send+Sync after each extraction
 
 ### Pitfall 9: Clippy/Lint "Fixes" Introduce Embedded-Unfriendly Behavior
 

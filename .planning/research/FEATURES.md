@@ -43,7 +43,36 @@ These are common quality-hardening traps in brownfield firmware.
 | **Overbuild a full hardware lab orchestration platform in v5.0** | Promise of perfect automated realism. | Tooling scope can eclipse the hardening objective. | Keep a pragmatic scripted HIL path first; automate further in follow-up milestone. |
 | **Refactor public protocol semantics during hardening** | Tempting to "clean up" protocol while touching handlers. | Changes external behavior and muddies regression attribution for quality milestone. | Freeze protocol semantics; harden implementation, tests, and observability only. |
 
-## Feature Dependencies
+---
+
+## Differentiators (Value-Adding Improvements)
+
+Benefits beyond basic refactoring - nice-to-have outcomes.
+
+| Refactoring | Value Proposition | Complexity | Notes |
+|-------------|-------------------|------------|-------|
+| **detect_heat_source extraction** | Enables unified periodic health check across SSR implementations. Future: consistent timing logic. | LOW | Adds `HeatSourceDetector` trait to base |
+| **crate::common migration** | Enables doctests and example binaries to use stubs. Better documentation through runnable examples. | LOW | Requires `pub(crate)` visibility |
+| **heapless::Deque** | Zero-allocation, no_std compatible. Paves way for `#![no_std]` builds. Cargo.toml already has heapless v0.9.2. | LOW | Matches 5-element window in current code |
+| **Handler pattern for ArtisanCommand** | Individual handlers testable in isolation. Enables future middleware (logging, rate limiting). | MEDIUM | Follows existing RoasterCommandHandler pattern |
+
+---
+
+## Anti-Features (What NOT To Do)
+
+Common mistakes during these refactorings - avoid these approaches.
+
+| Anti-Pattern | Why Problematic | Correct Approach |
+|--------------|-----------------|------------------|
+| **Adding new functionality during refactoring** | Scope creep. v4.5 should only refactor existing code. | Complete extraction first, new features in separate milestones |
+| **Changing public API signatures** | Breaks existing callers. v4.5 must be drop-in replacement. | Preserve trait bounds and method signatures |
+| **Replacing Vec<f32> with Deque<f32, N> where N != 5** | Current code explicitly manages 5-element window. Different capacity changes semantics. | Use `Deque<f32, 5>` to match current sliding window |
+| **Creating new handler trait for ArtisanCommand** | Already has `RoasterCommandHandler` in handlers.rs. Duplication. | Extend existing trait with ArtisanCommand variants |
+| **Moving stubs without pub visibility** | Must be `pub(crate)` to be usable across modules. | Ensure `pub(crate)` visibility in src/common/mod.rs |
+
+---
+
+## Refactoring Dependencies
 
 ```text
 Existing foundation (already built):

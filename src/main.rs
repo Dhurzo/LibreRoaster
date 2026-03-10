@@ -18,6 +18,7 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
+use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
 #[cfg(target_arch = "riscv32")]
