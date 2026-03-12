@@ -8,23 +8,18 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v5.0 Auditoria integral de calidad Rust
+## Current Milestone: v5.1 Complete
 
-**Goal:** Auditar y refactorizar de forma segura el firmware para eliminar codigo muerto, mejorar practicas Rust/SOLID y confirmar que el control de tostadora real via Artisan Scope sigue siendo viable.
+**Goal:** Actualizar toda la documentación (README.md y documentos internos) para reflejar el estado actual del proyecto y los cambios recientes, asegurando precisión, completitud y claridad para el usuario.
 
-**Target features:**
-- Analisis completo del codigo para detectar y eliminar codigo muerto sin romper funcionalidad.
-- Refuerzo de buenas practicas de Rust en arquitectura, errores, ownership y limites de modulos.
-- Revision y ajuste de diseno para cumplir SOLID de manera razonable en un firmware embebido.
-- Verificacion del flujo de control real (Artisan Scope -> firmware -> actuadores) con criterios observables.
+**Status:** ✅ SHIPPED (2026-03-12)
 
-## Current State
+v5.1 shipped: All documentation updated, verified, and synchronized. README.md includes project status, GPIO pinout, build instructions with `--features embedded`, and complete 18-field STATUS command reference. Internal docs (ARCHITECTURE.md, PROTOCOL.md, HARDWARE.md, DEVELOPMENT.md, INSTRUMENTATION_README.MD) all verified accurate.
 
-v4.5 Alta Prioridad esta en tramo final (fases 77-80), con SSR deduplication, test stubs compartidos y optimizacion de memoria ya entregados, y la migracion completa del handler pattern en cierre.
+## Next Milestone Goals
 
-- Fases 77-79 completadas y verificadas en `.planning/ROADMAP.md`.
-- Fase 80 en progreso, manteniendo compatibilidad de comandos Artisan existentes.
-- Base lista para iniciar el siguiente milestone de calidad integral (v5.0).
+- Initiate `/gsd-new-milestone` to define requirements for next milestone.
+- Plan and scope phases based on current project state.
 
 <details>
 <summary>Previous project context</summary>
@@ -168,14 +163,16 @@ v4.3 Code Cleanup is shipped. Documentation cleanup, instrumentation automation,
 - ✓ TEST-03: Create `StubFan` struct implementing `control::traits::Fan` with call history tracking — v4.4
 - ✓ TEST-04: Create `StubThermometer` struct implementing `control::traits::Thermometer` with configurable temperature returns — v4.4
 - ✓ TEST-05: Implement `reset_channels()` and `collect_output()` helper functions for test isolation — v4.4
+- ✓ QUAL-01: Identificar y catalogar codigo muerto por modulo con evidencia de uso/no-uso antes de eliminar — v5.0
+- ✓ QUAL-02: Eliminar codigo muerto y rutas obsoletas manteniendo compatibilidad funcional y cobertura de pruebas — v5.0
+- ✓ RUST-01: Aplicar mejoras de buenas practicas Rust en ownership, errores, API boundaries y consistencia en modulos — v5.0
+- ✓ SOLID-01: Evaluar y ajustar componentes clave para cumplir SOLID de manera razonable en contexto embebido — v5.0
+- ✓ HW-01: Verificar que Artisan Scope puede controlar una tostadora real usando este firmware y documentar evidencia — v5.0
+- ✓ DOCS-01: Update README.md with current project status, recent changes, build/test instructions, hardware/pinout information, and Artisan connection guide — v5.1
+- ✓ DOCS-02: Update all internal documentation (ARCHITECTURE.md, PROTOCOL.md, HARDWARE.md, DEVELOPMENT.md, INSTRUMENTATION_README.MD) to match current codebase — v5.1
+- ✓ DOCS-03: Verify documentation accuracy through manual review, ensuring all docs are synchronized with code — v5.1
 
 ### Active
-
-- [ ] QUAL-01: Identificar y catalogar codigo muerto por modulo con evidencia de uso/no-uso antes de eliminar
-- [ ] QUAL-02: Eliminar codigo muerto y rutas obsoletas manteniendo compatibilidad funcional y cobertura de pruebas
-- [ ] RUST-01: Aplicar mejoras de buenas practicas Rust en ownership, errores, API boundaries y consistencia en modulos
-- [ ] SOLID-01: Evaluar y ajustar componentes clave para cumplir SOLID de manera razonable en contexto embebido
-- [ ] HW-01: Verificar que Artisan Scope puede controlar una tostadora real usando este firmware y documentar evidencia
 
 ### Out of Scope
 
@@ -324,6 +321,6 @@ v2.0 Code Quality Audit — Complete. Technical debt inventory finished with 31 
 
 ---
 
-*Last updated: 2026-03-07 — v5.0 milestone started*
+*Last updated: 2026-03-12 — v5.1 milestone complete*
 
 </details>

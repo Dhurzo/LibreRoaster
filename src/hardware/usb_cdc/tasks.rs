@@ -26,8 +26,7 @@ static USB_COMMAND_QUEUE: BlockingMutex<
 
 #[cfg(all(test, target_arch = "riscv32"))]
 pub fn init_usb_command_queue_for_test() {
-    USB_COMMAND_QUEUE
-        .lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
+    USB_COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
 }
 
 #[cfg(all(test, target_arch = "riscv32"))]
@@ -50,8 +49,7 @@ pub fn drain_usb_command_queue_for_test() -> Vec<ArtisanCommand, USB_COMMAND_PIP
 pub async fn usb_reader_task() {
     let mut rbuf: [u8; 64] = [0u8; 64];
 
-    USB_COMMAND_QUEUE
-        .lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
+    USB_COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
 
     Timer::after(Duration::from_millis(100)).await;
 

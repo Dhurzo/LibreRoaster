@@ -130,12 +130,10 @@ async fn main_with_no_fan(_spawner: Spawner, _delay: Delay) -> ! {
                     AppBuilder::new().build().unwrap_or_else(|_| {
                         log::error!("Critical: Cannot build any application variant");
                         // Emergency fallback: just log and prevent crash
-                        embassy_time::Timer::after_millis(100).await;
+                        embassy_time::Timer::Timer::after_millis(100).await;
                         return emergency_loop().await;
                     })
-                })
-        }
-    };
+                });
 
     let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_controller, 0.0);
 

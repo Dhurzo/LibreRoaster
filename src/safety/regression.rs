@@ -148,7 +148,10 @@ mod target_impl {
                         );
                     }
 
-                    if let Ok(mut buffer) = heapless::String::<crate::memory::SAFETY_ERROR_MSG_MAX_LEN>::try_from(line.as_str()) {
+                    if let Ok(mut buffer) = heapless::String::<
+                        crate::memory::SAFETY_ERROR_MSG_MAX_LEN,
+                    >::try_from(line.as_str())
+                    {
                         let _ = ServiceContainer::get_output_channel().try_send(buffer);
                     }
                 }

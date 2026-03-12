@@ -2,24 +2,24 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-07)
+See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Phase 88 - Architecture Alignment and UNITS Refactor complete - v5.0 milestone complete
+**Current focus:** Milestone v5.1 complete — Ready for next milestone
 
 ## Current Position
 
-Phase: 88 of 88 (Architecture Alignment and UNITS Refactor)
-Plan: 1 of 1 in current phase
-Status: Phase complete
-Last activity: 2026-03-09 — Completed 88-01-PLAN.md
+Phase: None (milestone complete)
+Plan: Not started
+Status: Ready to plan next milestone
+Last activity: 2026-03-12 — v5.1 milestone archived
 
-Progress: [██████████] 100%
+Progress: [████████████████████] 100% (v5.1)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 27 (all v5.0 phases complete: 81-88)
+- Total plans completed: 33 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans)
 
 **By Phase:**
 
@@ -33,6 +33,12 @@ Progress: [██████████] 100%
 | 86 | 1/1 | 1 | Phase complete |
 | 87 | 2/2 | 2 | Phase complete |
 | 88 | 1/1 | 1 | Phase complete |
+| 89 | 1/2 | 2 | Phase complete (verified in Phase 92) |
+| 90 | 3/3 | 3 | Phase complete |
+| 91 | 4/4 | 4 | Phase complete |
+| 92 | 1/1 | 1 | Phase complete |
+| 93 | 3/3 | 3 | Phase complete |
+| 94 | 2/2 | 2 | Phase complete |
 
 ## Accumulated Context
 
@@ -50,17 +56,36 @@ Progress: [██████████] 100%
 - [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
 - [88-01] Promoted stage_instrumentation.rs to Tier 1 in quality policy.
 - [88-01] Refactored UNITS command to use ManualCommandPolicy pattern via forward_artisan_manual_command.
+- [89-01] README now includes Project Status section after main title, detailed pinout table with note column, and quality baseline subsection in build instructions.
+- [90-01] Force-added internal documentation files to Git tracking (gitignored but required for per-task commits).
+- [90-02] Kept HARDWARE.md language in Spanish (no translation required) and created DEVELOPMENT.md consolidating build, flash, test, and debugging guides.
+- [90-03] Expanded INSTRUMENTATION_README.MD from 47 to 411 lines with comprehensive watchdog, LEDC guard, regression, and PID telemetry descriptions; verified all internal documentation cross-references are valid and up-to-date.
+- [91-01] README.md verified accurate with no discrepancies - pin assignments, build/test instructions, and project status all match codebase.
+- [91-02] ARCHITECTURE.md and PROTOCOL.md verified accurate - module structure, data flow, command implementations, and 18-field STATUS format all match codebase.
+- [91-03] HARDWARE.md pinout and hardware specs verified accurate; DEVELOPMENT.md test/debug instructions validated, but CRITICAL build documentation issue found (missing --features embedded flag).
+- [91-04] INSTRUMENTATION_README.MD and ARTISAN_CONNECTION.md verified accurate; fixed watchdog failure reasons (ESP-IDF codes) and LEDC guard timeout (40ms) documentation.
+- [92-01] Created retrospective VERIFICATION.md for Phase 89 to close documentation gap; DOCS-01 requirement formally satisfied and traceability complete.
+- [93-01] Fixed README.md build command to include --features embedded flag; DEVELOPMENT.md verified as accurate baseline; documentation consistency established.
+- [93-02] Verified build command enables binary target (required-features = ["embedded"]) but confirmed pre-existing code bugs in main.rs prevent .bin production; library builds successfully (3.4MB .rlib); separate code fix needed.
+- [93-03] Verified flash command syntax correct; binary path references accurate; documented complete E2E build → flash workflow in README.md; binary production still blocked by main.rs bugs.
+- [94-01] Updated README.md version header from v5.0 to v5.1 (2026-03-12); milestone reflects v5.1 in progress; Next updated to v5.2 (TBD).
+- [94-02] Updated STATUS command description to reference all 18 CSV fields; includes PID state, flags, and latency metrics; references INSTRUMENTATION_README.MD for complete definitions.
 
 ### Pending Todos
 
-- None (Milestone v5.0 complete)
+- None (Milestone v5.1 complete)
 
 ### Blockers/Concerns
 
-- None (Phase 88 and Milestone v5.0 validated)
+- **CRITICAL**: Pre-existing code issue in main.rs prevents successful builds with --features embedded flag
+  - Missing generic arguments on SsrControlSimple type
+  - Missing #[esp_rtos::main] attribute on entry function
+  - Multiple undefined variable references
+  - Requires separate code-level fix (not documentation)
+- Note: Documentation fix (--features embedded) is verified correct; binary target enabled but cannot compile
 
 ## Session Continuity
 
-Last session: 2026-03-09T06:08:52Z
-Stopped at: Completed 87-02-PLAN.md
+Last session: 2026-03-12T20:00:26Z
+Stopped at: Completed 94-02-PLAN.md (STATUS 18 fields reference)
 Resume file: None

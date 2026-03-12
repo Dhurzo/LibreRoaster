@@ -2,6 +2,22 @@
 
 LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-C3 (firmware & hardware). Built with modern embedded Rust using Embassy async framework, featuring dual thermocouple monitoring, PWM heater/fan control, and Artisan+ compatibility via USB or UART communication.
 
+
+## Project Status
+
+**Current version:** v5.1 (2026‑03‑12)
+**Milestone:** v5.1 in progress – Documentation update and minor improvements.
+**Next:** v5.2 – TBD.
+
+### Recent Changes
+
+- Added STATUS command with 18‑field CSV for automation telemetry
+- Added REG command for over‑temperature regression testing
+- Enhanced watchdog instrumentation and safety logging
+- Implemented quality baseline scripts (quality‑baseline.sh)
+- Refactored unsafe code and improved memory strategy
+- Updated all internal documentation (ARCHITECTURE.md, PROTOCOL.md, etc.)
+
 ## Project Philosophy
 
 The project aims to enable anyone with intermediate technical skills to build their own affordable coffee roaster. Due to the cost-focused approach, certain components are chosen over more expensive alternatives - this is evident in the (future) hardware section where even recycled components are utilized.
@@ -47,7 +63,7 @@ The async architecture enables:
 |---------|-------------|
 | `READ` | Request telemetry (ET, BT, heater%, fan%) |
 | `REG` | Regression-runner trigger that ramps heater/fan to 100%, keeps the watchdog fed, and emits SAFETY OT-REGRESSION records so automation can detect and monitor over-temperature regression cycles |
-| `STATUS/STAT` | Automation telemetry snapshot returning ET, BT, Heater, Fan, WatchdogOK, WatchdogFailures, LastWatchdogReason, LEDCGuardTimeouts, and RegressionActive (alias `STAT`) while surfacing watchdog guard/regression telemetry without touching `READ` |
+| `STATUS/STAT` | Automation telemetry snapshot returning 18 CSV fields including ET, BT, Heater, Fan, WatchdogOK, WatchdogFailures, LastWatchdogReason, LEDCGuardTimeouts, RegressionActive, PID state (PV, MV, IntegratorValue, DerivativeValue), flags (SaturationFlag, IntegratorClampFlag, DerivativeAvailableFlag), and latency metrics (CommandLatency, MaxCommandLatency). See INSTRUMENTATION_README.MD for complete field definitions. (alias `STAT`) while surfacing watchdog guard/regression telemetry without touching `READ` |
 | `OT1 [0-100]` | Set heater power percentage |
 | `OT2 [0-100]` | Set fan speed percentage (auto-cuts heater if out of range) |
 | `IO3 [0-100]` | Set fan speed percentage |
@@ -94,16 +110,20 @@ mocouple amplifier boards |
 
 ## Pinout
 
-| GPIO | Function |
-|------|----------|
-| 3 | MAX31856 #1 CS (ET - Environment Temperature) |
-| 4 | MAX31856 #2 CS (BT - Bean Temperature) |
-| 5-7 | SPI (MOSI, MISO, SCLK) |
-| 9 | Fan PWM |
-| 10 | SSR PWM |
-| 1 | Heat Detection (SSR feedback) |
-| 20 | UART TX (to Artisan) |
-| 21 | UART RX (from Artisan) |
+| GPIO | Function | Description | Note |
+|------|----------|-------------|------|
+| 3 | MAX31856 #1 CS | Environment Temperature (ET) | SPI bus shared |
+| 4 | MAX31856 #2 CS | Bean Temperature (BT) | SPI bus shared |
+| 5 | SPI MOSI | Master Out Slave In | Shared between MAX31856 chips |
+| 6 | SPI MISO | Master In Slave Out | Shared |
+| 7 | SPI SCLK | Serial Clock | Shared |
+| 9 | Fan PWM | Fan speed control (25kHz) | Strapping pin – safe with pull‑up (see internalDoc/HARDWARE.md) |
+| 10 | SSR PWM | Heater control (1Hz) | |
+| 1 | Heat Detection | SSR feedback input | Pull‑up enabled |
+| 20 | UART TX | Artisan communication (to Artisan) | |
+| 21 | UART RX | Artisan communication (from Artisan) | |
+
+For detailed hardware wiring and strapping pin information, see [HARDWARE.md](internalDoc/HARDWARE.md).
 
 ## Artisan Connection
 
@@ -215,25 +235,66 @@ Before building LibreRoaster, ensure you have:
 # Build in release mode
 cargo build --release
 
-# Build in debug mode  
+# Build in debug mode
 cargo build
 
 # Clean build artifacts
 cargo clean
 ```
 
+**Note:** For detailed flashing, testing, and debugging instructions, see [DEVELOPMENT.md](internalDoc/DEVELOPMENT.md).
+
+### Quality Baseline and Regression Testing
+
+The project includes automated quality gates and regression checks:
+
+```bash
+# Run the quality baseline (format, clippy, tests)
+scripts/quality-baseline.sh
+
+# Run the full regression suite
+scripts/run-regression-checks.sh
+```
+
+These scripts are the authoritative source for quality policy and regression validation. They are used in CI and should be run before submitting changes.
 #### Building for ESP32-C3
 
 LibreRoaster is built as an embedded binary for the ESP32-C3 RISC-V processor. The build requires specifying the target explicitly:
 
 ```bash
 # Build for ESP32-C3 embedded target
-cargo build --release --target riscv32imc-unknown-none-elf
+cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
 **Output location:** `target/riscv32imc-unknown-none-elf/release/libreroaster.bin`
 
 > **Note:** The `--target riscv32imc-unknown-none-elf` flag is required because LibreRoaster is an embedded application (no stdlib), not a host application.
+
+#### Build and Flash Workflow
+
+Complete end-to-end workflow to build and flash firmware to ESP32-C3:
+
+```bash
+# 1. Build firmware with embedded features
+cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+
+# 2. Verify binary was produced (optional but recommended)
+ls -lh target/riscv32imc-unknown-none-elf/release/libreroaster.bin
+
+# 3. Flash to ESP32-C3
+cargo espflash flash --release
+
+# 4. Flash and monitor serial output
+cargo espflash flash --release --monitor
+```
+
+**Workflow steps:**
+1. **Build** - Compile the firmware with `--features embedded` to enable the binary target
+2. **Verify** - Confirm the `.bin` file exists before attempting to flash
+3. **Flash** - Write the binary to ESP32-C3 using espflash
+4. **Monitor** - Optionally view serial output to verify successful boot
+
+For detailed flashing instructions and troubleshooting, see [DEVELOPMENT.md](internalDoc/DEVELOPMENT.md).
 
 ### Test Commands
 
@@ -251,6 +312,8 @@ cargo test test_name
 # Run with output (see print statements)
 cargo test -- --nocapture
 ```
+**Quality and Regression:** For a complete quality and regression check, run the scripts described in [Quality Baseline and Regression Testing](#quality-baseline-and-regression-testing).
+
 
 #### Host Integration Tests
 
