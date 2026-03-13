@@ -82,7 +82,7 @@ async fn main(spawner: Spawner) -> ! {
     // Timer 0: SSR (1 Hz - slow PWM for heater control)
     let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     timer0.configure(timer::config::Config {
-        duty: timer::config::Duty::Duty13Bit,
+        duty: timer::config::Duty::Duty8Bit,
         clock_source: timer::LSClockSource::APBClk,
         frequency: Rate::from_hz(1),
     }).unwrap();
