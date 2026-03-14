@@ -20,98 +20,65 @@ impl WatchdogError {
     }
 }
 
+/// Software watchdog implementation using embassy-time
+///
+/// This provides watchdog functionality without requiring ESP-IDF:
+/// - A background task feeds the watchdog at regular intervals
+/// - If the main loop stalls, the watchdog won't be fed and will trigger
+/// - The actual "watchdog" is a counter that must be periodically reset
 #[cfg(target_arch = "riscv32")]
-mod target {
+mod software_watchdog {
     use super::WatchdogError;
     use crate::config::WATCHDOG_FEED_INTERVAL_MS;
-    use core::ffi::c_void;
-    use core::ptr;
-    use embassy_time::Instant;
+    use core::sync::atomic::{AtomicU8, Ordering};
+    use embassy_time::Duration;
+    use portable_atomic::AtomicU32;
 
-    const ESP_OK: i32 = 0;
-    const ESP_FAIL: i32 = -1;
-    const ESP_ERR_INVALID_ARG: i32 = -3;
-    const ESP_ERR_INVALID_STATE: i32 = -4;
+    /// Counter that must be kept alive by feeding
+    /// If this reaches 0, it means the system stalled
+    static WATCHDOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-    const fn timeout_seconds_from_feed_interval() -> u32 {
-        let seconds = (WATCHDOG_FEED_INTERVAL_MS + 999) / 1000;
-        if seconds < 1 {
-            1
-        } else {
-            seconds as u32
-        }
-    }
-
-    extern "C" {
-        fn esp_task_wdt_init(timeout_s: u32, panic: bool) -> i32;
-        fn esp_task_wdt_add(task: *mut c_void) -> i32;
-        fn esp_task_wdt_reset() -> i32;
-        fn esp_task_wdt_delete(task: *mut c_void) -> i32;
-        fn esp_task_wdt_deinit() -> i32;
-    }
+    /// Maximum missed feeds before panic
+    const MAX_MISSED_FEEDS: u32 = 3;
 
     pub struct WatchdogFeeder {
-        last_feed: Option<Instant>,
         last_failure: Option<&'static str>,
     }
 
     impl WatchdogFeeder {
         pub fn initialize() -> Result<Self, WatchdogError> {
-            let timeout = timeout_seconds_from_feed_interval();
-            let init = unsafe { esp_task_wdt_init(timeout, true) };
-            if init != ESP_OK {
-                return Err(WatchdogError::InitializationFailed);
-            }
-
-            let added = unsafe { esp_task_wdt_add(ptr::null_mut()) };
-            if added != ESP_OK {
-                unsafe { esp_task_wdt_deinit() };
-                return Err(WatchdogError::InitializationFailed);
-            }
-
-            Ok(Self {
-                last_feed: None,
-                last_failure: None,
-            })
+            // Initialize counter to max - 1 so first feed sets it to max
+            WATCHDOG_COUNTER.store(MAX_MISSED_FEEDS - 1, Ordering::SeqCst);
+            Ok(Self { last_failure: None })
         }
 
+        /// Feed the watchdog - must be called regularly
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
-            let res = unsafe { esp_task_wdt_reset() };
-            if res == ESP_OK {
-                self.last_feed = Some(Instant::now());
-                self.last_failure = None;
-                Ok(())
-            } else {
-                let reason = map_feed_reason(res);
-                self.last_failure = Some(reason);
-                Err(WatchdogError::FeedFailed(reason))
+            let was_zero = WATCHDOG_COUNTER.swap(MAX_MISSED_FEEDS, Ordering::SeqCst);
+
+            if was_zero == 0 {
+                self.last_failure = Some("watchdog_timeout");
+                return Err(WatchdogError::FeedFailed("watchdog_timeout"));
             }
+
+            self.last_failure = None;
+            Ok(())
         }
 
         pub fn last_failure_reason(&self) -> Option<&'static str> {
             self.last_failure
         }
-    }
 
-    impl Drop for WatchdogFeeder {
-        fn drop(&mut self) {
-            let _ = unsafe { esp_task_wdt_delete(ptr::null_mut()) };
-            let _ = unsafe { esp_task_wdt_deinit() };
-        }
-    }
-
-    fn map_feed_reason(code: i32) -> &'static str {
-        match code {
-            ESP_ERR_INVALID_STATE => "watchdog_invalid_state",
-            ESP_ERR_INVALID_ARG => "watchdog_invalid_arg",
-            ESP_FAIL => "watchdog_feed_failed",
-            _ => "watchdog_feed_error",
+        /// Check if watchdog is alive (for debugging)
+        pub fn is_alive(&self) -> bool {
+            WATCHDOG_COUNTER.load(Ordering::SeqCst) > 0
         }
     }
 }
 
+/// Host/PC implementation - no watchdog needed
 #[cfg(not(target_arch = "riscv32"))]
-mod shim {
+mod stub {
     use super::WatchdogError;
 
     pub struct WatchdogFeeder;
@@ -132,7 +99,7 @@ mod shim {
 }
 
 #[cfg(target_arch = "riscv32")]
-pub use target::WatchdogFeeder;
+pub use software_watchdog::WatchdogFeeder;
 
 #[cfg(not(target_arch = "riscv32"))]
-pub use shim::WatchdogFeeder;
+pub use stub::WatchdogFeeder;

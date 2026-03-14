@@ -5,255 +5,201 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for duration of a data transfer."
 )]
+
+#[cfg(target_arch = "riscv32")]
+use esp_backtrace as _;
+
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
-#[cfg(target_arch = "riscv32")]
-use embedded_hal::delay::DelayNs;
-#[cfg(target_arch = "riscv32")]
-use esp_backtrace as _;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::clock::CpuClock;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::gpio::{Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::channel::{config::Config as ChannelConfig, ChannelIFace};
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::timer::config::Config as TimerConfig;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::timer::TimerIFace;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::{channel, timer, Ledc, LowSpeed};
-#[cfg(target_arch = "riscv32")]
-use esp_hal::spi::master::Spi;
 
 #[cfg(target_arch = "riscv32")]
-use esp_hal::delay::Delay;
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+
+#[cfg(target_arch = "riscv32")]
+use esp_hal::spi::master::{Spi, Config as SpiConfig};
 
 #[cfg(target_arch = "riscv32")]
 use log::info;
+
+#[cfg(target_arch = "riscv32")]
+use esp_bootloader_esp_idf;
+
+#[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
 #[cfg(target_arch = "riscv32")]
-extern crate alloc;
+use core::cell::RefCell;
 
-// StaticCells for safe static initialization (replaces unsafe make_static)
 #[cfg(target_arch = "riscv32")]
-static SSR_CELL: StaticCell<SsrControlSimple> = StaticCell::new();
-#[cfg(target_arch = "riscv32")]
-static FAN_CELL: StaticCell<FanController> = StaticCell::new();
+use critical_section;
 
 #[cfg(target_arch = "riscv32")]
 use libreroaster::application::AppBuilder;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::fan::FanController;
 #[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::ledc_bus::LedcBus;
-#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::ssr::SsrControlSimple;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::ledc_bus::LedcBus;
 
 #[cfg(target_arch = "riscv32")]
-use core::cell::RefCell;
+use esp_hal::ledc::{Ledc, LowSpeed, LSGlobalClkSource};
 #[cfg(target_arch = "riscv32")]
-use esp_bootloader_esp_idf;
-
+use esp_hal::ledc::channel;
 #[cfg(target_arch = "riscv32")]
-use critical_section;
-
+use esp_hal::ledc::timer::{self, TimerIFace};
 #[cfg(target_arch = "riscv32")]
-esp_bootloader_esp_idf::esp_app_desc!();
+use esp_hal::time::Rate;
 
 #[cfg(target_arch = "riscv32")]
-async fn main_with_no_fan(_spawner: Spawner, _delay: Delay) -> ! {
-    log::error!("Fan controller initialization failed, running without fan control");
-    
-    // Create minimal components (without fan)
-    let mock_ssr = SsrControlSimple::new(
-        Input::new(unsafe { esp_hal::peripherals::Peripherals::steal().GPIO1 }, InputConfig::default().with_pull(Pull::Up)),
-        // This is a dummy handle that won't work, but we'll handle the error
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
-    ).unwrap_or_else(|_| {
-        log::error!("Cannot create SSR control in fallback mode");
-        // Return from this function to enter safe mode
-        return enter_safe_mode().await;
-    });
-    
-    let mock_bt_sensor = Max31856::new(
-        SpiDeviceWithCs::new(
-            unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-            Output::new(unsafe { esp_hal::peripherals::Peripherals::steal().GPIO4 }, Level::High, OutputConfig::default())
-        )
-    ).unwrap_or_else(|_| {
-        log::error!("Cannot create BT sensor in fallback mode");
-        // Return from this function to enter safe mode
-        return enter_safe_mode().await;
-    });
-    
-    let mock_et_sensor = Max31856::new(
-        SpiDeviceWithCs::new(
-            unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-            Output::new(unsafe { esp_hal::peripherals::Peripherals::steal().GPIO3 }, Level::High, OutputConfig::default())
-        )
-    ).unwrap_or_else(|_| {
-        log::error!("Cannot create ET sensor in fallback mode");
-        // Return from this function to enter safe mode
-        return enter_safe_mode().await;
-    });
-    
-    // Create static references
-    let static_ssr = SSR_CELL.init(mock_ssr);
-    let static_fan = FAN_CELL.init(FanController::new().unwrap_or_else(|_| {
-        log::error!("Cannot create fan controller in fallback mode");
-        return enter_safe_mode().await;
-    }));
-    
-    // Build minimal application
-    let app = AppBuilder::new()
-        .with_uart(unsafe { esp_hal::peripherals::Peripherals::steal().UART0 })
-        .with_real_ssr(static_ssr)
-        .with_fan_control(static_fan)
-        .with_temperature_sensors(mock_bt_sensor, mock_et_sensor)
-        .with_formatter(ArtisanFormatter::new())
-        .build()
-                .unwrap_or_else(|_| {
-                    log::error!("Failed to build minimal application: {:?}", e2);
-                    // Last resort: create the most basic app possible
-                    AppBuilder::new().build().unwrap_or_else(|_| {
-                        log::error!("Critical: Cannot build any application variant");
-                        // Emergency fallback: just log and prevent crash
-                        embassy_time::Timer::Timer::after_millis(100).await;
-                        return emergency_loop().await;
-                    })
-                });
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
+    info!("LibreRoaster v5.1 starting...");
 
-    let _ = libreroaster::control::traits::Fan::set_speed(&mut fan_controller, 0.0);
+    // Initialize with default config
+    let config = esp_hal::Config::default();
+    let peripherals = esp_hal::init(config);
 
-    use esp_hal::spi::master::Config;
+    info!("Hardware initialized");
 
-    let spi_config = Config::default().with_frequency(esp_hal::time::Rate::from_khz(1000));
+    // ========== Initialize LEDC ==========
+    let mut ledc = Ledc::new(peripherals.LEDC);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    info!("LEDC peripheral acquired");
 
-    let spi = match Spi::new(peripherals.SPI2, spi_config) {
-        Ok(spi_instance) => spi_instance,
-        Err(e) => {
-            log::error!("Failed to initialize SPI2: {:?}, entering safe mode", e);
-            // Fallback: enter safe mode
-            return enter_safe_mode().await;
-        }
-    };
+    // Timer 0: SSR (1 Hz - slow PWM for heater control)
+    let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    timer0.configure(timer::config::Config {
+        duty: timer::config::Duty::Duty8Bit,
+        clock_source: timer::LSClockSource::APBClk,
+        frequency: Rate::from_hz(1),
+    }).unwrap();
+    info!("Timer 0 configured (SSR, 1 Hz)");
+
+    // Timer 1: Fan (25 kHz - fast PWM for fan speed)
+    let mut timer1 = ledc.timer::<LowSpeed>(timer::Number::Timer1);
+    timer1.configure(timer::config::Config {
+        duty: timer::config::Duty::Duty8Bit,
+        clock_source: timer::LSClockSource::APBClk,
+        frequency: Rate::from_hz(25000),
+    }).unwrap();
+    info!("Timer 1 configured (Fan, 25 kHz)");
+
+    // ========== Configure Channels ==========
+    // Fan channel on GPIO9
+    let fan_pin = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
+    let fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
+    
+    // SSR channel on GPIO10
+    let ssr_pin = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
+    let ssr_channel = ledc.channel(channel::Number::Channel1, ssr_pin);
+    
+    // Create LEDC bus with safety wrapper
+    let ledc_bus = LedcBus::new(
+        fan_channel,
+        channel::Number::Channel0,
+        ssr_channel,
+        channel::Number::Channel1,
+    );
+    
+    static LEDC_BUS: StaticCell<LedcBus<'static>> = StaticCell::new();
+    let ledc_bus = LEDC_BUS.init(ledc_bus);
+    info!("LEDC Bus initialized (Fan: GPIO9, SSR: GPIO10)");
+
+    // ========== Initialize SPI ==========
+    let spi = Spi::new(peripherals.SPI2, SpiConfig::default().with_frequency(Rate::from_khz(1000)))
+        .expect("Failed to initialize SPI");
 
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<esp_hal::Blocking>>>> =
         StaticCell::new();
-    static LEDC_BUS: StaticCell<LedcBus<'static>> = StaticCell::new();
     let spi_mutex = SPI_BUS.init(critical_section::Mutex::new(RefCell::new(spi)));
+    info!("SPI initialized");
 
-    // Create devices
+    // Create GPIO pins for SPI chip selects
     let bt_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
     let bt_spi = SpiDeviceWithCs::new(spi_mutex, bt_cs);
 
     let et_cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
     let et_spi = SpiDeviceWithCs::new(spi_mutex, et_cs);
 
+    // ========== Initialize Temperature Sensors ==========
     let bean_sensor = match Max31856::new(bt_spi) {
         Ok(sensor) => sensor,
         Err(e) => {
-            log::error!("Failed to init BT sensor: {:?}, using fallback sensor", e);
-            // Fallback: create a basic sensor that returns safe values
-            // For now, we'll continue with the error and let the app handle it
-            bean_sensor // We'll let the app handle the sensor error
+            panic!("Failed to init BT sensor: {:?}", e);
         }
     };
     let env_sensor = match Max31856::new(et_spi) {
         Ok(sensor) => sensor,
         Err(e) => {
-            log::error!("Failed to init ET sensor: {:?}, using fallback sensor", e);
-            // Fallback: create a basic sensor that returns safe values
-            // For now, we'll continue with the error and let the app handle it
-            env_sensor // We'll let the app handle the sensor error
+            panic!("Failed to init ET sensor: {:?}", e);
         }
     };
+    info!("Temperature sensors initialized (BT: GPIO4, ET: GPIO3)");
 
-    info!("Temperature sensors initialized - BT: GPIO4, ET: GPIO3");
-
+    // ========== Initialize Heat Detection (GPIO1) ==========
+    let heat_detection_pin = Input::new(peripherals.GPIO1, InputConfig::default().with_pull(Pull::Up));
     let heat_detected = heat_detection_pin.is_low();
-    info!(
-        "Heat source detection (GPIO1): {}",
-        if heat_detected {
-            "DETECTED"
-        } else {
-            "NOT DETECTED"
-        }
-    );
+    info!("Heat source detection (GPIO1): {}", if heat_detected { "DETECTED" } else { "NOT DETECTED" });
 
+    // Get handles from LedcBus
+    let ssr_handle = ledc_bus.ssr_handle();
+    let fan_handle = ledc_bus.fan_handle();
+
+    // ========== Initialize SSR Control ==========
     let real_ssr = match SsrControlSimple::new(heat_detection_pin, ssr_handle) {
         Ok(ssr) => ssr,
         Err(e) => {
-            log::error!("Failed to initialize SSR control: {:?}, using fallback SSR", e);
-            // Fallback: we need to create a basic SSR that does nothing safely
-            // For now, we'll try to create a simple one without the heat detection pin
-            // This might not be ideal but it's better than crashing
-            let dummy_pin = Input::new(peripherals.GPIO2, InputConfig::default().with_pull(Pull::Up));
-            SsrControlSimple::new(dummy_pin, ssr_handle).unwrap_or_else(|_| {
-                log::error!("Failed to create fallback SSR");
-                // Last resort: continue with the error and let the app handle it
-                real_ssr // This will cause issues but won't panic
-            })
+            panic!("Failed to initialize SSR: {:?}", e);
         }
     };
+    info!("SSR control initialized");
 
-    info!("SSR configured with REAL GPIO hardware (GPIO10) - simple mode");
+    // ========== Initialize Fan Controller ==========
+    let fan_controller = match FanController::with_handle(fan_handle) {
+        Ok(fan) => fan,
+        Err(e) => {
+            panic!("Failed to initialize fan: {:?}", e);
+        }
+    };
+    info!("Fan controller initialized");
 
-    // SAFETY: StaticCell::init() provides compile-time memory reservation,
-    // preventing use-after-free. Called once during initialization before async tasks start.
-    let static_ssr: &'static mut SsrControlSimple = SSR_CELL.init(real_ssr);
-    let static_fan: &'static mut FanController = FAN_CELL.init(fan_controller);
-
-    info!("Drivers initialized and moved to static memory");
-
+    // Initialize USB CDC
     let _ = libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE);
-
-    let mut delay = Delay::new();
+    info!("USB CDC initialized");
 
     info!("Wake the f*** up samurai we have beans to burn!");
 
+    // ========== Build and Start Application ==========
     let app = match AppBuilder::new()
         .with_uart(peripherals.UART0)
-        .with_real_ssr(static_ssr)
-        .with_fan_control(static_fan)
+        .with_real_ssr(real_ssr)
+        .with_fan_control(fan_controller)
         .with_temperature_sensors(bean_sensor, env_sensor)
         .with_formatter(ArtisanFormatter::new())
-        .build() {
+        .build()
+    {
         Ok(app) => app,
         Err(e) => {
-            log::error!("Failed to build application: {:?}, building with minimal configuration", e);
-            // Fallback: build with minimal configuration
-            AppBuilder::new()
-                .with_uart(peripherals.UART0)
-                .with_formatter(ArtisanFormatter::new())
-                .build()
-                .unwrap_or_else(|e2| {
-                    log::error!("Failed to build minimal application: {:?}", e2);
-                    // Last resort: create the most basic app possible
-                    AppBuilder::new().build().unwrap_or_else(|_| {
-                        log::error!("Critical: Cannot build any application variant");
-                        // Emergency fallback: just log and prevent crash
-                        return emergency_loop().await;
-                    })
-                })
+            panic!("Failed to build application: {:?}", e);
         }
     };
 
-    if let Err(e) = app.start_tasks(spawner).await {
-        log::error!("Failed to start application tasks: {:?}, entering safe mode", e);
-        // Fallback: enter safe mode with minimal functionality
-        enter_safe_mode().await;
-    }
+    // Start tasks - this should never return
+    let _ = app.start_tasks(spawner).await;
+    
+    // If we somehow get here, panic
+    panic!("Application tasks returned unexpectedly");
 }
