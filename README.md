@@ -108,6 +108,16 @@ mocouple amplifier boards |
 | SSR | Solid State Relay for heater control |
 | Fan | Variable speed fan (PWM controlled) |
 
+### HIL Validation and Golden Outputs
+
+HW-03 requires every manifest-driven HIL scenario to produce artifact-backed evidence. This HIL validation workflow is the authoritative path for capturing golden outputs, so follow `tests/hardware/HIL-PLAYBOOK.md` to:
+
+- Select a scenario from `tests/hardware/scenario_manifest.json` and run `tests/hardware/validation_runner.py` using the `--manifest`, `--scenario`, and `--runs-dir` flags so telemetry and metadata land under `tests/hardware/runs/`.
+- Run `tests/hardware/analysis.py` with `--thresholds tests/hardware/thresholds.json` and `--template tests/hardware/report_template.md` to generate a report that embeds scenario metadata, golden artifact links, PASS/FAIL badges, and run metadata for auditors.
+- Bundle the CSV, metadata JSON, markdown report, and manifest entry into a tarball so auditors can verify the path from scenario manifest → telemetry → golden artifact.
+
+Approved golden CSVs live in `tests/hardware/goldens/` and must include the `metadata.retention_days` value specified in the manifest so artifact retention matches HW-03 expectations.
+
 ## Pinout
 
 | GPIO | Function | Description | Note |
