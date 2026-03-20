@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from scripts.traceability_matrix import (
     TraceSummary,
@@ -119,6 +120,25 @@ class TestTraceabilityMatrix(unittest.TestCase):
         summary = TraceSummary()
         _update_summary(summary, entry.step, entry.data)
         self.assertEqual(summary.command, "STATUS")
+
+    def test_safe_shutdown_log_replays_guard_failure(self) -> None:
+        log_path = (
+            Path(__file__)
+            .resolve()
+            .parent
+            .parent
+            / "logs"
+            / "traceability"
+            / "sample-safe-shutdown.log"
+        )
+        lines = log_path.read_text().splitlines()
+        rows = summarize_trace(build_trace_summaries(lines))
+        self.assertEqual(len(rows), 1)
+        guard = rows[0][5]
+        self.assertIn("watchdog_failure=init_error_failure", guard)
+        self.assertIn("watchdog=fail", guard)
+        self.assertIn("error_category=initialization", guard)
+        self.assertIn("error_source=hardware_init_failed", guard)
 
 
 if __name__ == "__main__":

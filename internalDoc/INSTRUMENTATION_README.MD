@@ -453,6 +453,19 @@ python scripts/traceability_matrix.py <trace.log>
 
 The script now understands the runtime names `queue_enqueue`, `queue_dequeue`, `queue_fallback`, `actuation`, `telemetry`, and `guard`, so it always produces the same column layout auditors expect. It also normalizes the Debug-formatted `cmd` field (e.g., `ReadStatus`) and shows `fallback=1` in the matrix whenever the queue overflow path retried a command. Point auditors to `logs/traceability/sample-trace.log` if their TRACE stream diverges so they can trace the difference to the firmware event that led to the regression outcome.
 
+### Safe-Shutdown Trace Replay
+
+InitError failures now emit guard events with `watchdog_failure=init_error_failure` plus the `error_category`/`error_source` metadata before the LED blink loop begins. Auditors can replay the new safe-shutdown path with `logs/traceability/sample-safe-shutdown.log`, which strings together queue/actuation/telemetry/guard lines carrying `error_category=initialization` and `error_source=hardware_init_failed`.
+
+To capture and replay the safe-shutdown trace:
+
+1. Build the firmware with `--features embedded` and flash a device.
+2. Force `init_hardware()` to produce an `Err` (for example, by unplugging a temperature sensor or mocking the initializer) so `enter_safe_shutdown()` runs.
+3. Observe the host TRACE output—the guard line should include `watchdog_failure=init_error_failure` and the AppError metadata from `AppError::Initialization`.
+4. Replay the capture with `python scripts/traceability_matrix.py logs/traceability/sample-safe-shutdown.log` to confirm the regression row highlights the failure path.
+
+The regression test `scripts/test_traceability_matrix.py` now exercises this log so the parser continually proves the safe-shutdown scenario stays visible in the matrix.
+
 ### Related documentation
 
 Whenever another section of this guide references TRACE instrumentation or regression triage, keep the event names and parser usage aligned with `src/logging/traceability.rs` and `scripts/traceability_matrix.py`. This keeps all cross-references in sync with runtime behavior.
