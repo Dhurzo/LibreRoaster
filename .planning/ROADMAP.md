@@ -15,7 +15,19 @@
 
 ## Phases
 
-*Next milestone to be planned.*
+### Phase 96: Error Architecture Implementation
+**Goal**: Design and implement cross-module error taxonomy
+**Requirements**: RUST-03
+**Dependencies**: Phase 95
+**Status**: Planned (2026-03-20)
+**Plans:** 5 plans
+
+Plans:
+- [ ] 96-01-PLAN.md — Add error source chaining to error enums
+- [ ] 96-02-PLAN.md — Implement embedded-hal Error traits for hardware errors
+- [ ] 96-03-PLAN.md — Eliminate panic-prone initialization paths
+- [ ] 96-04-PLAN.md — Create error boundary contracts with From trait implementations
+- [ ] 96-05-PLAN.md — Expand error testing infrastructure with mocks and comprehensive tests
 
 ---
 
