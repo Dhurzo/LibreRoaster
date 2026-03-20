@@ -278,6 +278,8 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
 **Output location:** `target/riscv32imc-unknown-none-elf/release/libreroaster.bin`
 
+**Audit:** The `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command was recorded in [95-build-verification.md](95-build-verification.md), which proves the embedded ELF (`target/riscv32imc-unknown-none-elf/release/libreroaster`) and `.bin` (`target/riscv32imc-unknown-none-elf/release/libreroaster.bin`) artifacts were produced as part of BUILD-01. Rerun the same command to reproduce those binaries and review the audit log for timestamps and artifact sizes.
+
 > **Note:** The `--target riscv32imc-unknown-none-elf` flag is required because LibreRoaster is an embedded application (no stdlib), not a host application.
 
 #### Build and Flash Workflow
