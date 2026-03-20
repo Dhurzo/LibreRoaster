@@ -7,6 +7,9 @@ use crate::application::stage_instrumentation::{
 use crate::config::SystemStatus;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
+use crate::logging::traceability::{
+    trace_actuation, trace_guard, trace_telemetry, TraceId, TracedCommand,
+};
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
 use crate::safety::regression;
@@ -93,6 +96,7 @@ pub async fn control_loop_task() {
     let mut last_guard_total_timeouts = ledc_guard::total_timeouts();
     let mut stage_tracker = StageTracker::new();
     let stage_reporter = StageReporter::new();
+    let mut tick_trace_id: Option<TraceId> = None;
     // Track previous tick's watchdog state for stage instrumentation (not yet known in first tick)
     let mut prev_watchdog_state = WatchdogState::None;
 
@@ -104,17 +108,19 @@ pub async fn control_loop_task() {
         let guard_total_timeouts = ledc_guard::total_timeouts();
         let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
 
-        while let Ok(command) = cmd_channel.try_receive() {
-            if let crate::config::ArtisanCommand::RunRegression = command {
+        while let Ok(traced_command) = cmd_channel.try_receive() {
+            if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
                 regression::request_regression();
                 continue;
             }
+
+            tick_trace_id = Some(traced_command.trace_id);
             let output_channel = ServiceContainer::get_output_channel();
 
-            let _ = ServiceContainer::with_roaster_async(
+            let command_outcome = ServiceContainer::with_roaster_async(
                 |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
                     let start_time = Instant::now();
-                    let result = roaster.process_artisan_command(command);
+                    let result = roaster.process_artisan_command(traced_command.command);
                     let latency = start_time.elapsed().as_micros() as u32;
 
                     roaster.status_mut().command_latency_us = latency;
@@ -122,21 +128,36 @@ pub async fn control_loop_task() {
                         roaster.status_mut().max_command_latency_us = latency;
                     }
 
+                    let status = roaster.get_status();
+                    (result, latency, status)
+                },
+            )
+            .await;
+
+            let mut latency_us = 0;
+            let mut status_snapshot = SystemStatus::default();
+
+            match command_outcome {
+                Ok((result, latency, status)) => {
+                    latency_us = latency;
+                    status_snapshot = status;
                     match result {
                         Ok(()) => {
                             debug!("Processed Artisan command successfully");
-
-                            if let crate::config::ArtisanCommand::StatusReport = command {
-                                let status = roaster.get_status();
-                                let response = ArtisanFormatter::format_status_response(&status);
+                            if let crate::config::ArtisanCommand::StatusReport =
+                                traced_command.command
+                            {
+                                let response =
+                                    ArtisanFormatter::format_status_response(&status_snapshot);
 
                                 if let Ok(line) = String::<128>::try_from(response.as_str()) {
                                     let _ = output_channel.try_send(line);
                                 }
-                            } else if let crate::config::ArtisanCommand::ReadStatus = command {
-                                let status = roaster.get_status();
-                                // Use full READ response with 4 values per current protocol
-                                let response = ArtisanFormatter::format_read_response_full(&status);
+                            } else if let crate::config::ArtisanCommand::ReadStatus =
+                                traced_command.command
+                            {
+                                let response =
+                                    ArtisanFormatter::format_read_response_full(&status_snapshot);
 
                                 if let Ok(line) = String::<128>::try_from(response.as_str()) {
                                     let _ = output_channel.try_send(line);
@@ -148,7 +169,18 @@ pub async fn control_loop_task() {
                             send_handler_error(output_channel, &err);
                         }
                     }
-                },
+                }
+                Err(err) => {
+                    warn!("Control update container error: {:?}", err);
+                }
+            }
+
+            trace_actuation(
+                &traced_command,
+                status_snapshot.ssr_output,
+                status_snapshot.fan_output,
+                latency_us,
+                status_snapshot.saturation_active,
             );
         }
 
@@ -526,6 +558,23 @@ pub async fn control_loop_task() {
                 guard_timeout_happened,
                 watchdog_snapshot.last_failure
             );
+        }
+
+        if let Some(trace_id) = tick_trace_id {
+            trace_telemetry(
+                trace_id,
+                guard_timeout_happened,
+                guard_total_timeouts,
+                watchdog_snapshot.feed_ok,
+            );
+            trace_guard(
+                trace_id,
+                guard_timeout_happened,
+                guard_total_timeouts,
+                watchdog_snapshot.feed_ok,
+                watchdog_snapshot.last_failure,
+            );
+            tick_trace_id = None;
         }
 
         stage_tracker.clear();
