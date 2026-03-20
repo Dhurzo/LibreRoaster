@@ -412,3 +412,29 @@ PID internal state fields enable data‑driven tuning:
 ---
 
 *Last Updated: 2026-03-11*
+
+## TRACE Stream & Parser
+
+Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is produced by the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle.
+
+Example TRACE line from `logs/traceability/sample-trace.log`:
+
+```
+TRACE,1,command_enqueue,command=STATUS,channel=USB,queue_depth=2
+```
+
+Key steps recorded per `TraceId`:
+
+1. `command_enqueue` – the command hits Artisan's queue; `queue_depth` and `channel` show where it waited.
+2. `queue_dequeue` – the control loop dequeues the command for execution and updates queue depth.
+3. `actuator_output` – SSR/fan values written to hardware, keeping the actuators aligned with the traced command.
+4. `telemetry_emit` – PID telemetry (ET/BT/PV/MV) recorded while that command is active.
+5. `guard_report` – guard and watchdog health tied to the same `TraceId`, including `guard_state`, `watchdog`, and `guard_timeout` counters.
+
+The host parser script (`scripts/traceability_matrix.py`) consolidates these entries into the command→queue→actuator→telemetry→guard matrix auditors need. Run it against any regression log (for example `logs/traceability/sample-trace.log`) to print a concise table of `TraceId`, `Command`, `QueueDepth`, actuator outputs, telemetry, and guard/watchdog flags.
+
+```
+python scripts/traceability_matrix.py logs/traceability/sample-trace.log
+```
+
+Mention this sample log when documenting regression runs so auditors can compare real outputs with the recorded example and trace any deviation to a specific TraceId.
