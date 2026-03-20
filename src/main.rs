@@ -70,9 +70,11 @@ use esp_hal::peripherals::Peripherals;
 use esp_hal::time::Rate;
 
 #[cfg(target_arch = "riscv32")]
-use libreroaster::error::app_error::InitError;
+use libreroaster::error::app_error::{AppError, InitError};
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::init::InitPeripherals;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::logging::traceability::{trace_safe_shutdown_guard, TraceId};
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
 
@@ -98,6 +100,9 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
     // Emit host-facing error event using Artisan protocol format
     let artisan_err = ArtisanFormatter::format_err(99, &error_msg);
     log::error!("{}", artisan_err);
+
+    let app_error = AppError::Initialization { source: error };
+    trace_safe_shutdown_guard(TraceId::next(), Some(&app_error));
 
     // Blink GPIO8 LED to indicate error (3 short blinks, pause, repeat)
     let peripherals = unsafe { Peripherals::steal() };
