@@ -1,5 +1,7 @@
 #[cfg(target_arch = "riscv32")]
 pub mod fan;
+#[cfg(target_arch = "riscv32")]
+pub mod init;
 #[cfg(not(target_arch = "riscv32"))]
 #[path = "fan_host.rs"]
 pub mod fan;
