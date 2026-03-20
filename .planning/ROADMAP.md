@@ -50,13 +50,13 @@ Plans:
 **Goal**: Establish artifact-backed HIL scenarios with golden outputs
 **Requirements**: HW-03
 **Dependencies**: Phase 96, Phase 97
-**Status**: In progress (1/3 plans complete, 2026-03-20)
-**Plans:** 3 plans
+**Status**: Phase complete (3/3 plans, 2026-03-20)
+**Plans:** 3 plans (complete)
 
 Plans:
 - [x] 98-01-PLAN.md — Define the HIL scenario contract, manifest, and retention policy
-- [ ] 98-02-PLAN.md — Make validation_runner.py and analysis.py manifest-aware so runs generate packaged evidence
-- [ ] 98-03-PLAN.md — Document the workflow, playbook, and README guidance for artifact-backed HIL validation
+- [x] 98-02-PLAN.md — Make validation_runner.py and analysis.py manifest-aware so runs generate packaged evidence
+- [x] 98-03-PLAN.md — Document the workflow, playbook, and README guidance for artifact-backed HIL validation
 
 ---
 

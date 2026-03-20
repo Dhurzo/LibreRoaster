@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 98 of 158 (HIL Validation Infrastructure)
-Plan: 2 of 3 in current phase
-Status: In progress (manifest-aware validation runner and manifest-driven analysis reports)
-Last activity: 2026-03-20 — Completed 98-02-PLAN.md (manifest-aware runner + analysis)
+Plan: 3 of 3 in current phase
+Status: Phase complete (artifact-backed validation documentation)
+Last activity: 2026-03-20 — Completed 98-03-PLAN.md (validation docs + playbook)
 
-Progress: █████████░ 97% (155/159 plans complete)
+Progress: █████████░ 98% (156/159 plans complete)
 
 ## Performance Metrics
 
@@ -80,12 +80,14 @@ Progress: █████████░ 97% (155/159 plans complete)
 - Every Artisan command now travels as a `TracedCommand`, letting queue, actuator, telemetry, and guard events share one TraceId.
 - [98-02] Validation runner now organizes tests/hardware/runs/{scenario}/{timestamp} and metadata so analysis can consistently map telemetry to manifest entries.
 - [98-02] Analysis reports now cite scenario descriptions, command sequences, thresholds, and golden outputs to demonstrate audit alignment.
+- [98-03] Reports now embed manifest scenario metadata, golden artifact links, and threshold verdict badges so auditors can trace every scenario end-to-end.
+- [98-03] HIL playbook + README guidance document the manifest reader, validation_runner/analysis CLI flags, artifact bundling, retention, and safety notes required for HW-03 sign-off.
 
 ### Pending Todos
 
 - Complete Phase 96: Error Architecture Implementation (RUST-03) - 1/5 plans complete
 - Complete Phase 97: Traceability Matrix Tooling (SOLID-03) - Plan 3/3 complete
-- Complete Phase 98: HIL Validation Infrastructure (HW-03) - 2/3 plans complete
+- Complete Phase 98: HIL Validation Infrastructure (HW-03) - 3/3 plans complete (phase complete)
 
 ### Blockers/Concerns
 
@@ -104,6 +106,6 @@ Progress: █████████░ 97% (155/159 plans complete)
 
 ## Session Continuity
 
-Last session: 2026-03-20T14:01:29Z
-Stopped at: Completed Phase 98 execution (HIL Validation Infrastructure plan 98-02)
+Last session: 2026-03-20T14:09:39Z
+Stopped at: Completed Phase 98 execution (HIL Validation Infrastructure plan 98-03)
 Resume file: None
