@@ -86,31 +86,47 @@ def _kv_to_str(data: Mapping[str, str], key_order: Sequence[str] | None = None) 
 
 
 def _format_queue_depth(data: Mapping[str, str]) -> str:
-    depth = data.get("queue_depth")
+    depth = data.get("depth") or data.get("queue_depth")
     channel = data.get("channel")
+    fallback = data.get("fallback")
     parts: List[str] = []
     if depth:
         parts.append(f"depth={depth}")
     if channel:
         parts.append(f"channel={channel}")
+    if fallback and fallback.lower() not in {"0", "false"}:
+        parts.append("fallback=true")
     return " ".join(parts)
 
 
+def _normalize_command(data: Mapping[str, str], current: str) -> str:
+    raw_cmd = data.get("cmd")
+    if not raw_cmd:
+        return current
+    return raw_cmd.split("::")[-1] if "::" in raw_cmd else raw_cmd
+
+
 def _update_summary(summary: TraceSummary, step: str, data: Mapping[str, str]) -> None:
-    if step == "command_enqueue":
-        summary.command = data.get("command", summary.command)
+    if step == "queue_enqueue":
+        summary.command = _normalize_command(data, summary.command)
         queue_info = _format_queue_depth(data)
         if queue_info:
             summary.queue_depth = queue_info
     elif step == "queue_dequeue":
+        summary.command = _normalize_command(data, summary.command)
         queue_info = _format_queue_depth(data)
         if queue_info:
             summary.queue_depth = queue_info
-    elif step == "actuator_output":
+    elif step == "queue_fallback":
+        summary.command = _normalize_command(data, summary.command)
+        queue_info = _format_queue_depth(data)
+        if queue_info:
+            summary.queue_depth = queue_info
+    elif step == "actuation":
         summary.actuator.update(data)
-    elif step == "telemetry_emit":
+    elif step == "telemetry":
         summary.telemetry.update(data)
-    elif step == "guard_report":
+    elif step == "guard":
         summary.guard.update(data)
 
 
