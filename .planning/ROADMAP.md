@@ -93,11 +93,11 @@ Plans:
 **Goal**: Align the TRACE regression-triage tooling with the runtime event names so SOLID-03 can consume live logs and the TRACE flow is restorable.
 **Requirements**: SOLID-03
 **Dependencies**: Phase 97
-**Status**: Ready for execution (2026-03-20)
-**Plans:** 2 plans (ready)
+**Status**: In progress (2026-03-20)
+**Plans:** 2 plans (in progress)
 
 Plans:
-- [ ] 101-01-PLAN.md — Update `scripts/traceability_matrix.py` to filter for the actual TRACE events (`queue_enqueue`, `actuation`, `telemetry`, `guard`) and add regression tests that replay sample logs.
+- [x] 101-01-PLAN.md — Update `scripts/traceability_matrix.py` to filter for the actual TRACE events (`queue_enqueue`, `actuation`, `telemetry`, `guard`) and add regression tests that replay sample logs.
 - [ ] 101-02-PLAN.md — Document the TRACE matrix generation flow after the parser fix so the regression triage path can be rerun from live captures.
 
 ---
