@@ -2,17 +2,17 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-12)
+See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Milestone v5.2 in progress — Embedded Build Verification + Error Architecture Implementation
+**Current focus:** Planning the next milestone (safe-shutdown artifact replay automation + remaining diagnostics coverage)
 
 ## Current Position
 
-Phase: 104 of 158 (Safe-Shutdown Artifact Replay)
-Plan: 1 of 1 in current phase
-Status: Phase complete
-Last activity: 2026-03-20 — Completed 104-01-PLAN.md
+Phase: Planning next milestone (post-v5.2)
+Plan: Requirements/planning stage for safe-shutdown replay automation
+Status: Ready to plan
+Last activity: 2026-03-20 — v5.2 milestone complete
 
 Progress: ██████████ 100% (168/168 plans complete)
 
@@ -40,7 +40,7 @@ Progress: ██████████ 100% (168/168 plans complete)
 | 93 | 3/3 | 3 | Phase complete |
 | 94 | 2/2 | 2 | Phase complete |
 | 95 | 1/1 | 1 | Phase complete |
-| 96 | 3/5 | 5 | Phase complete (plans 96-01, 96-02, 96-03 completed; 96-04, 96-05 pending) |
+| 96 | 5/5 | 5 | Phase complete (plans 96-01..96-05 verified) |
 | 97 | 3/3 | 3 | Phase complete |
 | 98 | 3/3 | 3 | Phase complete |
 | 99 | 2/2 | 2 | Phase complete |
@@ -95,8 +95,9 @@ Progress: ██████████ 100% (168/168 plans complete)
 
 ### Pending Todos
 
-- Complete Phase 96: Error Architecture Implementation (RUST-03) - 3/5 plans complete (96-04, 96-05 pending)
-- Phase 101: Traceability Matrix Alignment (SOLID-03) - complete and verified (101-01, 101-02)
+- Plan Phase 104: Safe-Shutdown Artifact Replay Automation (DIAG-01) and capture CLI/tests/docs in `/gsd-new-milestone`.
+- Refresh the diagnostics replay automation artifacts (`safe-shutdown-replay.zip`, `traceability-replay.csv`, `replay-report.json`) for archival evidence.
+
 
 ### Blockers/Concerns
 

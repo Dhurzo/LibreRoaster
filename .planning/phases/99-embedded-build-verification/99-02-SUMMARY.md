@@ -7,7 +7,7 @@ tags: [docs, cargo, audit, embedded]
 # Dependency graph
 requires:
   - phase: 99-embedded-build-verification (Plan 01)
-    provides: Audited the embedded release build command and produced 95-build-verification.md for BUILD-01 traceability
+    provides: Audited the embedded release build command and produced 95-VERIFICATION.md for BUILD-01 traceability
 provides:
   - README and internal development guide now reference the proven `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command, the ELF/bin artifacts, and the audit proof so BUILD-01 remains reproducible
 affects:
@@ -18,7 +18,7 @@ tech-stack:
   added: []
   patterns:
     - Keep public and internal build instructions synchronized to the audited embedded build command and artifact references
-    - Always cite 95-build-verification.md when mentioning BUILD-01 so readers know where to find the logged proof and artifact sizes
+    - Always cite 95-VERIFICATION.md when mentioning BUILD-01 so readers know where to find the logged proof and artifact sizes
 
 key-files:
   created:
@@ -41,7 +41,7 @@ completed: 2026-03-20
 
 # Phase 99 Plan 02: Embedded Build Verification Summary
 
-**Aligned README and internal DEVELOPMENT.md build instructions with the audited `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command and artifact proof in 95-build-verification.md.**
+**Aligned README and internal DEVELOPMENT.md build instructions with the audited `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command and artifact proof in 95-VERIFICATION.md.**
 
 ## Performance
 
@@ -53,9 +53,9 @@ completed: 2026-03-20
 
 ## Accomplishments
 
-- Updated `README.md` to highlight the audited embedded build command, link to `95-build-verification.md`, and mention the ELF/bin artifacts for BUILD-01 traceability.
+- Updated `README.md` to highlight the audited embedded build command, link to `95-VERIFICATION.md`, and mention the ELF/bin artifacts for BUILD-01 traceability.
 - Mirrored the audited workflow in `internalDoc/DEVELOPMENT.md` so internal developers rerunning the build see the same command, artifacts, and audit proof as public readers.
-- Reinforced that future maintainers can rerun `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`, inspect `target/riscv32imc-unknown-none-elf/release/libreroaster` and `libreroaster.bin`, and compare to `95-build-verification.md` before hitting BUILD-01.
+- Reinforced that future maintainers can rerun `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`, inspect `target/riscv32imc-unknown-none-elf/release/libreroaster` and `libreroaster.bin`, and compare to `95-VERIFICATION.md` before hitting BUILD-01.
 
 ## Task Commits
 
@@ -68,7 +68,7 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `README.md` - Public build section now calls out the audited embedded build command, the ELF/bin artifacts, and links to `95-build-verification.md` for proof.
+- `README.md` - Public build section now calls out the audited embedded build command, the ELF/bin artifacts, and links to `95-VERIFICATION.md` for proof.
 - `internalDoc/DEVELOPMENT.md` - Internal build guide mirrors the command, artifacts, and audit link so developers rerunning the build see the same instructions.
 
 ## Decisions Made
@@ -90,7 +90,7 @@ None - no external service configuration required for this documentation work.
 ## Next Phase Readiness
 
 - Documentation now aligns with the verified BUILD-01 command and artifacts, so phase 99 can be closed with proof that README/internal docs remain in sync.
-- Future maintainers and auditors can rerun the audited command, inspect `target/riscv32imc-unknown-none-elf/release/libreroaster` and `libreroaster.bin`, and compare to `95-build-verification.md` for reproducibility.
+- Future maintainers and auditors can rerun the audited command, inspect `target/riscv32imc-unknown-none-elf/release/libreroaster` and `libreroaster.bin`, and compare to `95-VERIFICATION.md` for reproducibility.
 
 ---
 *Phase: 99-embedded-build-verification*

@@ -6,7 +6,7 @@ use core::fmt::Write;
 use heapless::String;
 use portable_atomic::{AtomicU32, Ordering};
 
-pub const TRACE_EVENT_MAX_LEN: usize = 128;
+pub const TRACE_EVENT_MAX_LEN: usize = 192;
 
 static TRACE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 

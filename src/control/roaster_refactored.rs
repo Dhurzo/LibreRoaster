@@ -298,11 +298,7 @@ impl RoasterControl {
                 .get_output_manager_mut()
                 .enable_continuous_output();
 
-            self.fan
-                .set_speed(fan)
-                .map_err(|_| RoasterError::HardwareError {
-                    source: Some("fan_set_failed"),
-                })?;
+            self.fan.set_speed(fan)?;
             self.status.fan_output = fan;
             self.status.ssr_hardware_status = self.heater.get_status();
         }
@@ -361,16 +357,9 @@ impl RoasterControl {
             self.status.fault_condition = false;
         }
 
-        let heater_result = self.heater.set_power(0.0);
         self.capture_ssr_monitor_metrics();
-        heater_result.map_err(|_| RoasterError::HardwareError {
-            source: Some("heater_off_failed"),
-        })?;
-        self.fan
-            .set_speed(0.0)
-            .map_err(|_| RoasterError::HardwareError {
-                source: Some("fan_off_failed"),
-            })?;
+        self.heater.set_power(0.0)?;
+        self.fan.set_speed(0.0)?;
 
         self.status.ssr_hardware_status = self.heater.get_status();
 
@@ -509,9 +498,7 @@ impl RoasterControl {
         if clamped <= 0.0 {
             let power_result = self.heater.set_power(0.0);
             self.capture_ssr_monitor_metrics();
-            power_result.map_err(|_| RoasterError::HardwareError {
-                source: Some("heater_off_in_apply_guarded_failed"),
-            })?;
+            power_result?;
             self.status.ssr_output = 0.0;
             self.status.saturation_active = false;
             self.status.integrator_clamped = false;
@@ -524,9 +511,7 @@ impl RoasterControl {
                 self.ssr_guard.mark_cycle(now);
                 let power_result = self.heater.set_power(clamped);
                 self.capture_ssr_monitor_metrics();
-                power_result.map_err(|_| RoasterError::HardwareError {
-                    source: Some("heater_set_in_apply_guarded_failed"),
-                })?;
+                power_result?;
                 self.status.ssr_output = clamped;
                 self.status.saturation_active = false;
                 self.status.integrator_clamped = false;

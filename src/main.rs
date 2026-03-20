@@ -31,9 +31,9 @@ use esp_bootloader_esp_idf;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[cfg(target_arch = "riscv32")]
-use static_cell::StaticCell;
-#[cfg(target_arch = "riscv32")]
 use heapless::String;
+#[cfg(target_arch = "riscv32")]
+use static_cell::StaticCell;
 
 #[cfg(target_arch = "riscv32")]
 use core::cell::RefCell;

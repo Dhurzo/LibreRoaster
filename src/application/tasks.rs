@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
 use crate::logging::traceability::{
-    trace_actuation, trace_guard, trace_telemetry, TraceId, TracedCommand,
+    trace_actuation, trace_guard, trace_telemetry, TraceId, TracedCommand, TRACE_EVENT_MAX_LEN,
 };
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
@@ -155,7 +155,9 @@ pub async fn control_loop_task() {
                                 let response =
                                     ArtisanFormatter::format_status_response(&status_snapshot);
 
-                                if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                                if let Ok(line) =
+                                    String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
+                                {
                                     let _ = output_channel.try_send(line);
                                 }
                             } else if let crate::config::ArtisanCommand::ReadStatus =
@@ -164,7 +166,9 @@ pub async fn control_loop_task() {
                                 let response =
                                     ArtisanFormatter::format_read_response_full(&status_snapshot);
 
-                                if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                                if let Ok(line) =
+                                    String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
+                                {
                                     let _ = output_channel.try_send(line);
                                 }
                             }
@@ -377,7 +381,7 @@ pub async fn control_loop_task() {
                         status.fault_condition = true;
                     }
                     if previous_watchdog_failure != Some(reason) {
-                        let mut safety = String::<128>::new();
+                        let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
                         let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
                         let _ = output_channel.try_send(safety);
                     }
@@ -404,7 +408,7 @@ pub async fn control_loop_task() {
 
                 status.ledc_guard_timeouts = guard_total_timeouts;
                 if guard_timeout_happened {
-                    let mut guard_msg = String::<128>::new();
+                    let mut guard_msg = String::<TRACE_EVENT_MAX_LEN>::new();
                     let _ = guard_msg.push_str("SAFETY LEDC-GUARD timeout");
                     let _ = output_channel.try_send(guard_msg);
                 }
@@ -613,12 +617,12 @@ pub async fn control_loop_task() {
 fn send_handler_error(
     output_channel: &Channel<
         embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-        String<128>,
+        String<TRACE_EVENT_MAX_LEN>,
         { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
     >,
     error: &crate::control::RoasterError,
 ) {
-    let mut message = String::<128>::new();
+    let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
     let _ = message.push_str("ERR handler_failed ");
     let _ = message.push_str(error.message_token());
 

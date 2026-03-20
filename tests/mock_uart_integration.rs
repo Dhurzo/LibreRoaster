@@ -17,6 +17,7 @@ use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
 use libreroaster::input::ArtisanInput;
+use libreroaster::logging::traceability::TRACE_EVENT_MAX_LEN;
 use libreroaster::output::artisan::ArtisanFormatter;
 
 #[path = "common/mod.rs"]
@@ -113,13 +114,14 @@ fn drain_and_process_commands() {
                             &status,
                             roaster.get_fan_speed(),
                         );
-                        if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                        if let Ok(line) = String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
+                        {
                             let _ = output_channel.try_send(line);
                         }
                     }
                 }
                 Err(err) => {
-                    let mut message = String::<128>::new();
+                    let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
                     let _ = message.push_str("ERR handler_failed ");
                     let _ = message.push_str(err.message_token());
                     let _ = output_channel.try_send(message);

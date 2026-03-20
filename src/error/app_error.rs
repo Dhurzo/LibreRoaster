@@ -1,3 +1,4 @@
+use crate::input::InputError;
 use crate::memory::ERROR_MSG_MAX_LEN;
 use core::fmt;
 #[cfg(feature = "std")]
@@ -304,13 +305,21 @@ impl From<crate::hardware::fan::FanError> for AppError {
     }
 }
 
-impl From<crate::input::InputError> for AppError {
-    fn from(err: crate::input::InputError) -> Self {
+impl From<crate::hardware::ssr::SsrError> for AppError {
+    fn from(_err: crate::hardware::ssr::SsrError) -> Self {
+        AppError::Hardware {
+            source: HardwareError::SsrError,
+        }
+    }
+}
+
+impl From<InputError> for AppError {
+    fn from(err: InputError) -> Self {
         match err {
-            crate::input::InputError::UartError => AppError::Communication {
+            InputError::UartError => AppError::Communication {
                 source: CommunicationError::UartError,
             },
-            crate::input::InputError::ParseError => AppError::Communication {
+            InputError::ParseError => AppError::Communication {
                 source: CommunicationError::ProtocolError,
             },
             _ => AppError::Communication {
@@ -323,6 +332,10 @@ impl From<crate::input::InputError> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::RoasterError;
+    use crate::hardware::fan::FanError;
+    use crate::hardware::ssr::SsrError;
+    use crate::input::InputError;
 
     #[test]
     fn test_error_categorization() {
@@ -363,5 +376,58 @@ mod tests {
         let app_err = AppError::from(fan_err);
 
         assert_eq!(app_err.source(), Some("fan_error"));
+    }
+
+    #[test]
+    fn test_boundary_contract_hardware_to_control() {
+        let ssr_err = SsrError::PwmError { source: "test" };
+        let ctrl_err = RoasterError::from(ssr_err);
+        assert!(matches!(ctrl_err, RoasterError::HardwareError { .. }));
+    }
+
+    #[test]
+    fn test_boundary_contract_control_to_app() {
+        let ctrl_err = RoasterError::TemperatureOutOfRange {
+            source: Some("sensor"),
+        };
+        let app_err = AppError::from(ctrl_err);
+        assert!(matches!(app_err, AppError::Temperature { .. }));
+        assert_eq!(app_err.source(), Some("temperature_out_of_range"));
+    }
+
+    #[test]
+    fn test_boundary_contract_hardware_direct_to_app() {
+        let fan_err = FanError::PwmError { source: "test" };
+        let app_err = AppError::from(fan_err);
+        assert!(matches!(app_err, AppError::Hardware { .. }));
+        assert_eq!(app_err.source(), Some("fan_error"));
+    }
+
+    #[test]
+    fn test_boundary_contract_input_to_app() {
+        let input_err = InputError::ParseError;
+        let app_err = AppError::from(input_err);
+        assert!(matches!(app_err, AppError::Communication { .. }));
+    }
+
+    #[test]
+    fn test_display_outputs_expected_tokens() {
+        let err = AppError::Temperature {
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
+            source: TemperatureError::OutOfRange,
+        };
+        let repr = format!("{}", err);
+        assert!(repr.contains("temperature:"));
+        assert!(repr.contains("source:"));
+    }
+
+    #[test]
+    fn test_debug_contains_variant_name() {
+        let err = AppError::Control {
+            source: ControlError::PidError,
+        };
+        let repr = format!("{:?}", err);
+        assert!(repr.contains("Control"));
+        assert!(repr.contains("PidError"));
     }
 }

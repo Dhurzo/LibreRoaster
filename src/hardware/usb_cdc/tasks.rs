@@ -3,9 +3,11 @@ use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
-use crate::logging::traceability::{trace_command_enqueue, trace_queue_dequeue, TracedCommand};
 use crate::log_channel;
 use crate::logging::channel::Channel;
+use crate::logging::traceability::{
+    trace_command_enqueue, trace_queue_dequeue, TracedCommand, TRACE_EVENT_MAX_LEN,
+};
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -167,7 +169,7 @@ fn send_usb_parse_error(error: ParseError) {
 
         if should_write {
             let output_channel = ServiceContainer::get_output_channel();
-            let mut message = String::<128>::new();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = message.push_str("ERR ");
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");

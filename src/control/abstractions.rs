@@ -1,4 +1,6 @@
 use crate::config::{RoasterCommand, SystemStatus};
+use crate::hardware::{fan::FanError, ssr::SsrError, uart::UartError};
+use crate::input::InputError;
 use embassy_time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,32 +19,35 @@ impl core::fmt::Display for RoasterError {
             RoasterError::TemperatureOutOfRange { source } => {
                 write!(f, "Temperature out of range")?;
                 write_source(f, source)
-            },
+            }
             RoasterError::SensorFault { source } => {
                 write!(f, "Sensor fault")?;
                 write_source(f, source)
-            },
+            }
             RoasterError::InvalidState { source } => {
                 write!(f, "Invalid state")?;
                 write_source(f, source)
-            },
+            }
             RoasterError::PidError { source } => {
                 write!(f, "PID error")?;
                 write_source(f, source)
-            },
+            }
             RoasterError::HardwareError { source } => {
                 write!(f, "Hardware error")?;
                 write_source(f, source)
-            },
+            }
             RoasterError::EmergencyShutdown { source } => {
                 write!(f, "Emergency shutdown")?;
                 write_source(f, source)
-            },
+            }
         }
     }
 }
 
-fn write_source(f: &mut core::fmt::Formatter<'_>, source: &Option<&'static str>) -> core::fmt::Result {
+fn write_source(
+    f: &mut core::fmt::Formatter<'_>,
+    source: &Option<&'static str>,
+) -> core::fmt::Result {
     match source {
         Some(s) => write!(f, " (source: {})", s),
         None => Ok(()),
@@ -58,6 +63,54 @@ impl RoasterError {
             RoasterError::PidError { .. } => "pid_error",
             RoasterError::HardwareError { .. } => "hardware_error",
             RoasterError::EmergencyShutdown { .. } => "emergency_shutdown",
+        }
+    }
+}
+
+impl From<SsrError> for RoasterError {
+    fn from(err: SsrError) -> Self {
+        RoasterError::HardwareError {
+            source: Some(match err {
+                SsrError::OutputError { source }
+                | SsrError::InputError { source }
+                | SsrError::HeatSourceNotDetected { source }
+                | SsrError::PwmError { source } => source,
+            }),
+        }
+    }
+}
+
+impl From<FanError> for RoasterError {
+    fn from(err: FanError) -> Self {
+        RoasterError::HardwareError {
+            source: Some(match err {
+                FanError::InitializationError { source }
+                | FanError::InvalidSpeed { source }
+                | FanError::PwmError { source }
+                | FanError::LedcError { source } => source,
+            }),
+        }
+    }
+}
+
+impl From<UartError> for RoasterError {
+    fn from(_err: UartError) -> Self {
+        RoasterError::HardwareError {
+            source: Some("uart_error"),
+        }
+    }
+}
+
+impl From<InputError> for RoasterError {
+    fn from(err: InputError) -> Self {
+        let token = match err {
+            InputError::UartError => "uart_error",
+            InputError::ParseError => "parse_error",
+            InputError::BufferFull => "input_buffer_full",
+        };
+
+        RoasterError::InvalidState {
+            source: Some(token),
         }
     }
 }

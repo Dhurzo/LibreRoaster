@@ -25,7 +25,7 @@ tech-stack:
 key-files:
   created:
     - .planning/execution/99-01/task1.log
-    - 95-build-verification.md
+    - 95-VERIFICATION.md
   modified:
     - src/main.rs
     - src/hardware/init.rs
@@ -58,18 +58,18 @@ completed: 2026-03-20
 ## Accomplishments
 - Re-aligned peripheral wiring, SSR/fan error handling, and trace ID atomics so `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` can finish successfully and keep the previous BUILD-01 claim intact.
 - Captured the full environment fingerprint, build output, and espflash image creation in `.planning/execution/99-01/task1.log` and snapshot the ELF/binary sizes for auditors.
-- Produced `95-build-verification.md` that points back to the Phase 95 summary and the README/DEVELOPMENT build instructions for future maintainers.
+- Produced `95-VERIFICATION.md` that points back to the Phase 95 summary and the README/DEVELOPMENT build instructions for future maintainers.
 
 ## Task Commits
 Each task was committed atomically:
 
 1. **Task 1: Re-run the embedded release build and capture artifacts** - `f62e418` (fix)
-2. **Task 2: Draft `95-build-verification.md` audit artifact** - `163d65f` (docs)
+2. **Task 2: Draft `95-VERIFICATION.md` audit artifact** - `163d65f` (docs)
 
 **Plan metadata:** docs(99-01): complete plan (to be captured in the final metadata commit)
 
 ## Files Created/Modified
-- `95-build-verification.md` - Audit narrative describing the run, artifacts, and documentation references.
+- `95-VERIFICATION.md` - Audit narrative describing the run, artifacts, and documentation references.
 - `.planning/execution/99-01/task1.log` - Full rust/cargo/espflash output plus timestamps for auditors.
 - `src/main.rs` - Async-safe `enter_safe_shutdown` and proper references to the library errors/peripherals.
 - `src/hardware/init.rs` - Peripheral type cleanup aligned with `esp-hal::peripherals` plus `SsrControlSimple` typing.

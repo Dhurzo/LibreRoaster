@@ -3,7 +3,9 @@ use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
-use crate::logging::traceability::{trace_command_enqueue, trace_queue_dequeue, TracedCommand};
+use crate::logging::traceability::{
+    trace_command_enqueue, trace_queue_dequeue, TracedCommand, TRACE_EVENT_MAX_LEN,
+};
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -208,7 +210,7 @@ fn send_parse_error_internal(error: ParseError) {
 
         if should_write {
             let output_channel = ServiceContainer::get_output_channel();
-            let mut message = String::<128>::new();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = message.push_str("ERR ");
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
@@ -243,15 +245,16 @@ pub async fn uart_writer_task() {
 
 pub async fn send_response(response: &str) -> Result<(), crate::input::InputError> {
     let output_channel = ServiceContainer::get_output_channel();
-    let line =
-        String::<128>::try_from(response).map_err(|_| crate::input::InputError::BufferFull)?;
+    let line = String::<TRACE_EVENT_MAX_LEN>::try_from(response)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
     let _ = output_channel.try_send(line);
     Ok(())
 }
 
 pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
     let output_channel = ServiceContainer::get_output_channel();
-    let line = String::<128>::try_from(data).map_err(|_| crate::input::InputError::BufferFull)?;
+    let line = String::<TRACE_EVENT_MAX_LEN>::try_from(data)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
     let _ = output_channel.try_send(line);
     Ok(())
 }

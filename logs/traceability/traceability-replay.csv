@@ -1,0 +1,2 @@
+TraceId,Command,QueueDepth,Actuator,Telemetry,Guard
+200,INIT,depth=1 channel=Uart,"channel=Uart, cmd=ArtisanCommand::INIT, fan=0, latency_us=210, saturation_active=0, ssr=0","ET=160, BT=138, PV=1200, MV=0","error_category=initialization, error_source=hardware_init_failed, guard_timeout=1, guard_timeouts=1, watchdog=fail, watchdog_failure=init_error_failure"
