@@ -75,8 +75,6 @@ use libreroaster::error::app_error::{AppError, InitError};
 use libreroaster::hardware::init::InitPeripherals;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::logging::traceability::{trace_safe_shutdown_guard, TraceId};
-#[cfg(target_arch = "riscv32")]
-use libreroaster::output::artisan::ArtisanFormatter;
 
 #[cfg(target_arch = "riscv32")]
 fn format_init_error(error: &InitError) -> heapless::String<256> {
