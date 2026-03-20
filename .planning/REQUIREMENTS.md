@@ -22,6 +22,10 @@
 
 - **HW-03**: User can run artifact-backed HIL scenarios with golden outputs and retention policy for release audits.
 
+### Diagnostics Coverage
+
+- **DIAG-01**: Diagnostics coverage for InitError flows.
+
 ## v5.1 Requirements (Complete)
 
 ### Rust Best Practices
@@ -49,9 +53,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| DIAG-01 | Phase 102 | Complete |
 | BUILD-01 | Phase 95 | Complete |
 | RUST-03 | Phase 96, 100 | Complete |
-| SOLID-03 | Phase 97 | Complete |
+| SOLID-03 | Phase 97, Phase 101 | Complete |
 | HW-03 | Phase 98 | Complete |
 | DOCS-01 | Phase 89 | Complete |
 | DOCS-02 | Phase 90 | Complete |
