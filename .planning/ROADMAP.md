@@ -93,12 +93,25 @@ Plans:
 **Goal**: Align the TRACE regression-triage tooling with the runtime event names so SOLID-03 can consume live logs and the TRACE flow is restorable.
 **Requirements**: SOLID-03
 **Dependencies**: Phase 97
-**Status**: In progress (2026-03-20)
-**Plans:** 2 plans (in progress)
+**Status**: Verified (2026-03-20)
+**Plans:** 2 plans (complete)
+**Verification:** 101-VERIFICATION.md ✓
 
 Plans:
 - [x] 101-01-PLAN.md — Update `scripts/traceability_matrix.py` to filter for the actual TRACE events (`queue_enqueue`, `actuation`, `telemetry`, `guard`) and add regression tests that replay sample logs.
-- [ ] 101-02-PLAN.md — Document the TRACE matrix generation flow after the parser fix so the regression triage path can be rerun from live captures.
+- [x] 101-02-PLAN.md — Document the TRACE matrix generation flow after the parser fix so the regression triage path can be rerun from live captures.
+
+---
+
+### Phase 102: Safe-Shutdown Diagnostics
+**Goal**: Trace startup failures end-to-end by emitting guard TRACE events with AppError metadata, publishing a failure log, and documenting how to replay it through the regression parser.
+**Requirements**: DIAG-01 (Diagnostics coverage for InitError flows)
+**Dependencies**: Phase 101
+**Status**: Verified (2026-03-20)
+**Plans:** 1 plan (complete)
+
+Plans:
+- [x] 102-01-PLAN.md — Emit guard TRACE events when `init_hardware()` fails, add a safe-shutdown sample log, and extend the parser/tests/docs so auditors can rerun the flow.
 
 ---
 
