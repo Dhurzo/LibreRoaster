@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Parse TRACE logs into a command → queue → actuator → telemetry → guard matrix.
 
+Parses runtime TRACE events: queue_enqueue, queue_dequeue, queue_fallback, actuation, telemetry, guard.
+Command field uses Debug format (e.g., ArtisanCommand::STATUS).
+
 Columns: TraceId, Command, QueueDepth, Actuator (SSR/fan outputs), Telemetry (ET/BT/PV/MV), Guard (watchdog/guard flags).
 """
 
@@ -131,7 +134,7 @@ def _print_table(rows: List[List[str]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse TRACE logs into a regression triage matrix.",
-        epilog="Columns: TraceId, Command, QueueDepth, Actuator, Telemetry, Guard.",
+        epilog="Columns: TraceId, Command, QueueDepth, Actuator, Telemetry, Guard. Handles queue_enqueue, queue_dequeue, queue_fallback, actuation, telemetry, guard.",
     )
     parser.add_argument("log_path", help="Path to the TRACE log to summarize.")
     args = parser.parse_args()
