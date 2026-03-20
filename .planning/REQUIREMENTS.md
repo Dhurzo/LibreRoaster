@@ -49,10 +49,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUILD-01 | Phase 95 | Pending |
+| BUILD-01 | Phase 95 | Complete |
 | RUST-03 | Phase 96 | Pending |
 | SOLID-03 | Phase 97 | Complete |
-| HW-03 | Phase 98 | Pending |
+| HW-03 | Phase 98 | Complete |
 | DOCS-01 | Phase 89 | Complete |
 | DOCS-02 | Phase 90 | Complete |
 | DOCS-03 | Phase 91 | Complete |
