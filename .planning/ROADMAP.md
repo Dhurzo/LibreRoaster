@@ -128,6 +128,18 @@ Plans:
 
 ---
 
+### Phase 104: Safe-Shutdown Artifact Replay Automation
+**Goal**: Automate replaying zipped safe-shutdown artifacts so auditors can decompress the bundle, rerun the traceability matrix, and validate guard metadata without hardware.
+**Requirements**: DIAG-01 (Diagnostics coverage for InitError flows)
+**Dependencies**: Phase 103
+**Status**: Planned (2026-03-20)
+**Plans:** 1 plan
+
+Plans:
+- [ ] 104-01-PLAN.md — Add the replay CLI, tests, and docs needed to unzip `safe-shutdown-replay.zip`, regenerate the matrix, and verify guard metadata integrity for audits.
+
+---
+
 ## Coverage
 
 *Coverage table will be updated after next milestone is planned.*
