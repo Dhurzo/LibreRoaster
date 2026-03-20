@@ -32,9 +32,13 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
+#[cfg(target_arch = "riscv32")]
+use heapless::String;
 
 #[cfg(target_arch = "riscv32")]
 use core::cell::RefCell;
+#[cfg(target_arch = "riscv32")]
+use core::fmt::Write;
 
 #[cfg(target_arch = "riscv32")]
 use critical_section;
@@ -71,8 +75,23 @@ use libreroaster::error::app_error::InitError;
 use libreroaster::hardware::init::InitPeripherals;
 
 #[cfg(target_arch = "riscv32")]
+fn format_init_error(error: &InitError) -> heapless::String<256> {
+    let mut buf = heapless::String::<256>::new();
+    let (what, reason) = match error {
+        InitError::ServiceContainer { what, reason } => (what, reason.as_str()),
+        InitError::HardwareInit { what, reason } => (what, reason.as_str()),
+        InitError::TaskSpawn { what, reason } => (what, reason.as_str()),
+        InitError::MemoryAllocation { what, reason } => (what, reason.as_str()),
+    };
+    let _ = core::write!(&mut buf, "safe_shutdown: {} - {}", what, reason);
+    buf
+}
+
+#[cfg(target_arch = "riscv32")]
 async fn enter_safe_shutdown(error: InitError) -> ! {
-    log::error!("Initialization failed: {:?}", error);
+    // Log the InitError diagnostics for telemetry/TRACE correlation
+    let error_msg = format_init_error(&error);
+    log::error!("safe_shutdown: {} - entering error loop", error_msg);
 
     // Blink GPIO8 LED to indicate error (3 short blinks, pause, repeat)
     let peripherals = unsafe { Peripherals::steal() };
