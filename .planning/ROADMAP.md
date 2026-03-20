@@ -31,6 +31,21 @@ Plans:
 
 ---
 
+### Phase 97: Traceability Matrix Tooling
+**Goal**: Build the command → queue → actuator → telemetry → guard traceability matrix for regression triage
+**Requirements**: SOLID-03
+**Dependencies**: Phase 96
+**Status**: Verified (2026-03-20)
+**Plans:** 3 plans (complete)
+**Verification:** 97-VERIFICATION.md ✓
+
+Plans:
+- [x] 97-01-PLAN.md — Instrument TraceId propagation and queue/guard logging
+- [x] 97-02-PLAN.md — Add host parser script plus sample trace log
+- [x] 97-03-PLAN.md — Document the TRACE stream and triage steps
+
+---
+
 ## Coverage
 
 *Coverage table will be updated after next milestone is planned.*

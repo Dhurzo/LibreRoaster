@@ -1,17 +1,28 @@
-# Requirements: LibreRoaster v5.1
+# Requirements: LibreRoaster v5.2
 
-**Defined:** 2026-03-10
+**Defined:** 2026-03-20
+**Updated:** 2026-03-20 (v5.2 planning)
 **Core Value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## v5.1 Requirements
+## v5.2 Requirements
 
-### Documentation Update
+### Critical Blocker Resolution
 
-- [x] **DOCS-01**: Update README.md with current project status, recent changes, build/test instructions, hardware/pinout information, and Artisan connection guide. ✓ COMPLETE
-- [x] **DOCS-02**: Update all internal documentation (ARCHITECTURE.md, PROTOCOL.md, HARDWARE.md, DEVELOPMENT.md, INSTRUMENTATION_README.MD) to match current codebase. ✓ COMPLETE
-- [x] **DOCS-03**: Verify documentation accuracy through manual review, ensuring all docs are synchronized with code. ✓ COMPLETE
+- **BUILD-01**: Fix main.rs compilation issues blocking binary production with --features embedded.
 
-## Future Requirements (Deferred)
+### Rust Best Practices
+
+- **RUST-03**: User can normalize cross-module error taxonomy and boundary contracts for all major subsystems.
+
+### SOLID (Pragmatic)
+
+- **SOLID-03**: User can use an end-to-end traceability matrix (`command -> queue -> actuator -> telemetry -> guard`) for regression triage.
+
+### Hardware Real Validation
+
+- **HW-03**: User can run artifact-backed HIL scenarios with golden outputs and retention policy for release audits.
+
+## v5.1 Requirements (Complete)
 
 ### Rust Best Practices
 
@@ -38,15 +49,20 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| BUILD-01 | Phase 95 | Pending |
+| RUST-03 | Phase 96 | Pending |
+| SOLID-03 | Phase 97 | Complete |
+| HW-03 | Phase 98 | Pending |
 | DOCS-01 | Phase 89 | Complete |
 | DOCS-02 | Phase 90 | Complete |
 | DOCS-03 | Phase 91 | Complete |
 
 **Coverage:**
+- v5.2 requirements: 4 total
 - v5.1 requirements: 3 total
-- Mapped to phases: 3
+- Mapped to phases: 7
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-10*
-*Last updated: 2026-03-10 after milestone v5.1 definition*
+*Last updated: 2026-03-20 (v5.2 planning)*
