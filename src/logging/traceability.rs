@@ -1,5 +1,6 @@
 use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
+use crate::error::AppError;
 use crate::input::multiplexer::CommChannel;
 use core::fmt::Write;
 use heapless::String;
@@ -127,10 +128,15 @@ pub fn trace_telemetry(
     guard_timeout: bool,
     guard_timeouts: u16,
     watchdog_feed_ok: bool,
+    app_error: Option<&AppError>,
 ) {
-    if let Some(event) =
-        format_trace_telemetry(trace_id, guard_timeout, guard_timeouts, watchdog_feed_ok)
-    {
+    if let Some(event) = format_trace_telemetry(
+        trace_id,
+        guard_timeout,
+        guard_timeouts,
+        watchdog_feed_ok,
+        app_error,
+    ) {
         emit_event(event);
     }
 }
@@ -141,6 +147,7 @@ pub fn trace_guard(
     guard_timeouts: u16,
     watchdog_feed_ok: bool,
     watchdog_failure: Option<&'static str>,
+    app_error: Option<&AppError>,
 ) {
     if let Some(event) = format_trace_guard(
         trace_id,
@@ -148,6 +155,7 @@ pub fn trace_guard(
         guard_timeouts,
         watchdog_feed_ok,
         watchdog_failure,
+        app_error,
     ) {
         emit_event(event);
     }
@@ -230,6 +238,7 @@ fn format_trace_telemetry(
     guard_timeout: bool,
     guard_timeouts: u16,
     watchdog_feed_ok: bool,
+    app_error: Option<&AppError>,
 ) -> Option<String<TRACE_EVENT_MAX_LEN>> {
     format_trace_event(trace_id, TraceStep::Telemetry, |output| {
         write!(
@@ -238,7 +247,17 @@ fn format_trace_telemetry(
             bool_flag(guard_timeout),
             guard_timeouts,
             watchdog_label(watchdog_feed_ok)
-        )
+        )?;
+
+        // Append AppError metadata if available
+        if let Some(err) = app_error {
+            write!(output, ",error_category={}", err.category())?;
+            if let Some(source) = err.source() {
+                write!(output, ",error_source={}", source)?;
+            }
+        }
+
+        Ok(())
     })
 }
 
@@ -248,6 +267,7 @@ fn format_trace_guard(
     guard_timeouts: u16,
     watchdog_feed_ok: bool,
     watchdog_failure: Option<&'static str>,
+    app_error: Option<&AppError>,
 ) -> Option<String<TRACE_EVENT_MAX_LEN>> {
     format_trace_event(trace_id, TraceStep::Guard, |output| {
         write!(
@@ -260,6 +280,14 @@ fn format_trace_guard(
 
         if let Some(reason) = watchdog_failure {
             write!(output, ",watchdog_failure={}", reason)?;
+        }
+
+        // Append AppError metadata if available
+        if let Some(err) = app_error {
+            write!(output, ",error_category={}", err.category())?;
+            if let Some(source) = err.source() {
+                write!(output, ",error_source={}", source)?;
+            }
         }
 
         Ok(())

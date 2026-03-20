@@ -566,6 +566,7 @@ pub async fn control_loop_task() {
                 guard_timeout_happened,
                 guard_total_timeouts,
                 watchdog_snapshot.feed_ok,
+                None, // AppError telemetry will be added in Task 2
             );
             trace_guard(
                 trace_id,
@@ -573,6 +574,7 @@ pub async fn control_loop_task() {
                 guard_total_timeouts,
                 watchdog_snapshot.feed_ok,
                 watchdog_snapshot.last_failure,
+                None, // AppError guard will be added in Task 2
             );
             tick_trace_id = None;
         }
