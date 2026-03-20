@@ -1,3 +1,8 @@
+import json
+import subprocess
+import sys
+import tempfile
+import zipfile
 import unittest
 from pathlib import Path
 
@@ -139,6 +144,38 @@ class TestTraceabilityMatrix(unittest.TestCase):
         self.assertIn("watchdog=fail", guard)
         self.assertIn("error_category=initialization", guard)
         self.assertIn("error_source=hardware_init_failed", guard)
+
+    def test_collect_safe_shutdown_artifact(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        cli_path = project_root / "scripts" / "collect_safe_shutdown.py"
+        log_path = project_root / "logs" / "traceability" / "sample-safe-shutdown.log"
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_path = Path(tempdir) / "safe-shutdown-replay.zip"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(cli_path),
+                    "--log",
+                    str(log_path),
+                    "--output",
+                    str(output_path),
+                    "--artifact-name",
+                    "test-safe-shutdown",
+                    "--force",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue(output_path.exists())
+            with zipfile.ZipFile(output_path) as artifact:
+                self.assertIn("traceability.csv", artifact.namelist())
+                with artifact.open("metadata.json") as metadata_file:
+                    metadata = json.load(metadata_file)
+                self.assertEqual(metadata.get("watchdog_failure"), "init_error_failure")
+                self.assertEqual(metadata.get("error_category"), "initialization")
+                self.assertEqual(metadata.get("error_source"), "hardware_init_failed")
+                self.assertEqual(metadata.get("TraceId"), "200")
 
 
 if __name__ == "__main__":
