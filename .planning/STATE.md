@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Milestone v5.1 complete — Ready for next milestone
+**Current focus:** Milestone v5.2 in progress — Error Architecture Implementation
 
 ## Current Position
 
 Phase: 96-Error Architecture Implementation
-Plan: 96-03 Complete
-Status: Panic-free initialization implemented; pre-existing compilation errors in RoasterError/Max31856Error block verification
-Last activity: 2026-03-20 — Implemented Result-based initialization with safe shutdown state
+Plan: 96-01 Complete
+Status: Error source chaining implemented with source fields, custom source() method, and unit tests
+Last activity: 2026-03-20 — Added error source fields, AppError.source() method, and unit tests
 
-Progress: [████████████████████] 100% (v5.1) → [███████░░░░░░░░░░░] 30% (v5.2)
+Progress: [████████████████████] 100% (v5.1) → [████████░░░░░░░░░] 35% (v5.2)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 35 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans, phase 96: 2 plans)
+- Total plans completed: 36 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans, phase 95: 1 plan, phase 96: 1 plan)
 
 **By Phase:**
 
@@ -39,7 +39,8 @@ Progress: [████████████████████] 100% (v
 | 92 | 1/1 | 1 | Phase complete |
 | 93 | 3/3 | 3 | Phase complete |
 | 94 | 2/2 | 2 | Phase complete |
-| 96 | 2/5 | 5 | In progress |
+| 95 | 1/1 | 1 | Phase complete |
+| 96 | 1/5 | 5 | In progress |
 
 ## Accumulated Context
 
@@ -71,13 +72,14 @@ Progress: [████████████████████] 100% (v
 - [93-03] Verified flash command syntax correct; binary path references accurate; documented complete E2E build → flash workflow in README.md; binary production still blocked by main.rs bugs.
 - [94-01] Updated README.md version header from v5.0 to v5.1 (2026-03-12); milestone reflects v5.1 in progress; Next updated to v5.2 (TBD).
 - [94-02] Updated STATUS command description to reference all 18 CSV fields; includes PID state, flags, and latency metrics; references INSTRUMENTATION_README.MD for complete definitions.
+- [95-01] Fixed critical build blocker by removing duplicate embassy-time symbol definitions from lib.rs; build now produces flashable .bin binary (146K).
+- [96-01] Added source fields to all error enums with &'static str for zero-allocation diagnostics; implemented custom AppError.source() method for error chain navigation (std::error::Error unavailable in no_std).
 - [96-02] All hardware error variants map to ErrorKind::Other (most appropriate for domain-specific errors).
 - [96-03] Created InitPeripherals struct to work around private esp_hal::Peripherals; Safe shutdown blinks GPIO8 LED (3 short blinks, pause, repeat).
 
 ### Pending Todos
 
-- Complete Phase 96: Error Architecture Implementation (RUST-03) - 2/5 plans complete
-- Fix pre-existing compilation errors in RoasterError/Max31856Error usage sites
+- Complete Phase 96: Error Architecture Implementation (RUST-03) - 1/5 plans complete
 - Complete Phase 97: Traceability Matrix Tooling (SOLID-03)
 - Complete Phase 98: HIL Validation Infrastructure (HW-03)
 
@@ -89,15 +91,15 @@ Progress: [████████████████████] 100% (v
   - Command: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`
   - Binary ready for flashing with espflash
 
-- **BLOCKING ⚠️**: Pre-existing compilation errors block Phase 96 verification
-  - RoasterError and Max31856Error converted to struct variants (with source fields)
-  - Usage sites in handlers.rs, roaster_refactored.rs, app_error.rs, fan_host.rs, conversion.rs not updated
-  - These errors are used as unit variants (e.g., `RoasterError::InvalidState`) instead of struct variants (e.g., `RoasterError::InvalidState { source: ... }`)
-  - Affects 20+ locations across 5 files
-  - Must be fixed before `cargo check --lib` or `cargo test` can succeed
+- **RESOLVED ✅**: Error source chaining infrastructure complete (Phase 96-01)
+  - All error enums have source fields with &'static str for zero-allocation diagnostics
+  - AppError.source() method implemented for error chain navigation (no_std compatible)
+  - Display implementations show source context with "source: X" pattern
+  - Unit tests verify source propagation across hardware -> control -> app boundaries
+  - All deviation issues fixed during execution (duplicate impls, test code, lifetime issues)
 
 ## Session Continuity
 
-Last session: 2026-03-20T11:41:11Z
-Stopped at: Completed 96-03-PLAN.md (panic-free initialization)
+Last session: 2026-03-20T12:09:29Z
+Stopped at: Completed 96-01-PLAN.md (error source chaining)
 Resume file: None
