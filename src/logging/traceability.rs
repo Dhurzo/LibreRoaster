@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn format_telemetry_reports_guard_watchdog() {
-        let event = format_trace_telemetry(TraceId::from_u32(7), true, 3, false)
+        let event = format_trace_telemetry(TraceId::from_u32(7), true, 3, false, None)
             .expect("should format telemetry");
         assert!(event.starts_with("TRACE,7,telemetry,"));
         assert!(event.contains("guard_timeout=1"));
@@ -372,13 +372,40 @@ mod tests {
     }
 
     #[test]
+    fn format_telemetry_includes_app_error_metadata() {
+        let app_err = AppError::Temperature {
+            message: heapless::String::<128>::try_from("Test error").unwrap(),
+            source: crate::error::TemperatureError::SensorFault,
+        };
+        let event = format_trace_telemetry(TraceId::from_u32(8), false, 0, true, Some(&app_err))
+            .expect("should format telemetry with AppError");
+        assert!(event.starts_with("TRACE,8,telemetry,"));
+        assert!(event.contains("guard_timeout=0"));
+        assert!(event.contains("error_category=temperature"));
+        assert!(event.contains("error_source=sensor_fault"));
+    }
+
+    #[test]
     fn format_guard_appends_failure_marker() {
-        let event = format_trace_guard(TraceId::from_u32(9), false, 5, true, Some("timeout"))
+        let event = format_trace_guard(TraceId::from_u32(9), false, 5, true, Some("timeout"), None)
             .expect("should format guard");
         assert!(event.starts_with("TRACE,9,guard,"));
         assert!(event.contains("guard_timeout=0"));
         assert!(event.contains("guard_timeouts=5"));
         assert!(event.contains("watchdog=ok"));
         assert!(event.contains("watchdog_failure=timeout"));
+    }
+
+    #[test]
+    fn format_guard_includes_app_error_metadata() {
+        let app_err = AppError::Control {
+            source: crate::error::ControlError::PidError,
+        };
+        let event = format_trace_guard(TraceId::from_u32(10), false, 0, true, None, Some(&app_err))
+            .expect("should format guard with AppError");
+        assert!(event.starts_with("TRACE,10,guard,"));
+        assert!(event.contains("guard_timeout=0"));
+        assert!(event.contains("error_category=control"));
+        assert!(event.contains("error_source=pid_error"));
     }
 }

@@ -5,6 +5,7 @@ use crate::application::stage_instrumentation::{
     GuardState, StageName, StageReporter, WatchdogState,
 };
 use crate::config::SystemStatus;
+use crate::error::AppError;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
 use crate::logging::traceability::{
@@ -99,11 +100,15 @@ pub async fn control_loop_task() {
     let mut tick_trace_id: Option<TraceId> = None;
     // Track previous tick's watchdog state for stage instrumentation (not yet known in first tick)
     let mut prev_watchdog_state = WatchdogState::None;
+    // Track AppError diagnostics for this tick to pass to TRACE events
+    let mut tick_app_error: Option<AppError> = None;
 
     loop {
         let tick_start = Instant::now();
         stage_tracker.start_tick(tick_start);
         let current_time = tick_start;
+        // Reset error tracking for this tick
+        tick_app_error = None;
 
         let guard_total_timeouts = ledc_guard::total_timeouts();
         let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
@@ -221,6 +226,8 @@ pub async fn control_loop_task() {
                 "stage=SensorRead elapsed={}ms Sensor read error: {:?}",
                 sensor_elapsed_ms, sensor_err
             );
+            // Note: ContainerError doesn't convert directly to AppError, so we log but don't capture
+            // as AppError diagnostics. This is expected - sensor errors are infrastructure-level.
         }
 
         // Do sync control update separately
@@ -236,6 +243,8 @@ pub async fn control_loop_task() {
                 }),
                 Err(e) => {
                     warn!("Control update error: {:?}", e);
+                    // Convert RoasterError to AppError for TRACE diagnostics
+                    tick_app_error = Some(AppError::from(e.clone()));
                     None
                 }
             },
@@ -566,7 +575,7 @@ pub async fn control_loop_task() {
                 guard_timeout_happened,
                 guard_total_timeouts,
                 watchdog_snapshot.feed_ok,
-                None, // AppError telemetry will be added in Task 2
+                tick_app_error.as_ref(),
             );
             trace_guard(
                 trace_id,
@@ -574,9 +583,11 @@ pub async fn control_loop_task() {
                 guard_total_timeouts,
                 watchdog_snapshot.feed_ok,
                 watchdog_snapshot.last_failure,
-                None, // AppError guard will be added in Task 2
+                tick_app_error.as_ref(),
             );
             tick_trace_id = None;
+            // Clear error tracking for next tick
+            tick_app_error = None;
         }
 
         stage_tracker.clear();
