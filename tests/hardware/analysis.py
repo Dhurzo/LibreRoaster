@@ -9,6 +9,44 @@ def load_thresholds(path):
     with open(path, 'r') as f:
         return json.load(f)
 
+
+def load_manifest(path):
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def normalize_suffix(suffix):
+    if not suffix:
+        return '.json'
+    return suffix if suffix.startswith('.') else f'.{suffix}'
+
+
+def load_metadata(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def discover_runs(runs_dir, metadata_suffix, scenario_filter=None):
+    scenario_filter = None if not scenario_filter else scenario_filter.upper()
+    if not os.path.isdir(runs_dir):
+        return
+    for scenario in sorted(os.listdir(runs_dir)):
+        scenario_path = os.path.join(runs_dir, scenario)
+        if not os.path.isdir(scenario_path):
+            continue
+        if scenario_filter and scenario.upper() != scenario_filter:
+            continue
+        for timestamp in sorted(os.listdir(scenario_path)):
+            run_path = os.path.join(scenario_path, timestamp)
+            if not os.path.isdir(run_path):
+                continue
+            csv_path = os.path.join(run_path, 'telemetry.csv')
+            metadata_path = f"{csv_path}{metadata_suffix}"
+            if os.path.isfile(csv_path):
+                yield scenario.upper(), timestamp, csv_path, metadata_path
+
 def analyze_csv(csv_path, thresholds):
     results = {
         'max_command_latency_ms': {'value': 0.0, 'pass': True, 'threshold': thresholds['max_command_latency_ms']},
@@ -63,7 +101,7 @@ def analyze_csv(csv_path, thresholds):
     
     return results
 
-def generate_report(results, csv_path, template_path, output_path):
+def generate_report(results, csv_path, template_path, output_path, scenario_entry, metadata_entry, thresholds):
     if not os.path.exists(template_path):
         print(f"Template not found: {template_path}")
         return
@@ -86,6 +124,35 @@ def generate_report(results, csv_path, template_path, output_path):
     report = report.replace("{{RUN_ID}}", os.path.basename(csv_path))
     report = report.replace("{{SIGN_OFF}}", sign_off)
     report = report.replace("{{SUMMARY_TABLE}}", summary_table)
+
+    golden_output = None
+    scenario_description = "Unknown"
+    command_sequence = "Not provided"
+    if scenario_entry:
+        golden_output = scenario_entry.get('golden_output')
+        scenario_description = scenario_entry.get('description', scenario_description)
+        command_sequence = scenario_entry.get('command_sequence', command_sequence)
+    elif metadata_entry.get('manifest_entry'):
+        manifest_entry = metadata_entry['manifest_entry']
+        golden_output = manifest_entry.get('golden_output')
+        scenario_description = manifest_entry.get('description', scenario_description)
+        command_sequence = manifest_entry.get('command_sequence', command_sequence)
+
+    verdict_line = f"\n## Scenario Verdict\n**{sign_off}** — associated golden output: {golden_output or 'N/A'}\n"
+
+    scenario_section = f"\n## Scenario Context\n- **Description:** {scenario_description}\n- **Command Sequence:** {command_sequence}\n- **Golden Output:** {golden_output or 'N/A'}\n"
+
+    metadata_section = "\n## Run Metadata\n"
+    metadata_section += f"- **Run ID:** {metadata_entry.get('run_id', os.path.basename(csv_path))}\n"
+    metadata_section += f"- **Scenario ID:** {metadata_entry.get('scenario_id', 'unknown')}\n"
+    metadata_section += f"- **Max Command Latency (us):** {metadata_entry.get('max_command_latency_us', 'N/A')}\n"
+    metadata_section += f"- **Manifest Source:** {metadata_entry.get('manifest_path', 'N/A')}\n"
+
+    thresholds_section = "\n## Thresholds\n"
+    for key, value in sorted(thresholds.items()):
+        thresholds_section += f"- **{key}:** {value}\n"
+
+    report = report + scenario_section + verdict_line + thresholds_section + metadata_section
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
@@ -94,30 +161,59 @@ def generate_report(results, csv_path, template_path, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description='LibreRoaster Threshold Analysis')
-    parser.add_argument('--csv', type=str, required=True, help='Path to the validation run CSV')
     parser.add_argument('--thresholds', type=str, default='tests/hardware/thresholds.json', help='Path to thresholds.json')
     parser.add_argument('--template', type=str, default='tests/hardware/report_template.md', help='Path to report template')
-    parser.add_argument('--output', type=str, help='Path to save the generated report')
-    
+    parser.add_argument('--manifest', type=str, default='tests/hardware/scenario_manifest.json', help='Path to the scenario manifest')
+    parser.add_argument('--runs-dir', type=str, default='tests/hardware/runs', help='Directory containing telemetry runs')
+    parser.add_argument('--reports-dir', type=str, default='tests/hardware/reports', help='Directory where analysis reports are written')
+    parser.add_argument('--metadata-suffix', type=str, default='.json', help='Suffix appended to telemetry CSV for metadata files')
+    parser.add_argument('--scenario', type=str, default='all', help='Scenario identifier to analyze (default: all)')
+
     args = parser.parse_args()
-    
+
     if not os.path.exists(args.thresholds):
         print(f"Thresholds file not found: {args.thresholds}")
         sys.exit(1)
-        
+
+    if not os.path.exists(args.manifest):
+        print(f"Manifest file not found: {args.manifest}")
+        sys.exit(1)
+
     thresholds = load_thresholds(args.thresholds)
-    results = analyze_csv(args.csv, thresholds)
-    
-    if results:
+    manifest_entries = load_manifest(args.manifest)
+    manifest_map = {entry['id'].upper(): entry for entry in manifest_entries if 'id' in entry}
+    metadata_suffix = normalize_suffix(args.metadata_suffix)
+
+    scenario_filter = None
+    if args.scenario and args.scenario.lower() != 'all':
+        scenario_filter = args.scenario.upper()
+
+    runs = list(discover_runs(args.runs_dir, metadata_suffix, scenario_filter))
+    if not runs:
+        print(f"No runs found under {args.runs_dir} matching scenario filter '{args.scenario}'.")
+        sys.exit(0)
+
+    processed = 0
+    for scenario, timestamp, csv_path, metadata_path in runs:
+        metadata_entry = load_metadata(metadata_path)
+        scenario_entry = manifest_map.get(scenario)
+
+        if not scenario_entry and metadata_entry.get('manifest_entry'):
+            scenario_entry = metadata_entry['manifest_entry']
+
+        results = analyze_csv(csv_path, thresholds)
+        if not results:
+            continue
+
+        report_path = os.path.join(args.reports_dir, scenario, f"{timestamp}.md")
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        generate_report(results, csv_path, args.template, report_path, scenario_entry, metadata_entry, thresholds)
+
         overall_pass = all(v['pass'] for v in results.values())
-        print(f"SIGN-OFF: {'PASSED' if overall_pass else 'FAILED'}")
-        for metric, data in results.items():
-            status = 'PASS' if data['pass'] else 'FAIL'
-            print(f"{metric}: {data['value']:.2f} (Threshold: {data['threshold']}) [{status}]")
-            
-        if args.output:
-            generate_report(results, args.csv, args.template, args.output)
-    else:
+        print(f"Processed run {scenario}@{timestamp}: {'PASSED' if overall_pass else 'FAILED'}")
+        processed += 1
+
+    if processed == 0:
         sys.exit(1)
 
 if __name__ == "__main__":
