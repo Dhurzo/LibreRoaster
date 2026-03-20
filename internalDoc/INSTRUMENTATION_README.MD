@@ -496,6 +496,43 @@ The matrix output will highlight the guard row with the same `TraceId` and failu
 
 Inspect `metadata.json` directly (e.g., `jq '.' metadata.json`) if you need to cite the guard failure values in a report. The artifact README reinforces the same failure summary so reviewers can validate the packaged contents without running any commands.
 
+### Safe-Shutdown Artifact Replay
+
+Auditors can rerun the packaged artifact without hardware by invoking the replay CLI that unzips the bundle, regenerates the matrix, and compares the guard row metadata the artifact recorded at collection time.
+
+```bash
+python scripts/replay_safe_shutdown.py \
+  --artifact logs/traceability/safe-shutdown-replay.zip \
+  --report replay-report.json
+```
+
+The command extracts `sample-safe-shutdown.log`, parses it with `scripts/traceability_matrix.py`, writes the replayed CSV to `traceability-replay.csv` beside the artifact, and validates the guard metadata keys `TraceId`, `watchdog_failure`, `error_category`, and `error_source` against the bundled `metadata.json`. If the values drift, the CLI exits non-zero so automation can halt auditing until drift is resolved.
+
+When `--report` is supplied, the CLI dumps JSON describing the walk-through, for example:
+
+```json
+{
+  "artifact": "logs/traceability/safe-shutdown-replay.zip",
+  "csv": "logs/traceability/traceability-replay.csv",
+  "metadata_match": true,
+  "replayed_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "artifact_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "mismatch_details": []
+}
+```
+
+Capture the JSON output as an audit artifact so reviewers or CI jobs can confirm the guard metadata matches the archived values and trust the replayed row. Adding this replay step to regression pipelines or post-collection automation ensures every artifact's guard diagnostics stay reproducible even if the underlying TRACE capture log changes later.
+
 ### Related documentation
 
 Whenever another section of this guide references TRACE instrumentation or regression triage, keep the event names and parser usage aligned with `src/logging/traceability.rs` and `scripts/traceability_matrix.py`. This keeps all cross-references in sync with runtime behavior.
