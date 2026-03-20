@@ -1,5 +1,8 @@
 use crate::memory::ERROR_MSG_MAX_LEN;
 use core::fmt;
+#[cfg(feature = "std")]
+extern crate std;
+use alloc::string::String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
@@ -68,10 +71,10 @@ pub enum CommunicationError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitError {
-    ServiceContainer,
-    HardwareInit,
-    TaskSpawn,
-    MemoryAllocation,
+    ServiceContainer { what: &'static str, reason: String },
+    HardwareInit { what: &'static str, reason: String },
+    TaskSpawn { what: &'static str, reason: String },
+    MemoryAllocation { what: &'static str, reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,10 +159,10 @@ impl AppError {
                 CommunicationError::TimeoutError => "Communication timeout",
             },
             AppError::Initialization { source } => match source {
-                InitError::ServiceContainer => "System initialization failed",
-                InitError::HardwareInit => "Hardware initialization failed",
-                InitError::TaskSpawn => "Task startup failed",
-                InitError::MemoryAllocation => "Memory allocation failed",
+                InitError::ServiceContainer { what, .. } => "System initialization failed",
+                InitError::HardwareInit { what, .. } => "Hardware initialization failed",
+                InitError::TaskSpawn { what, .. } => "Task startup failed",
+                InitError::MemoryAllocation { what, .. } => "Memory allocation failed",
             },
             AppError::Safety { severity } => match severity {
                 SafetyLevel::Warning => "Safety warning",
