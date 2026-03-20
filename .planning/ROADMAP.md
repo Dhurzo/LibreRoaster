@@ -50,13 +50,54 @@ Plans:
 **Goal**: Establish artifact-backed HIL scenarios with golden outputs
 **Requirements**: HW-03
 **Dependencies**: Phase 96, Phase 97
-**Status**: Phase complete (3/3 plans, 2026-03-20)
+**Status**: Verified (2026-03-20)
 **Plans:** 3 plans (complete)
+**Verification:** 98-hil-validation-infrastructure-VERIFICATION.md ✓
 
 Plans:
 - [x] 98-01-PLAN.md — Define the HIL scenario contract, manifest, and retention policy
 - [x] 98-02-PLAN.md — Make validation_runner.py and analysis.py manifest-aware so runs generate packaged evidence
 - [x] 98-03-PLAN.md — Document the workflow, playbook, and README guidance for artifact-backed HIL validation
+
+---
+
+### Phase 99: Embedded Build Verification
+**Goal**: Produce an audited VERIFICATION.md and documentation that prove the embedded build flow claimed in Phase 95 is repeatable for BUILD-01.
+**Requirements**: BUILD-01
+**Dependencies**: Phase 95, Phase 98
+**Status**: Planned (2026-03-20)
+**Plans:** 2 plans
+
+Plans:
+- [ ] 99-01-PLAN.md — Re-run `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`, capture output/artifacts, and publish a `95-build-verification.md` audit artifact.
+- [ ] 99-02-PLAN.md — Update README.md and DEVELOPMENT.md with the verified embedded-target build command so the documented workflow matches the audited artifact.
+
+---
+
+### Phase 100: Error Taxonomy Completion
+**Goal**: Close the remaining RUST-03 gaps by fixing the compile blockers, wiring AppError diagnostics into telemetry/guards/TRACE, and stabilizing the safe-shutdown flow.
+**Requirements**: RUST-03
+**Dependencies**: Phase 96
+**Status**: Planned (2026-03-20)
+**Plans:** 3 plans
+
+Plans:
+- [ ] 100-01-PLAN.md — Convert `RoasterError`/`Max31856Error` to struct variants and clean up unit-variant usage so the codebase compiles without `AppError` dead paths.
+- [ ] 100-02-PLAN.md — Import and re-export `AppError.source()`/`Display` in telemetry/guard/TRACE modules so the richer diagnostics reach live instrumentation.
+- [ ] 100-03-PLAN.md — Fix `enter_safe_shutdown()` so it can await embassy_time timers without blocking the LED blink path, then document the recovery flow for verification.
+
+---
+
+### Phase 101: Traceability Matrix Alignment
+**Goal**: Align the TRACE regression-triage tooling with the runtime event names so SOLID-03 can consume live logs and the TRACE flow is restorable.
+**Requirements**: SOLID-03
+**Dependencies**: Phase 97
+**Status**: Planned (2026-03-20)
+**Plans:** 2 plans
+
+Plans:
+- [ ] 101-01-PLAN.md — Update `scripts/traceability_matrix.py` to filter for the actual TRACE events (`queue_enqueue`, `actuation`, `telemetry`, `guard`) and add regression tests that replay sample logs.
+- [ ] 101-02-PLAN.md — Document the TRACE matrix generation flow after the parser fix so the regression triage path can be rerun from live captures.
 
 ---
 
