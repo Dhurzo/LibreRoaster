@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 
 ## Current Position
 
-Phase: 103 of 158 (Diagnostics Artifacts)
+Phase: 104 of 158 (Safe-Shutdown Artifact Replay)
 Plan: 1 of 1 in current phase
 Status: Phase complete
-Last activity: 2026-03-20 — Completed 103-01-PLAN.md
+Last activity: 2026-03-20 — Completed 104-01-PLAN.md
 
-Progress: ██████████ 100% (167/167 plans complete)
+Progress: ██████████ 100% (168/168 plans complete)
 
 ## Performance Metrics
 
@@ -90,6 +90,8 @@ Progress: ██████████ 100% (167/167 plans complete)
 - [100-02] Extended TRACE helpers (trace_telemetry, trace_guard) to accept Option<&AppError> and format error_category/error_source fields when AppError is present; control loop now captures RoasterError and converts to AppError for diagnostics.
 - [100-03] Enhanced safe shutdown with structured InitError logging (what/reason fields), LED heartbeat maintained on embassy_time timers, and Artisan-formatted error events (ERR 99) for host/telemetry correlation.
 - [101-02] Updated TRACE documentation and parser guidance so instrumentation and regression triage workflows reference the actual queue_enqueue/queue_fallback/actuation/telemetry/guard vocabulary.
+- [104-01] Replay automation must cross-check metadata.json guard fields (TraceId/watchdog_failure/error_category/error_source) whenever the artifact is reprocessed.
+- [104-01] Expose replay results via `--report` so CI/audit automation can assert metadata fidelity and persist evidence.
 
 ### Pending Todos
 
@@ -113,6 +115,6 @@ Progress: ██████████ 100% (167/167 plans complete)
 
 ## Session Continuity
 
-Last session: 2026-03-20T21:30:48Z
-Stopped at: Completed 103-01-PLAN.md
+Last session: 2026-03-20T22:17:59Z
+Stopped at: Completed 104-01-PLAN.md
 Resume file: None
