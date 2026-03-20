@@ -294,6 +294,26 @@ fn format_trace_guard(
     })
 }
 
+pub fn format_safe_shutdown_guard(
+    trace_id: TraceId,
+    app_error: Option<&AppError>,
+) -> Option<String<TRACE_EVENT_MAX_LEN>> {
+    format_trace_guard(
+        trace_id,
+        true,
+        1,
+        false,
+        Some("init_error_failure"),
+        app_error,
+    )
+}
+
+pub fn trace_safe_shutdown_guard(trace_id: TraceId, app_error: Option<&AppError>) {
+    if let Some(event) = format_safe_shutdown_guard(trace_id, app_error) {
+        emit_event(event);
+    }
+}
+
 fn channel_label(channel: CommChannel) -> &'static str {
     match channel {
         CommChannel::None => "None",
@@ -405,6 +425,22 @@ mod tests {
             .expect("should format guard with AppError");
         assert!(event.starts_with("TRACE,10,guard,"));
         assert!(event.contains("guard_timeout=0"));
+        assert!(event.contains("error_category=control"));
+        assert!(event.contains("error_source=pid_error"));
+    }
+
+    #[test]
+    fn format_safe_shutdown_guard_includes_failure_metadata() {
+        let app_err = AppError::Control {
+            source: crate::error::ControlError::PidError,
+        };
+        let event = format_safe_shutdown_guard(TraceId::from_u32(11), Some(&app_err))
+            .expect("should format safe shutdown guard");
+        assert!(event.starts_with("TRACE,11,guard,"));
+        assert!(event.contains("guard_timeout=1"));
+        assert!(event.contains("guard_timeouts=1"));
+        assert!(event.contains("watchdog=fail"));
+        assert!(event.contains("watchdog_failure=init_error_failure"));
         assert!(event.contains("error_category=control"));
         assert!(event.contains("error_source=pid_error"));
     }
