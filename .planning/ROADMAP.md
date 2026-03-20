@@ -65,12 +65,12 @@ Plans:
 **Goal**: Produce an audited VERIFICATION.md and documentation that prove the embedded build flow claimed in Phase 95 is repeatable for BUILD-01.
 **Requirements**: BUILD-01
 **Dependencies**: Phase 95, Phase 98
-**Status**: Planned (2026-03-20)
-**Plans:** 2 plans
+**Status**: Verified (2026-03-20)
+**Plans:** 2 plans (complete)
 
 Plans:
-- [ ] 99-01-PLAN.md — Re-run `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`, capture output/artifacts, and publish a `95-build-verification.md` audit artifact.
-- [ ] 99-02-PLAN.md — Update README.md and DEVELOPMENT.md with the verified embedded-target build command so the documented workflow matches the audited artifact.
+- [x] 99-01-PLAN.md — Re-run `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`, capture output/artifacts, and publish a `95-build-verification.md` audit artifact.
+- [x] 99-02-PLAN.md — Update README.md and DEVELOPMENT.md with the verified embedded-target build command so the documented workflow matches the audited artifact.
 
 ---
 
