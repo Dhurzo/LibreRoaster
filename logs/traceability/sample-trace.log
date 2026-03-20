@@ -1,13 +1,15 @@
-STATUS,2026-03-20T13:25:00,All systems nominal,channel=USB,queue=0
-TRACE,1,command_enqueue,command=STATUS,channel=USB,queue_depth=2
-DEBUG,2026-03-20T13:25:01,Sampling queued command for TraceId 1
-TRACE,1,queue_dequeue,queue_depth=1
-TRACE,1,actuator_output,ssr=on,heater_pwm=200,fan_pwm=128
-TRACE,1,telemetry_emit,ET=150,BT=142,PV=1450,MV=1600
-TRACE,1,guard_report,guard_state=armed,watchdog=ok,guard_timeout=0
-STATUS,2026-03-20T13:25:02,Queue depth dipping,channel=USB,queue=1
-TRACE,2,command_enqueue,command=GUARD_CHECK,channel=USB,queue_depth=2
-TRACE,2,queue_dequeue,queue_depth=0
-TRACE,2,actuator_output,ssr=off,heater_pwm=0,fan_pwm=0
-TRACE,2,telemetry_emit,ET=155,BT=144,PV=1460,MV=1580
-TRACE,2,guard_report,guard_state=idle,watchdog=reset,guard_timeout=1
+TRACE,1,queue_enqueue,cmd=ReadStatus,channel=Uart,depth=5,fallback=0
+TRACE,1,queue_dequeue,cmd=ReadStatus,channel=Uart,depth=4
+TRACE,1,actuation,cmd=ReadStatus,channel=Uart,ssr=33.5,fan=12,latency_us=150,saturation_active=1
+TRACE,1,telemetry,guard_timeout=0,guard_timeouts=0,watchdog=ok,ET=150,BT=142,PV=1450,MV=1600
+TRACE,1,guard,guard_timeout=0,guard_timeouts=0,watchdog=ok
+STATUS,2026-03-20T13:25:00,Ready,channel=USB,queue=0
+TRACE,2,queue_enqueue,cmd=SetPoint,channel=Uart,depth=4,fallback=0
+TRACE,2,queue_dequeue,cmd=SetPoint,channel=Uart,depth=3
+TRACE,2,queue_fallback,cmd=SetPoint,channel=Uart,depth=3,fallback=1
+TRACE,2,actuation,cmd=SetPoint,channel=Uart,ssr=50.0,fan=14,latency_us=180,saturation_active=1
+TRACE,2,telemetry,guard_timeout=0,guard_timeouts=0,watchdog=fail,error_category=control,error_source=pid_error
+TRACE,2,guard,guard_timeout=0,guard_timeouts=0,watchdog=fail,error_category=control,error_source=pid_error
+DEBUG,2026-03-20T13:25:10,Fallback triggered for TraceId 2
+TRACE,3,queue_enqueue,cmd=ReadStatus,channel=Uart,depth=3,fallback=0
+TRACE,3,telemetry,guard_timeout=1,guard_timeouts=3,watchdog=ok,error_category=safety,error_source=watchdog_timeout
