@@ -177,6 +177,58 @@ class TestTraceabilityMatrix(unittest.TestCase):
                 self.assertEqual(metadata.get("error_source"), "hardware_init_failed")
                 self.assertEqual(metadata.get("TraceId"), "200")
 
+    def test_replay_safe_shutdown_artifact(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        collect_cli = project_root / "scripts" / "collect_safe_shutdown.py"
+        replay_cli = project_root / "scripts" / "replay_safe_shutdown.py"
+        log_path = project_root / "logs" / "traceability" / "sample-safe-shutdown.log"
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            artifact_path = Path(tempdir) / "safe-shutdown-replay.zip"
+            report_path = Path(tempdir) / "replay-report.json"
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(collect_cli),
+                    "--log",
+                    str(log_path),
+                    "--output",
+                    str(artifact_path),
+                    "--artifact-name",
+                    "test-safe-shutdown",
+                    "--force",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(replay_cli),
+                    "--artifact",
+                    str(artifact_path),
+                    "--report",
+                    str(report_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(report_path.exists())
+            with report_path.open(encoding="utf-8") as report_file:
+                report = json.load(report_file)
+
+            self.assertTrue(report.get("metadata_match"))
+            replayed = report["replayed_metadata"]
+            self.assertEqual(replayed.get("watchdog_failure"), "init_error_failure")
+            self.assertEqual(replayed.get("error_category"), "initialization")
+            self.assertEqual(replayed.get("error_source"), "hardware_init_failed")
+            self.assertEqual(replayed.get("TraceId"), "200")
+
 
 if __name__ == "__main__":
     unittest.main()
