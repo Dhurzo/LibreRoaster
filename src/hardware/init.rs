@@ -145,3 +145,32 @@ pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandle
         ledc_bus,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_error_context() {
+        let err = InitError::HardwareInit {
+            what: "SPI",
+            reason: "timeout".to_string(),
+        };
+        // Test that error can be created and contains the expected data
+        assert_eq!(
+            matches!(err, InitError::HardwareInit { what: "SPI", .. }),
+            true
+        );
+    }
+
+    #[test]
+    fn test_init_error_display() {
+        let err = InitError::TaskSpawn {
+            what: "control_task",
+            reason: "out of memory".to_string(),
+        };
+        // Test that error can be displayed
+        let display_string = format!("{:?}", err);
+        assert!(display_string.contains("control_task"));
+    }
+}
