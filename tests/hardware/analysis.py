@@ -125,34 +125,64 @@ def generate_report(results, csv_path, template_path, output_path, scenario_entr
     report = report.replace("{{SIGN_OFF}}", sign_off)
     report = report.replace("{{SUMMARY_TABLE}}", summary_table)
 
-    golden_output = None
-    scenario_description = "Unknown"
-    command_sequence = "Not provided"
+    manifest_entry = {}
     if scenario_entry:
-        golden_output = scenario_entry.get('golden_output')
-        scenario_description = scenario_entry.get('description', scenario_description)
-        command_sequence = scenario_entry.get('command_sequence', command_sequence)
+        manifest_entry = scenario_entry
     elif metadata_entry.get('manifest_entry'):
         manifest_entry = metadata_entry['manifest_entry']
-        golden_output = manifest_entry.get('golden_output')
-        scenario_description = manifest_entry.get('description', scenario_description)
-        command_sequence = manifest_entry.get('command_sequence', command_sequence)
 
-    verdict_line = f"\n## Scenario Verdict\n**{sign_off}** — associated golden output: {golden_output or 'N/A'}\n"
+    scenario_id = (manifest_entry.get('id') or metadata_entry.get('scenario_id') or 'unknown').upper()
+    category = manifest_entry.get('category', 'Unknown')
+    description = manifest_entry.get('description', 'Not provided')
+    command_sequence = manifest_entry.get('command_sequence', 'Not provided')
+    golden_output = manifest_entry.get('golden_output') or metadata_entry.get('golden_output')
+    scenario_metadata = manifest_entry.get('metadata', {}) or metadata_entry.get('metadata', {}) or {}
+    retention_days = scenario_metadata.get('retention_days', 'unspecified')
+    evidence_owner = scenario_metadata.get('evidence_owner', 'unspecified')
 
-    scenario_section = f"\n## Scenario Context\n- **Description:** {scenario_description}\n- **Command Sequence:** {command_sequence}\n- **Golden Output:** {golden_output or 'N/A'}\n"
+    golden_artifact_value = (
+        f"[{golden_output}]({golden_output}) (retain {retention_days} days, owner: {evidence_owner})"
+        if golden_output
+        else f"Not provided (retain {retention_days} days, owner: {evidence_owner})"
+    )
+
+    scenario_rows = [
+        ("ID", scenario_id),
+        ("Category", category),
+        ("Description", description),
+        ("Command Sequence", command_sequence),
+        ("Golden artifact", golden_artifact_value)
+    ]
+    scenario_table_lines = ["| Field | Value |", "|-------|-------|"]
+    for field, value in scenario_rows:
+        scenario_table_lines.append(f"| {field} | {value} |")
+    scenario_metadata_table = "\n".join(scenario_table_lines)
+
+    metric_labels = {
+        'max_command_latency_ms': 'Max command latency (ms)',
+        'avg_command_latency_ms': 'Average command latency (ms)',
+        'max_watchdog_consecutive_fails': 'Max watchdog consecutive fails',
+        'max_ledc_guard_timeouts': 'Max LEDC guard timeouts'
+    }
+    threshold_lines = ["| Threshold | Result |", "|-----------|--------|"]
+    for metric, data in results.items():
+        label = metric_labels.get(metric, metric)
+        value_str = f"{data['value']:.2f}"
+        threshold_value = thresholds.get(metric, 'N/A')
+        badge = "✅ PASS" if data['pass'] else "❌ FAIL"
+        threshold_lines.append(f"| {label}: {value_str} / {threshold_value} | {badge} |")
+    threshold_verdict_table = "\n".join(threshold_lines)
+
+    report = report.replace("{{SCENARIO_METADATA_TABLE}}", scenario_metadata_table)
+    report = report.replace("{{THRESHOLD_VERDICTS_TABLE}}", threshold_verdict_table)
 
     metadata_section = "\n## Run Metadata\n"
     metadata_section += f"- **Run ID:** {metadata_entry.get('run_id', os.path.basename(csv_path))}\n"
-    metadata_section += f"- **Scenario ID:** {metadata_entry.get('scenario_id', 'unknown')}\n"
+    metadata_section += f"- **Scenario ID:** {metadata_entry.get('scenario_id', scenario_id)}\n"
     metadata_section += f"- **Max Command Latency (us):** {metadata_entry.get('max_command_latency_us', 'N/A')}\n"
     metadata_section += f"- **Manifest Source:** {metadata_entry.get('manifest_path', 'N/A')}\n"
 
-    thresholds_section = "\n## Thresholds\n"
-    for key, value in sorted(thresholds.items()):
-        thresholds_section += f"- **{key}:** {value}\n"
-
-    report = report + scenario_section + verdict_line + thresholds_section + metadata_section
+    report = report + metadata_section
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
