@@ -176,11 +176,63 @@ impl AppError {
             },
         }
     }
+
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            AppError::Temperature { source, .. } => Some(match source {
+                TemperatureError::OutOfRange => "temperature_out_of_range",
+                TemperatureError::SensorFault => "sensor_fault",
+                TemperatureError::ReadingTimeout => "sensor_timeout",
+                TemperatureError::InvalidValue => "sensor_invalid",
+            }),
+            AppError::Control { source } => Some(match source {
+                ControlError::PidError => "pid_error",
+                ControlError::InvalidState => "invalid_state",
+                ControlError::CommandFailed => "command_failed",
+                ControlError::OutputError => "output_error",
+                ControlError::EmergencyShutdown => "emergency_shutdown",
+            }),
+            AppError::Hardware { source } => Some(match source {
+                HardwareError::UartError => "uart_error",
+                HardwareError::FanError => "fan_error",
+                HardwareError::SsrError => "ssr_error",
+                HardwareError::GpioError => "gpio_error",
+            }),
+            AppError::Communication { source } => Some(match source {
+                CommunicationError::UartError => "comm_uart_error",
+                CommunicationError::ProtocolError => "protocol_error",
+                CommunicationError::SerializationError => "serialization_error",
+                CommunicationError::TimeoutError => "timeout_error",
+            }),
+            AppError::Initialization { source } => Some(match source {
+                InitError::ServiceContainer { .. } => "service_container_init_failed",
+                InitError::HardwareInit { .. } => "hardware_init_failed",
+                InitError::TaskSpawn { .. } => "task_spawn_failed",
+                InitError::MemoryAllocation { .. } => "memory_alloc_failed",
+            }),
+            AppError::Safety { severity } => Some(match severity {
+                SafetyLevel::Warning => "safety_warning",
+                SafetyLevel::Critical => "safety_critical",
+                SafetyLevel::Emergency => "safety_emergency",
+            }),
+            AppError::Configuration { source } => Some(match source {
+                ConfigError::InvalidValue => "config_invalid",
+                ConfigError::MissingConfig => "config_missing",
+                ConfigError::CorruptedData => "config_corrupted",
+            }),
+        }
+    }
 }
 
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.category(), self.user_message())
+        write!(
+            f,
+            "{}: {} (source: {})",
+            self.category(),
+            self.user_message(),
+            self.source().unwrap_or("unknown")
+        )
     }
 }
 
