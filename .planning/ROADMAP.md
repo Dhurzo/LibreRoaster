@@ -78,12 +78,12 @@ Plans:
 **Goal**: Close the remaining RUST-03 gaps by fixing the compile blockers, wiring AppError diagnostics into telemetry/guards/TRACE, and stabilizing the safe-shutdown flow.
 **Requirements**: RUST-03
 **Dependencies**: Phase 96
-**Status**: Planned (2026-03-20)
-**Plans:** 3 plans
+**Status**: In progress (2026-03-20)
+**Plans:** 3 plans (2/3 complete)
 
 Plans:
-- [ ] 100-01-PLAN.md — Convert `RoasterError`/`Max31856Error` to struct variants and clean up unit-variant usage so the codebase compiles without `AppError` dead paths.
-- [ ] 100-02-PLAN.md — Import and re-export `AppError.source()`/`Display` in telemetry/guard/TRACE modules so the richer diagnostics reach live instrumentation.
+- [x] 100-01-PLAN.md — Convert `RoasterError`/`Max31856Error` to struct variants and clean up unit-variant usage so that codebase compiles without `AppError` dead paths.
+- [x] 100-02-PLAN.md — Import and re-export `AppError.source()`/`Display` in telemetry/guard/TRACE modules so the richer diagnostics reach live instrumentation.
 - [ ] 100-03-PLAN.md — Fix `enter_safe_shutdown()` so it can await embassy_time timers without blocking the LED blink path, then document the recovery flow for verification.
 
 ---
