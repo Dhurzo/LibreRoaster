@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 
 ## Current Position
 
-Phase: 96-Error Architecture Implementation
-Plan: 96-01 Complete
-Status: Error source chaining implemented with source fields, custom source() method, and unit tests
-Last activity: 2026-03-20 — Added error source fields, AppError.source() method, and unit tests
+Phase: 97-Traceability Matrix Tooling
+Plan: 97-01 Complete
+Status: TraceId instrumentation now spans queues through actuator/telemetry/guard events
+Last activity: 2026-03-20 — Completed traceability matrix tooling plan (97-01)
 
-Progress: [████████████████████] 100% (v5.1) → [████████░░░░░░░░░] 35% (v5.2)
+Progress: [████████████████████] 100% (v5.1) → [████████░░░░░░░░░] 35% (v5.2, Phase 97 Plan 1 complete)
 
 ## Performance Metrics
 
@@ -76,11 +76,13 @@ Progress: [████████████████████] 100% (v
 - [96-01] Added source fields to all error enums with &'static str for zero-allocation diagnostics; implemented custom AppError.source() method for error chain navigation (std::error::Error unavailable in no_std).
 - [96-02] All hardware error variants map to ErrorKind::Other (most appropriate for domain-specific errors).
 - [96-03] Created InitPeripherals struct to work around private esp_hal::Peripherals; Safe shutdown blinks GPIO8 LED (3 short blinks, pause, repeat).
+- TRACE instrumentation now shares the Artisan output channel so hosts ingest control and trace data together.
+- Every Artisan command now travels as a `TracedCommand`, letting queue, actuator, telemetry, and guard events share one TraceId.
 
 ### Pending Todos
 
 - Complete Phase 96: Error Architecture Implementation (RUST-03) - 1/5 plans complete
-- Complete Phase 97: Traceability Matrix Tooling (SOLID-03)
+- Complete Phase 97: Traceability Matrix Tooling (SOLID-03) - Plan 1/3 complete (97-02/97-03 pending)
 - Complete Phase 98: HIL Validation Infrastructure (HW-03)
 
 ### Blockers/Concerns
@@ -100,6 +102,6 @@ Progress: [████████████████████] 100% (v
 
 ## Session Continuity
 
-Last session: 2026-03-20T12:09:29Z
-Stopped at: Completed 96-01-PLAN.md (error source chaining)
+Last session: 2026-03-20T13:23:14Z
+Stopped at: Completed Phase 97 execution (Traceability Matrix Tooling plan 97-01)
 Resume file: None
