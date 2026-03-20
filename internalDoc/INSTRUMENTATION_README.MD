@@ -415,26 +415,44 @@ PID internal state fields enable data‑driven tuning:
 
 ## TRACE Stream & Parser
 
-Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is produced by the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle.
+Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is emitted on the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle. The instrumentation sits in [`src/logging/traceability.rs`](src/logging/traceability.rs) and writes the strings through the shared `ServiceContainer` output channel.
 
-Example TRACE line from `logs/traceability/sample-trace.log`:
+### TRACE event series & fields
+
+Lines follow the format `TRACE,<TraceId>,<event>,key=value,...`. The `cmd` field is produced with Rust's `Debug` formatter (e.g., `cmd=ReadStatus` or `cmd=ArtisanCommand::STATUS`), so the parser always knows which enum variant drove the event. The runtime emits the following events:
+
+1. **`queue_enqueue`** – command entered the Artisan queue. Fields: `cmd`, `channel`, `depth`, `fallback`. When the queue overflow path reroutes a command the same data is emitted as `queue_fallback` with `fallback=1`; this makes retries immediately visible in the matrix.
+2. **`queue_dequeue`** – command removed for execution. The event repeats `cmd`, `channel`, and `depth` so the matrix shows both enqueue and dequeue depths.
+3. **`queue_fallback`** – emitted whenever the queue overflow handler resubmits a command. It uses the same fields as `queue_enqueue` but flags `fallback=1` so hosts can detect the fallback path without inspecting the control loop.
+4. **`actuation`** – SSR/fan outputs written before actuating the traced command. Fields: `cmd`, `channel`, `ssr`, `fan`, `latency_us`, `saturation_active`.
+5. **`telemetry`** – guard and watchdog telemetry snapshot taken while the command is running. Fields: `guard_timeout`, `guard_timeouts`, `watchdog`, plus optional `error_category`/`error_source` when an `AppError` is attached.
+6. **`guard`** – guard/watchdog reporting tied to the same `TraceId`. Fields mirror the telemetry event: `guard_timeout`, `guard_timeouts`, `watchdog`, optional `watchdog_failure`, and optional `error_category`/`error_source` metadata.
+
+The queue fields drive the `QueueDepth` column in the regression matrix so you can clearly see whether a command hit the fallback path before it actuated.
+
+### Sample TRACE entries
+
+Use this excerpt (taken from `logs/traceability/sample-trace.log`) to validate regression output formatting:
 
 ```
-TRACE,1,command_enqueue,command=STATUS,channel=USB,queue_depth=2
+TRACE,1,queue_enqueue,cmd=ReadStatus,channel=Uart,depth=5,fallback=0
+TRACE,1,actuation,cmd=ReadStatus,channel=Uart,ssr=33.5,fan=12,latency_us=150,saturation_active=1
+TRACE,1,telemetry,guard_timeout=0,guard_timeouts=0,watchdog=ok
+TRACE,1,guard,guard_timeout=0,guard_timeouts=0,watchdog=ok
 ```
 
-Key steps recorded per `TraceId`:
+Because the `cmd` value is Debug-formatted, the log above is consistent with the parser expectations and can be compared directly with coverage captures from debug builds.
 
-1. `command_enqueue` – the command hits Artisan's queue; `queue_depth` and `channel` show where it waited.
-2. `queue_dequeue` – the control loop dequeues the command for execution and updates queue depth.
-3. `actuator_output` – SSR/fan values written to hardware, keeping the actuators aligned with the traced command.
-4. `telemetry_emit` – PID telemetry (ET/BT/PV/MV) recorded while that command is active.
-5. `guard_report` – guard and watchdog health tied to the same `TraceId`, including `guard_state`, `watchdog`, and `guard_timeout` counters.
+### Regression triage workflow
 
-The host parser script (`scripts/traceability_matrix.py`) consolidates these entries into the command→queue→actuator→telemetry→guard matrix auditors need. Run it against any regression log (for example `logs/traceability/sample-trace.log`) to print a concise table of `TraceId`, `Command`, `QueueDepth`, actuator outputs, telemetry, and guard/watchdog flags.
+Run the host parser after every regression capture to rebuild the command → queue → actuator → telemetry → guard matrix:
 
 ```
-python scripts/traceability_matrix.py logs/traceability/sample-trace.log
+python scripts/traceability_matrix.py <trace.log>
 ```
 
-Mention this sample log when documenting regression runs so auditors can compare real outputs with the recorded example and trace any deviation to a specific TraceId.
+The script now understands the runtime names `queue_enqueue`, `queue_dequeue`, `queue_fallback`, `actuation`, `telemetry`, and `guard`, so it always produces the same column layout auditors expect. It also normalizes the Debug-formatted `cmd` field (e.g., `ReadStatus`) and shows `fallback=1` in the matrix whenever the queue overflow path retried a command. Point auditors to `logs/traceability/sample-trace.log` if their TRACE stream diverges so they can trace the difference to the firmware event that led to the regression outcome.
+
+### Related documentation
+
+Whenever another section of this guide references TRACE instrumentation or regression triage, keep the event names and parser usage aligned with `src/logging/traceability.rs` and `scripts/traceability_matrix.py`. This keeps all cross-references in sync with runtime behavior.
