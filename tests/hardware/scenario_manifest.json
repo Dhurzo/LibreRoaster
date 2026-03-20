@@ -1,0 +1,253 @@
+[
+  {
+    "id": "WD-01",
+    "category": "Watchdog",
+    "description": "Watchdog feed succeeds normally",
+    "command_sequence": "prepare_watchdog; feed_watchdog; check_status",
+    "expected_columns": [
+      "env_temp",
+      "bean_temp",
+      "ssr_output",
+      "fan_output",
+      "watchdog_flag",
+      "failure_count",
+      "failure_reason",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/WD-01.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    },
+    "schema": {
+      "fields": {
+        "id": "Scenario identifier that follows the WD-|GD-|CM- prefix",
+        "category": "Watchdog/Guard/Comms classification",
+        "description": "Plain-text description that mirrors SCENARIO_MATRIX.md",
+        "command_sequence": "Semicolon-separated commands automation executes",
+        "expected_columns": "List of STATUS columns required in golden CSV",
+        "golden_output": "Relative path to the approved golden CSV for this scenario",
+        "metadata": "Object carrying expected_watchdog_feed_ok, guard_timeouts, fault_condition, retention_days, and evidence_owner"
+      },
+      "notes": "Automation reads this entry to understand the manifest payload semantics and gauges retention behavior."
+    }
+  },
+  {
+    "id": "WD-02",
+    "category": "Watchdog",
+    "description": "Single watchdog feed failure",
+    "command_sequence": "prepare_watchdog; drop_watchdog_feed; check_status; recover_watchdog",
+    "expected_columns": [
+      "env_temp",
+      "bean_temp",
+      "watchdog_flag",
+      "failure_count",
+      "failure_reason",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/WD-02.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": false,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "WD-03",
+    "category": "Watchdog",
+    "description": "Multiple consecutive watchdog feed failures",
+    "command_sequence": "prepare_watchdog; drop_watchdog_feed; drop_watchdog_feed; check_status",
+    "expected_columns": [
+      "watchdog_flag",
+      "failure_count",
+      "failure_reason",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/WD-03.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": false,
+      "guard_timeouts": 0,
+      "fault_condition": 1,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "WD-04",
+    "category": "Watchdog",
+    "description": "Watchdog feed recovers after failure",
+    "command_sequence": "prepare_watchdog; drop_watchdog_feed; recover_watchdog; check_status",
+    "expected_columns": [
+      "watchdog_flag",
+      "failure_count",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/WD-04.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GD-01",
+    "category": "Guard",
+    "description": "No LEDC guard timeouts",
+    "command_sequence": "prepare_guard; check_status",
+    "expected_columns": [
+      "guard_timeouts",
+      "fault_condition",
+      "watchdog_flag"
+    ],
+    "golden_output": "tests/hardware/goldens/GD-01.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GD-02",
+    "category": "Guard",
+    "description": "Single LEDC guard timeout",
+    "command_sequence": "prepare_guard; introduce_guard_delay; check_status",
+    "expected_columns": [
+      "guard_timeouts",
+      "watchdog_flag",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/GD-02.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 1,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GD-03",
+    "category": "Guard",
+    "description": "Multiple LEDC guard timeouts",
+    "command_sequence": "prepare_guard; introduce_guard_delay; increase_guard_timeout; check_status",
+    "expected_columns": [
+      "guard_timeouts",
+      "fault_condition",
+      "failure_reason"
+    ],
+    "golden_output": "tests/hardware/goldens/GD-03.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 3,
+      "fault_condition": 1,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GD-04",
+    "category": "Guard",
+    "description": "LEDC guard timeout with watchdog healthy",
+    "command_sequence": "prepare_guard; introduce_guard_delay; check_status",
+    "expected_columns": [
+      "guard_timeouts",
+      "watchdog_flag",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/GD-04.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 1,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "CM-01",
+    "category": "Comms",
+    "description": "Normal communication, no faults",
+    "command_sequence": "prepare_comms; verify_bus; check_status",
+    "expected_columns": [
+      "fault_condition",
+      "watchdog_flag",
+      "failure_reason"
+    ],
+    "golden_output": "tests/hardware/goldens/CM-01.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "CM-02",
+    "category": "Comms",
+    "description": "USB CDC channel fails, UART responds",
+    "command_sequence": "prepare_comms; disable_usb; enable_uart; check_status",
+    "expected_columns": [
+      "failure_reason",
+      "fault_condition",
+      "watchdog_flag"
+    ],
+    "golden_output": "tests/hardware/goldens/CM-02.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "CM-03",
+    "category": "Comms",
+    "description": "Both channels fail (command timeout)",
+    "command_sequence": "prepare_comms; disable_usb; disable_uart; check_status",
+    "expected_columns": [
+      "failure_reason",
+      "fault_condition",
+      "watchdog_flag"
+    ],
+    "golden_output": "tests/hardware/goldens/CM-03.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": false,
+      "guard_timeouts": 0,
+      "fault_condition": 1,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "CM-04",
+    "category": "Comms",
+    "description": "Partial command received, buffer timeout",
+    "command_sequence": "prepare_comms; send_partial; check_status",
+    "expected_columns": [
+      "failure_reason",
+      "fault_condition",
+      "watchdog_flag"
+    ],
+    "golden_output": "tests/hardware/goldens/CM-04.csv",
+    "metadata": {
+      "expected_watchdog_feed_ok": true,
+      "guard_timeouts": 0,
+      "fault_condition": 0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  }
+]
