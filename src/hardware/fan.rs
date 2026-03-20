@@ -8,10 +8,21 @@ use log::{debug, error, info};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanError {
-    InitializationError,
-    InvalidSpeed,
-    PwmError,
-    LedcError,
+    InitializationError { source: &'static str },
+    InvalidSpeed { source: &'static str },
+    PwmError { source: &'static str },
+    LedcError { source: &'static str },
+}
+
+impl embedded_hal::digital::Error for FanError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        match self {
+            FanError::InitializationError { .. } => embedded_hal::digital::ErrorKind::Other,
+            FanError::InvalidSpeed { .. } => embedded_hal::digital::ErrorKind::Other,
+            FanError::PwmError { .. } => embedded_hal::digital::ErrorKind::Other,
+            FanError::LedcError { .. } => embedded_hal::digital::ErrorKind::Other,
+        }
+    }
 }
 
 pub struct FanController<'a> {
@@ -70,12 +81,16 @@ impl<'a> FanController<'a> {
                 );
                 handle
                     .start_duty_fade(current_duty, target_duty, duration)
-                    .map_err(|_| FanError::PwmError)?;
+                    .map_err(|_| FanError::PwmError {
+                        source: "start_duty_fade_failed",
+                    })?;
             } else {
                 debug!("Fan set duty {} (delta {})", target_duty, duty_delta);
                 handle
                     .set_duty(target_duty)
-                    .map_err(|_| FanError::PwmError)?;
+                    .map_err(|_| FanError::PwmError {
+                        source: "set_duty_failed",
+                    })?;
             }
 
             self.current_speed = handle.applied_percent();
@@ -172,3 +187,17 @@ where
 }
 
 unsafe impl<'a, C> Send for SimpleLedcFan<'a, C> where C: ChannelIFace<'a, LowSpeed> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_digital_error_kind() {
+        let err = FanError::InitializationError { source: "test" };
+        assert!(matches!(
+            err.kind(),
+            embedded_hal::digital::ErrorKind::Other
+        ));
+    }
+}
