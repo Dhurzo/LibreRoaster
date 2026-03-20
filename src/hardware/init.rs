@@ -1,8 +1,14 @@
 use crate::error::app_error::{AppError, InitError};
+use crate::error::app_error::{AppError, InitError};
+use crate::hardware::fan::FanController;
 use crate::hardware::fan::FanController;
 use crate::hardware::ledc_bus::LedcBus;
+use crate::hardware::ledc_bus::LedcBus;
+use crate::hardware::max31856::Max31856;
 use crate::hardware::max31856::Max31856;
 use crate::hardware::shared_spi::SpiDeviceWithCs;
+use crate::hardware::shared_spi::SpiDeviceWithCs;
+use crate::hardware::ssr::SsrControlSimple;
 use crate::hardware::ssr::SsrControlSimple;
 use alloc::format;
 use alloc::string::String;
@@ -11,10 +17,21 @@ use critical_section;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::ledc::channel;
 use esp_hal::ledc::timer::{self, TimerIFace};
-use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed, LEDC};
+use esp_hal::spi::master::{Config as SpiConfig, Spi, Spi as SpiInstance};
 use esp_hal::time::Rate;
 use static_cell::StaticCell;
+
+/// Holds the peripheral handles needed for initialization
+pub struct InitPeripherals {
+    pub ledc: LEDC,
+    pub spi2: SpiInstance<'static, esp_hal::Blocking>,
+    pub gpio9: esp_hal::gpio::GpioPin<9>,
+    pub gpio10: esp_hal::gpio::GpioPin<10>,
+    pub gpio4: esp_hal::gpio::GpioPin<4>,
+    pub gpio3: esp_hal::gpio::GpioPin<3>,
+    pub gpio1: esp_hal::gpio::GpioPin<1>,
+}
 
 pub struct HardwareHandles {
     pub bean_sensor: Max31856<
@@ -36,9 +53,9 @@ pub struct HardwareHandles {
     pub ledc_bus: &'static LedcBus<'static>,
 }
 
-pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandles, InitError> {
+pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, InitError> {
     // Initialize LEDC
-    let mut ledc = Ledc::new(peripherals.LEDC);
+    let mut ledc = Ledc::new(peripherals.ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
     let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
@@ -66,10 +83,10 @@ pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandle
         })?;
 
     // Configure channels
-    let fan_pin = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
+    let fan_pin = Output::new(peripherals.gpio9, Level::Low, OutputConfig::default());
     let fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
 
-    let ssr_pin = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
+    let ssr_pin = Output::new(peripherals.gpio10, Level::Low, OutputConfig::default());
     let ssr_channel = ledc.channel(channel::Number::Channel1, ssr_pin);
 
     let ledc_bus = LedcBus::new(
@@ -84,7 +101,7 @@ pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandle
 
     // Initialize SPI
     let spi = Spi::new(
-        peripherals.SPI2,
+        peripherals.spi2,
         SpiConfig::default().with_frequency(Rate::from_khz(1000)),
     )
     .map_err(|e| InitError::HardwareInit {
@@ -97,10 +114,10 @@ pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandle
     let spi_mutex = SPI_BUS.init(critical_section::Mutex::new(RefCell::new(spi)));
 
     // Create GPIO pins for SPI chip selects
-    let bt_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
+    let bt_cs = Output::new(peripherals.gpio4, Level::High, OutputConfig::default());
     let bt_spi = SpiDeviceWithCs::new(spi_mutex, bt_cs);
 
-    let et_cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
+    let et_cs = Output::new(peripherals.gpio3, Level::High, OutputConfig::default());
     let et_spi = SpiDeviceWithCs::new(spi_mutex, et_cs);
 
     // Initialize temperature sensors
@@ -115,7 +132,7 @@ pub fn init_hardware(peripherals: esp_hal::Peripherals) -> Result<HardwareHandle
 
     // Initialize heat detection
     let heat_detection_pin = Input::new(
-        peripherals.GPIO1,
+        peripherals.gpio1,
         InputConfig::default().with_pull(Pull::Up),
     );
 

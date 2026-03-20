@@ -65,6 +65,8 @@ use esp_hal::time::Rate;
 
 #[cfg(target_arch = "riscv32")]
 use crate::error::app_error::InitError;
+#[cfg(target_arch = "riscv32")]
+use crate::hardware::init::InitPeripherals;
 
 #[cfg(target_arch = "riscv32")]
 fn enter_safe_shutdown(error: InitError) -> ! {
@@ -100,8 +102,19 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Hardware initialized");
 
+    // Prepare peripherals for init_hardware
+    let init_peripherals = InitPeripherals {
+        ledc: peripherals.LEDC,
+        spi2: peripherals.SPI2,
+        gpio9: peripherals.GPIO9,
+        gpio10: peripherals.GPIO10,
+        gpio4: peripherals.GPIO4,
+        gpio3: peripherals.GPIO3,
+        gpio1: peripherals.GPIO1,
+    };
+
     // Initialize all hardware (returns Result, no panics)
-    let hw_handles = match libreroaster::hardware::init::init_hardware(peripherals) {
+    let hw_handles = match libreroaster::hardware::init::init_hardware(init_peripherals) {
         Ok(handles) => handles,
         Err(e) => {
             enter_safe_shutdown(e);
