@@ -49,15 +49,15 @@ impl SensorFault {
     #[allow(dead_code)]
     fn from_max31856_error(error: &Max31856Error) -> Self {
         match error {
-            Max31856Error::CommunicationError => Self {
+            Max31856Error::CommunicationError { .. } => Self {
                 communication_error: true,
                 ..Default::default()
             },
-            Max31856Error::FaultDetected => Self {
+            Max31856Error::FaultDetected { .. } => Self {
                 fault_detected: true,
                 ..Default::default()
             },
-            Max31856Error::InvalidTemperature => Self {
+            Max31856Error::InvalidTemperature { .. } => Self {
                 invalid_temperature: true,
                 ..Default::default()
             },

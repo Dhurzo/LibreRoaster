@@ -3,36 +3,61 @@ use embassy_time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RoasterError {
-    TemperatureOutOfRange,
-    SensorFault,
-    InvalidState,
-    PidError,
-    HardwareError,
-    EmergencyShutdown,
+    TemperatureOutOfRange { source: Option<&'static str> },
+    SensorFault { source: Option<&'static str> },
+    InvalidState { source: Option<&'static str> },
+    PidError { source: Option<&'static str> },
+    HardwareError { source: Option<&'static str> },
+    EmergencyShutdown { source: Option<&'static str> },
 }
 
 impl core::fmt::Display for RoasterError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            RoasterError::TemperatureOutOfRange => write!(f, "Temperature out of range"),
-            RoasterError::SensorFault => write!(f, "Sensor fault"),
-            RoasterError::InvalidState => write!(f, "Invalid state"),
-            RoasterError::PidError => write!(f, "PID error"),
-            RoasterError::HardwareError => write!(f, "Hardware error"),
-            RoasterError::EmergencyShutdown => write!(f, "Emergency shutdown"),
+            RoasterError::TemperatureOutOfRange { source } => {
+                write!(f, "Temperature out of range")?;
+                write_source(f, source)
+            },
+            RoasterError::SensorFault { source } => {
+                write!(f, "Sensor fault")?;
+                write_source(f, source)
+            },
+            RoasterError::InvalidState { source } => {
+                write!(f, "Invalid state")?;
+                write_source(f, source)
+            },
+            RoasterError::PidError { source } => {
+                write!(f, "PID error")?;
+                write_source(f, source)
+            },
+            RoasterError::HardwareError { source } => {
+                write!(f, "Hardware error")?;
+                write_source(f, source)
+            },
+            RoasterError::EmergencyShutdown { source } => {
+                write!(f, "Emergency shutdown")?;
+                write_source(f, source)
+            },
         }
+    }
+}
+
+fn write_source(f: &mut core::fmt::Formatter<'_>, source: &Option<&'static str>) -> core::fmt::Result {
+    match source {
+        Some(s) => write!(f, " (source: {})", s),
+        None => Ok(()),
     }
 }
 
 impl RoasterError {
     pub fn message_token(&self) -> &'static str {
         match self {
-            RoasterError::TemperatureOutOfRange => "temperature_out_of_range",
-            RoasterError::SensorFault => "sensor_fault",
-            RoasterError::InvalidState => "invalid_state",
-            RoasterError::PidError => "pid_error",
-            RoasterError::HardwareError => "hardware_error",
-            RoasterError::EmergencyShutdown => "emergency_shutdown",
+            RoasterError::TemperatureOutOfRange { .. } => "temperature_out_of_range",
+            RoasterError::SensorFault { .. } => "sensor_fault",
+            RoasterError::InvalidState { .. } => "invalid_state",
+            RoasterError::PidError { .. } => "pid_error",
+            RoasterError::HardwareError { .. } => "hardware_error",
+            RoasterError::EmergencyShutdown { .. } => "emergency_shutdown",
         }
     }
 }

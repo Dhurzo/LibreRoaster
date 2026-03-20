@@ -159,10 +159,10 @@ impl AppError {
                 CommunicationError::TimeoutError => "Communication timeout",
             },
             AppError::Initialization { source } => match source {
-                InitError::ServiceContainer { what, .. } => "System initialization failed",
-                InitError::HardwareInit { what, .. } => "Hardware initialization failed",
-                InitError::TaskSpawn { what, .. } => "Task startup failed",
-                InitError::MemoryAllocation { what, .. } => "Memory allocation failed",
+                InitError::ServiceContainer { what: _, .. } => "System initialization failed",
+                InitError::HardwareInit { what: _, .. } => "Hardware initialization failed",
+                InitError::TaskSpawn { what: _, .. } => "Task startup failed",
+                InitError::MemoryAllocation { what: _, .. } => "Memory allocation failed",
             },
             AppError::Safety { severity } => match severity {
                 SafetyLevel::Warning => "Safety warning",
@@ -206,30 +206,30 @@ pub enum RecoveryError {
 impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {
         match err {
-            crate::control::RoasterError::TemperatureOutOfRange => AppError::Temperature {
+            crate::control::RoasterError::TemperatureOutOfRange { .. } => AppError::Temperature {
                 message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
                     "Temperature out of range",
                 )
                 .unwrap_or_default(),
                 source: TemperatureError::OutOfRange,
             },
-            crate::control::RoasterError::SensorFault => AppError::Temperature {
+            crate::control::RoasterError::SensorFault { .. } => AppError::Temperature {
                 message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
                     "Temperature sensor fault",
                 )
                 .unwrap_or_default(),
                 source: TemperatureError::SensorFault,
             },
-            crate::control::RoasterError::InvalidState => AppError::Control {
+            crate::control::RoasterError::InvalidState { .. } => AppError::Control {
                 source: ControlError::InvalidState,
             },
-            crate::control::RoasterError::PidError => AppError::Control {
+            crate::control::RoasterError::PidError { .. } => AppError::Control {
                 source: ControlError::PidError,
             },
-            crate::control::RoasterError::HardwareError => AppError::Hardware {
+            crate::control::RoasterError::HardwareError { .. } => AppError::Hardware {
                 source: HardwareError::SsrError,
             },
-            crate::control::RoasterError::EmergencyShutdown => AppError::Control {
+            crate::control::RoasterError::EmergencyShutdown { .. } => AppError::Control {
                 source: ControlError::EmergencyShutdown,
             },
         }

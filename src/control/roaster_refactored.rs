@@ -153,7 +153,9 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         if !Self::is_temperature_valid(bean_temp) || !Self::is_temperature_valid(env_temp) {
-            return Err(RoasterError::TemperatureOutOfRange);
+            return Err(RoasterError::TemperatureOutOfRange {
+                source: Some("temperature_out_of_valid_range"),
+            });
         }
 
         self.status.bean_temp = bean_temp + BT_THERMOCOUPLE_OFFSET;
@@ -225,7 +227,9 @@ impl RoasterControl {
             if outcome.emergency_active {
                 // Apply hardware writes for emergency
                 self.apply_safety_outcome(&outcome, current_time)?;
-                return Err(RoasterError::TemperatureOutOfRange);
+                return Err(RoasterError::TemperatureOutOfRange {
+                    source: Some("emergency_shutdown"),
+                });
             }
             return Ok(());
         }
@@ -239,7 +243,9 @@ impl RoasterControl {
                 self.apply_policy_outcome(&outcome, current_time)?;
                 return Ok(());
             } else {
-                return Err(RoasterError::InvalidState);
+                return Err(RoasterError::InvalidState {
+                    source: Some("manual_command_failed"),
+                });
             }
         }
 
@@ -254,7 +260,9 @@ impl RoasterControl {
         }
 
         warn!("No handler found for command: {:?}", command);
-        Err(RoasterError::InvalidState)
+        Err(RoasterError::InvalidState {
+            source: Some("no_handler_found"),
+        })
     }
 
     /// Apply policy outcome to hardware - RoasterControl is the single writer
@@ -292,7 +300,9 @@ impl RoasterControl {
 
             self.fan
                 .set_speed(fan)
-                .map_err(|_| RoasterError::HardwareError)?;
+                .map_err(|_| RoasterError::HardwareError {
+                    source: Some("fan_set_failed"),
+                })?;
             self.status.fan_output = fan;
             self.status.ssr_hardware_status = self.heater.get_status();
         }
@@ -353,10 +363,14 @@ impl RoasterControl {
 
         let heater_result = self.heater.set_power(0.0);
         self.capture_ssr_monitor_metrics();
-        heater_result.map_err(|_| RoasterError::HardwareError)?;
+        heater_result.map_err(|_| RoasterError::HardwareError {
+            source: Some("heater_off_failed"),
+        })?;
         self.fan
             .set_speed(0.0)
-            .map_err(|_| RoasterError::HardwareError)?;
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_off_failed"),
+            })?;
 
         self.status.ssr_hardware_status = self.heater.get_status();
 
@@ -377,7 +391,9 @@ impl RoasterControl {
         self.capture_ssr_monitor_metrics();
         let _ = self.fan.set_speed(100.0);
 
-        Err(RoasterError::EmergencyShutdown)
+        Err(RoasterError::EmergencyShutdown {
+            source: Some("emergency_shutdown"),
+        })
     }
 
     pub fn update_control(&mut self, current_time: Instant) -> Result<f32, RoasterError> {
@@ -434,7 +450,9 @@ impl RoasterControl {
         let fan_output = self.artisan_handler.get_manual_fan();
         self.fan
             .set_speed(fan_output)
-            .map_err(|_| RoasterError::HardwareError)?;
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_set_in_control_loop_failed"),
+            })?;
 
         // Keep status aligned with commanded fan output in control loop.
         self.status.fan_output = fan_output;
@@ -491,7 +509,9 @@ impl RoasterControl {
         if clamped <= 0.0 {
             let power_result = self.heater.set_power(0.0);
             self.capture_ssr_monitor_metrics();
-            power_result.map_err(|_| RoasterError::HardwareError)?;
+            power_result.map_err(|_| RoasterError::HardwareError {
+                source: Some("heater_off_in_apply_guarded_failed"),
+            })?;
             self.status.ssr_output = 0.0;
             self.status.saturation_active = false;
             self.status.integrator_clamped = false;
@@ -504,7 +524,9 @@ impl RoasterControl {
                 self.ssr_guard.mark_cycle(now);
                 let power_result = self.heater.set_power(clamped);
                 self.capture_ssr_monitor_metrics();
-                power_result.map_err(|_| RoasterError::HardwareError)?;
+                power_result.map_err(|_| RoasterError::HardwareError {
+                    source: Some("heater_set_in_apply_guarded_failed"),
+                })?;
                 self.status.ssr_output = clamped;
                 self.status.saturation_active = false;
                 self.status.integrator_clamped = false;
@@ -517,7 +539,9 @@ impl RoasterControl {
                 self.status.ssr_cycle_guard_busy_until_ms = Self::busy_window_ms(now, busy_until);
                 warn!("SSR cycle busy until {:?}", busy_until);
                 if reject_on_busy {
-                    Err(RoasterError::InvalidState)
+                    Err(RoasterError::InvalidState {
+                        source: Some("ssr_cycle_busy"),
+                    })
                 } else {
                     Ok(self.status.ssr_output)
                 }

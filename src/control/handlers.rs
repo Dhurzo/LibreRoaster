@@ -17,7 +17,9 @@ pub struct TemperatureCommandHandler {
 
 impl TemperatureCommandHandler {
     pub fn new() -> Result<Self, RoasterError> {
-        let pid = CoffeeRoasterPid::new().map_err(|_| RoasterError::PidError)?;
+        let pid = CoffeeRoasterPid::new().map_err(|_| RoasterError::PidError {
+            source: Some("pid_init_failed"),
+        })?;
 
         Ok(Self {
             pid_controller: pid,
@@ -38,7 +40,9 @@ impl TemperatureCommandHandler {
     pub fn set_pid_target(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.pid_controller
             .set_target(target_temp)
-            .map_err(|_| RoasterError::PidError)?;
+            .map_err(|_| RoasterError::PidError {
+                source: Some("set_target_failed"),
+            })?;
         Ok(())
     }
 
@@ -125,7 +129,9 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("invalid_command_for_mode"),
+            }),
         }
     }
 
@@ -161,7 +167,9 @@ impl SafetyCommandHandler {
     pub fn trigger_emergency(&mut self, reason: &str) -> Result<(), RoasterError> {
         warn!("EMERGENCY SHUTDOWN: {}", reason);
         self.emergency_flag = true;
-        Err(RoasterError::TemperatureOutOfRange)
+        Err(RoasterError::TemperatureOutOfRange {
+            source: Some("emergency_shutdown"),
+        })
     }
 }
 
@@ -189,7 +197,9 @@ impl RoasterCommandHandler for SafetyCommandHandler {
                 self.trigger_emergency("Artisan+ emergency stop")
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
@@ -305,7 +315,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
             RoasterCommand::SetHeaterManual(value) => {
                 if value > 100 {
                     warn!("Ignoring manual heater value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState);
+                    return Err(RoasterError::InvalidState {
+                        source: Some("heater_value_exceeds_100"),
+                    });
                 }
 
                 status.artisan_control = true;
@@ -320,7 +332,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
             RoasterCommand::SetFanManual(value) => {
                 if value > 100 {
                     warn!("Ignoring manual fan value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState);
+                    return Err(RoasterError::InvalidState {
+                        source: Some("fan_value_exceeds_100"),
+                    });
                 }
 
                 status.artisan_control = true;
@@ -358,7 +372,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
@@ -483,7 +499,9 @@ impl RoasterCommandHandler for SystemCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
