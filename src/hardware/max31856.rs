@@ -32,9 +32,9 @@ pub mod et_spi {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Max31856Error {
-    CommunicationError,
-    FaultDetected,
-    InvalidTemperature,
+    CommunicationError { source: &'static str },
+    FaultDetected { source: &'static str },
+    InvalidTemperature { source: &'static str },
 }
 
 /// Raw conversion payload returned by the MAX31856 driver.
@@ -43,12 +43,28 @@ pub struct Max31856Reading {
     pub fault: u8,
 }
 
+impl embedded_hal::spi::Error for Max31856Error {
+    fn kind(&self) -> embedded_hal::spi::ErrorKind {
+        match self {
+            Max31856Error::CommunicationError { .. } => embedded_hal::spi::ErrorKind::Other,
+            Max31856Error::FaultDetected { .. } => embedded_hal::spi::ErrorKind::Other,
+            Max31856Error::InvalidTemperature { .. } => embedded_hal::spi::ErrorKind::Other,
+        }
+    }
+}
+
 impl From<Max31856Error> for RoasterError {
     fn from(e: Max31856Error) -> Self {
         match e {
-            Max31856Error::CommunicationError => RoasterError::SensorFault,
-            Max31856Error::FaultDetected => RoasterError::SensorFault,
-            Max31856Error::InvalidTemperature => RoasterError::TemperatureOutOfRange,
+            Max31856Error::CommunicationError { source } => RoasterError::SensorFault {
+                source: Some(source),
+            },
+            Max31856Error::FaultDetected { source } => RoasterError::SensorFault {
+                source: Some(source),
+            },
+            Max31856Error::InvalidTemperature { source } => RoasterError::TemperatureOutOfRange {
+                source: Some(source),
+            },
         }
     }
 }
@@ -108,13 +124,17 @@ where
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
         if reading.fault & 0x01 != 0 {
-            return Err(Max31856Error::FaultDetected);
+            return Err(Max31856Error::FaultDetected {
+                source: "fault_bit_set",
+            });
         }
 
         let temperature = convert_raw_temp(reading.raw_temp);
 
         if temperature < -200.0 || temperature > 1350.0 {
-            return Err(Max31856Error::InvalidTemperature);
+            return Err(Max31856Error::InvalidTemperature {
+                source: "value_out_of_range",
+            });
         }
 
         Ok(temperature)
@@ -125,13 +145,17 @@ where
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature_async().await?;
         if reading.fault & 0x01 != 0 {
-            return Err(Max31856Error::FaultDetected);
+            return Err(Max31856Error::FaultDetected {
+                source: "fault_bit_set",
+            });
         }
 
         let temperature = convert_raw_temp(reading.raw_temp);
 
         if temperature < -200.0 || temperature > 1350.0 {
-            return Err(Max31856Error::InvalidTemperature);
+            return Err(Max31856Error::InvalidTemperature {
+                source: "value_out_of_range",
+            });
         }
 
         Ok(temperature)
@@ -141,7 +165,9 @@ where
     /// Attempts up to max_retries + 1 times (so max_retries=2 means 3 total attempts).
     /// Waits fixed 10ms between retries using embassy-time Timer.
     pub async fn read_with_retry(&mut self, max_retries: u8) -> Result<f32, Max31856Error> {
-        let mut last_error = Max31856Error::CommunicationError;
+        let mut last_error = Max31856Error::CommunicationError {
+            source: "retry_limit_reached",
+        };
 
         for attempt in 0..=max_retries {
             match self.read_temperature_async().await {
@@ -164,7 +190,9 @@ where
 
         match self.spi.transaction(&mut operations) {
             Ok(_) => Ok(()),
-            Err(_) => Err(Max31856Error::CommunicationError),
+            Err(_) => Err(Max31856Error::CommunicationError {
+                source: "spi_write_failed",
+            }),
         }
     }
 
@@ -177,7 +205,9 @@ where
 
         match self.spi.transaction(&mut operations) {
             Ok(_) => Ok(rx_buffer[1]),
-            Err(_) => Err(Max31856Error::CommunicationError),
+            Err(_) => Err(Max31856Error::CommunicationError {
+                source: "spi_read_failed",
+            }),
         }
     }
 
@@ -198,7 +228,9 @@ where
                 }
                 Ok(result)
             }
-            Err(_) => Err(Max31856Error::CommunicationError),
+            Err(_) => Err(Max31856Error::CommunicationError {
+                source: "spi_read_multiple_failed",
+            }),
         }
     }
 }
@@ -221,3 +253,17 @@ where
         Self::read_with_retry(self, 2).await.map_err(|e| e.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spi_error_kind() {
+        let err = Max31856Error::CommunicationError {
+            source: "test",
+        };
+        assert!(matches!(err.kind(), embedded_hal::spi::ErrorKind::Other));
+    }
+}
+
