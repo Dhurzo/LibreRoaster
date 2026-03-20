@@ -499,7 +499,9 @@ where
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_percentage(duty)
-            .map_err(|_| RoasterError::HardwareError)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("ssr_set_power"),
+            })
     }
 
     fn get_status(&self) -> GlobalSsrStatus {
@@ -584,7 +586,9 @@ where
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         StatusGetters::get_hardware_status(self);
-        SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError)
+        SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError {
+            source: Some("ssr_control_set_percentage"),
+        })
     }
 
     fn get_status(&self) -> GlobalSsrStatus {

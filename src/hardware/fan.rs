@@ -130,7 +130,9 @@ impl<'a> FanController<'a> {
 impl<'a> Fan for FanController<'a> {
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_speed(duty)
-            .map_err(|_| RoasterError::HardwareError)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_set_speed"),
+            })
     }
 
     fn get_speed(&self) -> f32 {
@@ -179,7 +181,9 @@ where
 
         self.channel
             .set_duty(duty as u8)
-            .map_err(|_| RoasterError::HardwareError)?;
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_simple_ledc"),
+            })?;
 
         debug!("SimpleLedcFan set to {:.1}% (duty {})", clamped, duty);
         Ok(())

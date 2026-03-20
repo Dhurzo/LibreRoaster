@@ -1,36 +1,30 @@
-use crate::error::app_error::{AppError, InitError};
-use crate::error::app_error::{AppError, InitError};
+use crate::error::app_error::InitError;
 use crate::hardware::fan::FanController;
-use crate::hardware::fan::FanController;
-use crate::hardware::ledc_bus::LedcBus;
-use crate::hardware::ledc_bus::LedcBus;
-use crate::hardware::max31856::Max31856;
+use crate::hardware::ledc_bus::{LedcBus, LedcChannelHandle};
 use crate::hardware::max31856::Max31856;
 use crate::hardware::shared_spi::SpiDeviceWithCs;
-use crate::hardware::shared_spi::SpiDeviceWithCs;
 use crate::hardware::ssr::SsrControlSimple;
-use crate::hardware::ssr::SsrControlSimple;
-use alloc::format;
-use alloc::string::String;
+use alloc::{format, string::String};
 use core::cell::RefCell;
 use critical_section;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::ledc::channel;
 use esp_hal::ledc::timer::{self, TimerIFace};
-use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed, LEDC};
-use esp_hal::spi::master::{Config as SpiConfig, Spi, Spi as SpiInstance};
+use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
+use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO9, LEDC, SPI2};
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 use static_cell::StaticCell;
 
 /// Holds the peripheral handles needed for initialization
 pub struct InitPeripherals {
-    pub ledc: LEDC,
-    pub spi2: SpiInstance<'static, esp_hal::Blocking>,
-    pub gpio9: esp_hal::gpio::GpioPin<9>,
-    pub gpio10: esp_hal::gpio::GpioPin<10>,
-    pub gpio4: esp_hal::gpio::GpioPin<4>,
-    pub gpio3: esp_hal::gpio::GpioPin<3>,
-    pub gpio1: esp_hal::gpio::GpioPin<1>,
+    pub ledc: LEDC<'static>,
+    pub spi2: SPI2<'static>,
+    pub gpio9: GPIO9<'static>,
+    pub gpio10: GPIO10<'static>,
+    pub gpio4: GPIO4<'static>,
+    pub gpio3: GPIO3<'static>,
+    pub gpio1: GPIO1<'static>,
 }
 
 pub struct HardwareHandles {
@@ -48,7 +42,7 @@ pub struct HardwareHandles {
             esp_hal::gpio::Output<'static>,
         >,
     >,
-    pub ssr: SsrControlSimple<'static>,
+    pub ssr: SsrControlSimple<'static, Input<'static>, LedcChannelHandle<'static>>,
     pub fan: FanController<'static>,
     pub ledc_bus: &'static LedcBus<'static>,
 }

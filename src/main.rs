@@ -19,7 +19,7 @@ use embassy_executor::Spawner;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 
 #[cfg(target_arch = "riscv32")]
-use esp_hal::spi::master::{Spi, Config as SpiConfig};
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 
 #[cfg(target_arch = "riscv32")]
 use log::info;
@@ -44,41 +44,39 @@ use libreroaster::application::AppBuilder;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::fan::FanController;
 #[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::ledc_bus::LedcBus;
+#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
+#[cfg(target_arch = "riscv32")]
+use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::ssr::SsrControlSimple;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::ledc_bus::LedcBus;
 
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::{Ledc, LowSpeed, LSGlobalClkSource};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::{self, TimerIFace};
 #[cfg(target_arch = "riscv32")]
+use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
+#[cfg(target_arch = "riscv32")]
+use esp_hal::peripherals::Peripherals;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::time::Rate;
 
 #[cfg(target_arch = "riscv32")]
-use crate::error::app_error::InitError;
+use libreroaster::error::app_error::InitError;
 #[cfg(target_arch = "riscv32")]
-use crate::hardware::init::InitPeripherals;
+use libreroaster::hardware::init::InitPeripherals;
 
 #[cfg(target_arch = "riscv32")]
-fn enter_safe_shutdown(error: InitError) -> ! {
+async fn enter_safe_shutdown(error: InitError) -> ! {
     log::error!("Initialization failed: {:?}", error);
 
     // Blink GPIO8 LED to indicate error (3 short blinks, pause, repeat)
-    let peripherals = esp_hal::Peripherals::take().unwrap();
-    let mut led = Output::new(
-        peripherals.GPIO8,
-        Level::High,
-        OutputConfig::default()
-    );
+    let peripherals = unsafe { Peripherals::steal() };
+    let mut led = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
 
     loop {
         for _ in 0..3 {
@@ -116,9 +114,7 @@ async fn main(spawner: Spawner) -> ! {
     // Initialize all hardware (returns Result, no panics)
     let hw_handles = match libreroaster::hardware::init::init_hardware(init_peripherals) {
         Ok(handles) => handles,
-        Err(e) => {
-            enter_safe_shutdown(e);
-        }
+        Err(e) => enter_safe_shutdown(e).await,
     };
 
     info!("Sensors initialized (BT: GPIO4, ET: GPIO3)");

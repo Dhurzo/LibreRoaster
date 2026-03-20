@@ -1,0 +1,223 @@
+=== Build verification run ===
+Start UTC: 2026-03-20T17:04:33Z
+
+--- Environment fingerprints ---
+rustc 1.92.0 (ded5c06cf 2025-12-08)
+cargo 1.92.0 (344c4567c 2025-10-21)
+87f7c46a601b4479d8ed9645fa1217624ee1dae2
+
+--- Build command ---
+   Compiling libreroaster v0.1.0 (/home/juan/Repos/LibreRoaster)
+warning: unused import: `TracedCommand`
+  --> src/application/tasks.rs:11:61
+   |
+11 |     trace_actuation, trace_guard, trace_telemetry, TraceId, TracedCommand,
+   |                                                             ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Vec`
+  --> src/application/tasks.rs:21:24
+   |
+21 | use heapless::{String, Vec};
+   |                        ^^^
+
+warning: unused import: `string::String`
+ --> src/hardware/init.rs:7:21
+  |
+7 | use alloc::{format, string::String};
+  |                     ^^^^^^^^^^^^^^
+
+warning: unused imports: `Config` and `Uart`
+ --> src/hardware/uart/driver.rs:5:21
+  |
+5 | use esp_hal::uart::{Config, Uart, UartRx, UartTx};
+  |                     ^^^^^^  ^^^^
+
+warning: unused import: `crate::config::WATCHDOG_FEED_INTERVAL_MS`
+  --> src/safety/watchdog.rs:32:9
+   |
+32 |     use crate::config::WATCHDOG_FEED_INTERVAL_MS;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `AtomicU8`
+  --> src/safety/watchdog.rs:33:30
+   |
+33 |     use core::sync::atomic::{AtomicU8, Ordering};
+   |                              ^^^^^^^^
+
+warning: unused import: `embassy_time::Duration`
+  --> src/safety/watchdog.rs:34:9
+   |
+34 |     use embassy_time::Duration;
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary `unsafe` block
+  --> src/hardware/uart/driver.rs:84:5
+   |
+84 |     unsafe {
+   |     ^^^^^^ unnecessary `unsafe` block
+   |
+   = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> src/hardware/usb_cdc/driver.rs:159:5
+    |
+159 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: method `current_stage` is never used
+  --> src/application/tasks.rs:56:8
+   |
+39 | impl StageTracker {
+   | ----------------- method in this implementation
+...
+56 |     fn current_stage(&self) -> ControlLoopStage {
+   |        ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: static `UART_TX` is never used
+  --> src/hardware/uart/driver.rs:56:8
+   |
+56 | static UART_TX: StaticCell<UartTx<'static, esp_hal::Async>> = StaticCell::new();
+   |        ^^^^^^^
+
+warning: static `UART_RX` is never used
+  --> src/hardware/uart/driver.rs:57:8
+   |
+57 | static UART_RX: StaticCell<UartRx<'static, esp_hal::Async>> = StaticCell::new();
+   |        ^^^^^^^
+
+warning: static `UART_DRIVER` is never used
+  --> src/hardware/uart/driver.rs:58:8
+   |
+58 | static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
+   |        ^^^^^^^^^^^
+
+warning: struct `SyncPointer` is never constructed
+  --> src/hardware/uart/driver.rs:60:8
+   |
+60 | struct SyncPointer<T>(UnsafeCell<T>);
+   |        ^^^^^^^^^^^
+
+warning: associated items `new` and `get` are never used
+  --> src/hardware/uart/driver.rs:65:14
+   |
+64 | impl<T> SyncPointer<T> {
+   | ---------------------- associated items in this implementation
+65 |     const fn new(ptr: T) -> Self {
+   |              ^^^
+...
+69 |     fn get(&self) -> *mut T {
+   |        ^^^
+
+warning: static `UART_PTR` is never used
+  --> src/hardware/uart/driver.rs:74:8
+   |
+74 | static UART_PTR: SyncPointer<core::ptr::NonNull<UartDriver>> =
+   |        ^^^^^^^^
+
+warning: `libreroaster` (lib) generated 16 warnings (run `cargo fix --lib -p libreroaster` to apply 7 suggestions)
+warning: unused imports: `InputConfig`, `Input`, and `Pull`
+  --> src/main.rs:19:21
+   |
+19 | use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+   |                     ^^^^^  ^^^^^^^^^^^                               ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Config as SpiConfig` and `Spi`
+  --> src/main.rs:22:28
+   |
+22 | use esp_hal::spi::master::{Config as SpiConfig, Spi};
+   |                            ^^^^^^^^^^^^^^^^^^^  ^^^
+
+warning: unused import: `static_cell::StaticCell`
+  --> src/main.rs:34:5
+   |
+34 | use static_cell::StaticCell;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `core::cell::RefCell`
+  --> src/main.rs:37:5
+   |
+37 | use core::cell::RefCell;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `critical_section`
+  --> src/main.rs:40:5
+   |
+40 | use critical_section;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `libreroaster::hardware::fan::FanController`
+  --> src/main.rs:45:5
+   |
+45 | use libreroaster::hardware::fan::FanController;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `libreroaster::hardware::ledc_bus::LedcBus`
+  --> src/main.rs:47:5
+   |
+47 | use libreroaster::hardware::ledc_bus::LedcBus;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `libreroaster::hardware::max31856::Max31856`
+  --> src/main.rs:49:5
+   |
+49 | use libreroaster::hardware::max31856::Max31856;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `libreroaster::hardware::shared_spi::SpiDeviceWithCs`
+  --> src/main.rs:51:5
+   |
+51 | use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `libreroaster::hardware::ssr::SsrControlSimple`
+  --> src/main.rs:53:5
+   |
+53 | use libreroaster::hardware::ssr::SsrControlSimple;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `esp_hal::ledc::channel`
+  --> src/main.rs:58:5
+   |
+58 | use esp_hal::ledc::channel;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `TimerIFace` and `self`
+  --> src/main.rs:60:28
+   |
+60 | use esp_hal::ledc::timer::{self, TimerIFace};
+   |                            ^^^^  ^^^^^^^^^^
+
+warning: unused imports: `LSGlobalClkSource`, `Ledc`, and `LowSpeed`
+  --> src/main.rs:62:21
+   |
+62 | use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
+   |                     ^^^^^^^^^^^^^^^^^  ^^^^  ^^^^^^^^
+
+warning: unused import: `esp_hal::time::Rate`
+  --> src/main.rs:66:5
+   |
+66 | use esp_hal::time::Rate;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: `libreroaster` (bin "libreroaster") generated 14 warnings (run `cargo fix --bin "libreroaster" -p libreroaster` to apply 14 suggestions)
+    Finished `release` profile [optimized + debuginfo] target(s) in 2.74s
+
+--- ELF artifact info ---
+-rwxrwxr-x 2 juan juan 3,0M mar 20 18:04 target/riscv32imc-unknown-none-elf/release/libreroaster
+
+--- espflash image command ---
+Chip type:         esp32c3
+Merge:             false
+Skip padding:      false
+App/part. size:    164,672/4,128,768 bytes, 3.99%
+[2026-03-20T17:04:36Z INFO ] Image successfully saved!
+
+--- .bin artifact info ---
+-rw-rw-r-- 1 juan juan 161K mar 20 18:04 libreroaster.bin
+Build run complete.

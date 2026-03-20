@@ -2,8 +2,8 @@ use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
 use crate::input::multiplexer::CommChannel;
 use core::fmt::Write;
-use core::sync::atomic::{AtomicU32, Ordering};
 use heapless::String;
+use portable_atomic::{AtomicU32, Ordering};
 
 pub const TRACE_EVENT_MAX_LEN: usize = 128;
 
