@@ -40,11 +40,15 @@ mod tests {
         #[cfg(target_arch = "riscv32")]
         {
             use ssr::SsrError;
-            let digital_err = SsrError::OutputError;
+            let digital_err = SsrError::OutputError {
+                source: "test",
+            };
             let _ = digital_err.kind(); // Should compile and return ErrorKind
         }
 
-        let fan_err = fan::FanError::InitializationError { source: "test" };
+        let fan_err = fan::FanError::InitializationError {
+            source: "test",
+        };
         let _ = fan_err.kind(); // Should compile and return ErrorKind
     }
 }

@@ -336,12 +336,14 @@ mod tests {
     }
 
     #[test]
-    fn test_error_conversion() {
-        let roaster_err = crate::control::RoasterError::TemperatureOutOfRange;
+    fn test_source_propagation_from_roaster_error() {
+        let roaster_err = crate::control::RoasterError::TemperatureOutOfRange {
+            source: Some("sensor_read"),
+        };
         let app_err = AppError::from(roaster_err);
 
-        assert!(matches!(app_err, AppError::Temperature { .. }));
-        assert!(app_err.requires_emergency_shutdown());
+        assert_eq!(app_err.source(), Some("temperature_out_of_range"));
+        assert!(format!("{}", app_err).contains("source:"));
     }
 
     #[test]
@@ -351,5 +353,15 @@ mod tests {
             source: TemperatureError::SensorFault,
         };
         assert_eq!(err.user_message(), "Temperature sensor malfunction");
+    }
+
+    #[test]
+    fn test_source_from_hardware_errors() {
+        let fan_err = crate::hardware::fan::FanError::PwmError {
+            source: "set_duty_failed",
+        };
+        let app_err = AppError::from(fan_err);
+
+        assert_eq!(app_err.source(), Some("fan_error"));
     }
 }

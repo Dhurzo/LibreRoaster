@@ -260,6 +260,7 @@ mod tests {
 
     #[test]
     fn test_spi_error_kind() {
+        use embedded_hal::spi::Error as _;
         let err = Max31856Error::CommunicationError {
             source: "test",
         };
