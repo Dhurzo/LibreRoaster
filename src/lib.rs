@@ -16,7 +16,7 @@ pub mod memory;
 pub mod output;
 pub mod safety;
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(all(not(target_arch = "riscv32"), any(test, feature = "test")))]
 mod host_time_driver;
 
 #[cfg(not(target_arch = "riscv32"))]
