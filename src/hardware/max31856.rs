@@ -131,7 +131,7 @@ where
 
         let temperature = convert_raw_temp(reading.raw_temp);
 
-        if temperature < -200.0 || temperature > 1350.0 {
+        if !(-200.0..=1350.0).contains(&temperature) {
             return Err(Max31856Error::InvalidTemperature {
                 source: "value_out_of_range",
             });
@@ -152,7 +152,7 @@ where
 
         let temperature = convert_raw_temp(reading.raw_temp);
 
-        if temperature < -200.0 || temperature > 1350.0 {
+        if !(-200.0..=1350.0).contains(&temperature) {
             return Err(Max31856Error::InvalidTemperature {
                 source: "value_out_of_range",
             });
@@ -223,9 +223,8 @@ where
         match self.spi.transaction(&mut operations) {
             Ok(_) => {
                 let mut result = [0u8; 3];
-                for i in 0..count.min(3) {
-                    result[i] = rx_buffer[i];
-                }
+                let len = count.min(3);
+                result[..len].copy_from_slice(&rx_buffer[..len]);
                 Ok(result)
             }
             Err(_) => Err(Max31856Error::CommunicationError {

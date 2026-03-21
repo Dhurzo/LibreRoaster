@@ -95,19 +95,15 @@ pub enum SafetyLevel {
 impl AppError {
     pub fn is_recoverable(&self) -> bool {
         match self {
-            AppError::Temperature { source, .. } => match source {
-                TemperatureError::ReadingTimeout | TemperatureError::InvalidValue => true,
-                _ => false,
-            },
-            AppError::Communication { source } => match source {
-                CommunicationError::TimeoutError => true,
-                _ => false,
-            },
+            AppError::Temperature { source, .. } => matches!(
+                source,
+                TemperatureError::ReadingTimeout | TemperatureError::InvalidValue
+            ),
+            AppError::Communication { source } => {
+                matches!(source, CommunicationError::TimeoutError)
+            }
             AppError::Hardware { .. } | AppError::Control { .. } => false,
-            AppError::Safety { severity } => match severity {
-                SafetyLevel::Warning => true,
-                _ => false,
-            },
+            AppError::Safety { severity } => matches!(severity, SafetyLevel::Warning),
             AppError::Initialization { .. } | AppError::Configuration { .. } => false,
         }
     }

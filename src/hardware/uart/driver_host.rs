@@ -35,6 +35,12 @@ impl UartDriver {
     }
 }
 
+impl Default for UartDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static UART_DRIVER: StaticCell<Option<UartDriver>> = StaticCell::new();
 
 struct SyncPointer<T>(UnsafeCell<T>);

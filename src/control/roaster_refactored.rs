@@ -367,7 +367,7 @@ impl RoasterControl {
     }
 
     pub fn is_temperature_valid(temp: f32) -> bool {
-        temp >= MIN_VALID_TEMP && temp <= MAX_VALID_TEMP
+        (MIN_VALID_TEMP..=MAX_VALID_TEMP).contains(&temp)
     }
 
     pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {

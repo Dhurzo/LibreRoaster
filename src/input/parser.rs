@@ -129,7 +129,7 @@ fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
         .parse::<f32>()
         .map_err(|_| ParseError::InvalidValue)?;
 
-    let was_clamped = value < 0.0 || value > 100.0;
+    let was_clamped = !(0.0..=100.0).contains(&value);
 
     // Round to nearest integer (0.5 rounds up)
     let rounded = if value >= 0.0 {

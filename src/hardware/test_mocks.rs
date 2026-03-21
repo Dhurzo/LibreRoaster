@@ -40,6 +40,12 @@ impl Thermometer for MockThermometer {
     }
 }
 
+impl Default for MockThermometer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Mock SSR/heater that exposes error injection for safe shutdown validation.
 #[derive(Debug, Clone)]
 pub struct MockSsr {
@@ -66,7 +72,7 @@ impl MockSsr {
 
 impl Heater for MockSsr {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        if let Some(error) = self.inject_error.clone() {
+        if let Some(error) = self.inject_error {
             return Err(RoasterError::from(error));
         }
 
@@ -84,6 +90,12 @@ impl Heater for MockSsr {
 
     fn last_retry_count(&self) -> u8 {
         0
+    }
+}
+
+impl Default for MockSsr {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -123,5 +135,11 @@ impl Fan for MockFan {
 
     fn get_speed(&self) -> f32 {
         self.current_speed
+    }
+}
+
+impl Default for MockFan {
+    fn default() -> Self {
+        Self::new()
     }
 }

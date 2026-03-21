@@ -73,6 +73,12 @@ impl<T, const N: usize> CommandQueue<T, N> {
     }
 }
 
+impl<T, const N: usize> Default for CommandQueue<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut COMMAND_PIPE: Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> = None;
 
 #[derive(Debug, Clone, PartialEq)]

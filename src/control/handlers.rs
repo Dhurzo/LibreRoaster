@@ -173,6 +173,12 @@ impl SafetyCommandHandler {
     }
 }
 
+impl Default for SafetyCommandHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoasterCommandHandler for SafetyCommandHandler {
     fn handle_command(
         &mut self,
@@ -301,6 +307,12 @@ impl ArtisanCommandHandler {
         let delta = direction * Self::HEATER_DELTA;
         let new_value = (current_value as i16 + delta as i16).clamp(0, 100);
         new_value as f32
+    }
+}
+
+impl Default for ArtisanCommandHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
