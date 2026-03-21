@@ -46,7 +46,7 @@ fn collect_commands() -> Vec<ArtisanCommand> {
     let mut commands = Vec::new();
 
     while let Ok(cmd) = channel.try_receive() {
-        commands.push(cmd);
+        commands.push(cmd.command);
     }
 
     commands
@@ -58,6 +58,9 @@ fn collect_output() -> Vec<StdString> {
     let mut messages = Vec::new();
 
     while let Ok(msg) = output_channel.try_receive() {
+        if msg.as_str().starts_with("TRACE,") {
+            continue;
+        }
         messages.push(StdString::from(msg.as_str()));
     }
 

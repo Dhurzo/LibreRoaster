@@ -1,6 +1,8 @@
 // GPIO Pin Assignments for LibreRoaster ESP32-C3
 // These pins are optimized for the ESP32-C3 capabilities and coffee roaster application
-// Note: GPIO2, GPIO8, GPIO9 are strapping pins and are NOT used to avoid boot issues
+// Note: ESP32-C3 has strapping pins (e.g. GPIO2/GPIO8/GPIO9). We avoid GPIO2/GPIO8.
+// GPIO9 is a strapping pin but is used for FAN PWM in this project; ensure the external fan driver
+// does not force an invalid strap level during reset/boot.
 
 pub const SPI_SCLK_PIN: u8 = 7;
 pub const SPI_MOSI_PIN: u8 = 5;

@@ -33,7 +33,7 @@ impl QueueProcessorMetrics {
         });
     }
 
-    fn reset(&self) {
+    pub fn reset(&self) {
         critical_section::with(|cs| {
             self.queue_depth.borrow(cs).set(0);
             self.max_depth.borrow(cs).set(0);
@@ -48,6 +48,12 @@ impl QueueProcessorMetrics {
             backlog_events: self.backlog_events.borrow(cs).get(),
             threshold: QUEUE_DEPTH_BACKLOG_THRESHOLD,
         })
+    }
+}
+
+impl Default for QueueProcessorMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

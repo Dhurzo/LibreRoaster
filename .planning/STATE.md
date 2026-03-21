@@ -2,24 +2,24 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-12)
+See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Milestone v5.1 complete — Ready for next milestone
+**Current focus:** Planning the next milestone (safe-shutdown artifact replay automation + remaining diagnostics coverage)
 
 ## Current Position
 
-Phase: None (milestone complete)
-Plan: Not started
-Status: Ready to plan next milestone
-Last activity: 2026-03-12 — v5.1 milestone archived
+Phase: Planning next milestone (post-v5.2)
+Plan: Requirements/planning stage for safe-shutdown replay automation
+Status: Ready to plan
+Last activity: 2026-03-20 — v5.2 milestone complete
 
-Progress: [████████████████████] 100% (v5.1)
+Progress: ██████████ 100% (168/168 plans complete)
 
 ## Performance Metrics
 
 - **Velocity:**
-- Total plans completed: 33 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans)
+- Total plans completed: 38 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans, phase 95: 1 plan, phase 96: 3 plans, phase 97: 3 plans, phase 98: 3 plans, phase 99: 2 plans, phase 100: 3 plans)
 
 **By Phase:**
 
@@ -39,6 +39,12 @@ Progress: [████████████████████] 100% (v
 | 92 | 1/1 | 1 | Phase complete |
 | 93 | 3/3 | 3 | Phase complete |
 | 94 | 2/2 | 2 | Phase complete |
+| 95 | 1/1 | 1 | Phase complete |
+| 96 | 5/5 | 5 | Phase complete (plans 96-01..96-05 verified) |
+| 97 | 3/3 | 3 | Phase complete |
+| 98 | 3/3 | 3 | Phase complete |
+| 99 | 2/2 | 2 | Phase complete |
+| 100 | 3/3 | 3 | Phase complete |
 
 ## Accumulated Context
 
@@ -70,22 +76,46 @@ Progress: [████████████████████] 100% (v
 - [93-03] Verified flash command syntax correct; binary path references accurate; documented complete E2E build → flash workflow in README.md; binary production still blocked by main.rs bugs.
 - [94-01] Updated README.md version header from v5.0 to v5.1 (2026-03-12); milestone reflects v5.1 in progress; Next updated to v5.2 (TBD).
 - [94-02] Updated STATUS command description to reference all 18 CSV fields; includes PID state, flags, and latency metrics; references INSTRUMENTATION_README.MD for complete definitions.
+- [95-01] Fixed critical build blocker by removing duplicate embassy-time symbol definitions from lib.rs; build now produces flashable .bin binary (146K).
+- [96-01] Added source fields to all error enums with &'static str for zero-allocation diagnostics; implemented custom AppError.source() method for error chain navigation (std::error::Error unavailable in no_std).
+- [96-02] All hardware error variants map to ErrorKind::Other (most appropriate for domain-specific errors).
+- [96-03] Created InitPeripherals struct to work around private esp_hal::Peripherals; Safe shutdown blinks GPIO8 LED (3 short blinks, pause, repeat).
+- TRACE instrumentation now shares the Artisan output channel so hosts ingest control and trace data together.
+- Every Artisan command now travels as a `TracedCommand`, letting queue, actuator, telemetry, and guard events share one TraceId.
+- [98-02] Validation runner now organizes tests/hardware/runs/{scenario}/{timestamp} and metadata so analysis can consistently map telemetry to manifest entries.
+- [98-02] Analysis reports now cite scenario descriptions, command sequences, thresholds, and golden outputs to demonstrate audit alignment.
+- [98-03] Reports now embed manifest scenario metadata, golden artifact links, and threshold verdict badges so auditors can trace every scenario end-to-end.
+- [98-03] HIL playbook + README guidance document the manifest reader, validation_runner/analysis CLI flags, artifact bundling, retention, and safety notes required for HW-03 sign-off.
+- [100-01] Verified that error struct variants (RoasterError, Max31856Error) with source fields were already implemented in Phase 96-01; all AppError conversion paths confirmed working with no dead arms.
+- [100-02] Extended TRACE helpers (trace_telemetry, trace_guard) to accept Option<&AppError> and format error_category/error_source fields when AppError is present; control loop now captures RoasterError and converts to AppError for diagnostics.
+- [100-03] Enhanced safe shutdown with structured InitError logging (what/reason fields), LED heartbeat maintained on embassy_time timers, and Artisan-formatted error events (ERR 99) for host/telemetry correlation.
+- [101-02] Updated TRACE documentation and parser guidance so instrumentation and regression triage workflows reference the actual queue_enqueue/queue_fallback/actuation/telemetry/guard vocabulary.
+- [104-01] Replay automation must cross-check metadata.json guard fields (TraceId/watchdog_failure/error_category/error_source) whenever the artifact is reprocessed.
+- [104-01] Expose replay results via `--report` so CI/audit automation can assert metadata fidelity and persist evidence.
 
 ### Pending Todos
 
-- None (Milestone v5.1 complete)
+- Plan Phase 104: Safe-Shutdown Artifact Replay Automation (DIAG-01) and capture CLI/tests/docs in `/gsd-new-milestone`.
+- Refresh the diagnostics replay automation artifacts (`safe-shutdown-replay.zip`, `traceability-replay.csv`, `replay-report.json`) for archival evidence.
+
 
 ### Blockers/Concerns
 
-- **CRITICAL**: Pre-existing code issue in main.rs prevents successful builds with --features embedded flag
-  - Missing generic arguments on SsrControlSimple type
-  - Missing #[esp_rtos::main] attribute on entry function
-  - Multiple undefined variable references
-  - Requires separate code-level fix (not documentation)
-- Note: Documentation fix (--features embedded) is verified correct; binary target enabled but cannot compile
+- **RESOLVED ✅**: Critical build blocker fixed in Phase 95-01
+  - Removed duplicate embassy-time symbol definitions from lib.rs
+  - Build now produces flashable .bin binary (146K)
+  - Command: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`
+  - Binary ready for flashing with espflash
+
+- **RESOLVED ✅**: Error source chaining infrastructure complete (Phase 96-01)
+  - All error enums have source fields with &'static str for zero-allocation diagnostics
+  - AppError.source() method implemented for error chain navigation (no_std compatible)
+  - Display implementations show source context with "source: X" pattern
+  - Unit tests verify source propagation across hardware -> control -> app boundaries
+  - All deviation issues fixed during execution (duplicate impls, test code, lifetime issues)
 
 ## Session Continuity
 
-Last session: 2026-03-12T20:00:26Z
-Stopped at: Completed 94-02-PLAN.md (STATUS 18 fields reference)
+Last session: 2026-03-20T22:17:59Z
+Stopped at: Completed 104-01-PLAN.md
 Resume file: None

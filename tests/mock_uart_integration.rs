@@ -17,6 +17,7 @@ use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
 use libreroaster::input::ArtisanInput;
+use libreroaster::logging::traceability::TRACE_EVENT_MAX_LEN;
 use libreroaster::output::artisan::ArtisanFormatter;
 
 #[path = "common/mod.rs"]
@@ -34,8 +35,6 @@ unsafe impl critical_section::Impl for TestCriticalSection {
 
     unsafe fn release(_restore_state: RawRestoreState) {}
 }
-
-static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
 
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
@@ -73,6 +72,9 @@ fn collect_output() -> Vec<StdString> {
     let mut messages = Vec::new();
 
     while let Ok(msg) = output_channel.try_receive() {
+        if msg.as_str().starts_with("TRACE,") {
+            continue;
+        }
         messages.push(StdString::from(msg.as_str()));
     }
 
@@ -84,7 +86,7 @@ fn collect_commands() -> Vec<ArtisanCommand> {
     let mut commands = Vec::new();
 
     while let Ok(cmd) = channel.try_receive() {
-        commands.push(cmd);
+        commands.push(cmd.command);
     }
 
     commands
@@ -95,7 +97,7 @@ fn drain_and_process_commands() {
         let command = {
             let channel = ServiceContainer::get_artisan_channel();
             match channel.try_receive() {
-                Ok(cmd) => cmd,
+                Ok(cmd) => cmd.command,
                 Err(_) => break,
             }
         };
@@ -110,13 +112,14 @@ fn drain_and_process_commands() {
                             &status,
                             roaster.get_fan_speed(),
                         );
-                        if let Ok(line) = String::<128>::try_from(response.as_str()) {
+                        if let Ok(line) = String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
+                        {
                             let _ = output_channel.try_send(line);
                         }
                     }
                 }
                 Err(err) => {
-                    let mut message = String::<128>::new();
+                    let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
                     let _ = message.push_str("ERR handler_failed ");
                     let _ = message.push_str(err.message_token());
                     let _ = output_channel.try_send(message);

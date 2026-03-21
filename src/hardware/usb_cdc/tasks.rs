@@ -1,11 +1,13 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
-use crate::config::ArtisanCommand;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
 use crate::log_channel;
 use crate::logging::channel::Channel;
+use crate::logging::traceability::{
+    trace_command_enqueue, trace_queue_dequeue, TracedCommand, TRACE_EVENT_MAX_LEN,
+};
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -21,7 +23,7 @@ pub const USB_COMMAND_PIPE_SIZE: usize = 256;
 /// Command queue for USB FIFO processing - reject-on-full behavior
 static USB_COMMAND_QUEUE: BlockingMutex<
     CriticalSectionRawMutex,
-    RefCell<Option<CommandQueue<ArtisanCommand, COMMAND_QUEUE_SIZE>>>,
+    RefCell<Option<CommandQueue<TracedCommand, COMMAND_QUEUE_SIZE>>>,
 > = BlockingMutex::new(RefCell::new(None));
 
 #[cfg(all(test, target_arch = "riscv32"))]
@@ -30,8 +32,8 @@ pub fn init_usb_command_queue_for_test() {
 }
 
 #[cfg(all(test, target_arch = "riscv32"))]
-pub fn drain_usb_command_queue_for_test() -> Vec<ArtisanCommand, USB_COMMAND_PIPE_SIZE> {
-    let mut drained: Vec<ArtisanCommand, USB_COMMAND_PIPE_SIZE> = Vec::new();
+pub fn drain_usb_command_queue_for_test() -> Vec<TracedCommand, USB_COMMAND_PIPE_SIZE> {
+    let mut drained: Vec<TracedCommand, USB_COMMAND_PIPE_SIZE> = Vec::new();
 
     USB_COMMAND_QUEUE.lock(|cell| {
         if let Some(queue) = cell.borrow_mut().as_mut() {
@@ -103,9 +105,11 @@ fn handle_complete_usb_command(command: &[u8]) {
 
     match parse_result {
         Ok(cmd) => {
+            let traced = TracedCommand::new(cmd, CommChannel::Usb);
             let mut depth = 0;
             let mut should_process = true;
             let mut use_channel = false;
+            let mut queued = false;
 
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
@@ -117,9 +121,10 @@ fn handle_complete_usb_command(command: &[u8]) {
                 if should_process {
                     USB_COMMAND_QUEUE.lock(|cell| {
                         if let Some(queue) = cell.borrow_mut().as_mut() {
-                            match queue.try_push(cmd) {
+                            match queue.try_push(traced) {
                                 Ok(()) => {
                                     depth = queue.len();
+                                    queued = true;
                                 }
                                 Err(QueueError::Full) => {
                                     debug!("USB command queue full, rejecting command");
@@ -130,11 +135,17 @@ fn handle_complete_usb_command(command: &[u8]) {
                             use_channel = true;
                         }
                     });
-                    if use_channel {
-                        let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
-                    }
                 }
             });
+
+            if should_process {
+                if queued {
+                    trace_command_enqueue(&traced, depth, false);
+                } else if use_channel {
+                    trace_command_enqueue(&traced, depth, true);
+                    let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+                }
+            }
             record_queue_depth(depth);
         }
         Err(error) => {
@@ -158,7 +169,7 @@ fn send_usb_parse_error(error: ParseError) {
 
         if should_write {
             let output_channel = ServiceContainer::get_output_channel();
-            let mut message = String::<128>::new();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = message.push_str("ERR ");
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
@@ -187,6 +198,7 @@ pub async fn usb_queue_processor_task() {
         record_queue_depth(queue_depth);
 
         if let Some(cmd) = cmd_opt {
+            trace_queue_dequeue(&cmd, queue_depth);
             let channel = ServiceContainer::get_artisan_channel();
             channel.send(cmd).await;
         }

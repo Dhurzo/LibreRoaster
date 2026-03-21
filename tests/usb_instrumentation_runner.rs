@@ -26,7 +26,7 @@ fn collect_artisan_commands() -> Vec<ArtisanCommand> {
     let mut commands = Vec::new();
 
     while let Ok(command) = channel.try_receive() {
-        commands.push(command);
+        commands.push(command.command);
     }
 
     commands
@@ -78,10 +78,12 @@ fn usb_instrumentation_runner_exercises_process_helper() {
         "Artisan channel read should observe ReadStatus"
     );
 
-    assert!(
-        ServiceContainer::get_output_channel()
-            .try_receive()
-            .is_err(),
-        "No ERR output should be emitted"
-    );
+    let output_channel = ServiceContainer::get_output_channel();
+    while let Ok(line) = output_channel.try_receive() {
+        assert!(
+            line.as_str().starts_with("TRACE,"),
+            "Unexpected non-TRACE output: {}",
+            line.as_str()
+        );
+    }
 }

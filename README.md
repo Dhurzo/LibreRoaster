@@ -108,6 +108,16 @@ mocouple amplifier boards |
 | SSR | Solid State Relay for heater control |
 | Fan | Variable speed fan (PWM controlled) |
 
+### HIL Validation and Golden Outputs
+
+HW-03 requires every manifest-driven HIL scenario to produce artifact-backed evidence. This HIL validation workflow is the authoritative path for capturing golden outputs, so follow `tests/hardware/HIL-PLAYBOOK.md` to:
+
+- Select a scenario from `tests/hardware/scenario_manifest.json` and run `tests/hardware/validation_runner.py` using the `--manifest`, `--scenario`, and `--runs-dir` flags so telemetry and metadata land under `tests/hardware/runs/`.
+- Run `tests/hardware/analysis.py` with `--thresholds tests/hardware/thresholds.json` and `--template tests/hardware/report_template.md` to generate a report that embeds scenario metadata, golden artifact links, PASS/FAIL badges, and run metadata for auditors.
+- Bundle the CSV, metadata JSON, markdown report, and manifest entry into a tarball so auditors can verify the path from scenario manifest → telemetry → golden artifact.
+
+Approved golden CSVs live in `tests/hardware/goldens/` and must include the `metadata.retention_days` value specified in the manifest so artifact retention matches HW-03 expectations.
+
 ## Pinout
 
 | GPIO | Function | Description | Note |
@@ -267,6 +277,8 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
 **Output location:** `target/riscv32imc-unknown-none-elf/release/libreroaster.bin`
+
+**Audit:** The `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command is documented in [.planning/phases/95-fix-critical-blockers/95-VERIFICATION.md](.planning/phases/95-fix-critical-blockers/95-VERIFICATION.md), which proves the embedded ELF (`target/riscv32imc-unknown-none-elf/release/libreroaster`) and `.bin` (`target/riscv32imc-unknown-none-elf/release/libreroaster.bin`) artifacts were produced as part of BUILD-01. Rerun the same command to reproduce those binaries and review the audit log for timestamps and artifact sizes.
 
 > **Note:** The `--target riscv32imc-unknown-none-elf` flag is required because LibreRoaster is an embedded application (no stdlib), not a host application.
 

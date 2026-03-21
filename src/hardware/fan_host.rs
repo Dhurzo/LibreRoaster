@@ -3,10 +3,16 @@ use crate::control::RoasterError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanError {
-    InitializationError,
-    InvalidSpeed,
-    PwmError,
-    LedcError,
+    InitializationError { source: &'static str },
+    InvalidSpeed { source: &'static str },
+    PwmError { source: &'static str },
+    LedcError { source: &'static str },
+}
+
+impl embedded_hal::digital::Error for FanError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
 }
 
 pub struct FanController {
@@ -49,7 +55,9 @@ impl Default for FanController {
 impl Fan for FanController {
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_speed(duty)
-            .map_err(|_| RoasterError::HardwareError)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_set_failed"),
+            })
     }
 
     fn get_speed(&self) -> f32 {

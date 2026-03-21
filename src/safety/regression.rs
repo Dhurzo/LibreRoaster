@@ -3,6 +3,7 @@ mod target_impl {
     use crate::application::service_container::{ContainerError, ServiceContainer};
     use crate::config::{ArtisanCommand, SystemStatus, WATCHDOG_FEED_INTERVAL_MS};
     use crate::hardware::sensors::conversion::{FixtureReading, SensorConversionHub, SensorSample};
+    use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
     use crate::memory::SAFETY_ERROR_MSG_MAX_LEN;
     use crate::output::artisan::ArtisanFormatter;
     use embassy_executor::{task, Spawner};
@@ -72,7 +73,7 @@ mod target_impl {
                 self.replay_fixture(fixture).await;
             }
 
-            let mut safety = String::<128>::new();
+            let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = safety.push_str("SAFETY OT-REGRESSION");
             let _ = ServiceContainer::get_output_channel().try_send(safety);
 

@@ -3,6 +3,9 @@ use crate::application::service_container::ServiceContainer;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
+use crate::logging::traceability::{
+    trace_command_enqueue, trace_queue_dequeue, TracedCommand, TRACE_EVENT_MAX_LEN,
+};
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -35,7 +38,7 @@ static EVENT_QUEUE: BlockingMutex<
 /// Command queue for FIFO processing - reject-on-full behavior
 static COMMAND_QUEUE: BlockingMutex<
     CriticalSectionRawMutex,
-    RefCell<Option<CommandQueue<crate::config::ArtisanCommand, COMMAND_QUEUE_SIZE>>>,
+    RefCell<Option<CommandQueue<TracedCommand, COMMAND_QUEUE_SIZE>>>,
 > = BlockingMutex::new(RefCell::new(None));
 
 fn take_pipe() -> Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> {
@@ -142,9 +145,11 @@ fn handle_command_data_internal(data: &[u8]) {
 
     match parse_result {
         Ok(cmd) => {
+            let traced = TracedCommand::new(cmd, CommChannel::Uart);
             let mut depth = 0;
             let mut should_process = true;
             let mut use_channel = false;
+            let mut queued = false;
 
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
@@ -156,9 +161,10 @@ fn handle_command_data_internal(data: &[u8]) {
                 if should_process {
                     COMMAND_QUEUE.lock(|cell| {
                         if let Some(queue) = cell.borrow_mut().as_mut() {
-                            match queue.try_push(cmd) {
+                            match queue.try_push(traced) {
                                 Ok(()) => {
                                     depth = queue.len();
+                                    queued = true;
                                 }
                                 Err(QueueError::Full) => {
                                     debug!("UART command queue full, rejecting command");
@@ -169,11 +175,17 @@ fn handle_command_data_internal(data: &[u8]) {
                             use_channel = true;
                         }
                     });
-                    if use_channel {
-                        let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
-                    }
                 }
             });
+
+            if should_process {
+                if queued {
+                    trace_command_enqueue(&traced, depth, false);
+                } else if use_channel {
+                    trace_command_enqueue(&traced, depth, true);
+                    let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+                }
+            }
             record_queue_depth(depth);
         }
         Err(error) => {
@@ -198,7 +210,7 @@ fn send_parse_error_internal(error: ParseError) {
 
         if should_write {
             let output_channel = ServiceContainer::get_output_channel();
-            let mut message = String::<128>::new();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = message.push_str("ERR ");
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
@@ -233,15 +245,16 @@ pub async fn uart_writer_task() {
 
 pub async fn send_response(response: &str) -> Result<(), crate::input::InputError> {
     let output_channel = ServiceContainer::get_output_channel();
-    let line =
-        String::<128>::try_from(response).map_err(|_| crate::input::InputError::BufferFull)?;
+    let line = String::<TRACE_EVENT_MAX_LEN>::try_from(response)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
     let _ = output_channel.try_send(line);
     Ok(())
 }
 
 pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
     let output_channel = ServiceContainer::get_output_channel();
-    let line = String::<128>::try_from(data).map_err(|_| crate::input::InputError::BufferFull)?;
+    let line = String::<TRACE_EVENT_MAX_LEN>::try_from(data)
+        .map_err(|_| crate::input::InputError::BufferFull)?;
     let _ = output_channel.try_send(line);
     Ok(())
 }
@@ -266,6 +279,7 @@ pub async fn queue_processor_task() {
         record_queue_depth(queue_depth);
 
         if let Some(cmd) = cmd_opt {
+            trace_queue_dequeue(&cmd, queue_depth);
             let channel = ServiceContainer::get_artisan_channel();
             channel.send(cmd).await;
         }

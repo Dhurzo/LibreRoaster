@@ -17,7 +17,9 @@ pub struct TemperatureCommandHandler {
 
 impl TemperatureCommandHandler {
     pub fn new() -> Result<Self, RoasterError> {
-        let pid = CoffeeRoasterPid::new().map_err(|_| RoasterError::PidError)?;
+        let pid = CoffeeRoasterPid::new().map_err(|_| RoasterError::PidError {
+            source: Some("pid_init_failed"),
+        })?;
 
         Ok(Self {
             pid_controller: pid,
@@ -38,7 +40,9 @@ impl TemperatureCommandHandler {
     pub fn set_pid_target(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.pid_controller
             .set_target(target_temp)
-            .map_err(|_| RoasterError::PidError)?;
+            .map_err(|_| RoasterError::PidError {
+                source: Some("set_target_failed"),
+            })?;
         Ok(())
     }
 
@@ -125,7 +129,9 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("invalid_command_for_mode"),
+            }),
         }
     }
 
@@ -161,7 +167,15 @@ impl SafetyCommandHandler {
     pub fn trigger_emergency(&mut self, reason: &str) -> Result<(), RoasterError> {
         warn!("EMERGENCY SHUTDOWN: {}", reason);
         self.emergency_flag = true;
-        Err(RoasterError::TemperatureOutOfRange)
+        Err(RoasterError::TemperatureOutOfRange {
+            source: Some("emergency_shutdown"),
+        })
+    }
+}
+
+impl Default for SafetyCommandHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -189,7 +203,9 @@ impl RoasterCommandHandler for SafetyCommandHandler {
                 self.trigger_emergency("Artisan+ emergency stop")
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
@@ -294,6 +310,12 @@ impl ArtisanCommandHandler {
     }
 }
 
+impl Default for ArtisanCommandHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoasterCommandHandler for ArtisanCommandHandler {
     fn handle_command(
         &mut self,
@@ -305,7 +327,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
             RoasterCommand::SetHeaterManual(value) => {
                 if value > 100 {
                     warn!("Ignoring manual heater value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState);
+                    return Err(RoasterError::InvalidState {
+                        source: Some("heater_value_exceeds_100"),
+                    });
                 }
 
                 status.artisan_control = true;
@@ -320,7 +344,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
             RoasterCommand::SetFanManual(value) => {
                 if value > 100 {
                     warn!("Ignoring manual fan value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState);
+                    return Err(RoasterError::InvalidState {
+                        source: Some("fan_value_exceeds_100"),
+                    });
                 }
 
                 status.artisan_control = true;
@@ -358,7 +384,9 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
@@ -483,7 +511,9 @@ impl RoasterCommandHandler for SystemCommandHandler {
                 Ok(())
             }
 
-            _ => Err(RoasterError::InvalidState),
+            _ => Err(RoasterError::InvalidState {
+                source: Some("command_not_supported"),
+            }),
         }
     }
 
@@ -495,31 +525,6 @@ impl RoasterCommandHandler for SystemCommandHandler {
 #[cfg(test)]
 mod artisan_command_handler_tests {
     use super::*;
-    use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
-
-    fn create_test_status() -> SystemStatus {
-        SystemStatus {
-            state: RoasterState::Stable,
-            bean_temp: 150.5,
-            env_temp: 120.3,
-            target_temp: 200.0,
-            ssr_output: 50.0,
-            fan_output: 50.0,
-            pid_enabled: false,
-            artisan_control: false,
-            fault_condition: false,
-            ssr_hardware_status: SsrHardwareStatus::Available,
-            ssr_last_duty_delta_ticks: 0,
-            ssr_retry_count: 0,
-            ssr_cycle_guard_busy_until_ms: 0,
-            watchdog_feed_ok: true,
-            watchdog_last_failure: None,
-            watchdog_consecutive_failures: 0,
-            ledc_guard_timeouts: 0,
-            overtemp_regression_active: false,
-            ..SystemStatus::default()
-        }
-    }
 
     #[test]
     fn test_heater_delta_constant() {

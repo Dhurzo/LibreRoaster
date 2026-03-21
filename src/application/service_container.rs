@@ -1,7 +1,7 @@
-use crate::config::ArtisanCommand;
 use crate::control::RoasterControl;
 use crate::input::multiplexer::CommandMultiplexer;
 use crate::input::ArtisanInput;
+use crate::logging::traceability::{TracedCommand, TRACE_EVENT_MAX_LEN};
 use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -24,12 +24,12 @@ pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 8;
 pub const ARTISAN_OUTPUT_CHANNEL_SIZE: usize = 16;
 static ARTISAN_CMD_CHANNEL: Channel<
     CriticalSectionRawMutex,
-    ArtisanCommand,
+    TracedCommand,
     ARTISAN_CMD_CHANNEL_SIZE,
 > = Channel::new();
 static ARTISAN_OUTPUT_CHANNEL: Channel<
     CriticalSectionRawMutex,
-    String<128>,
+    String<TRACE_EVENT_MAX_LEN>,
     ARTISAN_OUTPUT_CHANNEL_SIZE,
 > = Channel::new();
 static ARTISAN_MULTIPLEXER: Mutex<RefCell<Option<CommandMultiplexer>>> =
@@ -37,12 +37,15 @@ static ARTISAN_MULTIPLEXER: Mutex<RefCell<Option<CommandMultiplexer>>> =
 
 impl ServiceContainer {
     pub fn get_artisan_channel(
-    ) -> &'static Channel<CriticalSectionRawMutex, ArtisanCommand, ARTISAN_CMD_CHANNEL_SIZE> {
+    ) -> &'static Channel<CriticalSectionRawMutex, TracedCommand, ARTISAN_CMD_CHANNEL_SIZE> {
         &ARTISAN_CMD_CHANNEL
     }
 
-    pub fn get_output_channel(
-    ) -> &'static Channel<CriticalSectionRawMutex, String<128>, ARTISAN_OUTPUT_CHANNEL_SIZE> {
+    pub fn get_output_channel() -> &'static Channel<
+        CriticalSectionRawMutex,
+        String<TRACE_EVENT_MAX_LEN>,
+        ARTISAN_OUTPUT_CHANNEL_SIZE,
+    > {
         &ARTISAN_OUTPUT_CHANNEL
     }
 
@@ -240,7 +243,7 @@ impl ServiceContainer {
     }
 
     pub fn get_command_sender(
-    ) -> embassy_sync::channel::Sender<'static, CriticalSectionRawMutex, ArtisanCommand, 8> {
+    ) -> embassy_sync::channel::Sender<'static, CriticalSectionRawMutex, TracedCommand, 8> {
         ARTISAN_CMD_CHANNEL.sender()
     }
 }

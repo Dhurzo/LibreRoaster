@@ -62,6 +62,12 @@ impl LedcGuard {
     }
 }
 
+impl Default for LedcGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for LedcGuardToken<'_> {
     fn drop(&mut self) {
         self.guard.locked.store(false, Ordering::Release);

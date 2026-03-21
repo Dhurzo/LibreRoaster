@@ -44,7 +44,9 @@ where
 
     pwm_channel
         .set_duty(commanded)
-        .map_err(|_| SsrError::PwmError)?;
+        .map_err(|_| SsrError::PwmError {
+            source: "set_duty_failed",
+        })?;
 
     let rechecked = pwm_channel.read_duty_ticks();
     let new_delta = rechecked as i16 - commanded as i16;
@@ -55,7 +57,9 @@ where
             "LEDC duty mismatch persists after retry: commanded {} ticks vs actual {} ticks (delta {} ticks)",
             commanded, rechecked, new_delta
         );
-        return Err(SsrError::PwmError);
+        return Err(SsrError::PwmError {
+            source: "duty_mismatch_after_retry",
+        });
     }
 
     Ok(())
@@ -63,10 +67,10 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SsrError {
-    OutputError,
-    InputError,
-    HeatSourceNotDetected,
-    PwmError,
+    OutputError { source: &'static str },
+    InputError { source: &'static str },
+    HeatSourceNotDetected { source: &'static str },
+    PwmError { source: &'static str },
 }
 
 impl embedded_hal::digital::Error for SsrError {
@@ -167,7 +171,9 @@ impl SsrControlBase {
                     error!("SSR detection pin error - switching to error state");
                     self.hardware_status = SsrHardwareStatus::Error;
                 }
-                Err(SsrError::InputError)
+                Err(SsrError::InputError {
+                    source: "detection_pin_read_failed",
+                })
             }
         }
     }
@@ -234,8 +240,12 @@ where
         detection_pin: DETECT,
         pwm_channel: PWM,
     ) -> Result<Self, SsrError> {
-        pin.set_low().map_err(|_| SsrError::OutputError)?;
-        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError)?;
+        pin.set_low().map_err(|_| SsrError::OutputError {
+            source: "pin_init_failed",
+        })?;
+        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError {
+            source: "channel_init_failed",
+        })?;
 
         let mut ssr = SsrControl {
             pin,
@@ -285,7 +295,9 @@ where
 
         self.pwm_channel
             .set_duty(ledc_duty)
-            .map_err(|_| SsrError::PwmError)?;
+            .map_err(|_| SsrError::PwmError {
+                source: "set_duty_failed",
+            })?;
 
         monitor_ledc_after_set(
             &mut self.pwm_channel,
@@ -322,7 +334,9 @@ where
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     pub fn new(detection_pin: DETECT, pwm_channel: PWM) -> Result<Self, SsrError> {
-        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError)?;
+        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError {
+            source: "channel_init_failed",
+        })?;
 
         let mut ssr = SsrControlSimple {
             detection_pin,
@@ -377,7 +391,9 @@ where
 
         self.pwm_channel
             .set_duty(ledc_duty)
-            .map_err(|_| SsrError::PwmError)?;
+            .map_err(|_| SsrError::PwmError {
+                source: "set_duty_failed",
+            })?;
 
         monitor_ledc_after_set(
             &mut self.pwm_channel,
@@ -483,7 +499,9 @@ where
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         self.set_percentage(duty)
-            .map_err(|_| RoasterError::HardwareError)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("ssr_set_power"),
+            })
     }
 
     fn get_status(&self) -> GlobalSsrStatus {
@@ -568,7 +586,9 @@ where
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
         StatusGetters::get_hardware_status(self);
-        SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError)
+        SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError {
+            source: Some("ssr_control_set_percentage"),
+        })
     }
 
     fn get_status(&self) -> GlobalSsrStatus {
@@ -630,5 +650,14 @@ mod tests {
     fn guard_constants_are_locked() {
         assert_eq!(SSR_CYCLE_GUARD_MS, 1000);
         assert_eq!(SSR_DUTY_TOLERANCE_TICKS, 2);
+    }
+
+    #[test]
+    fn test_digital_error_kind() {
+        let err = SsrError::OutputError;
+        assert!(matches!(
+            err.kind(),
+            embedded_hal::digital::ErrorKind::Other
+        ));
     }
 }

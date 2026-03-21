@@ -9,12 +9,13 @@
 //! SensorRead->ControlUpdate->LedcWrite->WatchdogFeed->TelemetryEmit sequence
 //! even under fault conditions.
 
+use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
 use core::fmt::Write;
 use heapless::String;
 
 /// Maximum length for stage reporter output strings.
 /// Sufficient for: "STAGE,TelemetryEmit,elapsed=98ms,guard=0,watchdog=ok,failure=timeout"
-pub const STAGE_REPORT_MAX_LEN: usize = 128;
+pub const STAGE_REPORT_MAX_LEN: usize = TRACE_EVENT_MAX_LEN;
 
 /// Control loop stages that the reporter tracks.
 /// These must match the stages in tasks.rs.

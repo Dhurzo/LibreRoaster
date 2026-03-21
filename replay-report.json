@@ -1,0 +1,19 @@
+{
+  "artifact": "logs/traceability/safe-shutdown-replay.zip",
+  "csv": "logs/traceability/traceability-replay.csv",
+  "report": "replay-report.json",
+  "metadata_match": true,
+  "replayed_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "artifact_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "mismatch_details": []
+}

@@ -13,7 +13,6 @@
 //! use crate::control::traits::{Fan, Heater, Thermometer};
 //! ```
 
-use alloc::{string::String, vec::Vec};
 use core::cell::RefCell;
 
 use crate::config::constants::SsrHardwareStatus;
@@ -267,49 +266,4 @@ impl Thermometer for StubThermometer {
             .push(ThermometerCall::ReadTemperature);
         Ok(*self.temp.borrow())
     }
-}
-
-// ============================================================================
-// Helper functions for test isolation
-// ============================================================================
-
-/// Reset any global channels/state used for test isolation.
-///
-/// This is a placeholder that can be extended when the project
-/// has global state that needs resetting between tests.
-///
-/// # Example
-///
-/// ```rust
-/// #[test]
-/// fn my_test() {
-///     reset_channels();
-///     // test code...
-/// }
-/// ```
-
-pub fn reset_channels() {
-    // Placeholder for future channel reset implementation
-    // Currently no global channels need resetting in tests
-}
-
-/// Collect output messages from the output channel.
-///
-/// This is a placeholder that can be extended when the project
-/// has an output channel to collect from.
-///
-/// # Example
-///
-/// ```rust
-/// #[test]
-/// fn my_test() {
-///     let outputs = collect_output();
-///     assert!(outputs.is_empty());
-/// }
-/// ```
-
-pub fn collect_output() -> Vec<String> {
-    // Placeholder for future output collection implementation
-    // Currently returns empty vector
-    Vec::new()
 }

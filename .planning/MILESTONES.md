@@ -1,5 +1,29 @@
 # Project Milestones: LibreRoaster
 
+## v5.2 Architecture Hardening & Validation (Shipped: 2026-03-20)
+
+**Delivered:** Fixed the embedded build pipeline, normalized the error taxonomy from hardware through AppError, captured TRACE traceability evidence, and proved diagnostics + HIL validation artifacts so the next phase can focus on safe-shutdown replay automation.
+
+**Phases completed:** 95-103 (21 plans total)
+
+**Key accomplishments:**
+- Removed the duplicate embassy-time stubs so `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` produces a flashable `.bin` and documented the audited command.
+- Implemented `RoasterError`/`AppError` conversions, hardware mocks, and expanded AppError tests so diagnostics now carry `error_category`/`error_source` from sensor → control → guard.
+- Instrumented the full TRACE flow, updated the parser, and documented TraceId-driven regression playback for queue → actuation → telemetry → guard.
+- Built manifest-aware HIL validation runs with analysis/playbook, then archived every artifact with the safe-shutdown log + metadata for auditors.
+- Anchored DIAG-01 by packaging `safe-shutdown-replay.zip`, regenerating `traceability-replay.csv`, and emitting `replay-report.json` for guard metadata verification.
+
+**Stats:**
+- ~70 files touched (firmware, instrumentation, docs, automation)
+- 9 phases, 21 plans, ~30+ tasks (control + diagnostics + docs)
+- 5 weeks of cross-team work culminating in the verification artifacts.
+
+**Git range:** `feat(95-01)` → `feat(103-01)`
+
+**What’s next:** `/gsd-new-milestone` to plan the safe-shutdown replay automation + next diagnostics chapter.
+
+---
+
 ## v4.1 Documentation Update (Shipped: 2026-02-23)
 
 **Delivered:** Finalized the documentation cleanup, closed audit gaps, shipped Watchdog/LEDC/regression instrumentation observability, published the STATUS automation snapshot, linked REG/STATUS hooks, and aligned the regression helper API with its actual consumers.

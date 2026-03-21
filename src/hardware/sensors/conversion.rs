@@ -49,15 +49,15 @@ impl SensorFault {
     #[allow(dead_code)]
     fn from_max31856_error(error: &Max31856Error) -> Self {
         match error {
-            Max31856Error::CommunicationError => Self {
+            Max31856Error::CommunicationError { .. } => Self {
                 communication_error: true,
                 ..Default::default()
             },
-            Max31856Error::FaultDetected => Self {
+            Max31856Error::FaultDetected { .. } => Self {
                 fault_detected: true,
                 ..Default::default()
             },
-            Max31856Error::InvalidTemperature => Self {
+            Max31856Error::InvalidTemperature { .. } => Self {
                 invalid_temperature: true,
                 ..Default::default()
             },
@@ -117,7 +117,7 @@ pub struct FixtureReading {
 
 #[cfg(feature = "regression")]
 impl FixtureReading {
-    fn to_channel_results(&self) -> (SensorChannelResult, SensorChannelResult) {
+    fn to_channel_results(self) -> (SensorChannelResult, SensorChannelResult) {
         (
             SensorConversionHub::channel_result_from_bytes(self.bean_adc, self.bean_fault),
             SensorConversionHub::channel_result_from_bytes(self.env_adc, self.env_fault),
@@ -266,5 +266,17 @@ impl SensorConversionHub {
                 }
             }
         }
+    }
+}
+
+impl Default for SensorConversionHub {
+    #[cfg(target_arch = "riscv32")]
+    fn default() -> Self {
+        panic!("SensorConversionHub::default() cannot be called on riscv32 - use SensorConversionHub::new() with sensors");
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -15,13 +15,6 @@ use libreroaster::config::{RoasterState, SsrHardwareStatus, SystemStatus};
 use libreroaster::hardware::sensors::conversion::{FixtureReading, SensorConversionHub};
 use libreroaster::output::artisan::ArtisanFormatter;
 
-/// Canonical test fixtures matching the ones in tests/fixtures/max31856_sequences.rs
-struct TestFixture {
-    name: &'static str,
-    reading: FixtureReading,
-    expected_status_line: &'static str,
-}
-
 fn warm_fixture() -> FixtureReading {
     FixtureReading {
         bean_adc: [0x00, 0x4B, 0x00],

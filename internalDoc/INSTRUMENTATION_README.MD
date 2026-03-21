@@ -412,3 +412,127 @@ PID internal state fields enable data‑driven tuning:
 ---
 
 *Last Updated: 2026-03-11*
+
+## TRACE Stream & Parser
+
+Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is emitted on the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle. The instrumentation sits in [`src/logging/traceability.rs`](src/logging/traceability.rs) and writes the strings through the shared `ServiceContainer` output channel.
+
+### TRACE event series & fields
+
+Lines follow the format `TRACE,<TraceId>,<event>,key=value,...`. The `cmd` field is produced with Rust's `Debug` formatter (e.g., `cmd=ReadStatus` or `cmd=ArtisanCommand::STATUS`), so the parser always knows which enum variant drove the event. The runtime emits the following events:
+
+1. **`queue_enqueue`** – command entered the Artisan queue. Fields: `cmd`, `channel`, `depth`, `fallback`. When the queue overflow path reroutes a command the same data is emitted as `queue_fallback` with `fallback=1`; this makes retries immediately visible in the matrix.
+2. **`queue_dequeue`** – command removed for execution. The event repeats `cmd`, `channel`, and `depth` so the matrix shows both enqueue and dequeue depths.
+3. **`queue_fallback`** – emitted whenever the queue overflow handler resubmits a command. It uses the same fields as `queue_enqueue` but flags `fallback=1` so hosts can detect the fallback path without inspecting the control loop.
+4. **`actuation`** – SSR/fan outputs written before actuating the traced command. Fields: `cmd`, `channel`, `ssr`, `fan`, `latency_us`, `saturation_active`.
+5. **`telemetry`** – guard and watchdog telemetry snapshot taken while the command is running. Fields: `guard_timeout`, `guard_timeouts`, `watchdog`, plus optional `error_category`/`error_source` when an `AppError` is attached.
+6. **`guard`** – guard/watchdog reporting tied to the same `TraceId`. Fields mirror the telemetry event: `guard_timeout`, `guard_timeouts`, `watchdog`, optional `watchdog_failure`, and optional `error_category`/`error_source` metadata.
+
+The queue fields drive the `QueueDepth` column in the regression matrix so you can clearly see whether a command hit the fallback path before it actuated.
+
+### Sample TRACE entries
+
+Use this excerpt (taken from `logs/traceability/sample-trace.log`) to validate regression output formatting:
+
+```
+TRACE,1,queue_enqueue,cmd=ReadStatus,channel=Uart,depth=5,fallback=0
+TRACE,1,actuation,cmd=ReadStatus,channel=Uart,ssr=33.5,fan=12,latency_us=150,saturation_active=1
+TRACE,1,telemetry,guard_timeout=0,guard_timeouts=0,watchdog=ok
+TRACE,1,guard,guard_timeout=0,guard_timeouts=0,watchdog=ok
+```
+
+Because the `cmd` value is Debug-formatted, the log above is consistent with the parser expectations and can be compared directly with coverage captures from debug builds.
+
+### Regression triage workflow
+
+Run the host parser after every regression capture to rebuild the command → queue → actuator → telemetry → guard matrix:
+
+```
+python scripts/traceability_matrix.py <trace.log>
+```
+
+The script now understands the runtime names `queue_enqueue`, `queue_dequeue`, `queue_fallback`, `actuation`, `telemetry`, and `guard`, so it always produces the same column layout auditors expect. It also normalizes the Debug-formatted `cmd` field (e.g., `ReadStatus`) and shows `fallback=1` in the matrix whenever the queue overflow path retried a command. Point auditors to `logs/traceability/sample-trace.log` if their TRACE stream diverges so they can trace the difference to the firmware event that led to the regression outcome.
+
+### Safe-Shutdown Trace Replay
+
+InitError failures now emit guard events with `watchdog_failure=init_error_failure` plus the `error_category`/`error_source` metadata before the LED blink loop begins. Auditors can replay the new safe-shutdown path with `logs/traceability/sample-safe-shutdown.log`, which strings together queue/actuation/telemetry/guard lines carrying `error_category=initialization` and `error_source=hardware_init_failed`.
+
+To capture and replay the safe-shutdown trace:
+
+1. Build the firmware with `--features embedded` and flash a device.
+2. Force `init_hardware()` to produce an `Err` (for example, by unplugging a temperature sensor or mocking the initializer) so `enter_safe_shutdown()` runs.
+3. Observe the host TRACE output—the guard line should include `watchdog_failure=init_error_failure` and the AppError metadata from `AppError::Initialization`.
+4. Replay the capture with `python scripts/traceability_matrix.py logs/traceability/sample-safe-shutdown.log` to confirm the regression row highlights the failure path.
+
+The regression test `scripts/test_traceability_matrix.py` now exercises this log so the parser continually proves the safe-shutdown scenario stays visible in the matrix.
+
+### Safe-Shutdown Replay Artifact
+
+Auditors need a single bundle that captures the log, the parsed matrix, and the guard metadata so the InitError trace can be shipped and replayed without hardware. The helper CLI collects these pieces into `safe-shutdown-replay.zip` under `logs/traceability`.
+
+```bash
+python scripts/collect_safe_shutdown.py \
+  --log logs/traceability/sample-safe-shutdown.log \
+  --output logs/traceability/safe-shutdown-replay.zip \
+  --artifact-name safe-shutdown-replay \
+  --force
+```
+
+Inside the artifact you will find:
+
+- `sample-safe-shutdown.log` – the raw TRACE capture that emitted `watchdog_failure=init_error_failure` and the AppError metadata fields.
+- `traceability.csv` – the queue → actuator → telemetry → guard matrix generated by `scripts/traceability_matrix.py` so inspectors can follow the failure path step-by-step.
+- `metadata.json` – key diagnostics for the guard row, including `TraceId`, `watchdog_failure`, `error_category`, and `error_source` (the values at the time of this failure are `watchdog_failure=init_error_failure`, `error_category=initialization`, `error_source=hardware_init_failed`).
+- `README.txt` – a snapshot of the guard failure details plus replay instructions.
+
+To replay the guard matrix from the artifact, unzip it and run the parser against the extracted log:
+
+```bash
+unzip logs/traceability/safe-shutdown-replay.zip -d /tmp/safe-shutdown
+python scripts/traceability_matrix.py /tmp/safe-shutdown/sample-safe-shutdown.log
+```
+
+The matrix output will highlight the guard row with the same `TraceId` and failure metadata that auditors need to prove the diagnostics path.
+
+Inspect `metadata.json` directly (e.g., `jq '.' metadata.json`) if you need to cite the guard failure values in a report. The artifact README reinforces the same failure summary so reviewers can validate the packaged contents without running any commands.
+
+### Safe-Shutdown Artifact Replay
+
+Auditors can rerun the packaged artifact without hardware by invoking the replay CLI that unzips the bundle, regenerates the matrix, and compares the guard row metadata the artifact recorded at collection time.
+
+```bash
+python scripts/replay_safe_shutdown.py \
+  --artifact logs/traceability/safe-shutdown-replay.zip \
+  --report replay-report.json
+```
+
+The command extracts `sample-safe-shutdown.log`, parses it with `scripts/traceability_matrix.py`, writes the replayed CSV to `traceability-replay.csv` beside the artifact, and validates the guard metadata keys `TraceId`, `watchdog_failure`, `error_category`, and `error_source` against the bundled `metadata.json`. If the values drift, the CLI exits non-zero so automation can halt auditing until drift is resolved.
+
+When `--report` is supplied, the CLI dumps JSON describing the walk-through, for example:
+
+```json
+{
+  "artifact": "logs/traceability/safe-shutdown-replay.zip",
+  "csv": "logs/traceability/traceability-replay.csv",
+  "metadata_match": true,
+  "replayed_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "artifact_metadata": {
+    "TraceId": "200",
+    "watchdog_failure": "init_error_failure",
+    "error_category": "initialization",
+    "error_source": "hardware_init_failed"
+  },
+  "mismatch_details": []
+}
+```
+
+Capture the JSON output as an audit artifact so reviewers or CI jobs can confirm the guard metadata matches the archived values and trust the replayed row. Adding this replay step to regression pipelines or post-collection automation ensures every artifact's guard diagnostics stay reproducible even if the underlying TRACE capture log changes later.
+
+### Related documentation
+
+Whenever another section of this guide references TRACE instrumentation or regression triage, keep the event names and parser usage aligned with `src/logging/traceability.rs` and `scripts/traceability_matrix.py`. This keeps all cross-references in sync with runtime behavior.

@@ -40,7 +40,7 @@ impl CircularBuffer {
     pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, BufferError> {
         let mut bytes_read = 0;
 
-        for i in 0..buffer.len() {
+        for slot in buffer.iter_mut() {
             let head = self.head.load(Ordering::Relaxed);
             let tail = self.tail.load(Ordering::Relaxed);
 
@@ -48,7 +48,7 @@ impl CircularBuffer {
                 break;
             }
 
-            buffer[i] = self.buffer[tail];
+            *slot = self.buffer[tail];
             self.tail.store((tail + 1) % BUFFER_SIZE, Ordering::Relaxed);
             bytes_read += 1;
         }
@@ -75,6 +75,12 @@ impl CircularBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.head.load(Ordering::Relaxed) == self.tail.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for CircularBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
