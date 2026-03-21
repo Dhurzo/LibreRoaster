@@ -7,16 +7,12 @@
 //! also re-exports the helper that wires a `SensorConversionHub` into
 //! `RoasterControl` so helper suites can build the control consistently.
 
-pub use libreroaster::common::{
-    collect_output, reset_channels, FanCall, HeaterCall, StubFan, StubHeater, StubThermometer,
-    ThermometerCall,
-};
+pub use libreroaster::common::{StubFan, StubHeater, StubThermometer};
 
 pub use libreroaster::hardware::sensors::SensorConversionHub;
 
-pub use libreroaster::control::traits::{Fan, Heater, Thermometer};
+use libreroaster::control::traits::{Fan, Heater};
 use libreroaster::control::RoasterControl;
-pub use libreroaster::control::RoasterError;
 
 pub fn build_test_control(
     heater: Box<dyn Heater + Send>,

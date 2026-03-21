@@ -372,7 +372,6 @@ fn test_usb_command_response_flow() {
 
     use libreroaster::input::parser::parse_artisan_command;
     use libreroaster::output::artisan::ArtisanFormatter;
-    use libreroaster::output::OutputFormatter;
 
     // Step 1: Artisan sends READ command via USB
     let mut mock = MockUsbCdcDriver::with_data("READ\r\n");

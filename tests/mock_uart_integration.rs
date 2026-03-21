@@ -36,8 +36,6 @@ unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn release(_restore_state: RawRestoreState) {}
 }
 
-static TEST_TIME_TICKS: AtomicU64 = AtomicU64::new(0);
-
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
