@@ -9,11 +9,10 @@
 
 use crate::config::{RoasterCommand, SystemStatus};
 use crate::control::pid::{CoffeeRoasterPid, PidFeedback};
-use crate::control::policies::ManualCommandPolicy;
 use crate::control::OutputController;
 use crate::control::{RoasterCommandHandler, RoasterError};
 use embassy_time::Instant;
-use log::{info, warn};
+use log::info;
 
 /// Temperature command handler
 ///

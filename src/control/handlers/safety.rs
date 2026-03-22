@@ -35,6 +35,23 @@ impl SafetyCommandHandler {
     pub fn clear_emergency(&mut self) {
         self.emergency_flag = false;
     }
+
+    /// Trigger emergency shutdown
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - Reason for emergency shutdown
+    ///
+    /// # Returns
+    ///
+    /// Error indicating emergency condition
+    pub fn trigger_emergency(&mut self, reason: &str) -> Result<(), RoasterError> {
+        warn!("EMERGENCY SHUTDOWN: {}", reason);
+        self.emergency_flag = true;
+        Err(RoasterError::TemperatureOutOfRange {
+            source: Some("emergency_shutdown"),
+        })
+    }
 }
 
 impl Default for SafetyCommandHandler {
@@ -94,6 +111,14 @@ impl RoasterCommandHandler for SafetyCommandHandler {
             }),
         }
     }
+
+    /// Check if this handler can process the given command
+    fn can_handle(&self, command: RoasterCommand) -> bool {
+        matches!(
+            command,
+            RoasterCommand::EmergencyStop | RoasterCommand::ArtisanEmergencyStop
+        )
+    }
 }
 
 impl SafetyPolicy for SafetyCommandHandler {
@@ -139,6 +164,16 @@ impl SafetyPolicy for SafetyCommandHandler {
             command,
             RoasterCommand::EmergencyStop | RoasterCommand::ArtisanEmergencyStop
         )
+    }
+
+    /// Check if emergency is active
+    fn is_emergency_active(&self) -> bool {
+        self.emergency_flag
+    }
+
+    /// Clear emergency flag
+    fn clear_emergency(&mut self) {
+        self.emergency_flag = false;
     }
 }
 

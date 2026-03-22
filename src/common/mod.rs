@@ -13,6 +13,7 @@
 //! use crate::control::traits::{Fan, Heater, Thermometer};
 //! ```
 
+use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use crate::config::constants::SsrHardwareStatus;
