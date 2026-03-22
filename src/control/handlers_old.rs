@@ -1,3 +1,6 @@
+//This code is deprecated and will be removed in a future release. It is retained for reference and testing purposes as we transition to a new command handling architecture.
+//This code was splited in less complex modules.
+
 use super::policies::{
     ManualCommandPolicy, ManualPolicyOutcome, SafetyPolicy, SafetyPolicyOutcome,
 };
