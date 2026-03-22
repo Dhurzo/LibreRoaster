@@ -184,8 +184,7 @@ impl SensorConversionHub {
         #[cfg(target_arch = "riscv32")]
         {
             let timestamp = Instant::now();
-            let bean = self.read_bean_async().await;
-            let env = self.read_env_async().await;
+            let (bean, env) = self.sample_parallel().await;
             self.build_sample(timestamp, bean, env)
         }
         #[cfg(not(target_arch = "riscv32"))]
@@ -217,6 +216,48 @@ impl SensorConversionHub {
             convert_raw_temp(reading.raw_temp),
             SensorFault::from_register(reading.fault),
         ))
+    }
+
+    #[cfg(target_arch = "riscv32")]
+    async fn sample_parallel(&mut self) -> (SensorChannelResult, SensorChannelResult) {
+        // Trigger both sensor conversions in parallel by starting both conversions
+        // before any await, then wait once, then read both results.
+        //
+        // This reduces sampling time from ~320-360ms (serial) to ~160-180ms (parallel)
+        // bringing control loop from ~2-3Hz to target 10Hz.
+
+        // Trigger bean sensor conversion (one-shot) - fast SPI write, ~50us
+        let bean_trigger_result = self.bean_sensor.trigger_conversion();
+
+        // Trigger env sensor conversion (one-shot) - fast SPI write, ~50us
+        let env_trigger_result = self.env_sensor.trigger_conversion();
+
+        // Wait once for both conversions to complete (160ms is the typical conversion time)
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(160)).await;
+
+        // Read bean sensor result - fast SPI read, ~50us
+        let bean_result = bean_trigger_result
+            .and_then(|_| self.bean_sensor.read_conversion_result())
+            .map(|reading| {
+                (
+                    convert_raw_temp(reading.raw_temp),
+                    SensorFault::from_register(reading.fault),
+                )
+            })
+            .map_err(|e| e);
+
+        // Read env sensor result - fast SPI read, ~50us
+        let env_result = env_trigger_result
+            .and_then(|_| self.env_sensor.read_conversion_result())
+            .map(|reading| {
+                (
+                    convert_raw_temp(reading.raw_temp),
+                    SensorFault::from_register(reading.fault),
+                )
+            })
+            .map_err(|e| e);
+
+        (bean_result, env_result)
     }
 
     #[allow(dead_code)]

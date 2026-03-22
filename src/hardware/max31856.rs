@@ -113,6 +113,15 @@ where
         self.read_conversion_block()
     }
 
+    pub fn trigger_conversion(&mut self) -> Result<(), Max31856Error> {
+        self.write_register(0x80, 0x80)?;
+        Ok(())
+    }
+
+    pub fn read_conversion_result(&mut self) -> Result<Max31856Reading, Max31856Error> {
+        self.read_conversion_block()
+    }
+
     pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
         self.write_register(0x80, 0x80)?; // Set one-shot bit
 
