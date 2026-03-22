@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
 use crate::logging::traceability::{
-    trace_actuation, trace_guard, trace_telemetry, TraceId, TracedCommand, TRACE_EVENT_MAX_LEN,
+    trace_actuation, trace_guard, trace_telemetry, TraceId, TRACE_EVENT_MAX_LEN,
 };
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
@@ -19,7 +19,7 @@ use core::fmt::Write;
 use embassy_executor::task;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
-use heapless::{String, Vec};
+use heapless::String;
 use log::{debug, info, warn};
 
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +54,7 @@ impl StageTracker {
         self.current_stage = stage;
     }
 
+    #[allow(dead_code)]
     fn current_stage(&self) -> ControlLoopStage {
         self.current_stage
     }
@@ -101,7 +102,7 @@ pub async fn control_loop_task() {
     // Track previous tick's watchdog state for stage instrumentation (not yet known in first tick)
     let mut prev_watchdog_state = WatchdogState::None;
     // Track AppError diagnostics for this tick to pass to TRACE events
-    let mut tick_app_error: Option<AppError> = None;
+    let mut tick_app_error: Option<AppError>;
 
     loop {
         let tick_start = Instant::now();
