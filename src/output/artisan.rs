@@ -16,14 +16,13 @@ use alloc::string::String;
 // Artisan protocol formatter for LibreRoaster
 //
 // This module handles formatting of temperature data and commands according to the
-// Artisan roasting software protocol. All formatting operations use heapless
-// types to ensure predictable memory usage and deterministic timing.
+// Artisan roasting software protocol. Delegates to specialized formatters.
 //
 // # Memory Strategy
 //
 // This module is classified as **HOT PATH**:
 // - All formatting operations occur during real-time temperature reporting
-// - Uses heapless types with fixed capacities to prevent allocations
+// - Delegates to formatters module with heapless types
 // - No dynamic memory allocation during normal operation
 //
 // ## Memory Usage
@@ -35,7 +34,9 @@ use crate::config::SystemStatus;
 use crate::memory::{
     BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
 };
+use crate::output::formatters::{CsvFormatter, RorCalculator, TimeFormatter};
 use crate::output::traits::{OutputError, OutputFormatter};
+use core::cell::RefCell;
 use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
@@ -43,14 +44,14 @@ use heapless::{Deque, String as HeaplessString};
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
-    last_bt: f32,
+    ror_calculator: RefCell<RorCalculator>,
 }
 
 impl Default for ArtisanFormatter {
     fn default() -> Self {
         Self {
             start_time: Instant::now(),
-            last_bt: 0.0,
+            ror_calculator: RefCell::new(RorCalculator::new()),
         }
     }
 }
@@ -61,9 +62,11 @@ impl ArtisanFormatter {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.start_time = Instant::now();
+        self.ror_calculator.borrow_mut().reset();
     }
 
+    #[allow(dead_code)]
     fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
         if last_bt != 0.0 {
             current_bt - last_bt
@@ -138,11 +141,9 @@ impl OutputFormatter for ArtisanFormatter {
         let bt = status.bean_temp;
         let gas = status.ssr_output; // SSR output as gas control
 
-        let delta_bt = Self::calculate_delta_bt(bt, self.last_bt);
-        let ror = delta_bt;
-
-        let time_str = Self::format_time(elapsed_secs, elapsed_ms);
-        let line = Self::format_artisan_line(&time_str, et, bt, ror, gas);
+        let ror = self.ror_calculator.borrow_mut().calculate_ror(bt);
+        let time_str = TimeFormatter::format_time(elapsed_secs, elapsed_ms);
+        let line = CsvFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
         Ok(String::from(line.as_str()))
     }

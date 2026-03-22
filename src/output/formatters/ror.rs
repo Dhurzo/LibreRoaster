@@ -15,10 +15,10 @@
 // - No dynamic memory allocation during calculation
 
 use crate::memory::{BT_HISTORY_SIZE, ROR_MIN_SAMPLES};
-use core::fmt::Write;
-use heapless::{Deque, String as HeaplessString};
+use heapless::Deque;
 
 /// ROR calculator with history tracking
+#[derive(Debug, Clone)]
 pub struct RorCalculator {
     history: Deque<f32, BT_HISTORY_SIZE>,
 }
@@ -47,7 +47,7 @@ impl RorCalculator {
     /// Current ROR value in °C/s, or 0.0 if insufficient history
     pub fn calculate_ror(&mut self, current_bt: f32) -> f32 {
         Self::update_bt_history(&mut self.history, current_bt);
-        Self::compute_ror_from_history(&self.history)
+        self.compute_queued_ror()
     }
 
     /// Update BT history with new temperature sample
@@ -90,6 +90,24 @@ impl RorCalculator {
         let last_bt = history[samples - 1];
 
         (last_bt - first_bt) / (samples as f32 - 1.0)
+    }
+
+    fn compute_queued_ror(&self) -> f32 {
+        let (front, back) = self.history.as_slices();
+        let combined_len = front.len() + back.len();
+        if combined_len < ROR_MIN_SAMPLES {
+            return 0.0;
+        }
+
+        let mut combined = [0.0f32; BT_HISTORY_SIZE];
+        for (i, &v) in front.iter().enumerate() {
+            combined[i] = v;
+        }
+        for (i, &v) in back.iter().enumerate() {
+            combined[front.len() + i] = v;
+        }
+
+        Self::compute_ror_from_history(&combined[..combined_len])
     }
 
     /// Get current history length
@@ -153,7 +171,7 @@ mod tests {
             let _ = calc.calculate_ror(100.0 + (i as f32) * 5.0);
         }
         // Add one more (should push out oldest)
-        let ror = calc.calculate_ror(100.0 + (BT_HISTORY_SIZE as f32) * 5.0 + 10.0);
+        let _ = calc.calculate_ror(100.0 + (BT_HISTORY_SIZE as f32) * 5.0 + 10.0);
         // Check history length
         assert_eq!(calc.history_len(), BT_HISTORY_SIZE);
     }
