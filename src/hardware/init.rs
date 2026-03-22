@@ -4,7 +4,7 @@ use crate::hardware::ledc_bus::{LedcBus, LedcChannelHandle};
 use crate::hardware::max31856::Max31856;
 use crate::hardware::shared_spi::SpiDeviceWithCs;
 use crate::hardware::ssr::SsrControlSimple;
-use alloc::{format, string::String};
+use alloc::format;
 use core::cell::RefCell;
 use critical_section;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};

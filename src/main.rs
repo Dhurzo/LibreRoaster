@@ -16,13 +16,10 @@ fn main() {}
 use embassy_executor::Spawner;
 
 #[cfg(target_arch = "riscv32")]
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-
-#[cfg(target_arch = "riscv32")]
-use esp_hal::spi::master::{Config as SpiConfig, Spi};
-
-#[cfg(target_arch = "riscv32")]
 use log::info;
+
+#[cfg(target_arch = "riscv32")]
+use esp_hal::gpio::{Level, Output, OutputConfig};
 
 #[cfg(target_arch = "riscv32")]
 use esp_bootloader_esp_idf;
@@ -31,43 +28,12 @@ use esp_bootloader_esp_idf;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[cfg(target_arch = "riscv32")]
-use heapless::String;
-#[cfg(target_arch = "riscv32")]
-use static_cell::StaticCell;
-
-#[cfg(target_arch = "riscv32")]
-use core::cell::RefCell;
-#[cfg(target_arch = "riscv32")]
-use core::fmt::Write;
-
-#[cfg(target_arch = "riscv32")]
-use critical_section;
-
-#[cfg(target_arch = "riscv32")]
 use libreroaster::application::AppBuilder;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::fan::FanController;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::ledc_bus::LedcBus;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::max31856::Max31856;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
-#[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::ssr::SsrControlSimple;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::output::artisan::ArtisanFormatter;
 
 #[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::channel;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::timer::{self, TimerIFace};
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-#[cfg(target_arch = "riscv32")]
 use esp_hal::peripherals::Peripherals;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::time::Rate;
 
 #[cfg(target_arch = "riscv32")]
 use libreroaster::error::app_error::{AppError, InitError};
@@ -75,6 +41,9 @@ use libreroaster::error::app_error::{AppError, InitError};
 use libreroaster::hardware::init::InitPeripherals;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::logging::traceability::{trace_safe_shutdown_guard, TraceId};
+
+#[cfg(target_arch = "riscv32")]
+use core::fmt::Write;
 
 #[cfg(target_arch = "riscv32")]
 fn format_init_error(error: &InitError) -> heapless::String<256> {

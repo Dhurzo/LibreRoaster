@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use embedded_io_async::Read;
 use embedded_io_async::Write;
-use esp_hal::uart::{Config, Uart, UartRx, UartTx};
+use esp_hal::uart::{UartRx, UartTx};
 use static_cell::StaticCell;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,14 +53,19 @@ impl UartDriver {
     }
 }
 
+#[allow(dead_code)]
 static UART_TX: StaticCell<UartTx<'static, esp_hal::Async>> = StaticCell::new();
+#[allow(dead_code)]
 static UART_RX: StaticCell<UartRx<'static, esp_hal::Async>> = StaticCell::new();
+#[allow(dead_code)]
 static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
 
+#[allow(dead_code)]
 struct SyncPointer<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for SyncPointer<T> {}
 
+#[allow(dead_code)]
 impl<T> SyncPointer<T> {
     const fn new(ptr: T) -> Self {
         Self(UnsafeCell::new(ptr))
@@ -71,6 +76,7 @@ impl<T> SyncPointer<T> {
     }
 }
 
+#[allow(dead_code)]
 static UART_PTR: SyncPointer<core::ptr::NonNull<UartDriver>> =
     SyncPointer::new(core::ptr::NonNull::dangling());
 
@@ -81,9 +87,7 @@ pub fn init_uart(_uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
 }
 
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
-    unsafe {
-        // StaticCell doesn't have get_mut(), we need to use a different approach
-        // For now, return None until we can properly implement this
-        None
-    }
+    // StaticCell doesn't have get_mut(), we need to use a different approach
+    // For now, return None until we can properly implement this
+    None
 }
