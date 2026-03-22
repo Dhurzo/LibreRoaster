@@ -197,16 +197,19 @@ impl SensorConversionHub {
     }
 
     #[cfg(target_arch = "riscv32")]
+    #[allow(dead_code)]
     async fn read_bean_async(&mut self) -> SensorChannelResult {
         Self::read_sensor_async(&mut self.bean_sensor).await
     }
 
     #[cfg(target_arch = "riscv32")]
+    #[allow(dead_code)]
     async fn read_env_async(&mut self) -> SensorChannelResult {
         Self::read_sensor_async(&mut self.env_sensor).await
     }
 
     #[cfg(target_arch = "riscv32")]
+    #[allow(dead_code)]
     async fn read_sensor_async<SPI>(sensor: &mut Max31856<SPI>) -> SensorChannelResult
     where
         SPI: SpiDevice,

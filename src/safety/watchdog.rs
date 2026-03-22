@@ -29,9 +29,7 @@ impl WatchdogError {
 #[cfg(target_arch = "riscv32")]
 mod software_watchdog {
     use super::WatchdogError;
-    use crate::config::WATCHDOG_FEED_INTERVAL_MS;
-    use core::sync::atomic::{AtomicU8, Ordering};
-    use embassy_time::Duration;
+    use core::sync::atomic::Ordering;
     use portable_atomic::AtomicU32;
 
     /// Counter that must be kept alive by feeding

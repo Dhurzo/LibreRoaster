@@ -591,8 +591,6 @@ pub async fn control_loop_task() {
                 tick_app_error.as_ref(),
             );
             tick_trace_id = None;
-            // Clear error tracking for next tick
-            tick_app_error = None;
         }
 
         stage_tracker.clear();
