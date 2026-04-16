@@ -2,19 +2,17 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-20)
+See: .planning/PROJECT.md (updated 2026-04-16)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Planning the next milestone (safe-shutdown artifact replay automation + remaining diagnostics coverage)
+**Current focus:** Defining the v5.3 bug-analysis milestone and its defect-report roadmap
 
 ## Current Position
 
-Phase: Planning next milestone (post-v5.2)
-Plan: Requirements/planning stage for safe-shutdown replay automation
-Status: Ready to plan
-Last activity: 2026-03-20 — v5.2 milestone complete
-
-Progress: ██████████ 100% (168/168 plans complete)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-16 — Milestone v5.3 started
 
 ## Performance Metrics
 

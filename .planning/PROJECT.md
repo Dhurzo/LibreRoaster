@@ -8,25 +8,75 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v5.2 Architecture Hardening & Validation
+## Current Milestone: v5.3 Deep Bug Analysis & Defect Report
 
-**Goal:** Harden diagnostics, fix the embedded build flow, and instrument the traceability + HIL automation so the control loop carries reliable metadata end-to-end.
+**Goal:** Audit the whole repository to identify likely bugs, rank their criticity, and produce an implementation-ready defect report for a follow-up milestone.
 
-**Status:** ✅ SHIPPED (2026-03-20)
+**Target features:**
+- Deep brownfield audit of firmware, scripts, tooling, and planning-visible behavior
+- Structured report listing each bug, criticity, supporting evidence, and proposed fix description
+- Milestone roadmap focused on investigation, evidence gathering, and report production rather than code changes
 
-v5.2 delivered: flashable `.bin` artifacts, unified error taxonomy from hardware through AppError, end-to-end TRACE instrumentation, manifest-aware HIL validation, and diagnostics automation that packages safe-shutdown artifacts for auditors.
+## Requirements
+
+### Validated
+
+- ✓ Artisan can read roaster telemetry over the serial protocol during a roast session.
+- ✓ Artisan can control heater and fan outputs through the firmware command path.
+- ✓ The project ships embedded diagnostics, traceability, and HIL-oriented tooling that support validation and audits.
+
+### Active
+
+- [ ] Audit the whole repository for likely defects across firmware, scripts, tooling, and planning-visible behavior.
+- [ ] Produce a milestone report that records each bug, criticity, supporting evidence, and implementation-ready remediation guidance.
+- [ ] Define follow-up implementation scope based on the confirmed bug inventory.
+
+### Out of Scope
+
+- Implementing bug fixes in this milestone — this cycle is for investigation, evidence, and scoping.
+- Net-new product capabilities unrelated to defect discovery — keep the milestone focused on brownfield quality risks.
 
 ## Current State
 
-- The embedded build now runs with `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` and produces `libreroaster.bin` after `espflash save-image`.
-- `RoasterError`/`AppError` conversions plus mock hardware tests exercise every control boundary and keep guard telemetry annotated with `error_category`/`error_source`.
-- TRACE instrumentation and parser cover the queue → actuator → telemetry → guard flow, while HIL manifests + analysis provide golden outputs and the safe-shutdown replay report ensures DIAG-01 coverage.
-- Diagnostics scripts (`scripts/replay_safe_shutdown.py`) regenerate the traceability matrix (192-byte buffer) and produce `replay-report.json` for audits.
+- v5.2 shipped a flashable embedded build, unified error taxonomy, TRACE instrumentation, manifest-aware HIL validation, and safe-shutdown replay artifacts for diagnostics audits.
+- The repo now spans firmware, host-side scripts, validation tooling, and planning artifacts that interact closely enough for regressions to cross subsystem boundaries.
+- Phase 104 was left as the next planning thread for diagnostics replay automation, but this milestone shifts first to a broad defect hunt and prioritized report.
 
-## Next Milestone Goals
+## Context
 
-1. `/gsd-new-milestone` to plan the safe-shutdown artifact replay automation (Phase 104) and the next diagnostics/traceability chapter.
-2. Keep trace instrumentation, docs, and automation artifacts aligned while the next phase fills in the remaining automation checks.
+- LibreRoaster is already in active use as an embedded firmware + tooling codebase, so brownfield defects may exist in runtime control paths, diagnostics automation, or integration boundaries.
+- Recent work increased instrumentation and auditability, which makes this a good time to inspect the system for correctness gaps before adding more functionality.
+- The intended deliverable is a report that can seed a dedicated remediation milestone rather than a mixed analysis-and-fix milestone.
+
+## Constraints
+
+- **Scope**: Whole repository audit — cover firmware, scripts, tooling, and planning-visible behavior.
+- **Delivery**: This milestone produces analysis and a bug report, not code fixes.
+- **Quality bar**: Every reported bug should include criticity and enough context to plan remediation work.
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| Treat this milestone as a brownfield defect audit instead of a feature milestone | The current need is confidence in existing behavior and a prioritized bug backlog | — Pending |
+| Require implementation-ready fix descriptions in the report | The follow-up milestone should be able to scope remediation directly from the findings | — Pending |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 <details>
 <summary>Previous project context</summary>
@@ -36,4 +86,4 @@ Historical milestone write-ups (v5.1, v4.5, etc.) remain available in `.planning
 </details>
 
 ---
-*Last updated: 2026-03-20 after v5.2 milestone completion*
+*Last updated: 2026-04-16 after v5.3 milestone start*
