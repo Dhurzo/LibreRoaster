@@ -61,12 +61,25 @@ Which phases cover which requirements. This section is populated during roadmap 
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| AUD-01 | Phase 104 | Pending |
+| AUD-02 | Phase 104 | Pending |
+| AUD-03 | Phase 104 | Pending |
+| AUD-04 | Phase 104 | Pending |
+| EVID-01 | Phase 105 | Pending |
+| EVID-02 | Phase 105 | Pending |
+| INV-01 | Phase 106 | Pending |
+| INV-02 | Phase 106 | Pending |
+| INV-03 | Phase 106 | Pending |
+| REP-01 | Phase 107 | Pending |
+| REP-02 | Phase 109 | Pending |
+| REP-03 | Phase 109 | Pending |
+| REP-04 | Phase 108 | Pending |
 
 **Coverage:**
 - v5.3 requirements: 13 total
-- Mapped to phases: 0
-- Unmapped: 13 ⚠️
+- Mapped to phases: 6 phases (104-109)
+- Mapped: 13/13 ✓
 
 ---
 *Requirements defined: 2026-04-16*
-*Last updated: 2026-04-16 after initial milestone definition*
+*Last updated: 2026-04-16 after roadmap creation*

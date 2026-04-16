@@ -1,119 +1,66 @@
-# Project State
+# Project State: LibreRoaster v5.3
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-16)
 
 **Core value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
-**Current focus:** Defining the v5.3 bug-analysis milestone and its defect-report roadmap
+**Current focus:** v5.3 Deep Bug Analysis & Defect Report
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-16 — Milestone v5.3 started
+Phase: 104 of 109 (Audit Foundation)
+Plan: Not yet planned
+Status: Ready to plan
+Last activity: 2026-04-16 — Roadmap created for v5.3 milestone
+
+Progress: [░░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
-- **Velocity:**
-- Total plans completed: 38 (phases 81-88: 19 plans, phase 89: 1 plan, phase 90: 3 plans, phase 91: 4 plans, phase 92: 1 plan, phase 93: 3 plans, phase 94: 2 plans, phase 95: 1 plan, phase 96: 3 plans, phase 97: 3 plans, phase 98: 3 plans, phase 99: 2 plans, phase 100: 3 plans)
+**Velocity:**
+- Total plans completed: 0 (v5.3)
+- Average duration: N/A
+- Total execution time: 0.0 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 81 | 3/3 | 3 | Phase complete |
-| 82 | 3/3 | 3 | Phase complete |
-| 83 | 3/3 | 3 | Phase complete |
-| 84 | 3/3 | 3 | Phase complete |
-| 85 | 3/3 | 3 | Phase complete |
-| 86 | 1/1 | 1 | Phase complete |
-| 87 | 2/2 | 2 | Phase complete |
-| 88 | 1/1 | 1 | Phase complete |
-| 89 | 1/2 | 2 | Phase complete (verified in Phase 92) |
-| 90 | 3/3 | 3 | Phase complete |
-| 91 | 4/4 | 4 | Phase complete |
-| 92 | 1/1 | 1 | Phase complete |
-| 93 | 3/3 | 3 | Phase complete |
-| 94 | 2/2 | 2 | Phase complete |
-| 95 | 1/1 | 1 | Phase complete |
-| 96 | 5/5 | 5 | Phase complete (plans 96-01..96-05 verified) |
-| 97 | 3/3 | 3 | Phase complete |
-| 98 | 3/3 | 3 | Phase complete |
-| 99 | 2/2 | 2 | Phase complete |
-| 100 | 3/3 | 3 | Phase complete |
+| 104 Audit Foundation | 2 | - | - |
+| 105 Evidence Pipeline Verification | 2 | - | - |
+| 106 Static Whole-Repo Audit | 3 | - | - |
+| 107 Targeted Reproduction & Correlation | 2 | - | - |
+| 108 Criticity Ranking & Defect Catalog | 2 | - | - |
+| 109 Roadmap Handoff Package | 2 | - | - |
+
+**Recent Trend:**
+- First v5.3 phase — no execution data yet.
+- Note: Previous milestone (v5.2, phases 95-103) completed with avg ~15min/plan.
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
 ### Decisions
 
-- v5.0 signoff is gated by explicit numeric thresholds (thresholds.json) and instrumented firmware (command_latency_us).
-- Latency measurement is performed in the application layer (control_loop_task) to avoid circular dependencies.
-- ArtisanFormatter now produces 18 CSV fields for the STATUS command.
-- [85-02] Used csv module instead of pandas for analysis to avoid dependency installation issues in externally managed environment.
-- [85-03] Performed simulated validation instead of physical hardware run due to lack of hardware access.
-- [86-01] Updated all integration test assertions to expect 18 columns in STATUS output.
-- [86-01] Cleaned up pre-existing formatting and some Tier 1 clippy issues to improve quality baseline.
-- [87-01] Replaced complex 202-line quality-baseline.sh with simple 13-line script invoking cargo fmt/clippy/test directly.
-- [87-01] Added [lints.clippy] deny=["warnings"] to .cargo/config.toml as global policy declaration.
-- [87-02] Wired quality-baseline.sh into run-modernization.sh and run-regression-checks.sh for policy enforcement.
-- [88-01] Promoted stage_instrumentation.rs to Tier 1 in quality policy.
-- [88-01] Refactored UNITS command to use ManualCommandPolicy pattern via forward_artisan_manual_command.
-- [89-01] README now includes Project Status section after main title, detailed pinout table with note column, and quality baseline subsection in build instructions.
-- [90-01] Force-added internal documentation files to Git tracking (gitignored but required for per-task commits).
-- [90-02] Kept HARDWARE.md language in Spanish (no translation required) and created DEVELOPMENT.md consolidating build, flash, test, and debugging guides.
-- [90-03] Expanded INSTRUMENTATION_README.MD from 47 to 411 lines with comprehensive watchdog, LEDC guard, regression, and PID telemetry descriptions; verified all internal documentation cross-references are valid and up-to-date.
-- [91-01] README.md verified accurate with no discrepancies - pin assignments, build/test instructions, and project status all match codebase.
-- [91-02] ARCHITECTURE.md and PROTOCOL.md verified accurate - module structure, data flow, command implementations, and 18-field STATUS format all match codebase.
-- [91-03] HARDWARE.md pinout and hardware specs verified accurate; DEVELOPMENT.md test/debug instructions validated, but CRITICAL build documentation issue found (missing --features embedded flag).
-- [91-04] INSTRUMENTATION_README.MD and ARTISAN_CONNECTION.md verified accurate; fixed watchdog failure reasons (ESP-IDF codes) and LEDC guard timeout (40ms) documentation.
-- [92-01] Created retrospective VERIFICATION.md for Phase 89 to close documentation gap; DOCS-01 requirement formally satisfied and traceability complete.
-- [93-01] Fixed README.md build command to include --features embedded flag; DEVELOPMENT.md verified as accurate baseline; documentation consistency established.
-- [93-02] Verified build command enables binary target (required-features = ["embedded"]) but confirmed pre-existing code bugs in main.rs prevent .bin production; library builds successfully (3.4MB .rlib); separate code fix needed.
-- [93-03] Verified flash command syntax correct; binary path references accurate; documented complete E2E build → flash workflow in README.md; binary production still blocked by main.rs bugs.
-- [94-01] Updated README.md version header from v5.0 to v5.1 (2026-03-12); milestone reflects v5.1 in progress; Next updated to v5.2 (TBD).
-- [94-02] Updated STATUS command description to reference all 18 CSV fields; includes PID state, flags, and latency metrics; references INSTRUMENTATION_README.MD for complete definitions.
-- [95-01] Fixed critical build blocker by removing duplicate embassy-time symbol definitions from lib.rs; build now produces flashable .bin binary (146K).
-- [96-01] Added source fields to all error enums with &'static str for zero-allocation diagnostics; implemented custom AppError.source() method for error chain navigation (std::error::Error unavailable in no_std).
-- [96-02] All hardware error variants map to ErrorKind::Other (most appropriate for domain-specific errors).
-- [96-03] Created InitPeripherals struct to work around private esp_hal::Peripherals; Safe shutdown blinks GPIO8 LED (3 short blinks, pause, repeat).
-- TRACE instrumentation now shares the Artisan output channel so hosts ingest control and trace data together.
-- Every Artisan command now travels as a `TracedCommand`, letting queue, actuator, telemetry, and guard events share one TraceId.
-- [98-02] Validation runner now organizes tests/hardware/runs/{scenario}/{timestamp} and metadata so analysis can consistently map telemetry to manifest entries.
-- [98-02] Analysis reports now cite scenario descriptions, command sequences, thresholds, and golden outputs to demonstrate audit alignment.
-- [98-03] Reports now embed manifest scenario metadata, golden artifact links, and threshold verdict badges so auditors can trace every scenario end-to-end.
-- [98-03] HIL playbook + README guidance document the manifest reader, validation_runner/analysis CLI flags, artifact bundling, retention, and safety notes required for HW-03 sign-off.
-- [100-01] Verified that error struct variants (RoasterError, Max31856Error) with source fields were already implemented in Phase 96-01; all AppError conversion paths confirmed working with no dead arms.
-- [100-02] Extended TRACE helpers (trace_telemetry, trace_guard) to accept Option<&AppError> and format error_category/error_source fields when AppError is present; control loop now captures RoasterError and converts to AppError for diagnostics.
-- [100-03] Enhanced safe shutdown with structured InitError logging (what/reason fields), LED heartbeat maintained on embassy_time timers, and Artisan-formatted error events (ERR 99) for host/telemetry correlation.
-- [101-02] Updated TRACE documentation and parser guidance so instrumentation and regression triage workflows reference the actual queue_enqueue/queue_fallback/actuation/telemetry/guard vocabulary.
-- [104-01] Replay automation must cross-check metadata.json guard fields (TraceId/watchdog_failure/error_category/error_source) whenever the artifact is reprocessed.
-- [104-01] Expose replay results via `--report` so CI/audit automation can assert metadata fidelity and persist evidence.
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- [v5.3]: Treat this milestone as a brownfield defect audit instead of a feature milestone
+- [v5.3]: Require implementation-ready fix descriptions in the defect report
+- [v5.3]: Verify evidence pipeline before trusting findings (evidence-first approach)
+- [v5.3]: Reserve HIL for target-sensitive bugs only; cheap evidence first
 
 ### Pending Todos
 
-- Plan Phase 104: Safe-Shutdown Artifact Replay Automation (DIAG-01) and capture CLI/tests/docs in `/gsd-new-milestone`.
-- Refresh the diagnostics replay automation artifacts (`safe-shutdown-replay.zip`, `traceability-replay.csv`, `replay-report.json`) for archival evidence.
-
+None yet.
 
 ### Blockers/Concerns
 
-- **RESOLVED ✅**: Critical build blocker fixed in Phase 95-01
-  - Removed duplicate embassy-time symbol definitions from lib.rs
-  - Build now produces flashable .bin binary (146K)
-  - Command: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded`
-  - Binary ready for flashing with espflash
+None yet.
 
-- **RESOLVED ✅**: Error source chaining infrastructure complete (Phase 96-01)
-  - All error enums have source fields with &'static str for zero-allocation diagnostics
-  - AppError.source() method implemented for error chain navigation (no_std compatible)
-  - Display implementations show source context with "source: X" pattern
-  - Unit tests verify source propagation across hardware -> control -> app boundaries
-  - All deviation issues fixed during execution (duplicate impls, test code, lifetime issues)
+---
 
-## Session Continuity
-
-Last session: 2026-03-20T22:17:59Z
-Stopped at: Completed 104-01-PLAN.md
-Resume file: None
+*State created: 2026-04-16 for v5.3*
+*Next: /gsd-plan-phase 104*
