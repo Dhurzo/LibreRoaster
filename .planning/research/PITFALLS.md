@@ -1,359 +1,273 @@
-# Domain Pitfalls: v5.0 Quality Hardening (Embedded Rust Firmware)
+# Domain Pitfalls
 
-**Domain:** Brownfield ESP32-C3 firmware (Embassy + Artisan control path)
+**Domain:** Brownfield whole-repo defect audit for embedded firmware + diagnostics tooling
 **Project:** LibreRoaster
-**Researched:** 2026-03-07
+**Researched:** 2026-04-16
 **Confidence:** MEDIUM-HIGH
 
-## Phase Model Used for Prevention
+## Recommended Audit Phases
 
-1. **Phase 0 - Baseline & Invariants Freeze**
-   - Freeze behavioral contracts (Artisan command semantics, safety telemetry, watchdog/guard expectations)
-2. **Phase 1 - Dead Code Audit & Controlled Elimination**
-   - Evidence-based catalog, tombstone removals, fast rollback
-3. **Phase 2 - Rust Modernization (Mechanical First)**
-   - Lints/edition/API-boundary improvements without behavior changes
-4. **Phase 3 - SOLID Refactor in Hot Paths**
-   - Component boundaries + loop-budget and safety gates
-5. **Phase 4 - Hardware Validation Readiness (HIL Preflight)**
-   - Instrumentation, command/actuator correlation, failure-injection readiness
-6. **Phase 5 - Real Hardware Validation & Signoff**
-   - Artisan Scope -> firmware -> actuator proof on real roaster path
-
----
+1. **Phase 0 - Audit Charter, Bug Bar, and Evidence Rules**
+   - Freeze what counts as a bug, how severity works, what evidence is required, and what is out of scope.
+2. **Phase 1 - Repo Inventory and Observability Baseline**
+   - Enumerate firmware, scripts, HIL assets, diagnostics artifacts, host/target feature gates, and known validation paths.
+3. **Phase 2 - Subsystem Defect Hunt and Reproduction**
+   - Investigate firmware, scripts, tooling, and planning-visible behavior separately, with reproducible cases.
+4. **Phase 3 - Cross-Boundary Correlation and Integration Review**
+   - Trace failures across Artisan protocol, firmware control loop, TRACE/STATUS outputs, replay scripts, and HIL artifacts.
+5. **Phase 4 - Severity Ranking and Report Normalization**
+   - Rank criticity consistently and turn findings into implementation-ready defect records.
+6. **Phase 5 - Review, Deduplication, and Remediation Scoping**
+   - Remove duplicates, challenge weak findings, and package follow-up work for a fix milestone.
 
 ## Critical Pitfalls
 
-### Pitfall 1: "Dead" Code Removal Breaks Linker/Runtime Side-Effects
-
+### Pitfall 1: Audit scope collapses into “firmware only” and misses host/tooling defects
 **What goes wrong:**
-Code flagged as unused is removed, but it carried required linker/runtime behavior (`#[used]`, linker sections, drop side-effects, startup registration), causing missing symbols, silent behavior changes, or boot/runtime instability.
+The team audits `src/` deeply but barely inspects Python tooling, replay scripts, manifests, report generation, or planning-visible behavior. The final report looks thorough but misses defects that distort diagnostics or hide runtime failures.
 
 **Why it happens:**
-In brownfield firmware, "not referenced in Rust call graph" does not mean "safe to remove".
+Firmware feels “more real” than scripts, so brownfield audits drift toward code that runs on the MCU and away from code that shapes evidence.
 
-**How to avoid:**
-- Split dead-code candidates into: `provably dead`, `externally reachable`, `side-effectful`.
-- For every candidate, require one evidence artifact: symbol map diff, protocol trace diff, or test proof.
-- Ban direct deletion of items with `unsafe(no_mangle)`, `unsafe(link_section)`, `#[used]` unless explicitly reviewed.
+**Consequences:**
+- False confidence in validation tooling.
+- Bugs in `validation_runner.py`, replay packaging, or report generation survive into the remediation milestone.
+- Follow-up fixes target symptoms in firmware instead of broken evidence pipelines.
 
-**Warning signs:**
-- New linker errors about missing symbols after cleanup.
-- Behavior differs only in release/LTO builds.
-- Startup/reset path regressions despite "pure cleanup" PR.
+**Prevention:**
+- In **Phase 0**, define audit surfaces explicitly: firmware, host scripts, HIL tooling, artifact generation, docs/planning-visible operational behavior.
+- In **Phase 1**, produce a coverage matrix mapping each repo area to an audit owner and required evidence type.
+- Require the final report to tag every defect with a subsystem and integration surface.
 
-**Phase to address:**
-**Phase 1 - Dead Code Audit & Controlled Elimination**
+**Detection:**
+- Findings list is dominated by Rust files and ignores `scripts/`, `tests/hardware/`, and planning artifacts.
+- Many defects cite source inspection only, with no artifact or tool-path validation.
 
----
-
-### Pitfall 2: Removing "Unused" Artisan Paths That Are Required by Real Sessions
-
+### Pitfall 2: Teams treat existing diagnostics as ground truth instead of auditing the diagnostics themselves
 **What goes wrong:**
-Handshake or parser branches that seem unused in unit tests are removed, and Artisan Scope stops controlling heater/fan reliably in real sessions.
+TRACE, STATUS, replay bundles, and HIL reports are used as unquestioned evidence even when those systems may themselves be wrong, incomplete, or stale.
 
 **Why it happens:**
-Host tests cover nominal command subsets; real tools often rely on sequence/timing quirks and expected response formats.
+Brownfield projects often mistake observability for truth. In LibreRoaster, recent milestones added TRACE instrumentation, manifest-aware HIL validation, and replay artifacts; that increases audit leverage, but also increases the chance of “auditing through a distorted lens.”
 
-**How to avoid:**
-- Capture and freeze canonical command transcripts (connect, init, control, stop, error).
-- Gate removal on transcript replay tests and exact response-shape assertions.
-- Keep parser/formatter compatibility checks for existing command set before and after cleanup.
+**Consequences:**
+- Defects are ranked using faulty telemetry.
+- Tool bugs get misreported as firmware bugs.
+- The milestone ships a polished report with weak factual grounding.
 
-**Warning signs:**
-- "Works in tests, fails in Artisan Scope" reports.
-- Increased parser recovery logs or more `ERR` responses under normal operation.
-- Session starts but manual commands no longer map predictably to actuator output.
+**Prevention:**
+- In **Phase 1**, validate the evidence pipeline itself: manifest -> run metadata -> telemetry CSV -> report -> replay artifact.
+- Require at least one independent corroboration for critical findings: code path + test/replay evidence, or telemetry + source-level explanation.
+- Mark every finding with evidence class: `source-only`, `test-backed`, `artifact-backed`, or `cross-validated`.
 
-**Phase to address:**
-**Phase 0** and **Phase 1**
+**Detection:**
+- Critical bugs rely on a single TRACE line or a single generated report.
+- The team cannot explain how a STATUS/TRACE field is produced end-to-end.
 
----
-
-### Pitfall 3: SOLID Refactor Fragments Safety-Critical Authority
-
+### Pitfall 3: Host-only reproduction is mistaken for target truth
 **What goes wrong:**
-Refactor introduces clean interfaces but duplicates or splits authority over manual heater/fan/safety state, causing divergence between handler state and real actuator output.
+The audit treats host tests, mock drivers, or replay scripts as enough proof for firmware-adjacent failures that may depend on timing, peripheral contention, or target-specific cfg/feature combinations.
 
 **Why it happens:**
-SOLID is applied as a structural goal without preserving existing invariants in command ownership.
+Host tests are faster and easier to automate. Embedded brownfield audits often over-credit them, especially when HIL runs are slower.
 
-**How to avoid:**
-- Define invariant docs before refactor: who is source-of-truth for manual setpoints and safety flags.
-- Enforce single-writer rules per critical field (`manual_heater`, `manual_fan`, emergency/fault flags).
-- Add contract tests at handler boundary and post-apply actuator boundary.
+**Consequences:**
+- Timing, watchdog, guard, and transport bugs are mis-ranked or missed.
+- “Cannot reproduce” is recorded when the defect only exists on-target.
+- Fix milestone inherits incorrect root causes.
 
-**Warning signs:**
-- Two components mutate same safety/manual fields.
-- Integration tests pass only when execution order is unchanged.
-- Manual command handling logic appears in more than one handler path.
+**Prevention:**
+- In **Phase 1**, freeze the host-vs-target matrix for every audit area.
+- In **Phase 2**, require target-aware evidence for any defect touching watchdogs, LEDC guard behavior, UART/USB transport, sensor reads, or control-loop timing.
+- In **Phase 4**, downgrade confidence when a finding is host-only for target-sensitive paths.
 
-**Phase to address:**
-**Phase 3 - SOLID Refactor in Hot Paths**
+**Detection:**
+- Report uses mock/test-only evidence for control-loop or hardware integration bugs.
+- No distinction between `cfg(test)` behavior and device behavior.
 
----
-
-### Pitfall 4: Performance Regressions from Over-Abstraction in 100 ms Loop
-
+### Pitfall 4: Integration defects are reported as isolated component bugs
 **What goes wrong:**
-Refactor adds extra indirection, allocations, or logging overhead in control path; loop jitter increases and watchdog/safety timing assumptions erode.
+The audit records separate bugs in parser, handler, telemetry, or scripts without identifying the cross-boundary failure chain.
 
 **Why it happens:**
-Code quality improvements focus on readability while treating timing as secondary.
+Repos are organized by component, but many brownfield defects live at handoffs: Artisan command -> parser -> control path -> actuator state -> TRACE/STATUS -> host analysis.
 
-**How to avoid:**
-- Introduce loop budget SLO (per tick) and track before/after timing.
-- Keep hot path allocation-free and avoid new trait-object churn in tick path.
-- Enforce release-build performance checks (debug results are not enough).
+**Consequences:**
+- Duplicate or conflicting tickets.
+- Remediation milestone fixes only one side of the boundary.
+- High-friction bugs return because the true contract mismatch survives.
 
-**Warning signs:**
-- Watchdog near-miss counters rise after "refactor-only" changes.
-- Control cadence drifts under serial traffic.
-- Regressions appear only with `--release` + LTO.
+**Prevention:**
+- In **Phase 3**, require integration traces for defects that cross subsystems.
+- Add a report field: `Boundary/Contract Broken`.
+- Deduplicate by failure chain, not by file location.
 
-**Phase to address:**
-**Phase 3**, validated again in **Phase 4**
+**Detection:**
+- Multiple findings share the same trigger and user-visible symptom.
+- Bugs are phrased as local code smells instead of broken end-to-end behavior.
 
----
-
-### Pitfall 5: Modernization Changes Error Semantics Needed for Safety Decisions
-
+### Pitfall 5: Severity ranking is inconsistent because there is no embedded-specific bug bar
 **What goes wrong:**
-Error cleanup unifies/simplifies error types but loses distinctions needed for safe fallback (sensor fault vs transient IO vs actuator guard timeout).
+Teams rank defects by annoyance or implementation difficulty instead of roast-session risk, safety impact, auditability impact, and reproducibility.
 
 **Why it happens:**
-"Cleaner" `Result` hierarchy is treated as purely cosmetic.
+Generic bug triage scales poorly in firmware-adjacent systems where a report-generation bug, a false-safe telemetry field, and a control bug have very different consequences.
 
-**How to avoid:**
-- Preserve error classes that map to different operational responses.
-- Add explicit conversion policy documenting which errors are recoverable vs fail-safe.
-- Include safety action assertions in tests (shutdown, clamp, retry, degrade).
+**Consequences:**
+- Dangerous defects are buried under cosmetic/tooling issues.
+- Evidence-quality problems are underrated even when they invalidate audit conclusions.
+- Follow-up roadmap prioritizes easy fixes over risk reduction.
 
-**Warning signs:**
-- Multiple distinct failures now map to same generic error.
-- Emergency behavior triggers less often after refactor.
-- Logs become less specific exactly where previous incidents required granularity.
+**Prevention:**
+- In **Phase 0**, define a bug bar with explicit dimensions: safety, control correctness, data/evidence integrity, field detectability, reproducibility, and blast radius.
+- In **Phase 4**, rank severity with a fixed scoring rubric and require a short rationale per finding.
+- Separate `severity` from `fix effort` and `confidence`.
 
-**Phase to address:**
-**Phase 2 - Rust Modernization**
+**Detection:**
+- Report mixes “critical because hard to fix” with “critical because unsafe.”
+- Similar defects receive materially different severity without explanation.
 
----
-
-### Pitfall 6: Dead Code Elimination Removes Observability Hooks Needed for Validation
-
+### Pitfall 6: Evidence quality is too weak for an implementation-ready report
 **What goes wrong:**
-Telemetry/status fields, diagnostics commands, or instrumentation paths are deleted as "non-functional," making hardware validation impossible or non-auditable.
+Findings are real concerns but lack a reliable trigger, impacted surface, proof, or fix direction. The next milestone has to re-investigate instead of remediate.
 
 **Why it happens:**
-Quality work is scoped to runtime behavior, not validation observability requirements.
+Brownfield audits often optimize for defect count instead of defect quality.
 
-**How to avoid:**
-- Mark validation-critical telemetry as protected API surface for milestone duration.
-- Require observability parity checklist before merge.
-- Keep protocol-level status snapshots stable until HIL signoff is complete.
+**Consequences:**
+- Report churn during planning review.
+- Engineering disputes consume the next milestone.
+- The audit milestone fails its stated goal of producing remediation-ready scope.
 
-**Warning signs:**
-- Fewer safety counters/fields available after cleanup.
-- Regression harness can no longer prove guard/watchdog interactions.
-- Hardware test plans require manual interpretation instead of machine-readable evidence.
+**Prevention:**
+- In **Phase 2**, use a mandatory defect template: trigger, expected behavior, observed behavior, subsystem, evidence, confidence, likely root cause, proposed fix direction.
+- In **Phase 4**, reject findings that cannot pass a minimum evidence threshold.
+- Keep a separate appendix for hypotheses so they do not pollute the confirmed defect list.
 
-**Phase to address:**
-**Phase 0** and **Phase 1**
+**Detection:**
+- Findings say “likely bug” without a repro path or bounded symptom.
+- Proposed fixes are generic (“refactor”, “improve handling”).
 
----
-
-### Pitfall 7: Hardware Validation Readiness Skipped (Only Host/Mock Confidence)
-
+### Pitfall 7: Duplicate findings inflate the bug inventory and distort severity
 **What goes wrong:**
-Roadmap claims "ready for real hardware" based on host tests only; physical actuator behavior (latency, clamping, guard conflicts) is not actually verified.
+The same underlying defect appears multiple times under different surfaces: failing test, TRACE anomaly, replay mismatch, and user-visible symptom all become separate bugs.
 
 **Why it happens:**
-Host CI is fast and deterministic; HIL setup is slower and often deferred.
+Whole-repo audits naturally generate evidence from multiple layers. Without deduping by root cause, counts become meaningless.
 
-**How to avoid:**
-- Add preflight gate: no real-roaster testing until command-to-actuator evidence path is instrumented.
-- Define minimal HIL matrix: command class x expected actuator/telemetry response.
-- Require at least one failure-injection run (sensor fault, emergency stop, comms disturbance).
+**Consequences:**
+- The report overstates defect volume.
+- Prioritization becomes noisy.
+- The remediation milestone burns time merging tickets.
 
-**Warning signs:**
-- "Ready" stated without captured serial + actuator evidence.
-- Hardware validation plans lack pass/fail thresholds.
-- First real-device run reveals timing/ordering bugs absent in host tests.
+**Prevention:**
+- In **Phase 5**, run a dedup pass keyed by trigger, contract, and likely root cause.
+- Track `evidence items` separately from `defects`.
+- Link supporting observations under one canonical defect entry.
 
-**Phase to address:**
-**Phase 4 - HIL Preflight**
-
----
-
-### Pitfall 8: Unsafe Modernization Sweep Expands Risk Surface
-
-**What goes wrong:**
-During modernization, unsafe/linker attributes and low-level sections are mass-updated without per-item safety review; subtle ABI/link behavior changes occur.
-
-**Why it happens:**
-Edition/lint migration is applied mechanically to embedded-specific constructs.
-
-**How to avoid:**
-- Treat unsafe-attribute updates (`unsafe(no_mangle)`, `unsafe(link_section)`, `unsafe(export_name)`) as safety-reviewed changes.
-- Require one-line SAFETY rationale at each site.
-- Diff symbol table and section placement when touching these attributes.
-
-**Warning signs:**
-- Large automated migration touching startup/interrupt/linker-adjacent files.
-- New symbols exported/unexported unexpectedly.
-- Runtime changes without corresponding logic diffs.
-
-**Phase to address:**
-**Phase 2 - Rust Modernization**
-
----
+**Detection:**
+- Several defects share the same reproduction steps and proposed fix area.
+- Bug counts change dramatically after review without new evidence.
 
 ## Moderate Pitfalls
 
-### Pitfall 9: Clippy/Lint "Fixes" Introduce Embedded-Unfriendly Behavior
-
+### Pitfall 8: Scope explodes into architecture review, refactor planning, or feature ideation
 **What goes wrong:**
-Automatic lint fixes introduce less deterministic patterns (extra formatting, hidden copies, less explicit timing or ownership behavior).
+The bug-audit milestone turns into “while we are here” redesign work, cleanup planning, or feature discussion.
 
-**How to avoid:**
-- Use lint tiers: allow/warn/deny by module criticality.
-- Ban bulk `cargo fix` across control/safety modules without focused review.
+**Prevention:**
+- In **Phase 0**, define out-of-scope categories: refactors without a defect, net-new features, speculative architecture improvements.
+- Require every work item to point to a defect hypothesis or evidence gap.
 
-**Warning signs:**
-- Large mechanical diffs in control modules with no behavioral tests added.
-
-**Phase to address:**
-**Phase 2**
-
----
-
-### Pitfall 10: Feature-Gate Drift Between Host Tests and Firmware Build
-
+### Pitfall 9: Known fragile areas are not front-loaded
 **What goes wrong:**
-Code looks dead or safe under host features but is active on target (or vice versa), creating false confidence in cleanup/refactor outcomes.
+The team spends early effort on low-risk surfaces and reaches watchdog, guard, serial transport, or replay integrity too late.
 
-**How to avoid:**
-- Maintain a feature matrix with required test jobs for each gate set.
-- Review dead-code candidates per target/feature combination.
+**Prevention:**
+- In **Phase 1**, rank repo areas by risk: safety/control loop, transport, diagnostics pipeline, then lower-risk utilities.
+- Use existing project clues (`watchdog`, `guard`, `TRACE`, HIL manifest/report flow) to seed audit order.
 
-**Warning signs:**
-- Cleanup PR passes host tests but fails target build or behaves differently on-device.
-
-**Phase to address:**
-**Phase 1** and **Phase 4**
-
----
-
-### Pitfall 11: Command/Actuator Correlation Missing in Logs
-
+### Pitfall 10: Confidence is not separated from severity
 **What goes wrong:**
-You can see command logs and actuator states separately, but cannot prove causality or latency per command.
+Highly plausible bugs with thin evidence are reported beside proven defects with equal weight.
 
-**How to avoid:**
-- Introduce correlation IDs/timestamps across parser, handler, apply, and telemetry output.
-- Store compact event tuples suitable for post-run analysis.
+**Prevention:**
+- In **Phase 4**, each defect gets both `severity` and `confidence`.
+- Use confidence buckets: `confirmed`, `strong evidence`, `suspected`.
+- Suspected issues should shape follow-up investigation scope, not immediate fix commitments.
 
-**Warning signs:**
-- Team debates "did command X actually produce actuator Y?" with no definitive trace.
-
-**Phase to address:**
-**Phase 4**
-
----
-
-### Pitfall 12: No Rollback Path for Aggressive Cleanup/Refactor Batches
-
+### Pitfall 11: Repro steps depend on private operator knowledge
 **What goes wrong:**
-Multiple risky changes land together; when hardware regression appears, rollback is slow and root cause is unclear.
+Audit findings make sense only to the person who investigated them. Another engineer cannot reproduce them from the report.
 
-**How to avoid:**
-- Keep high-risk changes in small, reversible slices.
-- Tag each slice with explicit rollback plan and known-good benchmark.
+**Prevention:**
+- In **Phase 2**, require deterministic repro instructions or explicit “non-deterministic/rare” labeling.
+- Reference exact commands, files, artifacts, scenarios, and expected outputs.
 
-**Warning signs:**
-- PRs combine dead-code deletion + API redesign + behavior change.
+### Pitfall 12: Planning-visible behavior is ignored because it is “not code”
+**What goes wrong:**
+Operational expectations embedded in README, HIL playbooks, manifests, and report templates drift from actual behavior, but the audit ignores that mismatch.
 
-**Phase to address:**
-**All phases (execution policy)**
+**Prevention:**
+- In **Phase 3**, compare planning-visible contracts against implementation-visible behavior.
+- Treat contract drift as a reportable defect when it can mislead validation, operation, or remediation planning.
 
----
+## Minor Pitfalls
 
-## Technical Debt Patterns
+### Pitfall 13: Missing ownership for defect report curation
+**What goes wrong:**
+Everyone investigates, nobody normalizes. The final report has inconsistent wording, incomplete fields, and uneven severity logic.
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Remove "unused" branches without evidence artifact | Faster cleanup | Hidden protocol/safety regressions | Never |
-| Bulk modernization in hot path | Quick lint score improvement | Timing regressions, safety drift | Never |
-| Defer HIL preflight until end | Faster early velocity | Late discovery of hardware-only failures | Only for non-control modules |
-| Replace specific errors with generic catch-all | Simpler signatures | Wrong fail-safe behavior | Rarely, and not in safety path |
-| Refactor multiple safety boundaries in one PR | Cleaner architecture sooner | Hard to debug/regressions expensive | Never |
+**Prevention:**
+- In **Phase 4**, assign one editor/triage owner for report normalization.
 
-## Integration Gotchas (LibreRoaster-Specific)
+### Pitfall 14: Audit artifacts are not retained or linked
+**What goes wrong:**
+The report references runs or logs that are not preserved long enough to review.
 
-| Integration Surface | Common Mistake | Correct Approach |
-|---------------------|----------------|------------------|
-| Artisan command handling (`process_artisan_command` + handler chain) | Re-introduce duplicate manual setpoint logic outside authoritative handler | Keep one source of truth and test command -> handler -> actuator path end-to-end |
-| Safety telemetry and STATUS path | Treat observability fields as optional during cleanup | Freeze validation fields through Phase 5 signoff |
-| SSR guard + PID/manual apply helpers | Refactor without preserving guard feedback timing and clamp semantics | Add invariant tests that assert guard busy/timeout behavior before and after refactor |
-| Host stubs vs target hardware | Trust host-only behavior for go/no-go | Require target-preflight matrix and real command replay |
+**Prevention:**
+- In **Phase 5**, archive the exact evidence pack used for triage and link it from each defect where possible.
 
-## Performance Traps (100 ms Control Loop Context)
+## Phase-Specific Warnings
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Added indirection/allocation in tick path | Jitter, watchdog near-miss, delayed actuator update | Allocation-free hot path policy; release timing gate | Under combined serial + control load |
-| Over-logging in control/safety loop | Timing drift in release with logs enabled | Structured low-overhead logs + sampling strategy | During sustained command bursts |
-| Safety checks moved behind async/indirect calls | Non-deterministic emergency reaction latency | Keep fail-safe checks on direct path with bounded work | During fast fault transitions |
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| Audit charter | No shared definition of bug vs hypothesis vs tech debt | Create a bug bar and evidence gate before investigation starts |
+| Repo inventory | Firmware dominates scope; scripts/tooling skipped | Build an audit coverage matrix that includes `src/`, `scripts/`, `tests/hardware/`, and planning-visible assets |
+| Evidence baseline | TRACE/STATUS treated as authoritative without verification | Validate manifest -> telemetry -> report -> replay chain before using it as critical evidence |
+| Firmware investigation | Host tests overused for target-sensitive defects | Require target-aware evidence for control, timing, watchdog, guard, UART/USB, and sensor paths |
+| Tooling investigation | Report generation defects dismissed as “just tooling” | Rank evidence-integrity bugs by how much they can falsify triage and signoff |
+| Integration review | Same failure logged as multiple component bugs | Group by broken contract and end-to-end symptom, not by file |
+| Severity ranking | Criticity based on effort or annoyance | Use a rubric centered on safety, control correctness, auditability, and blast radius |
+| Final report | Weak findings mixed with confirmed defects | Split confirmed defects from hypotheses and show confidence separately |
+| Remediation scoping | Fix milestone inherits noisy, duplicated backlog | Deduplicate aggressively and convert each retained finding into implementation-ready scope |
 
-## "Looks Done But Isn't" Checklist
+## Warning Signs Checklist
 
-- [ ] **Dead-code pass:** Every deletion has evidence (map diff, transcript diff, or test) and target-feature review.
-- [ ] **Modernization pass:** No bulk mechanical edits in safety/control modules without behavior-lock tests.
-- [ ] **SOLID refactor:** Single-writer invariants for manual/safety state are documented and verified.
-- [ ] **HIL readiness:** Command-to-actuator correlation is measurable and archived.
-- [ ] **Hardware signoff:** Real Artisan Scope session includes nominal + fault-injection evidence.
-
-## Recovery Strategies
-
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Protocol/control regression after cleanup | HIGH | Revert last risky slice, replay transcript suite, reintroduce guarded path with deprecation marker |
-| Timing regression in loop | MEDIUM-HIGH | Restore previous hot path, collect release timing trace, re-apply refactor in smaller steps |
-| Lost observability for validation | MEDIUM | Re-add telemetry hooks, regenerate status contract tests, rerun HIL preflight |
-| Safety-semantic error collapse | HIGH | Restore typed error classes, rebind fail-safe actions, rerun emergency/fault scenarios |
-
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Linker/side-effect dead code deletion | Phase 1 | Symbol/section diff + target build + boot/run smoke |
-| Artisan branch false-positive dead code | Phase 0 + 1 | Recorded transcript replay + response shape assertions |
-| SOLID authority split | Phase 3 | Single-writer contract tests + integration flow test |
-| Hot-path abstraction regressions | Phase 3 + 4 | Release loop timing gate + watchdog telemetry trend |
-| Error semantic collapse | Phase 2 | Error-class to safety-action mapping tests |
-| Observability hook deletion | Phase 0 + 1 | STATUS/telemetry parity checklist |
-| HIL readiness skipped | Phase 4 | Preflight matrix complete before on-roaster run |
-| Real hardware validation gaps | Phase 5 | Evidence pack: commands, actuator traces, safety events |
+- [ ] More than half the findings come from source reading only.
+- [ ] Few or no findings reference `scripts/` or `tests/hardware/` despite whole-repo scope.
+- [ ] Report does not distinguish severity, confidence, and fix effort.
+- [ ] Multiple findings share one trigger or one user-visible symptom.
+- [ ] Critical findings cannot be reproduced by another engineer from the report alone.
+- [ ] HIL/replay/reporting pipeline was used as evidence but never validated as part of the audit.
+- [ ] Planning-visible contracts (README, playbook, manifest, report template) were not compared to actual behavior.
 
 ## Sources
 
-### High confidence (official docs/specs)
-- Rust Reference - `used`, `no_mangle`, `link_section`, `export_name`: https://doc.rust-lang.org/reference/abi.html#the-used-attribute
-- Rust Edition Guide (2024 unsafe attributes): https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-attributes.html
-- rustc codegen options (`lto`, dead-code linking behavior, panic strategy): https://doc.rust-lang.org/rustc/codegen-options/index.html
-- rustc lint docs (`dead_code` limitations): https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#dead-code
-- Embedded Rust Book (concurrency, critical sections, shared state hazards): https://docs.rust-embedded.org/book/concurrency/
-- Embassy executor docs (static tasks, no heap model): https://docs.embassy.dev/embassy-executor/0.9.1/
-- esp-hal docs (`no_std`, feature stability caveats, `mem::forget` warning): https://docs.rs/esp-hal/latest/esp_hal/
+### High confidence (project-local)
+- `.planning/PROJECT.md` — v5.3 scope, constraints, and goal of implementation-ready defect reporting.
+- `README.md` — active integration surfaces, STATUS/TRACE expectations, and HIL workflow references.
+- `tests/hardware/HIL-PLAYBOOK.md` — manifest-driven evidence workflow and artifact expectations.
+- `tests/hardware/scenario_manifest.json` — scenario/evidence metadata and retention expectations.
+- `tests/hardware/report_template.md` — report structure and threshold/evidence expectations.
+- `.planning/codebase/INTEGRATIONS.md` — hardware/software integration surfaces relevant to defect boundaries.
+- `.planning/codebase/CONCERNS.md` — known fragile areas and test gaps that bias audit risk.
 
-### High confidence (project-local evidence)
-- Project milestone context and active v5.0 goals: `.planning/PROJECT.md`
-- Handler/control ownership and actuator application flow: `src/control/roaster_refactored.rs`
-- Command handler state authority details: `src/control/handlers.rs`
+### High confidence (official docs)
+- Rust Reference, conditional compilation: https://doc.rust-lang.org/reference/conditional-compilation.html
+- Cargo Book, features and feature combinations: https://doc.rust-lang.org/cargo/reference/features.html
+- Embedded Rust Book, concurrency/shared-state hazards: https://docs.rust-embedded.org/book/concurrency/
 
-### Medium confidence (community-maintained guidance)
-- Embassy FAQ (release/LTO gotchas, dead-code/link behavior during setup, resource usage practices): https://github.com/embassy-rs/embassy/blob/main/docs/pages/faq.adoc
-
----
-*Pitfalls research for: LibreRoaster v5.0 quality hardening (dead code elimination, Rust modernization, SOLID refactors, real hardware validation)*
-*Researched: 2026-03-07*
+### Confidence notes
+- Repo-specific failure modes are HIGH confidence because they align with current project structure and local documentation.
+- Milestone-structure recommendations are MEDIUM confidence because they are process guidance derived from embedded brownfield audit practice rather than a single normative standard.

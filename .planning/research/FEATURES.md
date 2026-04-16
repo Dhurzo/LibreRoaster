@@ -1,136 +1,205 @@
-# Feature Research: LibreRoaster v5.0 Quality Hardening
+# Feature Landscape
 
-**Domain:** Brownfield embedded Rust firmware quality hardening (coffee roaster controller)
-**Researched:** 2026-03-07
-**Project:** LibreRoaster v5.0
+**Domain:** Brownfield embedded/firmware defect analysis and implementation-ready defect reporting
+**Researched:** 2026-04-16
+**Project:** LibreRoaster v5.3 Deep Bug Analysis & Defect Report
 **Confidence:** MEDIUM-HIGH
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes (Must Have)
-
-These are expected in a mature embedded Rust firmware hardening milestone. Missing these usually leads to recurring defects, slower onboarding, and unsafe refactors.
+Features users expect from a serious firmware-adjacent defect-audit milestone. Missing these usually turns the output into a vague bug brainstorm instead of a usable remediation backlog.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **Quality gate baseline (lint + formatting + fail policy)** | Mature Rust firmware teams codify baseline quality gates (`cargo fmt --check`, clippy sets, warning policy) so quality is enforced continuously, not by manual review. | MEDIUM | Dependencies: host/integration tests already in place; dual-channel queue + control modules must compile under stricter lints. Behavior in brownfield: start warn-only per module, then ratchet to deny in CI. |
-| **Codebase audit inventory (module ownership + risk map)** | Brownfield hardening needs an explicit map of hot paths, unsafe-adjacent areas, and stale modules before deleting/refactoring code. | MEDIUM | Dependencies: existing Artisan protocol processing, safety instrumentation, SSR/fan control, and queue processing paths. Behavior: inventory first, edits second. |
-| **Dead code elimination workflow (not one-shot deletion)** | Mature teams treat dead code removal as a pipeline: compiler lint signals, dependency-level checks, then behavior-preserving removals with test/hardware verification. | MEDIUM | Dependencies: existing host/integration tests are the first safety net; real-hardware validation is the second. Use `dead_code` lint + `cargo +nightly udeps` for unused dependencies, with explicit allowlist for intentional dormant items. |
-| **Rust best-practices uplift pass** | Brownfield firmware accumulates style and API drift. A structured uplift (`cargo fix`, edition idioms, clippy cleanup, error/context normalization) is table stakes for maintainability. | MEDIUM | Dependencies: all existing feature areas, especially protocol handlers and safety reporting. Behavior: prefer mechanical transforms first, then semantic cleanups. |
-| **Pragmatic SOLID alignment at hardware seams** | In embedded Rust, SOLID is expected mainly at boundaries (drivers, control strategies, command handlers), not as strict OO purity across all modules. | HIGH | Dependencies: existing SSR/Fan architecture, command processing handlers, dual-channel comm abstractions. Behavior: extract traits where hardware swap/testing needs it; avoid architecture churn in proven loops. |
-| **Hardware realism validation path (HIL smoke path)** | Mature firmware hardening does not stop at host tests. It defines a repeatable path where host tooling (Artisan Scope) drives a real roaster and validates telemetry + safety invariants. | HIGH | Dependencies: Artisan protocol + telemetry output, watchdog/guard reporting, queue processing, SSR/Fan control loop. Behavior: scripted scenario set with pass/fail thresholds and rollback criteria. |
+| **Whole-repo investigation coverage map** | A brownfield audit is only credible if it states what was inspected: firmware runtime paths, host scripts, validation tooling, and planning-visible behavior. | MEDIUM | Required behavior: declare in-scope surfaces, depth of review per surface, and known blind spots. Dependency: current repo structure and milestone scope in `.planning/PROJECT.md`. |
+| **Evidence-backed finding standard** | Rigorous audits do not report "likely bugs" without proof. Each finding needs code pointer(s), failure mode, trigger conditions, and why the behavior is wrong. | MEDIUM | Required minimum evidence: file/line or artifact reference, observed or reasoned failure chain, affected subsystem, and confidence level. Prefer replay/HIL/TRACE artifacts when available. |
+| **Criticity model tuned for firmware operations** | Embedded defects are not just "severity" in the web-app sense; they need safety/control impact, operator impact, and recovery implications. | MEDIUM | Recommend 4 levels: Critical, High, Medium, Low. Score using impact to safety/control, likelihood/reachability, and detectability/containment. Do **not** use pure CVSS as the primary model for non-security defects. |
+| **Implementation-ready defect record** | The output milestone succeeds only if a follow-up fix milestone can pick up a bug and act without redoing discovery work. | MEDIUM | Each record should include: problem statement, why it is a bug, evidence, suspected root cause, fix direction, affected files/components, validation needed after fix, and dependencies/risks. |
+| **Structured report with decision-friendly sections** | Teams need to triage quickly: exec summary first, defect inventory second, detailed findings third. | LOW-MEDIUM | Required sections: scope/method, coverage summary, criticity rubric, finding inventory table, detailed findings, false-positive/needs-validation list, deferred items, and recommended remediation slicing. |
+| **Validation expectation per finding** | Firmware bugs often look fixed on host-side reasoning but fail on target timing or hardware paths. The report must say how to confirm the eventual fix. | MEDIUM | Required behavior: every finding names the cheapest valid proof after remediation: unit test, integration test, TRACE replay, diagnostics replay, HIL rerun, or manual hardware check. |
+| **Explicit milestone boundaries** | Brownfield audit milestones fail when they drift into opportunistic refactors and half-fixes. | LOW | Required behavior: separate confirmed bugs from code smells, future enhancements, and speculative redesigns. This milestone produces defect reports, not merged fixes. |
 
-### Differentiators (Engineering Advantage)
+## Differentiators
 
-These are not strictly required for v5.0 completion, but they materially improve reliability velocity and auditability.
+Useful but not strictly required for milestone closeout. These materially improve trust, triage speed, and follow-up planning quality.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **Ratcheting lint policy by module criticality** | Lets the team harden critical safety/control modules first without blocking lower-risk areas; improves adoption vs. all-at-once deny policies. | MEDIUM | Start with safety + control + protocol modules; expand to full workspace after warning burn-down. |
-| **Traceability matrix: command -> queue -> actuator -> telemetry -> guard events** | Makes regressions explainable and shortens incident triage when behavior differs between host tests and hardware runs. | HIGH | Builds on existing dual-channel communication and telemetry instrumentation. |
-| **Artifact-backed HIL runs (scenario scripts + golden outputs)** | Converts hardware testing from tribal/manual process into repeatable evidence suitable for release gates and future regressions. | HIGH | Pair Artisan Scope scenario files with expected telemetry/safety envelopes and retain run artifacts per release. |
-| **Fault-injection hardening scenarios** | Competitive reliability gain: validates watchdog/guard behavior under dropped messages, queue pressure, and sensor anomalies before field exposure. | HIGH | Depends directly on existing watchdog/guard reporting and queue processing architecture. |
+| **Cross-artifact correlation (code -> TRACE -> replay/HIL -> docs)** | Stronger than a code-only audit because it can prove that defects cross firmware, tooling, and operator-facing evidence chains. | HIGH | Best fit for LibreRoaster because TRACE instrumentation, replay artifacts, and HIL playbooks already exist. |
+| **Finding confidence label** | Distinguishes confirmed defects from likely defects and review-only hypotheses, reducing false urgency. | LOW | Recommend labels: Confirmed / Strongly Suspected / Needs Runtime Confirmation. |
+| **Root-cause clustering across findings** | Prevents follow-up milestones from fixing symptoms one by one when several bugs share the same queue, state, parsing, or error-taxonomy cause. | MEDIUM | Useful output: "shared failure family" tags such as control-loop timing, protocol parsing, artifact drift, validation mismatch, unsafe defaults. |
+| **Fix sequencing hints** | Makes the follow-up remediation milestone easier to plan by grouping defects into low-risk-first slices. | MEDIUM | Example groups: report-only/tooling, host-side scripts, deterministic firmware logic, hardware/timing-sensitive defects. |
+| **False-positive quarantine section** | Preserves useful suspicions without polluting the confirmed bug backlog. | LOW | Important in embedded audits where not every suspicious path can be reproduced immediately on target hardware. |
+| **Machine-readable defect inventory** | Lets later phases sort/filter by subsystem, criticity, and validation type. | MEDIUM | Optional enhancement: emit JSON/CSV alongside Markdown, but Markdown remains the authoritative narrative artifact. |
 
-### Anti-Features (Deliberately Avoid)
+## Anti-Features
 
-These are common quality-hardening traps in brownfield firmware.
+Features to explicitly NOT build in this milestone.
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **Big-bang architecture rewrite for "perfect SOLID"** | Looks like the fastest route to clean design. | High regression risk in control/safety loops; burns schedule on structural churn rather than defect removal. | Incremental seam extraction at high-leverage boundaries only. |
-| **Enable all strict clippy groups globally on day one** | Signals rigor quickly. | `pedantic`/`restriction` contain intentionally noisy rules; creates churn and team fatigue, especially in legacy modules. | Curated lint profile with documented allowlist and ratchet plan. |
-| **Delete anything flagged as unused without runtime validation** | Appears to reduce complexity fast. | Firmware often has conditionally used paths (feature flags, board-specific, recovery flows). Blind deletion can break field behavior. | Two-stage deletion: static signal + scenario verification (tests + HIL). |
-| **Overbuild a full hardware lab orchestration platform in v5.0** | Promise of perfect automated realism. | Tooling scope can eclipse the hardening objective. | Keep a pragmatic scripted HIL path first; automate further in follow-up milestone. |
-| **Refactor public protocol semantics during hardening** | Tempting to "clean up" protocol while touching handlers. | Changes external behavior and muddies regression attribution for quality milestone. | Freeze protocol semantics; harden implementation, tests, and observability only. |
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| **Mix bug analysis with direct remediation** | Hides investigation quality, muddies blame for regressions, and breaks the milestone's stated goal. | Stop at implementation-ready fix descriptions and validation guidance. Schedule actual fixes in the next milestone. |
+| **Speculative bug lists without evidence** | Creates churn and distrust; maintainers cannot act on hand-wavy findings. | Require evidence + confidence labels; move weaker items to "needs validation." |
+| **Architecture rewrite recommendations disguised as bug fixes** | Brownfield audits often overreach into redesign. That expands scope and delays useful output. | Keep recommendations local and minimal unless a repeated root cause clearly proves a boundary problem. |
+| **Criticity inflation** | If everything is high severity, nothing is prioritized. | Use a narrow rubric tied to safety/control impact, customer-visible effect, and containment. |
+| **Treating style/lint issues as defects by default** | Noise overwhelms real runtime, protocol, or evidence-chain bugs. | Track non-functional cleanup separately unless it directly causes incorrect behavior or masks failures. |
+| **Requiring on-hardware reproduction for every finding** | Too expensive for a whole-repo audit and will suppress real script/tooling/reporting defects. | Accept static/reasoned findings when evidence is strong; reserve HIL for hardware-sensitive or timing-sensitive issues. |
+| **Generating a giant flat report with no triage structure** | Makes the output unreadable and unusable for milestone planning. | Use summary tables plus detailed per-finding records. |
+
+## Feature Categories for This Milestone
+
+These are the concrete behavior categories downstream roadmap work should preserve.
+
+### 1. Investigation Coverage
+
+**Required practices**
+- Cover firmware control/runtime logic, host scripts, validation tooling, diagnostics/replay tooling, and planning-visible behavior/documentation drift.
+- Distinguish inspected surfaces from lightly sampled surfaces.
+- Record blind spots explicitly: hardware-only paths not exercised, environment-dependent scripts not run, assumptions derived from static review only.
+
+**Optional enhancements**
+- Subsystem heatmap by risk and evidence depth.
+- Reviewer notes on "high churn / high coupling / low test visibility" zones.
+
+### 2. Evidence Standards
+
+**Required practices**
+- Every bug gets direct evidence: code location, artifact reference, or deterministic reasoning chain.
+- Evidence should be reproducible where practical: command transcript, TRACE line family, replay artifact mismatch, failing test path, or documented scenario.
+- Separate facts from inference.
+
+**Optional enhancements**
+- Attach minimal repro steps.
+- Include screenshots/log excerpts only when they add signal over structured references.
+
+### 3. Severity / Criticity Model
+
+**Required practices**
+- Use a defect criticity model that fits embedded systems, not only security disclosures.
+- Recommended rubric:
+  - **Critical** — can create unsafe behavior, uncontrolled actuation, loss of shutdown/guard guarantees, or corrupt trusted evidence for safety decisions.
+  - **High** — breaks core roast control, telemetry correctness, protocol correctness, or audit/replay workflows in realistic use.
+  - **Medium** — degrades diagnostics, creates misleading outputs, weakens validation confidence, or breaks less common but supported flows.
+  - **Low** — real defect with bounded impact, low reachability, or easy operator detection/recovery.
+- Score using three axes: **impact**, **reachability/likelihood**, **detectability/containment**.
+
+**Optional enhancements**
+- Add a separate **confidence** field so high-risk hypotheses do not masquerade as confirmed critical bugs.
+- Add a **fix-cost** hint, but keep it secondary to criticity.
+
+### 4. Report Structure
+
+**Required practices**
+- Start with an inventory table: ID, title, subsystem, criticity, confidence, validation type, proposed fix owner/area.
+- Detailed entries should include:
+  1. bug statement
+  2. affected components/files
+  3. why this is wrong
+  4. evidence
+  5. trigger/preconditions
+  6. impact
+  7. suspected root cause
+  8. implementation-ready fix direction
+  9. validation needed after fix
+  10. dependencies / blockers / open questions
+- Include a separate section for non-bug observations and deferred concerns.
+
+**Optional enhancements**
+- Machine-readable sidecar inventory.
+- Root-cause clusters and suggested remediation batches.
+
+### 5. Validation Expectations
+
+**Required practices**
+- The report must specify how each eventual fix should be validated.
+- Validation should use the cheapest proof that still matches the risk:
+  - host/unit/integration tests for deterministic logic
+  - TRACE/replay verification for diagnostics and evidence-chain defects
+  - HIL/manual hardware validation for timing, actuation, guard, or telemetry-on-target defects
+- Findings that cannot be reproduced now should still name the required confirmation step.
+
+**Optional enhancements**
+- Map findings to existing HIL scenarios or replay artifacts that can be reused.
+- Recommend new regression assets only where coverage is clearly missing.
+
+### 6. Boundaries
+
+**Required practices**
+- Keep the milestone centered on detection, ranking, and remediation planning.
+- Defer actual code changes, architecture overhauls, and broad quality-program work.
+- Record when a finding depends on hardware access, environment setup, or future repro work.
+
+**Optional enhancements**
+- Propose remediation slices for the next milestone.
+- Identify candidate bugs that should be bundled into a dedicated reliability or diagnostics follow-up.
 
 ## Feature Dependencies
 
 ```text
-Existing foundation (already built):
-  Artisan command processing + telemetry
-  Safety instrumentation + watchdog/guard reporting
-  Dual-channel communications + queue processing
-  SSR/Fan control architecture + host/integration tests
+Existing project context (already built):
+  TRACE instrumentation
+  Diagnostics replay artifacts
+  Manifest-aware HIL validation workflow
+  Embedded diagnostics + unified error taxonomy
+  Existing firmware/script/tooling/planning surfaces
 
-[Quality gate baseline]
-    └──enables──> [Dead code elimination workflow]
-    └──enables──> [Best-practices uplift pass]
+[Whole-repo investigation coverage]
+    └──requires──> [Current subsystem map and explicit scope boundaries]
 
-[Best-practices uplift pass]
-    └──enables──> [Pragmatic SOLID seam extraction]
+[Evidence-backed findings]
+    └──depends on──> [TRACE logs / replay artifacts / tests / code references]
+    └──depends on──> [Ability to cite planning-visible expected behavior]
 
-[Dead code elimination workflow]
-    └──requires──> [Host/integration test coverage confidence]
-    └──requires──> [Hardware realism validation path]
+[Criticity model]
+    └──depends on──> [Understanding of safety/control importance]
+    └──depends on──> [Known operator-facing impact paths]
 
-[Hardware realism validation path]
-    └──requires──> [Artisan protocol + telemetry]
-    └──requires──> [Safety/watchdog instrumentation]
-    └──requires──> [Dual-channel queue correctness]
-    └──requires──> [SSR/Fan control behavior]
+[Implementation-ready defect record]
+    └──depends on──> [Subsystem ownership or at least affected-component clarity]
+    └──depends on──> [Validation path selection per finding]
+
+[Validation expectations]
+    └──reuse──> [HIL playbook]
+    └──reuse──> [TRACE/replay tooling]
+    └──reuse──> [Existing tests where sufficient]
 ```
 
 ### Dependency Notes
 
-- **Dead code elimination depends on both test tiers:** host/integration tests catch immediate regressions, while real-hardware runs catch timing/actuation edge cases not visible in host-only tests.
-- **SOLID alignment depends on existing architecture seams:** most value comes from tightening current boundaries (handlers, hardware traits), not adding new abstraction layers.
-- **Hardware realism is an end-to-end dependency consumer:** it validates all existing core features together and should be the acceptance gate for hardening changes touching control or safety paths.
+- **TRACE instrumentation is a major accelerator** for proving cross-boundary bugs; use it as primary evidence where runtime flow matters.
+- **Replay artifacts matter for evidence-chain defects**; if a bug is in diagnostics or reporting fidelity, replay/metadata comparison is stronger than prose-only reasoning.
+- **HIL should be selective, not universal**; use it for actuation/timing/telemetry correctness, not as a blanket prerequisite for every reported defect.
+- **Planning-visible behavior is in scope** because this milestone explicitly includes reportability and auditability across tooling and planning artifacts, not firmware alone.
 
-## MVP Recommendation (v5.0)
+## MVP Recommendation
 
-Prioritize these for milestone completion:
+Prioritize:
+1. **Whole-repo coverage declaration** — prove the audit is systematic.
+2. **Evidence-backed per-finding record format** — make the output actionable.
+3. **Firmware-appropriate criticity + confidence model** — make prioritization credible.
+4. **Validation expectation per finding** — prevent the follow-up fix milestone from guessing how to verify changes.
+5. **Strict milestone boundary enforcement** — keep analysis work from becoming a mixed fix/refactor milestone.
 
-1. **Quality gate baseline + ratchet policy** - establish enforceable standards and prevent quality backsliding.
-2. **Codebase audit + dead code elimination workflow** - reduce maintenance drag without blind deletions.
-3. **Best-practices uplift + targeted SOLID seam alignment** - improve maintainability in high-change/high-risk modules.
-4. **Hardware realism validation path with Artisan Scope** - verify hardening on real roaster behavior before closeout.
-
-Defer to post-v5.0:
-
-- **Fully automated lab orchestration** - valuable, but beyond pragmatic scope for first hardening release.
-- **Global strict lint saturation in one pass** - adopt through ratcheting once top-risk modules stabilize.
-
-## Feature Prioritization Matrix
-
-| Feature | User/Engineering Value | Implementation Cost | Priority |
-|---------|-------------------------|---------------------|----------|
-| Quality gate baseline + ratchet | HIGH | MEDIUM | P1 |
-| Audit + dead code elimination workflow | HIGH | MEDIUM | P1 |
-| Hardware realism validation path (HIL smoke) | HIGH | HIGH | P1 |
-| Best-practices uplift pass | HIGH | MEDIUM | P1 |
-| Pragmatic SOLID seam alignment | MEDIUM-HIGH | HIGH | P2 |
-| Fault-injection scenario suite | MEDIUM-HIGH | HIGH | P2 |
-| Full lab automation platform | MEDIUM | HIGH | P3 |
-
-**Priority key:**
-- P1: Required for v5.0 hardening exit criteria
-- P2: Strongly recommended if schedule allows
-- P3: Follow-up milestone
+Defer:
+- **Actual bug remediation** — next milestone.
+- **Large new automation frameworks** — only recommend when the report proves a coverage gap.
+- **Broad architectural cleanup programs** — only justify later if multiple findings share one structural root cause.
+- **Formal external vulnerability disclosure workflow** — out of scope unless the audit uncovers true security vulnerabilities needing coordinated handling.
 
 ## Sources
 
-Primary (HIGH confidence):
+Project context (HIGH confidence):
+- `.planning/PROJECT.md` — milestone goal, scope, and out-of-scope definition.
+- `tests/hardware/HIL-PLAYBOOK.md` — existing artifact/evidence expectations for reproducible validation.
+- `tests/hardware/report_template.md` — current report structure for auditor-facing validation output.
+- `replay-report.json` — example of structured replay evidence with explicit metadata matching.
 
-- Rust compiler lint reference (`dead_code`, `unused_*`, warning levels): https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html
-- Clippy lint categories and operational guidance: https://doc.rust-lang.org/clippy/
-- Cargo automated fixes and edition migration workflow: https://doc.rust-lang.org/cargo/commands/cargo-fix.html
-- Cargo profiles and build policy controls: https://doc.rust-lang.org/cargo/reference/profiles.html
-- Rust 2024 edition timing/reference: https://doc.rust-lang.org/nightly/edition-guide/rust-2024/index.html
-- Embedded HAL design goals and trait-boundary guidance: https://docs.rs/embedded-hal/latest/embedded_hal/
-- Embedded test harness on real targets (`embedded-test` + `probe-rs run` model): https://docs.rs/embedded-test/latest/embedded_test/
+Official / authoritative references (MEDIUM-HIGH confidence):
+- NIST SP 800-218 SSDF — emphasizes reducing vulnerabilities, mitigating undetected issues, and addressing root causes: https://csrc.nist.gov/pubs/sp/800/218/final
+- FIRST CVSS v4.0 — useful as a reference for transparent scoring dimensions, but not sufficient alone for firmware defect criticity: https://www.first.org/cvss/v4.0/specification-document
+- MITRE CWE List v4.19.1 — useful for consistent weakness/root-cause taxonomy across software and hardware-adjacent findings: https://cwe.mitre.org/data/index.html
+- SEI CERT C Coding Standard — supports rule/recommendation framing, analyzers, and risk-oriented reasoning for C/C++-adjacent code and embedded tooling: https://wiki.sei.cmu.edu/confluence/display/c/SEI+CERT+C+Coding+Standard
 
-Supporting (MEDIUM confidence):
-
-- `cargo-udeps` usage and constraints (nightly needed to run): https://github.com/est31/cargo-udeps
-- `cargo-llvm-cov` capabilities/limits and CI thresholds: https://github.com/taiki-e/cargo-llvm-cov
-- `probe-rs` ecosystem maturity and host-target debugging tooling: https://github.com/probe-rs/probe-rs
-- Rust API design recommendations (pragmatic maintainability over dogma): https://rust-lang.github.io/api-guidelines/
-- `defmt` ecosystem and embedded logging/test context: https://defmt.ferrous-systems.com/
-
-Notes on confidence:
-
-- Google search tool was unavailable in this environment (403), so ecosystem trend claims are based on official docs and major project documentation rather than broad web survey.
-
----
-*Feature research for: LibreRoaster v5.0 quality audit/hardening*
-*Researched: 2026-03-07*
+Confidence notes:
+- Google Search was unavailable in this environment, so broader ecosystem trend claims are based on project artifacts, official standards, and established embedded review practice rather than a large 2026 community survey.
+- The recommendations above are **high confidence for brownfield firmware audit mechanics**, but **medium confidence for ecosystem popularity claims** because broad web survey tooling was not available.

@@ -1,154 +1,169 @@
 # Project Research Summary
 
-**Project:** LibreRoaster v5.0 Auditoria integral de calidad Rust
-**Domain:** Embedded Rust firmware quality hardening (ESP32-C3 coffee roaster control)
-**Researched:** 2026-03-07
+**Project:** LibreRoaster v5.3 Deep Bug Analysis & Defect Report
+**Domain:** Brownfield embedded firmware defect audit and evidence-backed reporting
+**Researched:** 2026-04-16
 **Confidence:** HIGH
 
 ## Executive Summary
 
-LibreRoaster v5.0 is a quality-hardening milestone for a brownfield embedded firmware product, not a feature-expansion release. The research converges on a conservative, evidence-first strategy used by mature embedded Rust teams: freeze runtime behavior contracts first, then run staged dead-code and best-practice cleanup behind strict gates, and only then perform targeted SOLID seam extraction in the highest-risk modules.
+LibreRoaster v5.3 is best treated as an **audit-overlay milestone**, not a feature-delivery or architecture-rewrite effort. The product here is an implementation-ready defect report for an existing embedded Rust firmware system plus its Python, shell, HIL, replay, and planning-visible evidence paths. The research consistently points to one approach: preserve the runtime, reuse current TRACE/STATUS/HIL/replay assets, and add a normalized defect catalog plus evidence index that can directly feed the next remediation roadmap.
 
-The recommended approach is to preserve the existing deterministic runtime architecture (`control_loop_task`, handler authority, guarded actuation) and add a host-side quality layer for audit inventory, automated gates, and hardware evidence packaging. Tooling should be pinned and split by purpose: stable for daily lint/test/governance workflows, nightly only for `cargo-udeps` dead-dependency audits. This keeps hardening velocity high without destabilizing firmware builds.
+The recommended build order is to trust the evidence pipeline before trusting any finding. Experts would first define the audit charter, bug bar, and evidence rules; then verify host capture and analysis tooling; then investigate transport/control-loop boundaries before lower-level hardware and documentation drift. Stack additions should stay lightweight and audit-focused: `cargo-nextest`, `cargo-hack`, `cargo-llvm-cov`, `cargo-deny`, `cargo-audit`, `cargo-geiger`, `uv`, `ruff`, `pytest`, and `ShellCheck`.
 
-The key risks are false-positive dead code deletions, authority fragmentation during refactors, and host-only confidence that misses real hardware behavior. Mitigation is explicit in all research tracks: candidate classification with evidence per deletion, single-writer invariants at safety/manual boundaries, loop-budget/timing gates in release builds, and mandatory Artisan Scope hardware validation artifacts before milestone signoff.
+The biggest risks are scope drift, false confidence in existing diagnostics, and weak evidence quality. Mitigate them by keeping fixes out of this milestone, separating severity from confidence, requiring artifact-backed findings, and using HIL selectively for target-sensitive bugs only. If the team follows that discipline, the output should be a high-signal defect inventory rather than a vague bug brainstorm.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack recommendation is intentionally incremental: keep firmware runtime tech unchanged, add audit-grade quality tooling around it, and pin versions to avoid drift while refactoring.
+Research favors **augmenting the current repo**, not introducing a new platform. Keep Rust pinned at `1.88.0`, use nightly only for tool-only needs, and extend existing Python reporting instead of adding a new service or dashboard.
 
 **Core technologies:**
-- Rust toolchain pin `1.88.0` (+ nightly tools-only) — deterministic ESP32-C3 builds with `esp-hal 1.0.0` compatibility and controlled nightly usage for `udeps`.
-- `cargo-nextest` `0.9.129` + `cargo-llvm-cov` `0.8.4` — reliable regression orchestration with measurable coverage fail-under gates before deletion.
-- `cargo-udeps` `0.1.60` + `cargo-machete` `0.9.1` — layered unused dependency detection (fast stable preflight + deeper nightly verification).
-- `cargo-modules` `0.25.0` + `cargo-deny` `0.19.0` + `cargo-geiger` `0.13.0` — architecture hygiene, supply-chain policy, and unsafe-surface trend control.
-- `serialport` `4.8.1` + `csv` `1.4.0` (dev) — reproducible command/telemetry evidence for HW-01 hardware validation.
+- **Rust 1.88.0 stable + nightly (tools-only):** deterministic audit runs without changing the firmware build path.
+- **cargo-nextest 0.9.133:** machine-readable host regression evidence with JUnit output.
+- **cargo-hack 0.6.44:** feature-matrix checking across `std`, `test`, `regression`, and `embedded` modes.
+- **cargo-llvm-cov 0.8.5:** host-path coverage evidence to show what the audit actually exercised.
+- **cargo-deny 0.19.4 + cargo-audit 0.22.1:** dependency and RustSec risk inventory for brownfield coverage.
+- **cargo-geiger 0.13.0:** unsafe hotspot inventory to correlate with defect-prone surfaces.
+- **uv + ruff + pytest:** lightweight, reproducible checks for Python evidence tooling.
+- **ShellCheck:** table-stakes static analysis for shell glue and build scripts.
+
+**Critical version requirements:**
+- Rust toolchain should remain pinned to **`1.88.0`**.
+- Use the listed audit tool versions from `STACK.md` for reproducible runs.
 
 ### Expected Features
 
-v5.0 success criteria are operational hardening capabilities, not new protocol semantics. Research aligns on a four-part MVP sequence with clear dependencies.
+The milestone’s table stakes are about **audit quality**, not new user functionality. The report must prove whole-repo coverage, use evidence-backed findings, apply an embedded-appropriate criticity model, produce implementation-ready defect records, and specify validation expectations per finding.
 
 **Must have (table stakes):**
-- Quality gate baseline with ratcheting lint/format/fail policy by module criticality.
-- Codebase audit inventory plus controlled dead-code elimination workflow (static signals + runtime evidence).
-- Rust best-practices modernization pass (mechanical first, semantic second).
-- Hardware realism validation path (Artisan-driven HIL smoke + auditable artifacts).
+- Whole-repo investigation coverage map across firmware, scripts, HIL, diagnostics, and planning-visible behavior.
+- Evidence-backed finding standard with code/artifact references and bounded failure chains.
+- Embedded-specific criticity model plus explicit confidence labels.
+- Implementation-ready defect records with proposed fix direction and post-fix validation path.
+- Structured report with inventory table, detailed findings, deferred items, and remediation slicing.
 
-**Should have (competitive):**
-- Command-to-actuator traceability matrix (`command -> queue -> actuator -> telemetry -> guard`).
-- Artifact-backed HIL scenarios with expected envelopes and release evidence retention.
-- Fault-injection hardening scenarios for watchdog/guard/comms anomalies.
+**Should have (differentiators):**
+- Cross-artifact correlation from code to TRACE to replay/HIL to docs.
+- Root-cause clustering and fix sequencing hints for the follow-up remediation milestone.
+- Machine-readable defect inventory (`JSON`) alongside the Markdown narrative.
+- False-positive / needs-validation quarantine section.
 
-**Defer (v2+):**
-- Full hardware lab orchestration platform.
-- Global strict clippy saturation in one pass.
-- Any protocol-semantic redesign during quality hardening.
+**Defer (v2+ / next milestone):**
+- Actual remediation work.
+- Large automation frameworks, observability rewrites, or architecture overhauls.
+- Formal vulnerability disclosure workflow unless true security defects are found.
 
 ### Architecture Approach
 
-The architecture recommendation is to keep runtime paths stable and add an out-of-band quality layer. Runtime remains centered on queue/multiplexer ingestion, `control_loop_task` cadence, authoritative handler chain, guarded actuation, and telemetry output. New v5.0 components live mostly in `.planning/quality/` and `tests/hardware/`, where audit inventories, dependency maps, gate outputs, and hardware evidence templates can evolve without injecting overhead into the 100 ms loop.
+The architecture recommendation is clear: keep firmware as the **evidence producer**, reuse host tooling as the **evidence collector/analyzer**, and add a host/docs-only **audit catalog layer** that turns subsystem findings into a roadmap-ready defect inventory. Audit the evidence pipeline first, then transport and control-loop boundaries, then hardware-sensitive flows, then planning-visible contract drift.
 
 **Major components:**
-1. `ServiceContainer` + transport tasks — preserve queue/channel boundaries and ingestion semantics.
-2. `control_loop_task` + `RoasterControl`/handlers — retain deterministic orchestration and single authority for manual/safety state.
-3. v5.0 quality layer (`.planning/quality/`, `tests/hardware/`) — run gates, collect artifacts, and support milestone signoff decisions.
+1. **Existing firmware runtime** — produces real behavior plus STATUS/TRACE/guard/safe-shutdown evidence.
+2. **Existing host evidence tools** — capture HIL/serial runs, analyze traces, and normalize replay outputs.
+3. **New audit catalog layer** — stores defect records, evidence links, criticity, confidence, and fix guidance.
+4. **Planning artifacts** — preserve scope, sequencing, and roadmap handoff for the remediation milestone.
 
 ### Critical Pitfalls
 
-1. **False dead-code deletions with linker/runtime side-effects** — classify candidates, ban blind removals of `#[used]`/unsafe linker attributes, require symbol/test/transcript evidence per deletion.
-2. **Removing Artisan branches needed in real sessions** — freeze canonical transcripts and gate deletions on replay with response-shape assertions.
-3. **SOLID refactor splitting safety/manual authority** — document invariants and enforce single-writer ownership for critical fields with contract tests.
-4. **Hot-path regressions from over-abstraction** — enforce release loop-budget gates, keep tick path allocation-free, and avoid heavy diagnostics in control cadence.
-5. **Skipping HIL readiness and relying on host-only confidence** — require command-to-actuator correlation artifacts and at least one fault-injection run before real hardware signoff.
+1. **Firmware-only audit bias** — force coverage of `scripts/`, `tests/hardware/`, and planning-visible assets.
+2. **Treating diagnostics as ground truth** — validate manifest -> telemetry -> report -> replay before using them as critical evidence.
+3. **Host-only proof for target-sensitive bugs** — require target-aware evidence for timing, watchdog, guard, transport, and sensor issues.
+4. **Reporting integration failures as isolated component bugs** — deduplicate by broken contract and end-to-end symptom.
+5. **Weak evidence quality** — reject findings that lack reproducible triggers, bounded impact, or implementation-ready fix direction.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on combined research, the roadmap should be structured around **evidence trust first, investigation second, packaging last**.
 
-### Phase 1: Baseline Freeze and Gate Foundation
-**Rationale:** Every later change depends on stable contracts and measurable guardrails.
-**Delivers:** Frozen command/safety/telemetry invariants, pinned toolchain, initial gate pipeline (`clippy -> machete -> nextest -> deny`).
-**Addresses:** Quality gate baseline, codebase audit setup.
-**Avoids:** Protocol drift, observability loss, rollback ambiguity.
+### Phase 1: Audit Charter and Evidence Contract
+**Rationale:** The audit fails if bug definitions, confidence rules, and evidence thresholds are fuzzy.
+**Delivers:** Audit scope, bug bar, criticity rubric, confidence labels, defect schema, evidence index skeleton.
+**Addresses:** Coverage declaration, evidence-backed findings, milestone boundaries.
+**Avoids:** Scope explosion, inconsistent severity, weak findings.
 
-### Phase 2: Dead Code Audit and Low-Risk Elimination
-**Rationale:** Remove maintenance drag early, but only where evidence is strongest.
-**Delivers:** Dead-code inventory, dependency map, small-batch removals with coverage and transcript checks.
-**Uses:** `dead_code` policy, `cargo-machete`, `cargo +nightly udeps`, `cargo-llvm-cov`.
-**Avoids:** Linker-side-effect deletions, feature-gate drift, hidden protocol regressions.
+### Phase 2: Evidence Pipeline Verification
+**Rationale:** Host capture and analysis tooling must be trusted before they can support firmware conclusions.
+**Delivers:** Verified TRACE/HIL/replay/reporting chain, documented blind spots, minimal tooling/doc fixes if evidence capture is broken.
+**Uses:** Existing HIL/replay assets plus `uv`, `ruff`, `pytest`, `ShellCheck`.
+**Implements:** Host evidence tooling boundary from `ARCHITECTURE.md`.
 
-### Phase 3: Rust Modernization (Mechanical First)
-**Rationale:** Improve maintainability before structural seam work, while minimizing behavior change risk.
-**Delivers:** Curated clippy improvements, lint ratchet by module, explicit error conversion policy, reviewed unsafe-attribute updates.
-**Implements:** Out-of-band quality gates with no added runtime loop cost.
-**Avoids:** Error semantic collapse, noisy global lint churn, unsafe modernization sweep risks.
+### Phase 3: Static Whole-Repo Audit
+**Rationale:** Once the evidence path is trustworthy, broad inspection can generate high-quality hypotheses quickly.
+**Delivers:** Subsystem notes and initial defect inventory across firmware, transport, tooling, and planning-visible behavior.
+**Addresses:** Whole-repo coverage map and implementation-ready record format.
+**Avoids:** Firmware-only bias and giant flat reports.
 
-### Phase 4: Pragmatic SOLID Seam Extraction in Hot Paths
-**Rationale:** After cleanup/modernization, seams can be introduced with clearer dependency boundaries.
-**Delivers:** Incremental ports-and-policies extraction around command routing/handlers, preserved behavior and safety ordering.
-**Addresses:** Targeted SOLID alignment and testability gains.
-**Avoids:** Big-bang rewrites, authority fragmentation, 100 ms loop jitter regressions.
+### Phase 4: Targeted Reproduction and Correlation
+**Rationale:** Highest-risk hypotheses should be confirmed with the cheapest valid proof, escalating to HIL only when needed.
+**Delivers:** Confirmed/likely findings backed by traces, tests, replay outputs, and selective on-target validation.
+**Uses:** `cargo-nextest`, `cargo-hack`, `cargo-llvm-cov`, HIL scenarios, replay artifacts.
+**Implements:** Cross-boundary evidence-first triage.
 
-### Phase 5: HIL Preflight and Hardware Evidence Pack
-**Rationale:** Host confidence must be converted into real-hardware proof before closeout.
-**Delivers:** Artisan Scope checklist runs, command/actuator/telemetry correlation artifacts, nominal + injected-fault evidence bundle.
-**Uses:** `serialport`/`csv` harness, `tests/hardware` evidence templates.
-**Avoids:** Late hardware surprises and non-auditable release claims.
+### Phase 5: Criticity Ranking and Deduplicated Defect Catalog
+**Rationale:** The next milestone needs a clean backlog, not raw observations.
+**Delivers:** Prioritized defect catalog, root-cause clusters, validation guidance, remediation sequencing hints.
+**Addresses:** Criticity model, structured report, machine-readable inventory.
+**Avoids:** Duplicate tickets, confidence/severity confusion, symptom-only fixes.
+
+### Phase 6: Roadmap Handoff Package
+**Rationale:** The milestone closes only when the research is directly consumable for requirements and roadmap generation.
+**Delivers:** `DEFECT_REPORT.md`, `defects.json`, evidence index, roadmap implications, deferred/hypothesis appendix.
+**Addresses:** Structured report and follow-up scoping needs.
+**Avoids:** Re-investigation during remediation planning.
 
 ### Phase Ordering Rationale
 
-- The order follows hard dependencies from FEATURES + PITFALLS: gates and invariants first, deletions second, modernization third, structural refactor fourth, hardware proof last.
-- Architecture guidance supports seam-first changes only after inventory and low-risk cleanup reduce coupling noise.
-- This sequence minimizes compounded risk by isolating one class of change per phase and keeping each slice reversible.
+- Verify the evidence pipeline before using it to diagnose firmware defects.
+- Front-load transport/control-loop boundaries because they can invalidate downstream symptoms.
+- Use static and host-side checks early because they are cheap and deterministic; reserve HIL for target-sensitive confirmation.
+- Normalize and deduplicate before roadmap handoff so the next milestone inherits scoped defects, not noisy observations.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 2:** Target/feature matrix for dead-code decisions, especially linker/attribute-sensitive modules.
-- **Phase 4:** Refactor boundary design in `RoasterControl`/handlers to guarantee single-writer invariants and loop-budget compliance.
-- **Phase 5:** HIL scenario thresholds, actuator observability method, and fault-injection acceptance criteria.
+- **Phase 2:** Evidence-pipeline verification may need targeted review of replay/HIL/report fidelity if current artifacts disagree.
+- **Phase 4:** Target-sensitive transport, watchdog, sensor, and control-loop defects may need `/gsd-research-phase` support when hardware timing questions appear.
+- **Phase 5:** Root-cause clustering may need deeper follow-up if multiple findings indicate a structural boundary issue rather than isolated bugs.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1:** Toolchain pinning and baseline quality-gate setup are well-documented and high-confidence.
-- **Phase 3:** Mechanical modernization workflow (curated clippy/cargo fix discipline) is established if safety modules are handled conservatively.
+- **Phase 1:** Audit charter, schema, and evidence contract are well-defined by the research.
+- **Phase 3:** Whole-repo static audit workflow is already well-bounded.
+- **Phase 6:** Packaging and roadmap handoff are standard once the catalog exists.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Version/tool recommendations are specific and mostly backed by official docs/repos plus project constraints. |
-| Features | MEDIUM-HIGH | Priorities are clear and dependency-mapped, but final scope pressure (P1 vs P2) remains planning-dependent. |
-| Architecture | HIGH | Strongly grounded in existing LibreRoaster runtime boundaries and explicit non-invasive patterns. |
-| Pitfalls | MEDIUM-HIGH | Comprehensive and practical, with solid official references; some prevention tactics still need project-specific thresholds. |
+| Stack | HIGH | Strong repo-local grounding plus official tool documentation; recommendations are tightly scoped. |
+| Features | MEDIUM-HIGH | High confidence on audit mechanics; slightly lower confidence on broader ecosystem expectations. |
+| Architecture | HIGH | Strongly supported by repo structure and explicit reuse-first boundaries. |
+| Pitfalls | MEDIUM-HIGH | Pitfalls align closely with embedded brownfield audit failure modes and project-local docs. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Quantified loop-budget threshold:** define concrete per-tick SLO and fail criteria for release builds before Phase 4 merges.
-- **Target/feature gate matrix completeness:** formalize required host + riscv32 jobs per feature profile to avoid false dead-code confidence.
-- **HIL acceptance envelopes:** set numeric pass/fail tolerances for command latency, actuator response, and safety counters.
-- **Evidence retention policy:** decide where gate/HIL artifacts live and how long they are retained for audit traceability.
+- **Evidence fidelity on current TRACE/HIL/replay outputs:** validate early so the report does not inherit tooling drift.
+- **Host-vs-target proof matrix:** define explicitly during planning to avoid over-claiming on target-sensitive bugs.
+- **Subsystem ownership for follow-up fixes:** defect records can name affected areas now, but fix ownership may need explicit assignment in roadmap planning.
+- **Confidence thresholds for “likely” vs “confirmed”:** set these upfront so findings are ranked consistently.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `.planning/research/STACK.md` — pinned stack and toolchain/gate recommendations.
-- `.planning/research/FEATURES.md` — table stakes, differentiators, anti-features, and dependency model.
-- `.planning/research/ARCHITECTURE.md` — runtime boundaries, incremental patterns, and build order.
-- `.planning/research/PITFALLS.md` — phase-specific failure modes and prevention controls.
-- Rust official docs (rustc lints, cargo fix/profiles, Rust reference/edition guide) — lint, unsafe attribute, and build behavior constraints.
-- Embedded ecosystem docs (`esp-hal`, Embassy executor, embedded-hal) — runtime and boundary constraints for ESP32-C3/async firmware.
+- Project-local research: `.planning/research/STACK.md`, `.planning/research/FEATURES.md`, `.planning/research/ARCHITECTURE.md`, `.planning/research/PITFALLS.md`
+- Repo context cited across research: `.planning/PROJECT.md`, `tests/hardware/HIL-PLAYBOOK.md`, `tests/hardware/report_template.md`, `tests/hardware/validation_runner.py`, `tests/hardware/analysis.py`, `internalDoc/TRACEABILITY_MATRIX.md`
+- Rust official docs: Cargo features and conditional compilation, Embedded Rust concurrency guidance
 
 ### Secondary (MEDIUM confidence)
-- Tooling project docs (`cargo-udeps`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `cargo-modules`, `cargo-geiger`) — operational behavior and integration guidance.
-- `probe-rs` and community-maintained Embassy FAQ — practical target validation and release/LTO gotchas.
+- Tool docs: nextest, cargo-llvm-cov, cargo-deny, cargo-audit, cargo-geiger, cargo-hack, uv, Ruff, pytest, ShellCheck
+- Standards/guidance: NIST SSDF, FIRST CVSS v4.0, MITRE CWE, SEI CERT C
 
 ### Tertiary (LOW confidence)
-- None identified as decision-critical for this synthesis.
+- Broader ecosystem popularity/trend assumptions where web-wide survey data was unavailable in this environment
 
 ---
-*Research completed: 2026-03-07*
+*Research completed: 2026-04-16*
 *Ready for roadmap: yes*
