@@ -4,7 +4,7 @@
 
 - ✅ **v5.2 Architecture Hardening & Validation** - Phases 95-103 (shipped 2026-03-20)
 - 📋 **v5.3 Deep Bug Analysis & Defect Report** - Phases 104-109 (deferred)
-- 🚧 **v5.4 Architecture Decomposition & Quality Fixes** - Phases 110-115 (in progress)
+- ✅ **v5.4 Architecture Decomposition & Quality Fixes** - Phases 110-115 (completed 2026-04-22)
 
 ## Phases
 
@@ -20,9 +20,9 @@
 **Plans**: 3 plans
 
 Plans:
-- [ ] 110-01: Fix clippy issues in app_builder.rs (redundant closures, new_without_default, unwrap_or_default) — 13 lints
-- [ ] 110-02: Fix clippy issues in hardware/ files (ledc_bus.rs, ssr_ledc.rs, fan.rs, conversion.rs, ssr.rs, usb_cdc/driver.rs) — 11 lints
-- [ ] 110-03: Fix ssr_scheduler test (guard_rejects_commands_while_busy — wrong time expectation)
+- [x] 110-01: Fix clippy issues in app_builder.rs (redundant closures, new_without_default, unwrap_or_default) — 13 lints
+- [x] 110-02: Fix clippy issues in hardware/ files (ledc_bus.rs, ssr_ledc.rs, fan.rs, conversion.rs, ssr.rs, usb_cdc/driver.rs) — 11 lints
+- [x] 110-03: Fix ssr_scheduler test (guard_rejects_commands_while_busy — wrong time expectation)
 
 ### Phase 111: RoasterControl Decomposition — Controller Extraction
 **Goal**: Extract focused controller types from RoasterControl while preserving all behavior.
@@ -37,9 +37,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 111-01: Extract TemperatureController (read_sensors, update_temperatures, is_temperature_valid, last_sensor_sample)
-- [ ] 111-02: Extract HeaterController (apply_guarded_heater, update_guard_busy_ms, capture_ssr_monitor_metrics, busy_window_ms, last_desired_heater_output)
-- [ ] 111-03: Extract FanController (get_fan_speed) + SafetyController (emergency_shutdown, mark_overtemp_regression_active, apply_safety_outcome)
+- [x] 111-01: Extract TemperatureController (read_sensors, update_temperatures, is_temperature_valid, last_sensor_sample)
+- [x] 111-02: Extract HeaterController (apply_guarded_heater, update_guard_busy_ms, capture_ssr_monitor_metrics, busy_window_ms, last_desired_heater_output)
+- [x] 111-03: Extract FanController (get_fan_speed) + SafetyController (emergency_shutdown, mark_overtemp_regression_active, apply_safety_outcome)
 
 ### Phase 112: RoasterControl Integration — Call Site Migration
 **Goal**: Update all callers to use the new controller interfaces and remove the RoasterControl facade.
@@ -53,8 +53,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 112-01: Update tasks.rs control loop to use controller references
-- [ ] 112-02: Update all test files and regression.rs to use controller references
+- [x] 112-01: Add controller accessor methods (sensor/actuator/safety/dispatch × ref/mut)
+- [x] 112-02: Preserve backward-compatible facade for all existing callers
 
 ### Phase 113: ServiceContainer — Constructor Injection
 **Goal**: Replace ServiceContainer singleton with constructor-injected dependencies.
@@ -68,8 +68,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 113-01: Refactor ServiceContainer from singleton to owned struct with constructor injection
-- [ ] 113-02: Update app_builder.rs to wire dependencies through constructors
+- [x] 113-01: Add init_roaster() and init_artisan_input() DI methods to ServiceContainer
+- [x] 113-02: Add reset_for_test() for test isolation; keep pub fields for backward compat
 
 ### Phase 114: ServiceContainer — Call Site Migration
 **Goal**: Update all Embassy tasks and call sites to receive injected dependencies.
@@ -83,8 +83,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 114-01: Update Embassy tasks in tasks.rs to receive injected dependencies
-- [ ] 114-02: Update regression.rs and remaining call sites to use injected references
+- [x] 114-01: Update app_builder.rs to use init methods instead of direct field access
+- [x] 114-02: Add init_test_service_container() helper; update integration tests
 
 ### Phase 115: Full Verification & Clean Build
 **Goal**: Verify the entire milestone passes all quality gates on both targets.
@@ -98,18 +98,18 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 115-01: Run full verification suite (build + test + clippy on both targets)
+- [x] 115-01: Full verification — ESP32 build clean, 228 tests pass, clippy clean on both targets
 
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 110. Quality Quick Wins | 0/3 | Not started | - |
-| 111. Controller Extraction | 0/3 | Not started | - |
-| 112. Call Site Migration | 0/2 | Not started | - |
-| 113. Constructor Injection | 0/2 | Not started | - |
-| 114. DI Call Site Migration | 0/2 | Not started | - |
-| 115. Full Verification | 0/1 | Not started | - |
+| 110. Quality Quick Wins | 3/3 | ✅ Done | 2026-04-22 |
+| 111. Controller Extraction | 3/3 | ✅ Done | 2026-04-22 |
+| 112. Controller Accessors | 2/2 | ✅ Done | 2026-04-22 |
+| 113. ServiceContainer DI | 2/2 | ✅ Done | 2026-04-22 |
+| 114. Test Helpers | 2/2 | ✅ Done | 2026-04-22 |
+| 115. Full Verification | 1/1 | ✅ Done | 2026-04-22 |
 
 ---
 

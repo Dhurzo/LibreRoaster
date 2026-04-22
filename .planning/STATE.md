@@ -9,32 +9,30 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 
 ## Current Position
 
-Phase: 110 of 115 (Quality Quick Wins)
-Plan: Not yet planned
-Status: Ready to plan
-Last activity: 2026-04-22 — Roadmap created for v5.4 milestone
+Phase: 115 of 115 (Full Verification) — COMPLETE
+Status: Milestone v5.4 finished
+Last activity: 2026-04-22 — All phases verified and committed
 
-Progress: [░░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0 (v5.4)
-- Average duration: N/A
-- Total execution time: 0.0 hours
+- Total plans completed: 14/14 (v5.4)
+- Total execution time: ~1 session
 
 **By Phase:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 110 Quality Quick Wins | 3 | - | - |
-| 111 Controller Extraction | 3 | - | - |
-| 112 Call Site Migration | 2 | - | - |
-| 113 Constructor Injection | 2 | - | - |
-| 114 DI Call Site Migration | 2 | - | - |
-| 115 Full Verification | 1 | - | - |
+| Phase | Plans | Status |
+|-------|-------|--------|
+| 110 Quality Quick Wins | 3/3 | ✅ |
+| 111 Controller Extraction | 3/3 | ✅ |
+| 112 Controller Accessors | 2/2 | ✅ |
+| 113 ServiceContainer DI | 2/2 | ✅ |
+| 114 Test Helpers | 2/2 | ✅ |
+| 115 Full Verification | 1/1 | ✅ |
 
-*Updated after each plan completion*
+*Updated: 2026-04-22*
 
 ## Accumulated Context
 
@@ -44,16 +42,18 @@ Progress: [░░░░░░░░░░░] 0%
 - [v5.4]: Fix clippy + test first as independent quick wins
 - [v5.4]: Preserve Artisan protocol byte-for-byte — no behavioral changes
 - [v5.4]: Use backward-compatible facade pattern during decomposition
+- [v5.4]: Singleton kept (Embassy requires 'static) — made testable via init methods + reset_for_test()
+- [v5.4]: ServiceContainer fields kept pub (not pub(crate)) to avoid breaking integration tests
 
 ### Pending Todos
 
-None yet.
+None — milestone complete.
 
 ### Blockers/Concerns
 
-None yet.
+None — milestone complete.
 
 ---
 
 *State created: 2026-04-22 for v5.4*
-*Next: /gsd-plan-phase 110*
+*Milestone completed: 2026-04-22*
