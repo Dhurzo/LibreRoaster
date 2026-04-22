@@ -571,6 +571,13 @@ where
     }
 }
 
+// SAFETY: SsrControlSimple owns its peripheral handles exclusively.
+// On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
+// task executes at a time. The type is moved into a `Box<dyn Heater + Send>`
+// and passed to a single task via ServiceContainer, so no concurrent access
+// occurs. The LEDC ChannelIFace is !Send by default because it holds a
+// reference to the Timer; we vouch that the Timer outlives all Channel users
+// (it is stored in the static LedcBus).
 unsafe impl<'a, DETECT, PWM> Send for SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
@@ -607,10 +614,13 @@ where
     }
 }
 
-// SAFETY: SsrControl has exclusive access to its peripherals.
-// On single-core ESP32-C3 with Embassy, passing ownership between tasks is safe
-// as long as we don't access it concurrently (which ownership prevents).
-// The inner Channel contains a non-Sync reference to Timer, preventing auto-Send.
+// SAFETY: SsrControl owns its peripheral handles exclusively.
+// On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
+// task executes at a time. The type is moved into a `Box<dyn Heater + Send>`
+// and passed to a single task via ServiceContainer, so no concurrent access
+// occurs. The LEDC ChannelIFace is !Send by default because it holds a
+// reference to the Timer; we vouch that the Timer outlives all Channel users
+// (it is stored in the static LedcBus).
 unsafe impl<'a, PIN, DETECT, PWM> Send for SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,

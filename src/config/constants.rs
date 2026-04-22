@@ -138,6 +138,11 @@ impl TemperatureSettings {
     }
 }
 
+/// Current roast state and instrumentation telemetry.
+///
+/// **Future consideration**: Split into `CoreRoastStatus` (state, temps, outputs —
+/// needed every tick) and `InstrumentationSnapshot` (watchdog, PID internals,
+/// latency metrics — polled on demand) to reduce stack pressure in the control loop.
 #[derive(Debug, Clone, Copy)]
 pub struct SystemStatus {
     pub state: RoasterState,

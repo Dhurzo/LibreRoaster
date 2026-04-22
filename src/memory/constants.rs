@@ -1,138 +1,138 @@
-//! Constantes de memoria para LibreRoaster
+//! Memory constants for LibreRoaster
 //!
-//! Este módulo define los tamaños estándar para buffers heapless,
-//! garantizando consistencia y predecibilidad en el uso de memoria.
+//! This module defines standard sizes for heapless buffers,
+//! ensuring consistency and predictability in memory usage.
 
-/// Tamaño máximo para mensajes de error en hot paths
+/// Maximum size for error messages in hot paths
 ///
-/// Usado para errores que pueden ocurrir durante operación normal
-/// en paths críticos donde no se permite heap allocation.
+/// Used for errors that may occur during normal operation
+/// in critical paths where heap allocation is not allowed.
 pub const ERROR_MSG_MAX_LEN: usize = 128;
 
-/// Tamaño máximo para comandos Artisan en hot paths
+/// Maximum size for Artisan commands in hot paths
 ///
-/// Usado para formateo de comandos y respuestas Artisan
-/// en el path de comunicación en tiempo real.
+/// Used for Artisan command and response formatting
+/// in the real-time communication path.
 pub const ARTISAN_CMD_MAX_LEN: usize = 64;
 
-/// Tamaño para buffers de reporte de temperatura
+/// Temperature report buffer size
 ///
-/// Usado para formateo de datos de temperatura que se envían
-/// a Artisan u otros sistemas de monitoreo.
+/// Used for temperature data formatting sent to
+/// Artisan or other monitoring systems.
 pub const REPORT_BUFFER_SIZE: usize = 64;
 
-/// Tamaño para historial de temperatura BT (Bean Temperature)
+/// BT (Bean Temperature) history buffer size
 ///
-/// Usado para tracking de temperatura en el módulo Artisan
-/// para cálculos de derivadas y tendencias.
+/// Used for temperature tracking in the Artisan module
+/// for derivative and trend calculations.
 pub const BT_HISTORY_SIZE: usize = ROR_WINDOW_SIZE;
 
-/// Tamaño máximo para nombres de etapa o estados
+/// Maximum size for stage or state names
 ///
-/// Usado para identificar estados actuales de la tostadora
-/// en reportes y logs.
+/// Used to identify current roaster state
+/// in reports and logs.
 pub const STAGE_NAME_MAX_LEN: usize = 16;
 
-/// Tamaño máximo para mensajes de estado del sistema
+/// Maximum size for system status messages
 ///
-/// Usado para reportes periódicos del estado del sistema
-/// que no son errores críticos.
+/// Used for periodic system status reports
+/// that are not critical errors.
 pub const STATUS_MSG_MAX_LEN: usize = 64;
 
-/// Tamaño para buffers de comandos UART/USB
+/// UART/USB command buffer size
 ///
-/// Usado para procesamiento de comandos recibidos vía
-/// comunicación serial o USB.
+/// Used for processing commands received via
+/// serial or USB communication.
 pub const COMMAND_BUFFER_SIZE: usize = 256;
 
-/// Tamaño para buffers de respuesta UART/USB
+/// UART/USB response buffer size
 ///
-/// Usado para construir respuestas a comandos
-/// sin allocation dinámica.
+/// Used to build command responses
+/// without dynamic allocation.
 pub const RESPONSE_BUFFER_SIZE: usize = 512;
 
-/// Tamaño máximo para mensajes de política de control
+/// Maximum size for control policy messages
 ///
-/// Usado en módulos de políticas donde los mensajes
-/// pueden generarse durante inicialización.
+/// Used in policy modules where messages
+/// may be generated during initialization.
 pub const POLICY_MSG_MAX_LEN: usize = 96;
 
-/// Tamaño para buffers de parseo de comandos
+/// Command parsing buffer size
 ///
-/// Usado durante el parseo de comandos Artisan
-/// para mantener tokens y parámetros.
+/// Used during Artisan command parsing
+/// to hold tokens and parameters.
 pub const PARSE_TOKENS_MAX: usize = 8;
 
-/// Tamaño máximo para valores de parámetros
+/// Maximum size for parameter values
 ///
-/// Usado para almacenamiento temporal de parámetros
-/// durante el parseo y procesamiento de comandos.
+/// Used for temporary parameter storage
+/// during command parsing and processing.
 pub const PARAM_VALUE_MAX_LEN: usize = 32;
 
-/// Tamaño para buffers de instrumentación
+/// Instrumentation buffer size
 ///
-/// Usado para recolectar métricas y datos de
-/// instrumentación del sistema.
+/// Used for collecting system metrics
+/// and instrumentation data.
 pub const INSTRUMENT_BUFFER_SIZE: usize = 128;
 
-/// Tamaño máximo para nombres de perfiles de tostado
+/// Maximum size for roast profile names
 ///
-/// Usado durante inicialización para almacenar
-/// nombres de perfiles de configuración.
+/// Used during initialization to store
+/// configuration profile names.
 pub const PROFILE_NAME_MAX_LEN: usize = 32;
 
-/// Capacidad máxima para cola de eventos de seguridad
+/// Maximum capacity for safety event queue
 ///
-/// Usado para manejar eventos de seguridad sin
-/// allocations en tiempo real.
+/// Used for handling safety events without
+/// real-time allocations.
 pub const SAFETY_EVENT_QUEUE_SIZE: usize = 16;
 
-/// Tamaño para buffers de logging en tiempo real
+/// Real-time logging buffer size
 ///
-/// Usado para formateo de mensajes de log que
-/// pueden ocurrir en cualquier momento.
+/// Used for log message formatting that
+/// may occur at any time.
 pub const LOG_MSG_MAX_LEN: usize = 96;
 
-/// Tamaño máximo para mensajes de diagnóstico
+/// Maximum size for diagnostic messages
 ///
-/// Usado para reportes de diagnóstico del sistema
-/// que pueden incluir información detallada.
+/// Used for system diagnostic reports
+/// that may include detailed information.
 pub const DIAGNOSTIC_MSG_MAX_LEN: usize = 256;
 
-/// Tamaño para buffers de calibración
+/// Calibration buffer size
 ///
-/// Usado durante operaciones de calibración de
-/// sensores y sistemas de control.
+/// Used during sensor and control
+/// system calibration operations.
 pub const CALIBRATION_BUFFER_SIZE: usize = 64;
 
-/// Tamaño para formateo de tiempo
+/// Time formatting buffer size
 ///
-/// Usado para formateo de timestamps en segundos y milisegundos
-/// para protocolos como Artisan.
+/// Used for timestamp formatting in seconds and milliseconds
+/// for protocols like Artisan.
 pub const TIME_FORMAT_SIZE: usize = 8;
 
-/// Tamaño para mensajes de error en módulos de seguridad
+/// Safety module error message size
 ///
-/// Usado para mensajes de error críticos que pueden
-/// ocurrir durante operaciones de seguridad.
+/// Used for critical error messages that may
+/// occur during safety operations.
 pub const SAFETY_ERROR_MSG_MAX_LEN: usize = 128;
 
-/// Tamaño de ventana para cálculo de ROR (Rate of Rise)
+/// ROR (Rate of Rise) window size
 ///
-/// Número de muestras de temperatura utilizadas para calcular
-/// la tasa de aumento de temperatura con ventana deslizante.
+/// Number of temperature samples used to calculate
+/// the temperature rate of change with a sliding window.
 pub const ROR_WINDOW_SIZE: usize = 10;
 
-/// Coeficiente de filtrado IIR para ROR
+/// IIR filter coefficient for ROR
 ///
-/// Alpha para el filtro IIR que suaviza el cálculo de ROR.
-/// Valores típicos: 0.1-0.4 (mayor = más suave, menos sensible)
+/// Alpha for the IIR filter that smooths ROR calculation.
+/// Typical values: 0.1-0.4 (higher = smoother, less sensitive)
 pub const ROR_FILTER_ALPHA: f32 = 0.25;
 
-/// Mínimo de muestras para calcular ROR
+/// Minimum samples for ROR calculation
 ///
-/// Número mínimo de muestras requeridas en el historial
-/// antes de poder calcular un valor de ROR válido.
+/// Minimum number of samples required in history
+/// before a valid ROR value can be calculated.
 pub const ROR_MIN_SAMPLES: usize = 2;
 
 #[cfg(test)]

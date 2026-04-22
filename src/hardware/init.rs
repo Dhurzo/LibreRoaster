@@ -1,3 +1,7 @@
+// Note: This module uses alloc::format! for error message construction.
+// This is acceptable because init runs exactly once at startup and is NOT
+// in the hot path. Do NOT use alloc in the control loop or telemetry path.
+
 use crate::error::app_error::InitError;
 use crate::hardware::fan::FanController;
 use crate::hardware::ledc_bus::{LedcBus, LedcChannelHandle};

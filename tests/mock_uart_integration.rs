@@ -176,7 +176,7 @@ fn read_command_emits_expected_response() {
     })
     .expect("Roaster should be initialized");
 
-    assert_eq!(outputs[0], expected);
+    assert_eq!(outputs[0], expected.as_str());
     assert!(
         collect_commands().is_empty(),
         "No commands should remain queued"

@@ -151,15 +151,13 @@ impl ServiceContainer {
     }
 
     pub async fn read_bean_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| Ok(roaster.get_status().bean_temp))
+        Self::with_roaster_async(|roaster| roaster.get_status().bean_temp)
             .await
-            .unwrap_or(Ok(0.0))
     }
 
     pub async fn read_env_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| Ok(roaster.get_status().env_temp))
+        Self::with_roaster_async(|roaster| roaster.get_status().env_temp)
             .await
-            .unwrap_or(Ok(0.0))
     }
 
     /// Perform async sensor read using the async lock

@@ -1,7 +1,3 @@
-extern crate alloc;
-use alloc::format;
-use alloc::string::String;
-
 /// Artisan standard CSV protocol formatter
 ///
 /// Implements the standard Artisan serial protocol format:
@@ -32,7 +28,8 @@ use alloc::string::String;
 // - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
 use crate::config::SystemStatus;
 use crate::memory::{
-    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
+    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, RESPONSE_BUFFER_SIZE, ROR_FILTER_ALPHA,
+    ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
 };
 use crate::output::formatters::{CsvFormatter, RorCalculator, TimeFormatter};
 use crate::output::traits::{OutputError, OutputFormatter};
@@ -44,6 +41,9 @@ use heapless::{Deque, String as HeaplessString};
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
+    // RefCell is safe here because ArtisanFormatter is only accessed from the
+    // control_loop_task under EmbassyMutex, which guarantees single-threaded
+    // access. No re-entrant borrow is possible in the Embassy cooperative model.
     ror_calculator: RefCell<RorCalculator>,
 }
 
@@ -133,7 +133,10 @@ impl ArtisanFormatter {
 }
 
 impl OutputFormatter for ArtisanFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<String, OutputError> {
+    fn format(
+        &self,
+        status: &SystemStatus,
+    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -145,41 +148,50 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = TimeFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = CsvFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(String::from(line.as_str()))
+        Ok(line)
     }
 }
 
 impl ArtisanFormatter {
-    pub fn format_read_response(status: &SystemStatus, fan_speed: f32) -> String {
+    pub fn format_read_response(
+        status: &SystemStatus,
+        fan_speed: f32,
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(fan_speed);
-        format!(
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(
+            &mut buf,
             "{:.1},{:.1},{:.1},{:.1}",
             et,     // ET
             bt,     // BT
             heater, // Power (heater)
             fan     // Fan
-        )
+        );
+        buf
     }
 
-    pub fn format_read_response_full(status: &SystemStatus) -> String {
+    pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(status.fan_output);
         // 4-value format: ET, BT, HEATER, FAN
-        format!(
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(
+            &mut buf,
             "{:.1},{:.1},{:.1},{:.1}",
             et,     // ET
             bt,     // BT
             heater, // Heater
             fan     // Fan
-        )
+        );
+        buf
     }
 
-    pub fn format_status_response(status: &SystemStatus) -> String {
+    pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
@@ -203,7 +215,9 @@ impl ArtisanFormatter {
         let command_latency = status.command_latency_us;
         let max_command_latency = status.max_command_latency_us;
 
-        format!(
+        let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
+        let _ = core::write!(
+            &mut buf,
             "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{}",
             et,
             bt,
@@ -223,15 +237,20 @@ impl ArtisanFormatter {
             derivative_available_flag,
             command_latency,
             max_command_latency
-        )
+        );
+        buf
     }
 
-    pub fn format_chan_ack(channel: u16) -> String {
-        format!("#{}", channel)
+    pub fn format_chan_ack(channel: u16) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(&mut buf, "#{}", channel);
+        buf
     }
 
-    pub fn format_err(code: u8, message: &str) -> String {
-        format!("ERR {} {}", code, message)
+    pub fn format_err(code: u8, message: &str) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
+        let _ = core::write!(&mut buf, "ERR {} {}", code, message);
+        buf
     }
 
     // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
@@ -308,7 +327,7 @@ impl MutableArtisanFormatter {
         *self = Self::default();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<String, OutputError> {
+    pub fn format(&mut self, status: &SystemStatus) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -321,7 +340,7 @@ impl MutableArtisanFormatter {
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(String::from(line.as_str()))
+        Ok(line)
     }
 
     fn calculate_ror(&mut self, current_bt: f32) -> f32 {

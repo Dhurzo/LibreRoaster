@@ -190,6 +190,11 @@ where
     }
 }
 
+// SAFETY: SimpleLedcFan owns its LEDC channel exclusively. On single-core
+// ESP32-C3 with Embassy cooperative scheduling, ownership transfer via
+// `Box<dyn Fan + Send>` guarantees no concurrent access. The inner Channel
+// holds a reference to the Timer which is stored in the static LedcBus and
+// outlives all channel users.
 unsafe impl<'a, C> Send for SimpleLedcFan<'a, C> where C: ChannelIFace<'a, LowSpeed> {}
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
-extern crate alloc;
-
 use crate::config::SystemStatus;
-use alloc::string::String;
+use crate::memory::REPORT_BUFFER_SIZE;
+use heapless::String as HeaplessString;
 
 #[derive(Debug)]
 pub enum OutputError {
@@ -12,7 +11,10 @@ pub enum OutputError {
 }
 
 pub trait OutputFormatter {
-    fn format(&self, status: &SystemStatus) -> Result<String, OutputError>;
+    fn format(
+        &self,
+        status: &SystemStatus,
+    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError>;
 }
 
 pub trait PrintScheduler {

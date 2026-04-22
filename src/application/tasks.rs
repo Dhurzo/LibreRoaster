@@ -521,7 +521,7 @@ pub async fn control_loop_task() {
 
             match line {
                 Ok(formatted_line) => {
-                    if let Ok(s) = heapless::String::try_from(formatted_line.as_str()) {
+                    if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str()) {
                         let _ = output_channel.try_send(s);
                     }
                 }

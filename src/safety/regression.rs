@@ -140,28 +140,19 @@ mod target_impl {
             status: &SystemStatus,
             fixture: &'static fixture_catalog::RegressionFixture,
         ) {
-            match ArtisanFormatter::format_status_response(status) {
-                Ok(line) => {
-                    if line != fixture.expected_status_line {
-                        warn!(
-                            "Fixture {} status mismatch. expected {} got {}",
-                            fixture.name, fixture.expected_status_line, line
-                        );
-                    }
+            let line = ArtisanFormatter::format_status_response(status);
+            if line != fixture.expected_status_line {
+                warn!(
+                    "Fixture {} status mismatch. expected {} got {}",
+                    fixture.name, fixture.expected_status_line, line
+                );
+            }
 
-                    if let Ok(mut buffer) = heapless::String::<
-                        crate::memory::SAFETY_ERROR_MSG_MAX_LEN,
-                    >::try_from(line.as_str())
-                    {
-                        let _ = ServiceContainer::get_output_channel().try_send(buffer);
-                    }
-                }
-                Err(err) => {
-                    warn!(
-                        "Fixture {} failed to format status response: {:?}",
-                        fixture.name, err
-                    );
-                }
+            if let Ok(mut buffer) = heapless::String::<
+                crate::memory::SAFETY_ERROR_MSG_MAX_LEN,
+            >::try_from(line.as_str())
+            {
+                let _ = ServiceContainer::get_output_channel().try_send(buffer);
             }
         }
 

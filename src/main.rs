@@ -5,7 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for duration of a data transfer."
 )]
-
+extern crate alloc;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 
@@ -135,7 +135,7 @@ async fn main(spawner: Spawner) -> ! {
     {
         Ok(app) => app,
         Err(e) => {
-            panic!("Failed to build application: {:?}", e);
+            enter_safe_shutdown(e.into()).await;
         }
     };
 
@@ -143,5 +143,8 @@ async fn main(spawner: Spawner) -> ! {
     let _ = app.start_tasks(spawner).await;
 
     // If we somehow get here, panic
-    panic!("Application tasks returned unexpectedly");
+    enter_safe_shutdown(InitError::TaskSpawn {
+        what: "main",
+        reason: alloc::string::String::from("Application tasks returned unexpectedly"),
+    }).await;
 }

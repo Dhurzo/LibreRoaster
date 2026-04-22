@@ -325,6 +325,16 @@ impl From<InputError> for AppError {
     }
 }
 
+#[cfg(target_arch = "riscv32")]
+impl From<crate::application::app_builder::BuildError> for InitError {
+    fn from(e: crate::application::app_builder::BuildError) -> Self {
+        InitError::ServiceContainer {
+            what: "AppBuilder",
+            reason: alloc::format!("{:?}", e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

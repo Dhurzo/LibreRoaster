@@ -101,6 +101,15 @@ where
         Ok(Max31856Reading { raw_temp, fault })
     }
 
+    /// Synchronous temperature read with busy-wait delay.
+    ///
+    /// # Deprecation
+    ///
+    /// This method uses a blocking spin loop (`spin_loop()` × 1,600,000 iterations)
+    /// instead of an async timer. Use [`read_raw_temperature_async()`] in all
+    /// Embassy task contexts. This sync variant exists only for non-async test
+    /// harnesses and initialization paths.
+    #[deprecated = "Use read_raw_temperature_async() in async contexts"]
     pub fn read_raw_temperature(&mut self) -> Result<Max31856Reading, Max31856Error> {
         self.write_register(0x80, 0x80)?; // Set one-shot bit
 
@@ -130,6 +139,7 @@ where
         self.read_conversion_block()
     }
 
+    #[allow(deprecated)]
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
         if reading.fault & 0x01 != 0 {

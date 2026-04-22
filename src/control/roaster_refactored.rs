@@ -48,36 +48,6 @@ pub struct RoasterControl {
 }
 
 impl RoasterControl {
-    #[cfg(target_arch = "riscv32")]
-    pub fn new(
-        heater: Box<dyn Heater + Send>,
-        fan: Box<dyn Fan + Send>,
-        sensor_hub: SensorConversionHub,
-    ) -> Result<Self, RoasterError> {
-        let temp_handler = TemperatureCommandHandler::new()?;
-
-        Ok(RoasterControl {
-            state: RoasterState::Idle,
-            status: SystemStatus::default(),
-            ssr_guard: SsrCycleGuard::new(),
-            last_temp_read: None,
-            last_pid_update: None,
-            last_desired_output: 0.0,
-            last_pv_sample: None,
-            last_pv_sample_time: None,
-            last_filtered_derivative: 0.0,
-            heater,
-            fan,
-            sensor_hub,
-            temp_handler,
-            safety_handler: SafetyCommandHandler::new(),
-            artisan_handler: ArtisanCommandHandler::new(),
-            system_handler: SystemCommandHandler,
-            temp_settings: TemperatureSettings::new(),
-        })
-    }
-
-    #[cfg(not(target_arch = "riscv32"))]
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
@@ -573,7 +543,7 @@ impl RoasterControl {
                         .get_output_manager_mut()
                         .enable_continuous_output();
 
-                    // Actualizar estado hardware
+                    // Update hardware status
                     self.status.ssr_hardware_status = self.heater.get_status();
                     self.state = crate::config::constants::RoasterState::Heating;
                     self.status.state = self.state;
