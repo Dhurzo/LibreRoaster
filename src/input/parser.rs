@@ -102,6 +102,25 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         } else {
             Err(ParseError::InvalidValue)
         }
+    } else if cmd.eq_ignore_ascii_case("PIDGAIN") {
+        if parts.len() == 4 {
+            let kp = parse_float(parts[1])?;
+            let ki = parse_float(parts[2])?;
+            let kd = parse_float(parts[3])?;
+            Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("SETTARGET") {
+        if parts.len() == 2 {
+            let target = parse_float(parts[1])?;
+            if !(50.0..=300.0).contains(&target) {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetTargetTemp(target))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
     } else {
         Err(ParseError::UnknownCommand)
     }
@@ -117,6 +136,12 @@ fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
     } else {
         Err(ParseError::OutOfRange)
     }
+}
+
+fn parse_float(value_str: &str) -> Result<f32, ParseError> {
+    value_str
+        .parse::<f32>()
+        .map_err(|_| ParseError::InvalidValue)
 }
 
 /// Parse OT2 fan speed value with decimal support
@@ -491,5 +516,53 @@ mod tests {
     fn test_parse_ot2_partial_command() {
         let result = parse_artisan_command("OT2");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_pidgain_command() {
+        let result = parse_artisan_command("PIDGAIN 2.0 0.25 0.05");
+        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(2.0, 0.25, 0.05))));
+    }
+
+    #[test]
+    fn test_parse_pidgain_case_insensitive() {
+        let result = parse_artisan_command("pidgain 1.5 0.3 0.1");
+        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(1.5, 0.3, 0.1))));
+    }
+
+    #[test]
+    fn test_parse_pidgain_invalid_value() {
+        let result = parse_artisan_command("PIDGAIN abc 0.25 0.05");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_pidgain_partial() {
+        let result = parse_artisan_command("PIDGAIN 2.0 0.25");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_settarget_command() {
+        let result = parse_artisan_command("SETTARGET 200");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(200.0))));
+    }
+
+    #[test]
+    fn test_parse_settarget_decimal() {
+        let result = parse_artisan_command("SETTARGET 210.5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(210.5))));
+    }
+
+    #[test]
+    fn test_parse_settarget_out_of_range() {
+        let result = parse_artisan_command("SETTARGET 350");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_parse_settarget_too_low() {
+        let result = parse_artisan_command("SETTARGET 40");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
     }
 }

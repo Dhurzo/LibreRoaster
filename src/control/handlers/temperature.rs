@@ -112,6 +112,19 @@ impl TemperatureCommandHandler {
     pub fn pid_saturation_active(&self) -> bool {
         self.pid_controller.is_saturation_active()
     }
+
+    /// Set PID gains (Kp, Ki, Kd)
+    ///
+    /// Allows runtime tuning of PID controller for different roast profiles
+    pub fn set_pid_gains(&mut self, kp: f32, ki: f32, kd: f32) -> Result<(), RoasterError> {
+        if kp < 0.0 || ki < 0.0 || kd < 0.0 {
+            return Err(RoasterError::PidError {
+                source: Some("negative_pid_gain"),
+            });
+        }
+        self.pid_controller = CoffeeRoasterPid::with_gains(kp, ki, kd);
+        Ok(())
+    }
 }
 
 impl RoasterCommandHandler for TemperatureCommandHandler {

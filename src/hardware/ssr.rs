@@ -585,7 +585,6 @@ where
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
-        StatusGetters::get_hardware_status(self);
         SsrControl::set_percentage(self, duty).map_err(|_| RoasterError::HardwareError {
             source: Some("ssr_control_set_percentage"),
         })

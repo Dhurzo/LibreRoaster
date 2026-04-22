@@ -22,7 +22,7 @@ pub const SSR_LEDC_CHANNEL: u8 = 1;
 pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (~1Hz zero-crossing)
 pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25kHz silent operation)
 pub const SSR_PWM_RESOLUTION: u8 = 8;
-pub const SSR_CYCLE_GUARD_MS: u32 = 1000;
+pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
 
 pub const PWM_FREQUENCY: u32 = 1000;
@@ -62,15 +62,13 @@ pub enum RoasterState {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArtisanCommand {
     ReadStatus,
     StatusReport,
     StartRoast,
     SetHeater(u8),
     SetFan(u8),
-    /// OT2 command with fan speed (0-100, decimals rounded, clamped silently)
-    /// bool indicates if original value was out of range (triggers heater stop)
     SetFanSpeed(u8, bool),
     EmergencyStop,
     IncreaseHeater,
@@ -79,6 +77,8 @@ pub enum ArtisanCommand {
     Units(bool),
     Filt(u8),
     RunRegression,
+    SetPidGain(f32, f32, f32),
+    SetTargetTemp(f32),
 }
 
 #[derive(Debug, Clone, Copy)]

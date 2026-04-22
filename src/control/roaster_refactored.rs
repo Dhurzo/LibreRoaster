@@ -691,6 +691,15 @@ impl RoasterControl {
             crate::config::ArtisanCommand::Filt(_) => {
                 debug!("Filt command received - initialization handled by multiplexer");
             }
+            crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => {
+                self.temp_handler.set_pid_gains(kp, ki, kd)?;
+                info!("PID gains updated: Kp={}, Ki={}, Kd={}", kp, ki, kd);
+            }
+            crate::config::ArtisanCommand::SetTargetTemp(target) => {
+                self.status.target_temp = target;
+                self.enable_pid_control(target)?;
+                info!("Target temperature set to {:.1}°C", target);
+            }
         }
 
         Ok(())
