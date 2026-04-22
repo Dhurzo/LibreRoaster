@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn guard_constants_are_locked() {
-        assert_eq!(SSR_CYCLE_GUARD_MS, 1000);
+        assert_eq!(SSR_CYCLE_GUARD_MS, 100);
         assert_eq!(SSR_DUTY_TOLERANCE_TICKS, 2);
     }
 

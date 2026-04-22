@@ -180,9 +180,6 @@ impl ServiceContainer {
                 .await
                 .map_err(|_| ContainerError::NotInitialized)?;
 
-            // Also do the control update (sync)
-            let _ = roaster.update_control(embassy_time::Instant::now());
-
             // Guard is automatically released when dropped
             Ok(())
         };
