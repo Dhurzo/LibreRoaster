@@ -550,4 +550,16 @@ impl RoasterControl {
             self.status.ssr_output
         }
     }
+
+    // Immutable accessor methods
+    pub fn sensor(&self) -> &SensorController { &self.sensor }
+    pub fn actuator(&self) -> &ActuatorController { &self.actuator }
+    pub fn safety(&self) -> &SafetyController { &self.safety }
+    pub fn dispatch(&self) -> &CommandDispatcher { &self.dispatch }
+
+    // Mutable accessor methods
+    pub fn sensor_mut(&mut self) -> &mut SensorController { &mut self.sensor }
+    pub fn actuator_mut(&mut self) -> &mut ActuatorController { &mut self.actuator }
+    pub fn safety_mut(&mut self) -> &mut SafetyController { &mut self.safety }
+    pub fn dispatch_mut(&mut self) -> &mut CommandDispatcher { &mut self.dispatch }
 }
