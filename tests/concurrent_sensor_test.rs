@@ -58,16 +58,7 @@ fn init_service_container() {
     });
 
     let sync_roaster = build_control();
-    critical_section::with(|cs| replace_sync_roaster(cs, sync_roaster));
-}
-
-// Helper keeps the borrow local to the critical section so it drops before any async tasks spawn.
-fn replace_sync_roaster(cs: critical_section::CriticalSection, roaster: RoasterControl) {
-    ServiceContainer::get_instance()
-        .roaster_sync
-        .borrow(cs)
-        .borrow_mut()
-        .replace(roaster);
+    ServiceContainer::init_roaster(sync_roaster);
 }
 
 #[test]

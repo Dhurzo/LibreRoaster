@@ -67,6 +67,28 @@ impl ServiceContainer {
         });
     }
 
+    /// Inject a RoasterControl instance into the sync storage slot
+    pub fn init_roaster(roaster: RoasterControl) {
+        critical_section::with(|cs| {
+            Self::get_instance()
+                .roaster_sync
+                .borrow(cs)
+                .borrow_mut()
+                .replace(roaster);
+        });
+    }
+
+    /// Inject an ArtisanInput instance
+    pub fn init_artisan_input(input: ArtisanInput) {
+        critical_section::with(|cs| {
+            Self::get_instance()
+                .artisan_input
+                .borrow(cs)
+                .borrow_mut()
+                .replace(input);
+        });
+    }
+
     pub fn with_watchdog<R, F>(&self, f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut WatchdogFeeder) -> Result<R, WatchdogError>,
@@ -315,3 +337,29 @@ mod async_lock_depth {
 }
 
 pub use async_lock_depth::{async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests};
+
+#[cfg(test)]
+impl ServiceContainer {
+    /// Full state reset for test isolation
+    pub fn reset_for_test() {
+        critical_section::with(|cs| {
+            let _ = Self::get_instance()
+                .roaster_sync
+                .borrow(cs)
+                .borrow_mut()
+                .take();
+            let _ = Self::get_instance()
+                .artisan_input
+                .borrow(cs)
+                .borrow_mut()
+                .take();
+            let _ = Self::get_instance()
+                .watchdog_feeder
+                .borrow(cs)
+                .borrow_mut()
+                .take();
+        });
+        while Self::get_artisan_channel().try_receive().is_ok() {}
+        while Self::get_output_channel().try_receive().is_ok() {}
+    }
+}

@@ -22,7 +22,7 @@ use libreroaster::output::artisan::ArtisanFormatter;
 
 #[path = "common/mod.rs"]
 mod tests_common;
-use tests_common::{build_test_control, StubFan, StubHeater};
+use tests_common::{build_test_control, init_test_service_container, StubFan, StubHeater};
 
 struct TestCriticalSection;
 
@@ -38,25 +38,6 @@ unsafe impl critical_section::Impl for TestCriticalSection {
 
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
-}
-
-fn init_service_container() {
-    let roaster = build_control();
-    let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
-
-    critical_section::with(|cs| {
-        let container = ServiceContainer::get_instance();
-        container
-            .roaster_sync
-            .borrow(cs)
-            .borrow_mut()
-            .replace(roaster);
-        container
-            .artisan_input
-            .borrow(cs)
-            .borrow_mut()
-            .replace(artisan_input);
-    });
 }
 
 fn reset_channels() {
@@ -154,7 +135,7 @@ fn assert_status_unchanged(before: SystemStatus, after: SystemStatus) {
 
 #[test]
 fn read_command_emits_expected_response() {
-    init_service_container();
+    init_test_service_container();
     reset_channels();
 
     ServiceContainer::with_roaster(|roaster| {
@@ -185,7 +166,7 @@ fn read_command_emits_expected_response() {
 
 #[test]
 fn start_ot1_io3_stop_sequence_updates_state() {
-    init_service_container();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"START\r");
@@ -241,7 +222,7 @@ fn start_ot1_io3_stop_sequence_updates_state() {
 
 #[test]
 fn error_paths_emit_err_without_side_effects() {
-    init_service_container();
+    init_test_service_container();
     reset_channels();
 
     let baseline_status = current_status();

@@ -13,7 +13,6 @@ use esp_hal::peripherals::UART0;
 use crate::safety::regression;
 use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use alloc::boxed::Box;
-use critical_section;
 use log::info;
 
 pub struct AppBuilder<'a> {
@@ -104,19 +103,8 @@ impl<'a> AppBuilder<'a> {
         let artisan_input = ArtisanInput::new().map_err(BuildError::ArtisanInit)?;
         let formatter = self.formatter.unwrap_or_default();
 
-        critical_section::with(|cs| {
-            let container = crate::application::service_container::ServiceContainer::get_instance();
-            container
-                .roaster_sync
-                .borrow(cs)
-                .borrow_mut()
-                .replace(roaster);
-            container
-                .artisan_input
-                .borrow(cs)
-                .borrow_mut()
-                .replace(artisan_input);
-        });
+        ServiceContainer::init_roaster(roaster);
+        ServiceContainer::init_artisan_input(artisan_input);
 
         ServiceContainer::init_multiplexer();
         let watchdog = WatchdogFeeder::initialize().map_err(BuildError::WatchdogInit)?;

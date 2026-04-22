@@ -11,12 +11,21 @@ pub use libreroaster::common::{StubFan, StubHeater, StubThermometer};
 
 pub use libreroaster::hardware::sensors::SensorConversionHub;
 
+use libreroaster::application::service_container::ServiceContainer;
 use libreroaster::control::traits::{Fan, Heater};
 use libreroaster::control::RoasterControl;
+use libreroaster::input::ArtisanInput;
 
 pub fn build_test_control(
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
 ) -> RoasterControl {
     RoasterControl::new(heater, fan, SensorConversionHub::new()).expect("test control should build")
+}
+
+pub fn init_test_service_container() {
+    let roaster = build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()));
+    let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
+    ServiceContainer::init_roaster(roaster);
+    ServiceContainer::init_artisan_input(artisan_input);
 }
