@@ -1,4 +1,5 @@
 pub mod abstractions;
+pub mod controllers;
 pub mod handlers;
 pub mod pid;
 pub mod policies;
