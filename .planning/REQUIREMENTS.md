@@ -1,85 +1,88 @@
 # Requirements: LibreRoaster
 
-**Defined:** 2026-04-16
+**Defined:** 2026-04-22
 **Core Value:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## v5.3 Requirements
+## v5.4 Requirements
 
-Requirements for the `v5.3 Deep Bug Analysis & Defect Report` milestone.
+Requirements for the `v5.4 Architecture Decomposition & Quality Fixes` milestone.
 
-### Audit Foundation
+### Quality Quick Wins
 
-- [ ] **AUD-01**: The milestone defines a whole-repo coverage map that names the firmware, scripts, tooling, and evidence surfaces included in the audit.
-- [ ] **AUD-02**: The milestone defines a criticity rubric that ranks defects by impact on runtime behavior, safety, or evidence integrity.
-- [ ] **AUD-03**: The milestone defines confidence labels that distinguish confirmed defects from likely defects and items needing more validation.
-- [ ] **AUD-04**: The milestone defines a defect record schema that requires bug summary, criticity, evidence, affected areas, fix description, and post-fix validation path.
+- [ ] **CLP-01**: All 24 pre-existing clippy warnings on the ESP32 target are resolved (zero warnings with `-D warnings`).
+- [ ] **CLP-02**: Host target clippy remains clean (zero warnings with `-D warnings`).
+- [ ] **TST-01**: The `guard_rejects_commands_while_busy` test in `tests/ssr_scheduler.rs` is fixed and passes.
 
-### Evidence Validation
+### SRP Decomposition
 
-- [ ] **EVID-01**: The milestone verifies that existing TRACE, replay, and HIL evidence paths are trustworthy before they are used as primary proof for findings.
-- [ ] **EVID-02**: The milestone documents known evidence blind spots and trust limits so the report does not over-claim certainty.
+- [ ] **SRP-01**: RoasterControl is decomposed into focused controllers with clear single responsibilities.
+- [ ] **SRP-02**: Each controller owns a bounded set of fields and methods — no cross-controller field access.
+- [ ] **SRP-03**: The existing handler chain pattern (`src/control/handlers/`) is preserved and extended.
+- [ ] **SRP-04**: All existing callers of RoasterControl methods are updated to use the new controller interfaces.
+- [ ] **SRP-05**: Artisan protocol responses remain byte-identical after decomposition.
 
-### Investigation
+### Dependency Injection
 
-- [ ] **INV-01**: The milestone audits firmware runtime paths including control, protocol, safety, and diagnostics behavior for likely defects.
-- [ ] **INV-02**: The milestone audits scripts and tooling used for replay, reporting, and diagnostics automation for likely defects.
-- [ ] **INV-03**: The milestone correlates defects across firmware and tooling boundaries and deduplicates them by broken contract or end-to-end symptom.
+- [ ] **DIP-01**: ServiceContainer singleton (`static_cell`) is replaced with constructor-injected dependencies.
+- [ ] **DIP-02**: Dependencies flow downward through constructors — no upward static access.
+- [ ] **DIP-03**: Embassy task signatures accept injected dependencies as parameters.
+- [ ] **DIP-04**: All 6+ ServiceContainer:: call sites are updated to use injected references.
 
-### Reporting
+### Verification
 
-- [ ] **REP-01**: The milestone confirms high-risk findings with targeted reproduction or artifact-backed evidence appropriate to the bug class.
-- [ ] **REP-02**: The milestone produces a Markdown defect report that lists each finding with bug summary, criticity, evidence, impact, and status.
-- [ ] **REP-03**: The milestone produces a machine-readable defect inventory that mirrors the report's finding list.
-- [ ] **REP-04**: Each confirmed or likely defect in the milestone output includes an implementation-ready fix description and a suggested post-fix validation path.
+- [ ] **VER-01**: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` produces zero errors and zero warnings.
+- [ ] **VER-02**: All 244 host tests pass (`cargo test --target x86_64-unknown-linux-gnu --features "std,test"`).
+- [ ] **VER-03**: Host clippy is clean (`cargo clippy --target x86_64-unknown-linux-gnu --features "std,test" -- -D warnings`).
+- [ ] **VER-04**: ESP32 clippy is clean (`cargo clippy --release --target riscv32imc-unknown-none-elf --features embedded -- -D warnings`).
 
 ## Future Requirements
 
 Deferred beyond this milestone.
 
-### Evidence Expansion
+### Further Architecture
 
-- **EVID-03**: The project runs standalone automated checks for host-side evidence tooling as a dedicated audit quality gate.
-- **EVID-04**: The project defines a host-vs-target proof matrix for each defect class to standardize when hardware confirmation is mandatory.
-
-### Planning Visibility
-
-- **PLAN-01**: The project audits planning-visible contract drift and documentation mismatches as a dedicated track.
+- **ARCH-01**: Evaluate whether RoasterControl decomposition enables standalone mode (no Artisan dependency).
+- **ARCH-02**: Consider event-driven architecture for inter-controller communication.
 
 ## Out of Scope
 
-Explicitly excluded from `v5.3`.
+Explicitly excluded from `v5.4`.
 
 | Feature | Reason |
 |---------|--------|
-| Implementing bug fixes | This milestone is for analysis, evidence, and remediation planning only. |
-| New dashboards or bug-tracking platforms | The milestone should extend current artifacts instead of creating a new platform. |
-| Large observability or architecture rewrites | Out of scope unless a finding proves a minimal instrumentation change is required for evidence. |
+| New Artisan protocol commands | This milestone is for architectural cleanup, not feature addition |
+| Performance optimization beyond clippy fixes | Not the goal — decomposition may incidentally improve cache locality |
+| Test infrastructure overhaul | Only fix the one broken test, don't refactor the test framework |
+| Changing public API of embedded binary | The binary target has no public API — only Artisan protocol matters |
 
 ## Traceability
 
-Which phases cover which requirements. This section is populated during roadmap creation.
+Which phases cover which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUD-01 | Phase 104 | Pending |
-| AUD-02 | Phase 104 | Pending |
-| AUD-03 | Phase 104 | Pending |
-| AUD-04 | Phase 104 | Pending |
-| EVID-01 | Phase 105 | Pending |
-| EVID-02 | Phase 105 | Pending |
-| INV-01 | Phase 106 | Pending |
-| INV-02 | Phase 106 | Pending |
-| INV-03 | Phase 106 | Pending |
-| REP-01 | Phase 107 | Pending |
-| REP-02 | Phase 109 | Pending |
-| REP-03 | Phase 109 | Pending |
-| REP-04 | Phase 108 | Pending |
+| CLP-01 | Phase 110 | Pending |
+| CLP-02 | Phase 110 | Pending |
+| TST-01 | Phase 110 | Pending |
+| SRP-01 | Phase 111 | Pending |
+| SRP-02 | Phase 111 | Pending |
+| SRP-03 | Phase 111 | Pending |
+| SRP-04 | Phase 112 | Pending |
+| SRP-05 | Phase 112 | Pending |
+| DIP-01 | Phase 113 | Pending |
+| DIP-02 | Phase 113 | Pending |
+| DIP-03 | Phase 114 | Pending |
+| DIP-04 | Phase 114 | Pending |
+| VER-01 | Phase 115 | Pending |
+| VER-02 | Phase 115 | Pending |
+| VER-03 | Phase 115 | Pending |
+| VER-04 | Phase 115 | Pending |
 
 **Coverage:**
-- v5.3 requirements: 13 total
-- Mapped to phases: 6 phases (104-109)
-- Mapped: 13/13 ✓
+- v5.4 requirements: 16 total
+- Mapped to phases: 6 phases (110-115)
+- Mapped: 16/16
 
 ---
-*Requirements defined: 2026-04-16*
-*Last updated: 2026-04-16 after roadmap creation*
+*Requirements defined: 2026-04-22*
+*Last updated: 2026-04-22 after roadmap creation*

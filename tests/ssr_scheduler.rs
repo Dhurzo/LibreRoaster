@@ -24,7 +24,7 @@ fn guard_rejects_commands_while_busy() {
     let start = instant_from_millis(0);
     guard.mark_cycle(start);
 
-    let before_guard = instant_from_millis(500);
+    let before_guard = instant_from_millis(50);
     let busy_until = guard.next_cycle_allowed(before_guard).err().unwrap();
 
     let expected = start + Duration::from_millis(SSR_CYCLE_GUARD_MS as u64);

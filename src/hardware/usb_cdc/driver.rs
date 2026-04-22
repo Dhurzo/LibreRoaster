@@ -100,11 +100,10 @@ impl UsbCdcDriver {
     }
 
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
-        let result = self
+        self
             .usb
             .read(buffer)
-            .map_err(|_| UsbCdcError::ReceptionError);
-        result
+            .map_err(|_| UsbCdcError::ReceptionError)
     }
 
     pub fn is_connected(&self) -> bool {

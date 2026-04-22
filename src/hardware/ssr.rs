@@ -179,6 +179,12 @@ impl SsrControlBase {
     }
 }
 
+impl Default for SsrControlBase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StatusGetters for SsrControlBase {
     fn get_hardware_status(&self) -> SsrHardwareStatus {
         self.hardware_status

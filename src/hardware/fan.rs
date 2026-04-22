@@ -67,11 +67,7 @@ impl<'a> FanController<'a> {
 
         if let Some(handle) = self.ledc_handle {
             let current_duty = handle.applied_duty();
-            let duty_delta = if target_duty >= current_duty {
-                target_duty - current_duty
-            } else {
-                current_duty - target_duty
-            };
+            let duty_delta = target_duty.abs_diff(current_duty);
 
             if duty_delta > FADE_THRESHOLD_DUTY {
                 let duration = Self::fade_duration(duty_delta);
@@ -107,7 +103,7 @@ impl<'a> FanController<'a> {
     }
 
     pub fn enable(&mut self) {
-        if let Err(_) = self.set_speed(100.0) {
+        if self.set_speed(100.0).is_err() {
             error!("Failed to enable fan");
         } else {
             info!("Fan enabled at 100%");
@@ -115,7 +111,7 @@ impl<'a> FanController<'a> {
     }
 
     pub fn disable(&mut self) {
-        if let Err(_) = self.set_speed(0.0) {
+        if self.set_speed(0.0).is_err() {
             error!("Failed to disable fan");
         } else {
             info!("Fan disabled");

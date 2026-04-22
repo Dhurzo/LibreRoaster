@@ -21,8 +21,7 @@ use log::info;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Level, Output, OutputConfig};
 
-#[cfg(target_arch = "riscv32")]
-use esp_bootloader_esp_idf;
+
 
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();

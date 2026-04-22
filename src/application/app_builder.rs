@@ -24,6 +24,12 @@ pub struct AppBuilder<'a> {
     sensor_hub: Option<SensorConversionHub>,
 }
 
+impl<'a> Default for AppBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> AppBuilder<'a> {
     pub fn new() -> Self {
         Self {
@@ -78,7 +84,7 @@ impl<'a> AppBuilder<'a> {
 
     pub fn build(self) -> Result<Application, BuildError> {
         if let Some(uart0) = self.uart0 {
-            initialize_uart_system(uart0).map_err(|e| BuildError::UartInit(e))?;
+            initialize_uart_system(uart0).map_err(BuildError::UartInit)?;
         }
 
         let fan: Box<dyn Fan + Send> = self
@@ -93,10 +99,10 @@ impl<'a> AppBuilder<'a> {
             .ok_or(BuildError::MissingPeripheral("Sensor Conversion Hub"))?;
 
         let roaster =
-            RoasterControl::new(heater, fan, sensor_hub).map_err(|e| BuildError::RoasterInit(e))?;
+            RoasterControl::new(heater, fan, sensor_hub).map_err(BuildError::RoasterInit)?;
 
-        let artisan_input = ArtisanInput::new().map_err(|e| BuildError::ArtisanInit(e))?;
-        let formatter = self.formatter.unwrap_or_else(ArtisanFormatter::new);
+        let artisan_input = ArtisanInput::new().map_err(BuildError::ArtisanInit)?;
+        let formatter = self.formatter.unwrap_or_default();
 
         critical_section::with(|cs| {
             let container = crate::application::service_container::ServiceContainer::get_instance();
@@ -113,7 +119,7 @@ impl<'a> AppBuilder<'a> {
         });
 
         ServiceContainer::init_multiplexer();
-        let watchdog = WatchdogFeeder::initialize().map_err(|e| BuildError::WatchdogInit(e))?;
+        let watchdog = WatchdogFeeder::initialize().map_err(BuildError::WatchdogInit)?;
         ServiceContainer::get_instance().init_watchdog(watchdog);
 
         info!("Application components initialized successfully");
@@ -156,36 +162,36 @@ impl Application {
         use crate::hardware::usb_cdc::tasks::{usb_queue_processor_task, usb_reader_task};
 
         self.verify_initialization()
-            .map_err(|e| TaskError::VerificationFailed(e))?;
+            .map_err(TaskError::VerificationFailed)?;
 
         spawner
             .spawn(uart_reader_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
         spawner
             .spawn(usb_reader_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
 
         // Spawn queue processor tasks to consume commands from queues
         spawner
             .spawn(queue_processor_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
         spawner
             .spawn(usb_queue_processor_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
 
         spawner
             .spawn(super::dual_output_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
 
         spawner
             .spawn(super::control_loop_task())
-            .map_err(|e| TaskError::SpawnFailed(e))?;
+            .map_err(TaskError::SpawnFailed)?;
 
         #[cfg(target_arch = "riscv32")]
         {
             spawner
                 .spawn(regression::regression_task())
-                .map_err(|e| TaskError::SpawnFailed(e))?;
+                .map_err(TaskError::SpawnFailed)?;
         }
 
         info!("All application tasks started successfully");

@@ -1,5 +1,3 @@
-#![cfg(target_arch = "riscv32")]
-
 use super::LedcDutyReader;
 use esp32c3::LEDC;
 use esp_hal::ledc::{channel, LowSpeed};

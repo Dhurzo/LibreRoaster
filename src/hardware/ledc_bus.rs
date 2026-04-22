@@ -1,5 +1,3 @@
-#![cfg(target_arch = "riscv32")]
-
 use crate::hardware::ledc_guard::{LedcGuard, LedcGuardError};
 use crate::hardware::ssr::LedcDutyReader;
 use core::cell::{Cell, RefCell};

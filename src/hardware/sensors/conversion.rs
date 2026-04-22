@@ -246,8 +246,7 @@ impl SensorConversionHub {
                     convert_raw_temp(reading.raw_temp),
                     SensorFault::from_register(reading.fault),
                 )
-            })
-            .map_err(|e| e);
+            });
 
         // Read env sensor result - fast SPI read, ~50us
         let env_result = env_trigger_result
@@ -257,8 +256,7 @@ impl SensorConversionHub {
                     convert_raw_temp(reading.raw_temp),
                     SensorFault::from_register(reading.fault),
                 )
-            })
-            .map_err(|e| e);
+            });
 
         (bean_result, env_result)
     }
@@ -313,13 +311,8 @@ impl SensorConversionHub {
     }
 }
 
+#[cfg(not(target_arch = "riscv32"))]
 impl Default for SensorConversionHub {
-    #[cfg(target_arch = "riscv32")]
-    fn default() -> Self {
-        panic!("SensorConversionHub::default() cannot be called on riscv32 - use SensorConversionHub::new() with sensors");
-    }
-
-    #[cfg(not(target_arch = "riscv32"))]
     fn default() -> Self {
         Self::new()
     }

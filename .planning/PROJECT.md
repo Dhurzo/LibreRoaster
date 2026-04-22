@@ -8,14 +8,16 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v5.3 Deep Bug Analysis & Defect Report
+## Current Milestone: v5.4 Architecture Decomposition & Quality Fixes
 
-**Goal:** Audit the whole repository to identify likely bugs, rank their criticity, and produce an implementation-ready defect report for a follow-up milestone.
+**Goal:** Resolve 4 deferred architectural and quality issues identified during the v5.1 code quality review: SRP violation in RoasterControl, DIP violation in ServiceContainer, 24 pre-existing clippy issues, and 1 broken test.
 
-**Target features:**
-- Deep brownfield audit of firmware, scripts, tooling, and planning-visible behavior
-- Structured report listing each bug, criticity, supporting evidence, and proposed fix description
-- Milestone roadmap focused on investigation, evidence gathering, and report production rather than code changes
+**Target outcomes:**
+- RoasterControl decomposed into focused, single-responsibility controllers
+- ServiceContainer singleton replaced with constructor dependency injection
+- Zero clippy warnings on both ESP32 and host targets
+- All 244 tests passing (including fixed ssr_scheduler test)
+- Artisan protocol 100% compatible — no behavioral changes
 
 ## Requirements
 
@@ -24,66 +26,69 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 - ✓ Artisan can read roaster telemetry over the serial protocol during a roast session.
 - ✓ Artisan can control heater and fan outputs through the firmware command path.
 - ✓ The project ships embedded diagnostics, traceability, and HIL-oriented tooling that support validation and audits.
+- ✓ v5.1 code quality review completed — 12 improvements committed (heapless hot path, SAFETY docs, error propagation fixes)
 
 ### Active
 
-- [ ] Audit the whole repository for likely defects across firmware, scripts, tooling, and planning-visible behavior.
-- [ ] Produce a milestone report that records each bug, criticity, supporting evidence, and implementation-ready remediation guidance.
-- [ ] Define follow-up implementation scope based on the confirmed bug inventory.
+- [ ] Decompose RoasterControl into focused controllers (SRP fix)
+- [ ] Replace ServiceContainer singleton with constructor dependency injection (DIP fix)
+- [ ] Fix all 24 pre-existing clippy warnings on ESP32 target
+- [ ] Fix broken ssr_scheduler test (guard_rejects_commands_while_busy)
 
 ### Out of Scope
 
-- Implementing bug fixes in this milestone — this cycle is for investigation, evidence, and scoping.
-- Net-new product capabilities unrelated to defect discovery — keep the milestone focused on brownfield quality risks.
+- Net-new product features — this is purely architectural cleanup
+- Changing Artisan protocol behavior — all responses must remain byte-identical
+- Refactoring test infrastructure beyond the broken test fix
 
 ## Current State
 
-- v5.2 shipped a flashable embedded build, unified error taxonomy, TRACE instrumentation, manifest-aware HIL validation, and safe-shutdown replay artifacts for diagnostics audits.
-- The repo now spans firmware, host-side scripts, validation tooling, and planning artifacts that interact closely enough for regressions to cross subsystem boundaries.
-- Phase 104 was left as the next planning thread for diagnostics replay automation, but this milestone shifts first to a broad defect hunt and prioritized report.
+- v5.1 code quality review committed (0a43b46) with 12 improvements across 17 files
+- ESP32 build compiles clean (zero warnings with our changes)
+- 243/244 host tests pass (1 pre-existing failure in ssr_scheduler)
+- 24 pre-existing clippy issues identified across 7 files
+- RoasterControl has 28+ methods spanning 6 responsibilities (SRP violation)
+- ServiceContainer uses static_cell singleton with 6+ call sites (DIP violation)
 
 ## Context
 
-- LibreRoaster is already in active use as an embedded firmware + tooling codebase, so brownfield defects may exist in runtime control paths, diagnostics automation, or integration boundaries.
-- Recent work increased instrumentation and auditability, which makes this a good time to inspect the system for correctness gaps before adding more functionality.
-- The intended deliverable is a report that can seed a dedicated remediation milestone rather than a mixed analysis-and-fix milestone.
+- LibreRoaster is a brownfield embedded firmware — changes must be backward-compatible
+- Embassy async framework uses cooperative multitasking — Send bounds are critical
+- The heapless hot path conversion (v5.1) changed OutputFormatter trait — decomposition must preserve this
+- Clippy config denies: unwrap_used, expect_used, panic in production code
 
 ## Constraints
 
-- **Scope**: Whole repository audit — cover firmware, scripts, tooling, and planning-visible behavior.
-- **Delivery**: This milestone produces analysis and a bug report, not code fixes.
-- **Quality bar**: Every reported bug should include criticity and enough context to plan remediation work.
+- **Scope**: Architectural refactoring only — no behavioral changes
+- **Delivery**: Code changes + passing tests + clean clippy on both targets
+- **Quality bar**: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` must be warning-free
+- **Test bar**: All 244 tests must pass after each phase
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Treat this milestone as a brownfield defect audit instead of a feature milestone | The current need is confidence in existing behavior and a prioritized bug backlog | — Pending |
-| Require implementation-ready fix descriptions in the report | The follow-up milestone should be able to scope remediation directly from the findings | — Pending |
+| Decompose RoasterControl before ServiceContainer DI | DI depends on controller interfaces existing first | — Pending |
+| Fix clippy + test first (independent of architecture) | Quick wins that don't conflict with decomposition | — Pending |
+| Use trait objects for controller interfaces | Enables DI without changing Embassy task signatures | — Pending |
+| Preserve Artisan protocol byte-for-byte | Roaster must remain 100% Artisan+ compatible | — Pending |
 
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
 
-**After each phase transition** (via `/gsd-transition`):
-1. Requirements invalidated? → Move to Out of Scope with reason
-2. Requirements validated? → Move to Validated with phase reference
-3. New requirements emerged? → Add to Active
-4. Decisions to log? → Add to Key Decisions
-5. "What This Is" still accurate? → Update if drifted
-
-**After each milestone** (via `/gsd-complete-milestone`):
-1. Full review of all sections
-2. Core Value check — still the right priority?
-3. Audit Out of Scope — reasons still valid?
-4. Update Context with current state
-
 <details>
 <summary>Previous project context</summary>
 
-Historical milestone write-ups (v5.1, v4.5, etc.) remain available in `.planning/MILESTONES.md` and the per-milestone archives.
+### v5.3 Deep Bug Analysis & Defect Report
+**Goal:** Audit the whole repository to identify likely bugs, rank their criticity, and produce an implementation-ready defect report for a follow-up milestone.
+
+### v5.2 Architecture Hardening & Validation (Shipped 2026-03-20)
+Phases 95-103. Flashable embedded build, unified error taxonomy, TRACE instrumentation, manifest-aware HIL validation, safe-shutdown replay.
+
+Historical milestone write-ups available in `.planning/MILESTONES.md`.
 
 </details>
 
 ---
-*Last updated: 2026-04-16 after v5.3 milestone start*
+*Last updated: 2026-04-22 after v5.4 milestone start*
