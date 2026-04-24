@@ -1,5 +1,7 @@
 //! Artisan Initialization State Machine
 //!
+//! DISABLED: Handshake (CHAN→UNITS→FILT) is bypassed for Artisan Scope compatibility.
+//! See src/input/multiplexer.rs for details. File kept for reference if re-enabled.
 //! NOTE: This module is COMMENTED OUT because Artisan Scope does not perform
 //! a handshake sequence. Artisan simply sends and receives data without
 //! requiring CHAN → UNITS → FILT initialization.

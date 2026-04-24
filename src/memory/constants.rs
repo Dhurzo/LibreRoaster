@@ -21,10 +21,9 @@ pub const ARTISAN_CMD_MAX_LEN: usize = 64;
 /// Artisan or other monitoring systems.
 pub const REPORT_BUFFER_SIZE: usize = 64;
 
-/// BT (Bean Temperature) history buffer size
-///
-/// Used for temperature tracking in the Artisan module
-/// for derivative and trend calculations.
+/// BT (Bean Temperature) history buffer size.
+/// Stored samples for BT temp tracking. The weighted ROR calculation
+/// uses all available samples up to this limit for linear weighting.
 pub const BT_HISTORY_SIZE: usize = ROR_WINDOW_SIZE;
 
 /// Maximum size for stage or state names

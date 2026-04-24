@@ -114,6 +114,9 @@ pub async fn control_loop_task() {
         let guard_total_timeouts = ledc_guard::total_timeouts();
         let guard_timeout_happened = guard_total_timeouts != last_guard_total_timeouts;
 
+        // Drain all pending commands from the channel. Commands arriving between ticks
+        // are queued up to capacity. The fallback pattern in UART/USB task code retries
+        // via the direct artisan_channel when the main queue is full, preventing silent drops.
         while let Ok(traced_command) = cmd_channel.try_receive() {
             if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
                 regression::request_regression();

@@ -34,6 +34,15 @@ impl LedcGuard {
         }
     }
 
+    /// Attempts to acquire the guard with a 40ms timeout.
+    ///
+    /// # Reentrancy Warning
+    ///
+    /// This method uses `spin_loop()` in a busy-wait loop. On the single-core ESP32-C3
+    /// running Embassy cooperative multitasking, **re-entrant acquisition from the same
+    /// task will deadlock** because the holder cannot yield to release. The guard MUST
+    /// be released (by dropping the LedcGuardToken) before the same task can acquire it
+    /// again. The 40ms timeout provides an escape hatch but should not be relied upon.
     pub fn try_acquire(
         &self,
         channel_name: &'static str,

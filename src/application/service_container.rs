@@ -182,8 +182,9 @@ impl ServiceContainer {
             .await
     }
 
-    /// Perform async sensor read using the async lock
-    /// This uses EmbassyMutex for safe concurrent async access
+    // TODO(v5.2): This holds the async mutex for the entire sensor read duration (~160ms),
+    // blocking all other command processing. Consider splitting into: trigger (lock), await (unlock),
+    // read-result (lock) to reduce mutex hold time by 90%.
     pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
         #[cfg(any(test, feature = "async-lock-depth-metrics"))]
         let _async_lock_depth_guard = async_lock_depth::AsyncLockDepthGuard::enter();

@@ -1,3 +1,8 @@
+/// NOTE: This is a software watchdog counter (AtomicU32), NOT a hardware WDT.
+/// If the Embassy executor itself hangs (deadlock, ISR infinite loop), this
+/// counter will never be decremented. Consider integrating the ESP32-C3 hardware
+/// watchdog timer for true hardware-level protection in a future milestone.
+
 /// Watchdog feeder errors exposed to higher-level services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchdogError {

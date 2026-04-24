@@ -36,25 +36,33 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     }
 
     // Try semicolon delimiter first (Artisan standard for init commands)
+    // If the command isn't CHAN/UNITS/FILT, fall through to space parsing
+    // to handle typos like "OT1;75" → "OT1 75"
     if let Some((cmd, args)) = trimmed.split_once(';') {
-        return match cmd.to_ascii_uppercase().as_str() {
-            "CHAN" => args
-                .trim()
-                .parse::<u16>()
-                .map(ArtisanCommand::Chan)
-                .map_err(|_| ParseError::InvalidValue),
-            "UNITS" => match args.trim() {
-                "C" | "c" => Ok(ArtisanCommand::Units(false)),
-                "F" | "f" => Ok(ArtisanCommand::Units(true)),
-                _ => Err(ParseError::InvalidValue),
-            },
-            "FILT" => args
-                .trim()
-                .parse::<u8>()
-                .map(ArtisanCommand::Filt)
-                .map_err(|_| ParseError::InvalidValue),
-            _ => Err(ParseError::UnknownCommand),
-        };
+        let init_result: Option<Result<ArtisanCommand, ParseError>> =
+            match cmd.to_ascii_uppercase().as_str() {
+                "CHAN" => Some(args
+                    .trim()
+                    .parse::<u16>()
+                    .map(ArtisanCommand::Chan)
+                    .map_err(|_| ParseError::InvalidValue)),
+                "UNITS" => Some(match args.trim() {
+                    "C" | "c" => Ok(ArtisanCommand::Units(false)),
+                    "F" | "f" => Ok(ArtisanCommand::Units(true)),
+                    _ => Err(ParseError::InvalidValue),
+                }),
+                "FILT" => Some(args
+                    .trim()
+                    .parse::<u8>()
+                    .map(ArtisanCommand::Filt)
+                    .map_err(|_| ParseError::InvalidValue)),
+                // Unknown init command → fall through to space parsing
+                _ => None,
+            };
+
+        if let Some(result) = init_result {
+            return result;
+        }
     }
 
     // Fall back to space delimiter for operational commands
@@ -144,7 +152,13 @@ fn parse_float(value_str: &str) -> Result<f32, ParseError> {
         .map_err(|_| ParseError::InvalidValue)
 }
 
-/// Parse OT2 fan speed value with decimal support
+/// Parse OT2 fan speed value with decimal support.
+///
+/// OT2 semantics differ from OT1/IO3: the MAX31856-style protocol specifies that
+/// out-of-range OT2 values indicate a sensor fault, so the heater is cut when
+/// clamping occurs. Values outside [0,100] are rounded and clamped to that range,
+/// and the caller receives `was_clamped=true` to trigger the heater safety cutoff.
+///
 /// - Decimals are rounded to nearest integer
 /// - Values are silently clamped to 0-100 range
 /// - Negative values clamp to 0

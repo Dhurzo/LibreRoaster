@@ -577,6 +577,10 @@ where
     }
 }
 
+// SAFETY(v5.1): Sound on single-core ESP32-C3 (cooperative Embassy tasks).
+// If porting to multi-core ESP32 (e.g., ESP32-S3 dual-core), review ref-counting
+// of the LEDC Timer reference held by ChannelIFace. The Timer is stored in the
+// static LedcBus and outlives all Channel users on single-core.
 // SAFETY: SsrControlSimple owns its peripheral handles exclusively.
 // On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
 // task executes at a time. The type is moved into a `Box<dyn Heater + Send>`
@@ -620,6 +624,10 @@ where
     }
 }
 
+// SAFETY(v5.1): Sound on single-core ESP32-C3 (cooperative Embassy tasks).
+// If porting to multi-core ESP32 (e.g., ESP32-S3 dual-core), review ref-counting
+// of the LEDC Timer reference held by ChannelIFace. The Timer is stored in the
+// static LedcBus and outlives all Channel users on single-core.
 // SAFETY: SsrControl owns its peripheral handles exclusively.
 // On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
 // task executes at a time. The type is moved into a `Box<dyn Heater + Send>`

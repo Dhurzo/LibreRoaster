@@ -235,8 +235,8 @@ impl SensorConversionHub {
         // Trigger env sensor conversion (one-shot) - fast SPI write, ~50us
         let env_trigger_result = self.env_sensor.trigger_conversion();
 
-        // Wait once for both conversions to complete (160ms is the typical conversion time)
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(160)).await;
+        // Wait once for both conversions to complete (TEMPERATURE_READ_INTERVAL_MS is the typical conversion time)
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64)).await;
 
         // Read bean sensor result - fast SPI read, ~50us
         let bean_result = bean_trigger_result

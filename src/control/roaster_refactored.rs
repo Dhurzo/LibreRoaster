@@ -231,7 +231,8 @@ impl RoasterControl {
         self.actuator
             .capture_ssr_monitor_metrics(&mut self.status);
         self.actuator.set_heater_power(0.0)?;
-        self.actuator.set_fan_raw(0.0)?;
+        // Bug #13: Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
+        self.actuator.set_fan_raw(100.0)?;
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
@@ -346,6 +347,16 @@ impl RoasterControl {
         &mut self,
         command: crate::config::ArtisanCommand,
     ) -> Result<(), RoasterError> {
+        // Bug #6 fix: Reject all commands when a fault condition is active.
+        // Prevents heater ramp commands from worsening an over-temp situation
+        // that was detected between sensor reads.
+        if self.status.fault_condition {
+            warn!("Command rejected: fault condition active");
+            return Err(RoasterError::InvalidState {
+                source: Some("fault_condition_active"),
+            });
+        }
+
         use crate::config::constants::DEFAULT_TARGET_TEMP;
         let current_time = embassy_time::Instant::now();
 
@@ -399,6 +410,8 @@ impl RoasterControl {
                     let _ = self.actuator.set_heater_power(0.0);
                     self.actuator
                         .capture_ssr_monitor_metrics(&mut self.status);
+                    // Bug #2: Send notification to Artisan via output channel
+                    self.send_ot2_clamped_notification(value);
                     info!(
                         "Artisan+ OT2 out of range - heater stopped, fan set to {}%",
                         value
@@ -434,6 +447,13 @@ impl RoasterControl {
 
                 let response =
                     crate::output::artisan::ArtisanFormatter::format_status_response(&self.status);
+
+                // Bug #7: Send STATUS response to output channel so Artisan receives it
+                // regardless of the call path (control loop + direct handler both covered)
+                let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
+                if let Ok(line) = heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::try_from(response.as_str()) {
+                    let _ = output_channel.try_send(line);
+                }
 
                 debug!(
                     "STATUS command - SSR status: {:?}, response generated",
@@ -496,6 +516,19 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         self.process_command(command, current_time)
+    }
+
+    /// Send OT2-clamped notification through the output channel so Artisan
+    /// is aware the heater was cut due to out-of-range fan values.
+    fn send_ot2_clamped_notification(&self, fan_value: u8) {
+        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+        let mut msg = heapless::String::<{ TRACE_EVENT_MAX_LEN }>::new();
+        let _ = core::fmt::Write::write_fmt(
+            &mut msg,
+            core::format_args!("ERR OT2_CLAMPED heater_cut fan={}", fan_value),
+        );
+        let _ = crate::application::service_container::ServiceContainer::get_output_channel()
+            .try_send(msg);
     }
 
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {

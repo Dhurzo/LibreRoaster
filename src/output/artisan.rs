@@ -83,6 +83,7 @@ impl ArtisanFormatter {
     }
 
     #[allow(dead_code)]
+    #[deprecated = "Use RorCalculator in formatters module. This assumes 1s sample intervals; control loop runs at ~10Hz."]
     fn compute_ror_from_history(history: &[f32]) -> f32 {
         if history.len() < 2 {
             0.0
@@ -153,6 +154,7 @@ impl OutputFormatter for ArtisanFormatter {
 }
 
 impl ArtisanFormatter {
+    #[deprecated = "Use format_read_response_full() instead"]
     pub fn format_read_response(
         status: &SystemStatus,
         fan_speed: f32,
@@ -178,6 +180,9 @@ impl ArtisanFormatter {
         let bt = Self::normalize_read_value(status.bean_temp);
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(status.fan_output);
+        // NOTE: All temperatures are in Celsius regardless of UNITS command setting.
+        // The TemperatureSettings/UNITS handler stores the preference but no
+        // Fahrenheit conversion is applied in the output path (v5.1 limitation).
         // 4-value format: ET, BT, HEATER, FAN
         let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(
@@ -191,6 +196,11 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Format STATUS response with 18 CSV fields.
+    ///
+    /// Buffer capacity: RESPONSE_BUFFER_SIZE=512 bytes.
+    /// The STATUS line consists of 18 fields (ET, BT, heater, fan, watchdog flags,
+    /// failure reason, PID state, and latency metrics). This must fit in 512 bytes.
     pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
         let et = Self::normalize_read_value(status.env_temp);
         let bt = Self::normalize_read_value(status.bean_temp);
@@ -198,7 +208,10 @@ impl ArtisanFormatter {
         let fan = Self::normalize_read_value(status.fan_output);
         let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
         let failure_count = status.watchdog_consecutive_failures;
-        let failure_reason = status.watchdog_last_failure.unwrap_or("none");
+        let failure_reason = match status.watchdog_last_failure {
+            Some(reason) => reason,
+            None => "none",
+        };
         let guard_timeouts = status.ledc_guard_timeouts;
         let regression_flag = if status.overtemp_regression_active {
             1
@@ -216,6 +229,9 @@ impl ArtisanFormatter {
         let max_command_latency = status.max_command_latency_us;
 
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
+        // Safety: Verify buffer capacity before writing to catch overflow bugs in development.
+        // STATUS response with 18 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
+        debug_assert!(buf.capacity() >= RESPONSE_BUFFER_SIZE);
         let _ = core::write!(
             &mut buf,
             "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{}",

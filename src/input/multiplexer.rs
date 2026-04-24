@@ -23,9 +23,11 @@ impl Instant {
     }
 }
 
-// NOTE: Handshake (CHAN → UNITS → FILT) is DISABLED for Artisan Scope compatibility
-// Artisan Scope does not perform handshake - it simply sends and receives data
-// Placeholder types kept for potential future re-enabling
+// NOTE: Handshake (CHAN → UNITS → FILT) is DISABLED for Artisan Scope compatibility.
+// Artisan Scope does not perform handshake — it sends commands immediately.
+// The `# ` acknowledgment documented in README is therefore not sent.
+// If re-enabling, restore init_state.rs and uncomment init flow.
+// Placeholder types kept for potential future re-enabling.
 #[allow(dead_code)]
 pub struct InitState;
 

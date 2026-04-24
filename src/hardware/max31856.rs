@@ -83,6 +83,7 @@ where
         max31856.write_register(0x80, 0x00)?; // Config register 0
         max31856.write_register(0x81, 0x03)?; // Config register 1 - Type K thermocouple
         max31856.write_register(0x82, 0x00)?; // Fault mask register
+        log::info!("MAX31856 initialized: Type-K thermocouple, CJ compensation active (register 0x81=0x03)");
 
         Ok(max31856)
     }
@@ -134,7 +135,7 @@ where
     pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
         self.write_register(0x80, 0x80)?; // Set one-shot bit
 
-        Timer::after(Duration::from_millis(160)).await;
+        Timer::after(Duration::from_millis(crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64)).await;
 
         self.read_conversion_block()
     }
@@ -142,7 +143,8 @@ where
     #[allow(deprecated)]
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
-        if reading.fault & 0x01 != 0 {
+        // Check all fault bits: open(0x01), short-VCC(0x02), short-GND(0x04), CJ-high(0x08), CJ-low(0x10)
+        if reading.fault & 0x1F != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });
@@ -163,7 +165,8 @@ where
     /// This prevents blocking the async executor during the 160ms conversion delay.
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature_async().await?;
-        if reading.fault & 0x01 != 0 {
+        // Check all fault bits: open(0x01), short-VCC(0x02), short-GND(0x04), CJ-high(0x08), CJ-low(0x10)
+        if reading.fault & 0x1F != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });
