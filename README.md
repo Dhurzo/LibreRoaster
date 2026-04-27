@@ -155,16 +155,19 @@ LibreRoaster supports two connection methods to Artisan:
 
 ### READ Response Format
 
-4-value CSV: ET,BT,HEATER,FAN
+7-value CSV (TC4/Arduino standard): ET,BT,AMB,ET2,BT2,HEATER,FAN
 
 | Field | Type | Unit | Description |
 |-------|------|------|-------------|
 | ET | Decimal | °C | Exhaust Temperature |
 | BT | Decimal | °C | Bean Temperature |
+| AMB | Decimal | °C | Ambient/Room Temperature (0.0 placeholder) |
+| ET2 | Decimal | °C | Second thermocouple ET (-1.0 placeholder) |
+| BT2 | Decimal | °C | Second thermocouple BT (-1.0 placeholder) |
 | HEATER | Decimal | % | Heater PWM percentage |
 | FAN | Decimal | % | Fan PWM percentage |
 
-Example: `185.3,201.4,45,80`
+Example: `185.3,201.4,25.0,-1.0,-1.0,45,80`
 
 ### Initialization
 

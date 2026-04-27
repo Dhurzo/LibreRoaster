@@ -532,6 +532,14 @@ pub async fn control_loop_task() {
                     debug!("Formatter error: {:?}", e);
                 }
             }
+
+            // Feed ring-buffer roast logger
+            let elapsed = tick_start.elapsed().as_secs() as u32;
+            crate::logging::roast_logger::log_sample(
+                elapsed, status.bean_temp, status.env_temp,
+                status.ssr_output, status.fan_output, status.target_temp,
+                status.derivative_rate,
+            );
         }
 
         let telemetry_elapsed_ms = stage_tracker.elapsed().as_millis();

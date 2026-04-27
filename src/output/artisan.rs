@@ -75,13 +75,6 @@ impl ArtisanFormatter {
         }
     }
 
-    fn update_bt_history(history: &mut Deque<f32, BT_HISTORY_SIZE>, current_bt: f32) {
-        if history.len() >= BT_HISTORY_SIZE {
-            let _ = history.pop_front();
-        }
-        let _ = history.push_back(current_bt);
-    }
-
     #[allow(dead_code)]
     #[deprecated = "Use RorCalculator in formatters module. This assumes 1s sample intervals; control loop runs at ~10Hz."]
     fn compute_ror_from_history(history: &[f32]) -> f32 {
@@ -176,20 +169,20 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
-        let et = Self::normalize_read_value(status.env_temp);
-        let bt = Self::normalize_read_value(status.bean_temp);
+        let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
+        let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
+        let amb = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.ambient_temp));
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(status.fan_output);
-        // NOTE: All temperatures are in Celsius regardless of UNITS command setting.
-        // The TemperatureSettings/UNITS handler stores the preference but no
-        // Fahrenheit conversion is applied in the output path (v5.1 limitation).
-        // 4-value format: ET, BT, HEATER, FAN
+        // 7-value TC4/Arduino format: ET, BT, AMB, ET2, BT2, HEATER, FAN
+        // ET2 and BT2 are placeholder -1 (no second thermocouple pair)
         let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(
             &mut buf,
-            "{:.1},{:.1},{:.1},{:.1}",
+            "{:.1},{:.1},{:.1},-1.0,-1.0,{:.1},{:.1}",
             et,     // ET
             bt,     // BT
+            amb,    // AMB (ambient temperature)
             heater, // Heater
             fan     // Fan
         );
@@ -202,8 +195,8 @@ impl ArtisanFormatter {
     /// The STATUS line consists of 18 fields (ET, BT, heater, fan, watchdog flags,
     /// failure reason, PID state, and latency metrics). This must fit in 512 bytes.
     pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
-        let et = Self::normalize_read_value(status.env_temp);
-        let bt = Self::normalize_read_value(status.bean_temp);
+        let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
+        let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(status.fan_output);
         let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
@@ -218,23 +211,24 @@ impl ArtisanFormatter {
         } else {
             0
         };
-        let pv = Self::normalize_read_value(status.pv);
-        let mv = Self::normalize_read_value(status.mv);
-        let integrator_value = Self::normalize_read_value(status.integrator_value);
-        let derivative_value = Self::normalize_read_value(status.derivative_rate);
+        let pv = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
+        let mv = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.mv));
+        let integrator_value = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.integrator_value));
+        let derivative_value = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.derivative_rate));
         let saturation_flag = if status.saturation_active { 1 } else { 0 };
         let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
         let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
         let command_latency = status.command_latency_us;
         let max_command_latency = status.max_command_latency_us;
+        let temp_scale_indicator = if status.temperature_settings.is_fahrenheit() { 1u8 } else { 0u8 };
 
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
         // Safety: Verify buffer capacity before writing to catch overflow bugs in development.
-        // STATUS response with 18 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
+        // STATUS response with 19 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
         debug_assert!(buf.capacity() >= RESPONSE_BUFFER_SIZE);
         let _ = core::write!(
             &mut buf,
-            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{}",
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{},{}",
             et,
             bt,
             heater,
@@ -252,7 +246,8 @@ impl ArtisanFormatter {
             integrator_clamp_flag,
             derivative_available_flag,
             command_latency,
-            max_command_latency
+            max_command_latency,
+            temp_scale_indicator
         );
         buf
     }
@@ -320,6 +315,7 @@ pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
     bt_history: Deque<f32, BT_HISTORY_SIZE>,
+    timestamp_history: Deque<Instant, BT_HISTORY_SIZE>,
     last_filtered_ror: f32,
 }
 
@@ -329,6 +325,7 @@ impl Default for MutableArtisanFormatter {
             start_time: Instant::now(),
             last_bt: 0.0,
             bt_history: Deque::<f32, BT_HISTORY_SIZE>::new(),
+            timestamp_history: Deque::<Instant, BT_HISTORY_SIZE>::new(),
             last_filtered_ror: 0.0,
         }
     }
@@ -347,22 +344,30 @@ impl MutableArtisanFormatter {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
-        let et = status.env_temp;
-        let bt = status.bean_temp;
+        // Use original Celsius for ROR calculation
+        let bt_c = status.bean_temp;
+        let ror = self.calculate_ror(bt_c, Instant::now());
+
+        // Convert temperatures for display
+        let et = status.temperature_settings.convert_to_display(status.env_temp);
+        let bt_display = status.temperature_settings.convert_to_display(bt_c);
         let gas = status.ssr_output; // SSR output as gas control
 
-        let ror = self.calculate_ror(bt);
-
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
-        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
+        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror, gas);
 
         Ok(line)
     }
 
-    fn calculate_ror(&mut self, current_bt: f32) -> f32 {
+    fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
         if self.last_bt == 0.0 {
             self.last_bt = current_bt;
-            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+            Self::update_bt_history_with_timestamp(
+                &mut self.bt_history,
+                &mut self.timestamp_history,
+                current_bt,
+                now,
+            );
             return 0.0;
         }
 
@@ -377,49 +382,96 @@ impl MutableArtisanFormatter {
             && !ArtisanFormatter::is_temperature_outlier(current_bt, back)
         {
             self.last_bt = current_bt;
-            ArtisanFormatter::update_bt_history(&mut self.bt_history, current_bt);
+            Self::update_bt_history_with_timestamp(
+                &mut self.bt_history,
+                &mut self.timestamp_history,
+                current_bt,
+                now,
+            );
         } else {
             // Skip this outlier reading, return last filtered value
             return self.last_filtered_ror;
         }
 
         // Compute ROR from Deque history using as_slices
-        let (front, back) = self.bt_history.as_slices();
-        let combined_len = front.len() + back.len();
+        let (bt_front, bt_back) = self.bt_history.as_slices();
+        let (ts_front, ts_back) = self.timestamp_history.as_slices();
+        let combined_len = bt_front.len() + bt_back.len();
         if combined_len < ROR_MIN_SAMPLES {
             return 0.0;
         }
 
-        // Build a temporary array for ROR calculation
-        let mut history_arr = [0.0f32; BT_HISTORY_SIZE];
-        for (i, &v) in front.iter().enumerate() {
-            history_arr[i] = v;
+        // Build temp arrays for ROR calculation
+        let mut bt_arr = [0.0f32; BT_HISTORY_SIZE];
+        for (i, &v) in bt_front.iter().enumerate() {
+            bt_arr[i] = v;
         }
-        for (i, &v) in back.iter().enumerate() {
-            history_arr[front.len() + i] = v;
+        for (i, &v) in bt_back.iter().enumerate() {
+            bt_arr[bt_front.len() + i] = v;
         }
 
-        let usable_history = &history_arr[..combined_len];
+        let mut ts_arr = [Instant::from_millis(0); BT_HISTORY_SIZE];
+        for (i, &v) in ts_front.iter().enumerate() {
+            ts_arr[i] = v;
+        }
+        for (i, &v) in ts_back.iter().enumerate() {
+            ts_arr[ts_front.len() + i] = v;
+        }
 
-        // Hybrid approach: Calculate weighted moving average ROR
-        let weighted_ror = ArtisanFormatter::calculate_weighted_ror(usable_history);
+        let usable_bt = &bt_arr[..combined_len];
+        let usable_ts = &ts_arr[..combined_len];
+
+        // Calculate ROR using actual elapsed time
+        let ror = Self::compute_ror_with_timestamps(usable_bt, usable_ts);
 
         // Apply IIR filter for smoothing
-        let filtered_ror = ArtisanFormatter::apply_iir_filter(
-            weighted_ror,
-            self.last_filtered_ror,
-            ROR_FILTER_ALPHA,
-        );
+        let filtered_ror = ArtisanFormatter::apply_iir_filter(ror, self.last_filtered_ror, ROR_FILTER_ALPHA);
 
         self.last_filtered_ror = filtered_ror;
         filtered_ror
+    }
+
+    fn update_bt_history_with_timestamp(
+        bt_history: &mut Deque<f32, BT_HISTORY_SIZE>,
+        timestamp_history: &mut Deque<Instant, BT_HISTORY_SIZE>,
+        current_bt: f32,
+        now: Instant,
+    ) {
+        if bt_history.len() >= BT_HISTORY_SIZE {
+            let _ = bt_history.pop_front();
+        }
+        let _ = bt_history.push_back(current_bt);
+
+        if timestamp_history.len() >= BT_HISTORY_SIZE {
+            let _ = timestamp_history.pop_front();
+        }
+        let _ = timestamp_history.push_back(now);
+    }
+
+    fn compute_ror_with_timestamps(bt: &[f32], timestamps: &[Instant]) -> f32 {
+        if bt.len() < 2 {
+            return 0.0;
+        }
+
+        let first_bt = bt[0];
+        let last_bt = bt[bt.len() - 1];
+        let first_ts = timestamps[0];
+        let last_ts = timestamps[timestamps.len() - 1];
+
+        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_secs() as f32) +
+            (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
+        if time_elapsed_secs > 0.0 {
+            (last_bt - first_bt) / time_elapsed_secs
+        } else {
+            0.0
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus};
+    use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings};
     use alloc::vec;
 
     fn create_test_status() -> SystemStatus {
@@ -442,6 +494,7 @@ mod tests {
             watchdog_consecutive_failures: 0,
             ledc_guard_timeouts: 0,
             overtemp_regression_active: false,
+            temperature_settings: TemperatureSettings::new(),
             ..SystemStatus::default()
         }
     }
@@ -517,7 +570,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
 
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 18);
+        assert_eq!(parts.len(), 19);
 
         assert_eq!(parts[0], "120.3");
         assert_eq!(parts[1], "150.5");
@@ -549,7 +602,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 18);
+        assert_eq!(parts.len(), 19);
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "0");
@@ -567,7 +620,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 18);
+        assert_eq!(parts.len(), 19);
         assert_eq!(parts[11], "51.2");
         assert_eq!(parts[12], "0.73");
         assert_eq!(parts[13], "1");
@@ -582,7 +635,7 @@ mod tests {
 
         assert!(output.contains(",none,"));
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 18);
+        assert_eq!(parts.len(), 19);
         assert_eq!(parts[12], "0.00");
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "0");
@@ -727,12 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn test_format_read_response_four_values() {
+    fn test_format_read_response_seven_values() {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 4, "READ response must have exactly 4 values");
+        assert_eq!(parts.len(), 7, "READ response must have exactly 7 values (TC4/Arduino format)");
     }
 
     #[test]
@@ -742,15 +795,32 @@ mod tests {
         status.bean_temp = 155.7;
         status.fan_output = 60.0;
         status.ssr_output = 80.0;
+        status.ambient_temp = 25.0;
 
+        // Test Celsius (default)
         let response = ArtisanFormatter::format_read_response_full(&status);
-
         let parts: Vec<&str> = response.split(',').collect();
-
+        assert_eq!(parts.len(), 7, "Response must have 7 fields");
         assert_eq!(parts[0], "125.5", "ET should use env_temp");
         assert_eq!(parts[1], "155.7", "BT should use bean_temp");
-        assert_eq!(parts[2], "80.0", "Heater should use ssr_output");
-        assert_eq!(parts[3], "60.0", "Fan should use fan_output");
+        assert_eq!(parts[2], "25.0", "AMB should use ambient_temp");
+        assert_eq!(parts[3], "-1.0", "ET2 should be -1.0 placeholder");
+        assert_eq!(parts[4], "-1.0", "BT2 should be -1.0 placeholder");
+        assert_eq!(parts[5], "80.0", "Heater should use ssr_output");
+        assert_eq!(parts[6], "60.0", "Fan should use fan_output");
+
+        // Test Fahrenheit conversion
+        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+        let response_f = ArtisanFormatter::format_read_response_full(&status);
+        let parts_f: Vec<&str> = response_f.split(',').collect();
+        // 125.5°C = 257.9°F, 155.7°C = 312.3°F, 25.0°C = 77.0°F
+        assert_eq!(parts_f[0], "257.9", "ET should convert to Fahrenheit");
+        assert_eq!(parts_f[1], "312.3", "BT should convert to Fahrenheit");
+        assert_eq!(parts_f[2], "77.0", "AMB should convert to Fahrenheit");
+        assert_eq!(parts_f[3], "-1.0", "ET2 should remain -1.0");
+        assert_eq!(parts_f[4], "-1.0", "BT2 should remain -1.0");
+        assert_eq!(parts_f[5], "80.0", "Heater should remain unchanged");
+        assert_eq!(parts_f[6], "60.0", "Fan should remain unchanged");
     }
 
     #[test]
@@ -761,8 +831,15 @@ mod tests {
 
         let response = ArtisanFormatter::format_read_response_full(&status);
 
-        assert_eq!(response, "120.3,0.0,75.0,0.0");
-        assert_eq!(response.split(',').count(), 4);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 7, "Response must have 7 fields");
+        assert_eq!(parts[0], "120.3", "ET should be valid");
+        assert_eq!(parts[1], "0.0", "BT should be 0.0 for invalid input");
+        assert_eq!(parts[2], "0.0", "AMB should be 0.0 (default)");
+        assert_eq!(parts[3], "-1.0", "ET2 should be -1.0");
+        assert_eq!(parts[4], "-1.0", "BT2 should be -1.0");
+        assert_eq!(parts[5], "75.0", "Heater should be valid");
+        assert_eq!(parts[6], "0.0", "Fan should be 0.0 for invalid input");
     }
 
     #[test]
@@ -774,8 +851,80 @@ mod tests {
         let response = ArtisanFormatter::format_read_response_full(&status);
 
         let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 7, "Response must have 7 fields");
 
-        assert_eq!(parts[2], "100.0", "Heater must show one decimal (100.0)");
-        assert_eq!(parts[3], "75.0", "Fan must show one decimal (75.0)");
+        assert_eq!(parts[0], "120.3", "ET must show one decimal");
+        assert_eq!(parts[1], "150.5", "BT must show one decimal");
+        assert_eq!(parts[2], "0.0", "AMB must show one decimal");
+        assert_eq!(parts[3], "-1.0", "ET2 must be -1.0");
+        assert_eq!(parts[4], "-1.0", "BT2 must be -1.0");
+        assert_eq!(parts[5], "100.0", "Heater must show one decimal (100.0)");
+        assert_eq!(parts[6], "75.0", "Fan must show one decimal (75.0)");
+    }
+
+    #[test]
+    fn test_format_status_response_celsius() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+
+        let response = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 19);
+
+        assert_eq!(parts[0], "120.3", "ET in Celsius");
+        assert_eq!(parts[1], "150.5", "BT in Celsius");
+        assert_eq!(parts[2], "88.0", "Heater unchanged");
+        assert_eq!(parts[3], "42.0", "Fan unchanged");
+        assert_eq!(parts[4], "0");
+        assert_eq!(parts[5], "3");
+        assert_eq!(parts[6], "timeout");
+        assert_eq!(parts[7], "7");
+        assert_eq!(parts[8], "1");
+        assert_eq!(parts[9], "150.5", "PV in Celsius");
+        assert_eq!(parts[10], "88.5", "MV in Celsius");
+        assert_eq!(parts[11], "37.1", "Integrator in Celsius");
+        assert_eq!(parts[12], "-0.42", "Derivative in Celsius");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "1");
+        assert_eq!(parts[16], "1250");
+        assert_eq!(parts[17], "5000");
+    }
+
+    #[test]
+    fn test_format_status_response_fahrenheit() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+
+        let response = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 19);
+
+        // 120.3°C = 248.5°F, 150.5°C = 302.9°F
+        assert_eq!(parts[0], "248.5", "ET converted to Fahrenheit");
+        assert_eq!(parts[1], "302.9", "BT converted to Fahrenheit");
+        assert_eq!(parts[2], "88.0", "Heater unchanged");
+        assert_eq!(parts[3], "42.0", "Fan unchanged");
+        assert_eq!(parts[9], "302.9", "PV converted to Fahrenheit");
+        assert_eq!(parts[10], "191.3", "MV converted to Fahrenheit (88.5°C)");
+        assert_eq!(parts[11], "98.8", "Integrator converted to Fahrenheit (37.1°C)");
+        assert_eq!(parts[12], "31.24", "Derivative converted to Fahrenheit (-0.42°C)");
     }
 }

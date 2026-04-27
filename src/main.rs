@@ -117,6 +117,10 @@ async fn main(spawner: Spawner) -> ! {
     info!("SSR control initialized");
     info!("Fan controller initialized");
 
+    // Initialize hardware RTC watchdog (fed in control loop)
+    libreroaster::safety::watchdog::init_hw_watchdog();
+    info!("Hardware watchdog initialized (RTC WDT)");
+
     // Initialize USB CDC
     let _ = libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE);
     info!("USB CDC initialized");

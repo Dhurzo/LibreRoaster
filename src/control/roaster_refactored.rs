@@ -21,6 +21,8 @@ pub struct RoasterControl {
     safety: SafetyController,
     dispatch: CommandDispatcher,
     last_pid_update: Option<Instant>,
+    active_profile: Option<RoastProfile>,
+    profile_start_time: Option<Instant>,
 }
 
 impl RoasterControl {
@@ -37,6 +39,8 @@ impl RoasterControl {
             safety: SafetyController::new(),
             dispatch: CommandDispatcher::new()?,
             last_pid_update: None,
+            active_profile: None,
+            profile_start_time: None,
         })
     }
 
@@ -278,7 +282,24 @@ impl RoasterControl {
             if self.status.ssr_hardware_status
                 == crate::config::constants::SsrHardwareStatus::Available
             {
-                self.update_pid_control(current_time)
+                // Sensor reads take ~160ms (TEMPERATURE_READ_INTERVAL_MS), PID runs at 100ms
+                // (PID_SAMPLE_TIME_MS). Skip PID if data is stale to avoid computing on old readings.
+                let is_stale = if let Some(last_read) = self.sensor.last_temp_read() {
+                    current_time.duration_since(last_read)
+                        > Duration::from_millis(PID_SAMPLE_TIME_MS as u64)
+                } else {
+                    false
+                };
+
+                if is_stale {
+                    debug!(
+                        "Sensor data is stale (>{}ms), holding last PID output",
+                        PID_SAMPLE_TIME_MS
+                    );
+                    self.status.mv // Hold last output
+                } else {
+                    self.update_pid_control(current_time)
+                }
             } else {
                 warn!("PID enabled but SSR not available - output: 0%");
                 0.0
@@ -367,19 +388,36 @@ impl RoasterControl {
                     self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
                 } else {
                     self.status.artisan_control = true;
-                    self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
+                    // Use loaded profile if available, otherwise fall back to default target
+                    if self.active_profile.is_some() {
+                        self.profile_start_time = Some(embassy_time::Instant::now());
+                        // Set initial target from profile
+                        let elapsed = 0u32;
+                        if let Some(target) = self
+                            .active_profile
+                            .as_ref()
+                            .and_then(|p| p.target_at(elapsed))
+                        {
+                            self.status.target_temp = target;
+                            self.enable_pid_control(target)?;
+                        }
+                        info!("Artisan+ roast started with profile ({} setpoints)",
+                            self.active_profile.as_ref().map_or(0, |p| p.setpoints.len()));
+                    } else {
+                        self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
+                        info!(
+                            "Artisan+ roast started with default target {:.1}°C",
+                            DEFAULT_TARGET_TEMP
+                        );
+                    }
+                    crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
                     self.dispatch
                         .get_output_manager_mut()
                         .enable_continuous_output();
-
                     self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
                     self.state = crate::config::constants::RoasterState::Heating;
                     self.status.state = self.state;
-
-                    info!(
-                        "Artisan+ roast started with target {:.1}°C - SSR: {:?}",
-                        DEFAULT_TARGET_TEMP, self.status.ssr_hardware_status
-                    );
+                    self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
                 }
             }
 
@@ -423,6 +461,7 @@ impl RoasterControl {
 
             crate::config::ArtisanCommand::EmergencyStop => {
                 self.stop_streaming()?;
+                crate::logging::roast_logger::stop_roast();
                 info!("Artisan+ stop requested - streaming disabled and outputs cleared");
             }
 
@@ -505,6 +544,29 @@ impl RoasterControl {
                 self.enable_pid_control(target)?;
                 info!("Target temperature set to {:.1}°C", target);
             }
+            crate::config::ArtisanCommand::SetProfile => {
+                let taken = crate::input::parser::take_profile();
+                if let Some(profile) = taken {
+                    let count = profile.setpoints.len();
+                    self.active_profile = Some(profile);
+                    info!("Profile loaded: {} setpoints", count);
+                } else {
+                    warn!("SetProfile received but no profile data in parser buffer");
+                }
+            }
+            crate::config::ArtisanCommand::DumpLog => {
+                use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+                let dump = crate::logging::roast_logger::dump();
+                let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
+                for line in dump.split('\n') {
+                    if !line.is_empty() {
+                        if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(line) {
+                            let _ = output_channel.try_send(msg);
+                        }
+                    }
+                }
+                info!("Roast log dump requested");
+            }
         }
 
         Ok(())
@@ -557,6 +619,23 @@ impl RoasterControl {
             if self.status.ssr_hardware_status != SsrHardwareStatus::Available {
                 warn!("PID update requested but SSR not available - skipping");
                 return 0.0;
+            }
+
+            // Profile-following: update PID target from profile interpolation
+            if let (Some(ref profile), Some(start)) =
+                (&self.active_profile, self.profile_start_time)
+            {
+                let elapsed = current_time.duration_since(start).as_secs() as u32;
+                if let Some(new_target) = profile.target_at(elapsed) {
+                    if (new_target - self.status.target_temp).abs() > 0.5 {
+                        self.status.target_temp = new_target;
+                        let _ = self.dispatch.set_pid_target(new_target);
+                        debug!(
+                            "Profile target: {:.1}°C at t={}s",
+                            new_target, elapsed
+                        );
+                    }
+                }
             }
 
             let output = self

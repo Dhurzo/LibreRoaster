@@ -91,6 +91,10 @@ impl CommandDispatcher {
         self.temp_handler.set_pid_feedback(feedback);
     }
 
+    pub fn set_pid_target(&mut self, target: f32) -> Result<(), RoasterError> {
+        self.temp_handler.set_pid_target(target)
+    }
+
     pub fn get_output_manager(&self) -> &crate::control::OutputController {
         self.temp_handler.get_output_manager()
     }

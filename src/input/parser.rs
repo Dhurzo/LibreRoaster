@@ -1,4 +1,22 @@
-use crate::config::ArtisanCommand;
+use crate::config::{ArtisanCommand, ProfileSetpoint, RoastProfile, MAX_PROFILE_SETPOINTS};
+use core::cell::RefCell;
+use critical_section::Mutex;
+
+static PARSED_PROFILE: Mutex<RefCell<Option<RoastProfile>>> = Mutex::new(RefCell::new(None));
+
+/// Store a parsed profile for the command handler to consume.
+pub fn store_profile(profile: RoastProfile) {
+    critical_section::with(|cs| {
+        *PARSED_PROFILE.borrow(cs).borrow_mut() = Some(profile);
+    });
+}
+
+/// Consume the stored profile, returning it and clearing the slot.
+pub fn take_profile() -> Option<RoastProfile> {
+    critical_section::with(|cs| {
+        PARSED_PROFILE.borrow(cs).borrow_mut().take()
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -56,6 +74,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     .parse::<u8>()
                     .map(ArtisanCommand::Filt)
                     .map_err(|_| ParseError::InvalidValue)),
+                "PROFILE" => Some(parse_profile_args(args.trim())),
                 // Unknown init command → fall through to space parsing
                 _ => None,
             };
@@ -119,6 +138,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         } else {
             Err(ParseError::InvalidValue)
         }
+    } else if cmd.eq_ignore_ascii_case("#DUMP") && parts.len() == 1 {
+        Ok(ArtisanCommand::DumpLog)
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
             let target = parse_float(parts[1])?;
@@ -179,6 +200,36 @@ fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
 
     let clamped = rounded.clamp(0, 100) as u8;
     Ok((clamped, was_clamped))
+}
+
+fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
+    let mut profile = RoastProfile::new();
+    for segment in args.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let mut parts = segment.splitn(2, ',');
+        let time_str = parts.next().ok_or(ParseError::InvalidValue)?;
+        let temp_str = parts.next().ok_or(ParseError::InvalidValue)?;
+
+        let time_secs: u32 = time_str.trim().parse().map_err(|_| ParseError::InvalidValue)?;
+        let temperature: f32 = temp_str.trim().parse().map_err(|_| ParseError::InvalidValue)?;
+
+        if !(50.0..=300.0).contains(&temperature) {
+            return Err(ParseError::OutOfRange);
+        }
+
+        profile.setpoints.push(ProfileSetpoint { time_secs, temperature })
+            .map_err(|_| ParseError::OutOfRange)?;
+    }
+
+    if profile.setpoints.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
+
+    store_profile(profile);
+    Ok(ArtisanCommand::SetProfile)
 }
 
 #[cfg(test)]

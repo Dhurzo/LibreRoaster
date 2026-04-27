@@ -3,6 +3,7 @@ pub mod fan;
 #[cfg(not(target_arch = "riscv32"))]
 #[path = "fan_host.rs"]
 pub mod fan;
+pub mod acoustic;
 #[cfg(target_arch = "riscv32")]
 pub mod init;
 #[cfg(target_arch = "riscv32")]

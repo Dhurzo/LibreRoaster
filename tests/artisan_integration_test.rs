@@ -472,14 +472,16 @@ fn test_complete_flow() {
     // Step 4: Format response
     let response = ArtisanFormatter::format_read_response(&status, 25.0);
 
-    // Step 5: Verify response format
+    // Step 5: Verify response format (7-field TC4/Arduino format)
     assert!(response.contains("120.3"), "Should contain ET");
     assert!(response.contains("150.5"), "Should contain BT");
-    assert!(response.contains("75.0"), "Should contain Power");
+    assert!(response.contains("0.0"), "Should contain AMB (ambient temp)");
+    assert!(response.contains("-1.0"), "Should contain ET2 placeholder");
+    assert!(response.contains("75.0"), "Should contain Heater");
     assert!(response.contains("25.0"), "Should contain Fan speed");
 
     let parts: Vec<&str> = response.split(',').collect();
-    assert_eq!(parts.len(), 4, "Response should have 4 fields");
+    assert_eq!(parts.len(), 7, "Response should have 7 fields (TC4/Arduino format)");
 
     println!(
         "   ✅ Complete flow: '{}' → {:?} → '{}'",

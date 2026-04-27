@@ -183,6 +183,7 @@ impl RoasterCommandHandler for ArtisanCommandHandler {
                     TemperatureScale::Celsius
                 };
                 self.temp_settings.set_scale(scale);
+                status.temperature_settings.set_scale(scale);
                 info!("Artisan+ units set to: {:?}", scale);
 
                 // Return success without changing status
@@ -284,6 +285,7 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                     TemperatureScale::Celsius
                 };
                 self.temp_settings.set_scale(scale);
+                status.temperature_settings.set_scale(scale);
                 info!("Artisan+ units set to: {:?}", scale);
 
                 ManualPolicyOutcome {
