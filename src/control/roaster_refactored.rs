@@ -23,6 +23,11 @@ pub struct RoasterControl {
     last_pid_update: Option<Instant>,
     active_profile: Option<RoastProfile>,
     profile_start_time: Option<Instant>,
+    fan_profile: Option<crate::config::FanProfile>,
+    charge_detected: bool,
+    charge_time: Option<Instant>,
+    preheat_target: Option<f32>,
+    bt_charge_history: heapless::Deque<f32, 10>,
 }
 
 impl RoasterControl {
@@ -41,6 +46,11 @@ impl RoasterControl {
             last_pid_update: None,
             active_profile: None,
             profile_start_time: None,
+            fan_profile: None,
+            charge_detected: false,
+            charge_time: None,
+            preheat_target: None,
+            bt_charge_history: heapless::Deque::new(),
         })
     }
 
@@ -263,6 +273,31 @@ impl RoasterControl {
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
+        // Charge detection: detect bean drop via sharp BT decline
+        if self.state == RoasterState::Heating && !self.charge_detected {
+            let bt = self.status.bean_temp;
+            if bt > 50.0 {
+                if self.bt_charge_history.len() >= 10 { let _ = self.bt_charge_history.pop_front(); }
+                let _ = self.bt_charge_history.push_back(bt);
+                if self.bt_charge_history.len() >= 5 {
+                    let (front, back) = self.bt_charge_history.as_slices();
+                    let first = front.first().copied().unwrap_or(bt);
+                    let drop = first - bt;
+                    if drop > CHARGE_DROP_THRESHOLD_C {
+                        self.charge_detected = true;
+                        self.charge_time = Some(current_time);
+                        self.status.charge_detected = true;
+                        info!("#CHARGE detected — BT dropped {:.1}°C", drop);
+                        let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
+                        let mut charge_msg = heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::new();
+                        let _ = core::fmt::Write::write_fmt(&mut charge_msg,
+                            core::format_args!("#CHARGE dt={:.1}", drop));
+                        let _ = output_channel.try_send(charge_msg);
+                    }
+                }
+            }
+        }
+
         let current_pv = self.status.bean_temp;
         self.status.pv = current_pv;
         self.sensor
@@ -322,7 +357,12 @@ impl RoasterControl {
         self.status.saturation_active = self.dispatch.pid_saturation_active();
         self.status.integrator_clamped = self.dispatch.pid_integrator_clamped();
 
-        let fan_output = self.dispatch.artisan_manual_fan();
+        let fan_output = if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
+            let elapsed = current_time.duration_since(start).as_secs() as u32;
+            fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
+        } else {
+            self.dispatch.artisan_manual_fan()
+        };
         self.actuator
             .set_fan_speed(fan_output, &mut self.status)
             .map_err(|_| RoasterError::HardwareError {
@@ -566,6 +606,24 @@ impl RoasterControl {
                     }
                 }
                 info!("Roast log dump requested");
+            }
+            crate::config::ArtisanCommand::Preheat(target) => {
+                self.preheat_target = Some(target);
+                self.state = RoasterState::Preheating;
+                self.status.state = RoasterState::Preheating;
+                self.enable_pid_control(target)?;
+                self.dispatch.get_output_manager_mut().disable_continuous_output();
+                info!("Preheat started — target {:.1}°C", target);
+            }
+            crate::config::ArtisanCommand::SetFanProfile => {
+                let taken = crate::input::parser::fan_profile_take();
+                if let Some(profile) = taken {
+                    let count = profile.setpoints.len();
+                    self.fan_profile = Some(profile);
+                    info!("Fan profile loaded: {} setpoints", count);
+                } else {
+                    warn!("SetFanProfile received but no fan profile data in buffer");
+                }
             }
         }
 

@@ -169,22 +169,18 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let amb = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.ambient_temp));
         let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
         let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
-        let amb = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.ambient_temp));
-        let heater = Self::normalize_read_value(status.ssr_output);
-        let fan = Self::normalize_read_value(status.fan_output);
-        // 7-value TC4/Arduino format: ET, BT, AMB, ET2, BT2, HEATER, FAN
-        // ET2 and BT2 are placeholder -1 (no second thermocouple pair)
+        // TC4 standard format: AMBIENT,ET,BT,CHAN3,CHAN4
+        // CHAN3 and CHAN4 are 0.0 (unused). Heater/fan available via STATUS command.
         let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(
             &mut buf,
-            "{:.1},{:.1},{:.1},-1.0,-1.0,{:.1},{:.1}",
-            et,     // ET
-            bt,     // BT
-            amb,    // AMB (ambient temperature)
-            heater, // Heater
-            fan     // Fan
+            "{:.1},{:.1},{:.1},0.0,0.0",
+            amb,
+            et,
+            bt,
         );
         buf
     }
@@ -780,86 +776,67 @@ mod tests {
     }
 
     #[test]
-    fn test_format_read_response_seven_values() {
+    fn test_format_read_response_tc4_format() {
         let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
 
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 7, "READ response must have exactly 7 values (TC4/Arduino format)");
+        assert_eq!(parts.len(), 5, "TC4 READ must have exactly 5 values (AMB,ET,BT,CHAN3,CHAN4)");
     }
 
     #[test]
-    fn test_format_read_response_full_uses_status_values() {
+    fn test_format_read_response_full_uses_tc4_order() {
         let mut status = create_test_status();
         status.env_temp = 125.5;
         status.bean_temp = 155.7;
-        status.fan_output = 60.0;
-        status.ssr_output = 80.0;
         status.ambient_temp = 25.0;
 
-        // Test Celsius (default)
+        // Test Celsius (default) — TC4 order: AMB,ET,BT,0,0
         let response = ArtisanFormatter::format_read_response_full(&status);
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 7, "Response must have 7 fields");
-        assert_eq!(parts[0], "125.5", "ET should use env_temp");
-        assert_eq!(parts[1], "155.7", "BT should use bean_temp");
-        assert_eq!(parts[2], "25.0", "AMB should use ambient_temp");
-        assert_eq!(parts[3], "-1.0", "ET2 should be -1.0 placeholder");
-        assert_eq!(parts[4], "-1.0", "BT2 should be -1.0 placeholder");
-        assert_eq!(parts[5], "80.0", "Heater should use ssr_output");
-        assert_eq!(parts[6], "60.0", "Fan should use fan_output");
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "25.0", "AMB should be ambient_temp (first per TC4)");
+        assert_eq!(parts[1], "125.5", "ET should be env_temp (second per TC4)");
+        assert_eq!(parts[2], "155.7", "BT should be bean_temp (third per TC4)");
+        assert_eq!(parts[3], "0.0", "CHAN3 placeholder");
+        assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
 
         // Test Fahrenheit conversion
         status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
         let response_f = ArtisanFormatter::format_read_response_full(&status);
         let parts_f: Vec<&str> = response_f.split(',').collect();
-        // 125.5°C = 257.9°F, 155.7°C = 312.3°F, 25.0°C = 77.0°F
-        assert_eq!(parts_f[0], "257.9", "ET should convert to Fahrenheit");
-        assert_eq!(parts_f[1], "312.3", "BT should convert to Fahrenheit");
-        assert_eq!(parts_f[2], "77.0", "AMB should convert to Fahrenheit");
-        assert_eq!(parts_f[3], "-1.0", "ET2 should remain -1.0");
-        assert_eq!(parts_f[4], "-1.0", "BT2 should remain -1.0");
-        assert_eq!(parts_f[5], "80.0", "Heater should remain unchanged");
-        assert_eq!(parts_f[6], "60.0", "Fan should remain unchanged");
+        // 25.0°C = 77.0°F, 125.5°C = 257.9°F, 155.7°C = 312.3°F
+        assert_eq!(parts_f[0], "77.0", "AMB converted to Fahrenheit");
+        assert_eq!(parts_f[1], "257.9", "ET converted to Fahrenheit");
+        assert_eq!(parts_f[2], "312.3", "BT converted to Fahrenheit");
+        assert_eq!(parts_f[3], "0.0", "CHAN3 unchanged");
+        assert_eq!(parts_f[4], "0.0", "CHAN4 unchanged");
     }
 
     #[test]
-    fn test_format_read_response_full_invalid_values() {
+    fn test_tc4_read_invalid_values_normalized() {
         let mut status = create_test_status();
         status.bean_temp = f32::NEG_INFINITY;
-        status.fan_output = f32::NAN;
 
         let response = ArtisanFormatter::format_read_response_full(&status);
-
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 7, "Response must have 7 fields");
-        assert_eq!(parts[0], "120.3", "ET should be valid");
-        assert_eq!(parts[1], "0.0", "BT should be 0.0 for invalid input");
-        assert_eq!(parts[2], "0.0", "AMB should be 0.0 (default)");
-        assert_eq!(parts[3], "-1.0", "ET2 should be -1.0");
-        assert_eq!(parts[4], "-1.0", "BT2 should be -1.0");
-        assert_eq!(parts[5], "75.0", "Heater should be valid");
-        assert_eq!(parts[6], "0.0", "Fan should be 0.0 for invalid input");
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "0.0", "AMB default");
+        assert_eq!(parts[1], "120.3", "ET valid");
+        assert_eq!(parts[2], "0.0", "BT normalized from -inf");
+        assert_eq!(parts[3], "0.0");
+        assert_eq!(parts[4], "0.0");
     }
 
     #[test]
-    fn test_format_read_response_full_one_decimal_format() {
-        let mut status = create_test_status();
-        status.fan_output = 75.0;
-        status.ssr_output = 100.0;
-
+    fn test_tc4_read_one_decimal_format() {
+        let status = create_test_status();
         let response = ArtisanFormatter::format_read_response_full(&status);
-
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 7, "Response must have 7 fields");
-
-        assert_eq!(parts[0], "120.3", "ET must show one decimal");
-        assert_eq!(parts[1], "150.5", "BT must show one decimal");
-        assert_eq!(parts[2], "0.0", "AMB must show one decimal");
-        assert_eq!(parts[3], "-1.0", "ET2 must be -1.0");
-        assert_eq!(parts[4], "-1.0", "BT2 must be -1.0");
-        assert_eq!(parts[5], "100.0", "Heater must show one decimal (100.0)");
-        assert_eq!(parts[6], "75.0", "Fan must show one decimal (75.0)");
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "0.0", "AMB shows one decimal");
+        assert_eq!(parts[1], "120.3", "ET shows one decimal");
+        assert_eq!(parts[2], "150.5", "BT shows one decimal");
     }
 
     #[test]

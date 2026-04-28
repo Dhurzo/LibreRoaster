@@ -117,7 +117,13 @@ pub async fn control_loop_task() {
         // Drain all pending commands from the channel. Commands arriving between ticks
         // are queued up to capacity. The fallback pattern in UART/USB task code retries
         // via the direct artisan_channel when the main queue is full, preventing silent drops.
+        let mut cmds_this_tick: usize = 0;
         while let Ok(traced_command) = cmd_channel.try_receive() {
+            cmds_this_tick = cmds_this_tick.saturating_add(1);
+            if cmds_this_tick > crate::config::MAX_COMMANDS_PER_TICK {
+                warn!("Command rate limit exceeded — {} commands this tick, skipping remaining", cmds_this_tick);
+                break;
+            }
             if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
                 regression::request_regression();
                 continue;

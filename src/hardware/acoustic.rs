@@ -137,4 +137,55 @@ mod tests {
         assert!(!det.first_crack_detected);
         assert_eq!(det.crack_count, 0);
     }
+
+    /// No microphone connected → ADC reads 0 (silence). Should not detect cracks.
+    #[test]
+    fn no_microphone_silence_returns_none() {
+        let mut det = AcousticDetector::new();
+        let now = Instant::now();
+        // Warm up with silence
+        for _ in 0..50 {
+            assert!(det.feed_sample(0, now).is_none());
+        }
+        assert_eq!(det.crack_count, 0);
+        assert!(!det.first_crack_detected);
+    }
+
+    /// Constant ADC value → no variance → no cracks detected.
+    #[test]
+    fn constant_signal_returns_none() {
+        let mut det = AcousticDetector::new();
+        let now = Instant::now();
+        for _ in 0..50 {
+            assert!(det.feed_sample(2048, now).is_none());
+        }
+        assert!(!det.first_crack_detected);
+    }
+
+    /// Random noise without sharp spikes → no false positives.
+    #[test]
+    fn noise_without_spikes_returns_none() {
+        let mut det = AcousticDetector::new();
+        let now = Instant::now();
+        // Simulate background noise: small random variations around 2000
+        for i in 0..50u16 {
+            let noise = 2000u16.wrapping_add(i.wrapping_mul(7) % 100).min(3000);
+            assert!(det.feed_sample(noise, now).is_none());
+        }
+        assert!(!det.first_crack_detected);
+    }
+
+    /// Single spike → one crack, but first_crack not confirmed (needs second within 3s).
+    #[test]
+    fn single_spike_not_first_crack() {
+        let mut det = AcousticDetector::new();
+        let now = Instant::now();
+        for _ in 0..30 {
+            det.feed_sample(2000, now);
+        }
+        let event = det.feed_sample(4000, now);
+        assert!(event.is_some());
+        assert!(!det.first_crack_detected); // Needs second crack to confirm
+        assert_eq!(det.crack_count, 1);
+    }
 }

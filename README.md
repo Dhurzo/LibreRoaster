@@ -5,18 +5,21 @@ LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-
 
 ## Project Status
 
-**Current version:** v5.1 (2026‑03‑12)
-**Milestone:** v5.1 in progress – Documentation update and minor improvements.
-**Next:** v5.2 – TBD.
+**Current version:** v5.3 (2026‑04‑27)
+**Milestone:** v5.3 — Full TC4 protocol compatibility, roast profiles, professional-ready.
 
 ### Recent Changes
 
-- Added STATUS command with 18‑field CSV for automation telemetry
-- Added REG command for over‑temperature regression testing
-- Enhanced watchdog instrumentation and safety logging
-- Implemented quality baseline scripts (quality‑baseline.sh)
-- Refactored unsafe code and improved memory strategy
-- Updated all internal documentation (ARCHITECTURE.md, PROTOCOL.md, etc.)
+- **TC4 protocol compatibility** — READ format matches Artisan standard (AMB,ET,BT,0.0,0.0)
+- **PID auto-control** — `PID,ON`, `PID,OFF`, `PID,SV,<temp>` TC4 commands
+- **Roast profiles** — `PROFILE;0,50;120,150...` with PID curve following + `FANPROFILE` for fan curves
+- **Auto-preheat** — `PREHEAT <temp>` command
+- **Bean charge detection** — Automatic drop detection, `#CHARGE` event
+- **Hardware watchdog** — ESP32-C3 RTC WDT (CPU reset on hang, independent of software)
+- **Fahrenheit conversion** — `UNITS;F` now actively converts output temperatures
+- **Ring-buffer roast logger** — 256-sample backup, retrievable via `#DUMP`
+- **Acoustic first-crack detector** — RMS energy analysis with Welford's algorithm
+- **Rate limiting** — Prevents command queue saturation (MAX 8 commands/tick)
 
 ## Project Philosophy
 
@@ -32,12 +35,20 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 | Feature | Description |
 |---------|-------------|
+| **TC4 Protocol Compatible** | Full Artisan TC4/Arduino protocol — READ, PID, OT1, OT2, IO3, CHAN, UNITS, FILT |
 | **Dual-Channel Artisan Communication** | Connect via USB CDC (native) or UART0 (GPIO20/21) at 115200 baud |
 | **Dual Thermocouple Monitoring** | MAX31856-based ET (Environment) and BT (Bean) temperature sensing |
-| **PWM Output Control** | SSR heater and fan control via LEDC PWM (0-100%) |
-| **Rate of Rise (ROR)** | Automatic BT rate-of-change calculation for roasting metrics |
-| **Command Multiplexer** | Routes Artisan commands between USB and UART with 60s timeout |
-| **Initialization Handshake** | Supports CHAN→UNITS→FILT sequence with `#` acknowledgment |
+| **PWM Output Control** | SSR heater (1Hz) and fan (25kHz) via LEDC PWM (0-100%) |
+| **PID Auto-Control** | `PID,SV,150` command for Artisan-controlled PID with anti-windup, saturation detection |
+| **Roast Profiles** | `PROFILE` and `FANPROFILE` commands for time-temperature-fan curves with linear interpolation |
+| **Rate of Rise (ROR)** | Timestamp-based BT rate-of-change calculation (accurate at any sample rate) |
+| **Auto-Preheat** | `PREHEAT <temp>` command — heats and holds until START |
+| **Bean Charge Detection** | Automatic detection of bean drop via sharp BT decline → `#CHARGE` event |
+| **Hardware Watchdog** | ESP32-C3 RTC WDT — independent CPU reset if control loop hangs >2s |
+| **Ring-Buffer Roast Logger** | Last 256 samples in RAM, retrievable via `#DUMP` |
+| **First-Crack Detection** | Acoustic energy analysis (Welford's algorithm), reports `#CRACK` events |
+| **Fahrenheit Support** | `UNITS;F` converts all temperature outputs to °F |
+| **Command Rate Limiting** | Prevents saturation — max 8 commands per control tick |
 
 ### Async Architecture
 
@@ -61,19 +72,27 @@ The async architecture enables:
 
 | Command | Description |
 |---------|-------------|
-| `READ` | Request telemetry (ET, BT, heater%, fan%) |
-| `REG` | Regression-runner trigger that ramps heater/fan to 100%, keeps the watchdog fed, and emits SAFETY OT-REGRESSION records so automation can detect and monitor over-temperature regression cycles |
-| `STATUS/STAT` | Automation telemetry snapshot returning 18 CSV fields including ET, BT, Heater, Fan, WatchdogOK, WatchdogFailures, LastWatchdogReason, LEDCGuardTimeouts, RegressionActive, PID state (PV, MV, IntegratorValue, DerivativeValue), flags (SaturationFlag, IntegratorClampFlag, DerivativeAvailableFlag), and latency metrics (CommandLatency, MaxCommandLatency). See INSTRUMENTATION_README.MD for complete field definitions. (alias `STAT`) while surfacing watchdog guard/regression telemetry without touching `READ` |
-| `OT1 [0-100]` | Set heater power percentage |
-| `OT2 [0-100]` | Set fan speed percentage (auto-cuts heater if out of range) |
-| `IO3 [0-100]` | Set fan speed percentage |
-| `UP` | Increase heater by 5% |
-| `DOWN` | Decrease heater by 5% |
-| `START` | Begin roasting, enable continuous output |
-| `STOP` | Emergency stop, disable outputs |
-| `CHAN [rate]` | Set communication rate (legacy) |
-| `UNITS [C/F]` | Set temperature units (Celsius/Fahrenheit) |
-| `FILT [value]` | Set filter value (legacy) |
+| `READ` | Request telemetry — returns TC4 standard: `AMB,ET,BT,0.0,0.0` |
+| `PID,ON` | Enable PID auto-control (TC4 standard) |
+| `PID,OFF` | Disable PID (TC4 standard) |
+| `PID,SV,<temp>` | Set PID setpoint value (TC4 standard, alias for `SETTARGET`) |
+| `SETTARGET <temp>` | Set PID target temperature (50-300°C) |
+| `PROFILE;t1,T1;t2,T2;...` | Load roast temperature curve (max 16 setpoints) |
+| `FANPROFILE;t1,s1;t2,s2;...` | Load fan speed curve (max 16 setpoints) |
+| `PREHEAT <temp>` | Heat to target and hold (50-300°C) |
+| `START` | Begin roasting, enable continuous output and PID |
+| `STOP` | Emergency stop — heater OFF, fan 100% |
+| `OT1 <0-100>` | Set heater power percentage |
+| `OT2 <0-100>` | Set fan speed (decimal, auto-cuts heater if out of range) |
+| `IO3 <0-100>` | Set fan speed percentage |
+| `UP` / `DOWN` | Increase/decrease heater by 5% |
+| `STATUS` / `STAT` | Full telemetry: 19-field CSV (ET, BT, heater, fan, watchdog, PID state, latency, temp scale) |
+| `REG` | Over‑temperature regression test trigger |
+| `CHAN;<rate>` | Set communication rate (handshake) |
+| `UNITS;C` / `UNITS;F` | Set temperature scale — applies to READ, STATUS, and PID outputs |
+| `FILT;<value>` | Set filter value (handshake) |
+| `PIDGAIN <kp> <ki> <kd>` | Tune PID constants at runtime |
+| `#DUMP` | Retrieve buffered roast data from ring logger |
 
 Automation-focused readers should consult [internalDoc/INSTRUMENTATION_README.MD](internalDoc/INSTRUMENTATION_README.MD) immediately after this table for the STATUS/STAT column definitions, payload expectations, and the way REG logs SAFETY OT-REGRESSION so instrumentation crews can react safely.
 
@@ -153,25 +172,25 @@ LibreRoaster supports two connection methods to Artisan:
 
 ## Protocol
 
-### READ Response Format
+### READ Response Format (TC4 Standard)
 
-7-value CSV (TC4/Arduino standard): ET,BT,AMB,ET2,BT2,HEATER,FAN
+5-value CSV: `AMB,ET,BT,CHAN3,CHAN4`
 
 | Field | Type | Unit | Description |
 |-------|------|------|-------------|
-| ET | Decimal | °C | Exhaust Temperature |
-| BT | Decimal | °C | Bean Temperature |
-| AMB | Decimal | °C | Ambient/Room Temperature (0.0 placeholder) |
-| ET2 | Decimal | °C | Second thermocouple ET (-1.0 placeholder) |
-| BT2 | Decimal | °C | Second thermocouple BT (-1.0 placeholder) |
-| HEATER | Decimal | % | Heater PWM percentage |
-| FAN | Decimal | % | Fan PWM percentage |
+| AMB | Decimal | °C/°F | Ambient/room temperature |
+| ET | Decimal | °C/°F | Environment (Exhaust) Temperature |
+| BT | Decimal | °C/°F | Bean Temperature |
+| CHAN3 | Fixed | — | `0.0` (unused channel) |
+| CHAN4 | Fixed | — | `0.0` (unused channel) |
 
-Example: `185.3,201.4,25.0,-1.0,-1.0,45,80`
+Example: `25.0,185.3,201.4,0.0,0.0`
+
+Heater and fan values are available via the `STATUS` command (19-field CSV with safety metrics, PID state, and temperature scale indicator).
 
 ### Initialization
 
-Artisan sends commands without handshake or Artisan sends handshake sequence (CHAN, UNITS, FILT). LibreRoaster responds with `#` acknowledgment. 
+Artisan sends handshake sequence (CHAN → UNITS → FILT). LibreRoaster responds with `#` acknowledgment for CHAN and `OK` for UNITS/FILT. TC4 `PID,ON` / `PID,SV,<temp>` commands are supported as Artisan-standard aliases.
 
 ## License
 
@@ -446,13 +465,16 @@ LibreRoaster implements multiple safety mechanisms:
 | **Sensor Timeout** | 1 second | Fault condition, disable heater |
 | **Heat Detection** | SSR feedback | Verify heater is actually turning on |
 | **Fault Conditions** | Any fault | Emergency shutdown, max fan for cooling |
+| **Hardware Watchdog** | 2 seconds | **RTC WDT resets ESP32-C3** (independent of CPU) |
 
 ### Safety Guarantees
 
-- **Automatic Emergency Shutdown**: If temperature exceeds 260°C or sensor times out, the system automatically cuts power to the heater and runs the fan at 100% for cooling
-- **Heat Source Verification**: System monitors SSR feedback to verify the heater element is actually drawing power
-- **Temperature Validity**: Sensor readings older than 1 second are marked invalid to prevent stale data from causing issues
-- **Fault Tracking**: All fault conditions are logged and trigger safe shutdown state
+- **Dual-Layer Watchdog**: Software counter (telemetry via STATUS) + hardware RTC WDT (CPU reset on hang)
+- **Automatic Emergency Shutdown**: If temperature exceeds 260°C or sensor times out, system automatically cuts power to heater and runs fan at 100%
+- **Heat Source Verification**: Monitors SSR feedback to verify heater element is drawing power
+- **Temperature Validity**: Sensor readings older than 1 second are marked invalid
+- **LEDC Guard**: Prevents PWM runaway with timeout detection
+- **Command Rate Limiting**: Prevents queue saturation (max 8/tick)
 - **Manual Emergency**: STOP command immediately cuts heater and sets fan to 100%
 
 ## ⚠️ Safety Warning

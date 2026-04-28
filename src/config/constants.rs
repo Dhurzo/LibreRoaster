@@ -59,6 +59,7 @@ pub const LEDC_GUARD_TIMEOUT_MS: u64 = 40;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {
     Idle,
+    Preheating,
     Heating,
     Stable,
     Cooling,
@@ -86,7 +87,15 @@ pub enum ArtisanCommand {
     SetTargetTemp(f32),
     SetProfile,
     DumpLog,
+    Preheat(f32),
+    SetFanProfile,
 }
+
+pub const MAX_PROFILE_SETPOINTS: usize = 16;
+pub const MAX_COMMANDS_PER_TICK: usize = 8;
+pub const CHARGE_DROP_THRESHOLD_C: f32 = 20.0;
+pub const CHARGE_DETECTION_WINDOW_S: u32 = 3;
+pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
 /// A single setpoint in a roast profile: at time_secs → target temperature °C.
 #[derive(Debug, Clone, Copy)]
@@ -95,12 +104,45 @@ pub struct ProfileSetpoint {
     pub temperature: f32,
 }
 
+/// Fan profile setpoint: at time_secs → fan speed %. Same format as temperature profile.
+#[derive(Debug, Clone, Copy)]
+pub struct FanSetpoint {
+    pub time_secs: u32,
+    pub fan_speed: u8,
+}
+
+pub struct FanProfile {
+    pub setpoints: heapless::Vec<FanSetpoint, MAX_PROFILE_SETPOINTS>,
+}
+
+impl FanProfile {
+    pub fn new() -> Self {
+        Self { setpoints: heapless::Vec::new() }
+    }
+    pub fn target_at(&self, elapsed_secs: u32) -> Option<u8> {
+        if self.setpoints.is_empty() { return None; }
+        if elapsed_secs <= self.setpoints[0].time_secs {
+            return Some(self.setpoints[0].fan_speed);
+        }
+        for i in 1..self.setpoints.len() {
+            let prev = self.setpoints[i - 1];
+            let curr = self.setpoints[i];
+            if elapsed_secs <= curr.time_secs {
+                let range = curr.time_secs - prev.time_secs;
+                if range == 0 { return Some(curr.fan_speed); }
+                let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
+                let interp = prev.fan_speed as f32 + (curr.fan_speed as f32 - prev.fan_speed as f32) * frac;
+                return Some((interp + 0.5) as u8);
+            }
+        }
+        Some(self.setpoints[self.setpoints.len() - 1].fan_speed)
+    }
+}
+
 /// Roast profile received from Artisan as a sequence of time-temperature setpoints.
 /// Artisan sends: `PROFILE;0,50;120,150;300,200;480,225` meaning
 /// at 0s→50°C, 120s→150°C, 300s→200°C, 480s→225°C.
 /// The firmware interpolates linearly between setpoints during the roast.
-pub const MAX_PROFILE_SETPOINTS: usize = 16;
-
 pub struct RoastProfile {
     pub setpoints: heapless::Vec<ProfileSetpoint, MAX_PROFILE_SETPOINTS>,
 }
@@ -128,7 +170,75 @@ impl RoastProfile {
                 let range = curr.time_secs - prev.time_secs;
                 if range == 0 {
                     return Some(curr.temperature);
-                }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Fan profile interpolation ──────────────
+
+    fn make_fan_profile(pairs: &[(u32, u8)]) -> FanProfile {
+        let mut p = FanProfile::new();
+        for &(t, s) in pairs {
+            p.setpoints.push(FanSetpoint { time_secs: t, fan_speed: s }).unwrap();
+        }
+        p
+    }
+
+    #[test]
+    fn fan_profile_empty_returns_none() {
+        let p = FanProfile::new();
+        assert_eq!(p.target_at(0), None);
+        assert_eq!(p.target_at(100), None);
+    }
+
+    #[test]
+    fn fan_profile_before_first() {
+        let p = make_fan_profile(&[(10, 30), (20, 80)]);
+        assert_eq!(p.target_at(0), Some(30));
+        assert_eq!(p.target_at(5), Some(30));
+    }
+
+    #[test]
+    fn fan_profile_exact_setpoint() {
+        let p = make_fan_profile(&[(0, 20), (60, 60), (120, 100)]);
+        assert_eq!(p.target_at(0), Some(20));
+        assert_eq!(p.target_at(60), Some(60));
+        assert_eq!(p.target_at(120), Some(100));
+    }
+
+    #[test]
+    fn fan_profile_interpolation_midpoint() {
+        let p = make_fan_profile(&[(0, 0), (100, 100)]);
+        assert_eq!(p.target_at(50), Some(50));
+    }
+
+    #[test]
+    fn fan_profile_after_last_holds() {
+        let p = make_fan_profile(&[(0, 20), (30, 80)]);
+        assert_eq!(p.target_at(60), Some(80));
+        assert_eq!(p.target_at(999), Some(80));
+    }
+
+    #[test]
+    fn fan_profile_single_setpoint() {
+        let p = make_fan_profile(&[(0, 50)]);
+        assert_eq!(p.target_at(0), Some(50));
+        assert_eq!(p.target_at(100), Some(50));
+    }
+
+    #[test]
+    fn fan_profile_max_setpoints() {
+        let mut p = FanProfile::new();
+        for i in 0..MAX_PROFILE_SETPOINTS {
+            p.setpoints.push(FanSetpoint { time_secs: i as u32 * 10, fan_speed: i as u8 * 6 }).unwrap();
+        }
+        assert_eq!(p.setpoints.len(), MAX_PROFILE_SETPOINTS);
+        assert_eq!(p.target_at(0), Some(0));
+        assert_eq!(p.target_at((MAX_PROFILE_SETPOINTS - 1) as u32 * 10), Some((MAX_PROFILE_SETPOINTS - 1) as u8 * 6));
+    }
+}
                 let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
                 return Some(prev.temperature + (curr.temperature - prev.temperature) * frac);
             }
@@ -241,6 +351,7 @@ pub struct SystemStatus {
     pub command_latency_us: u32,
     pub max_command_latency_us: u32,
     pub temperature_settings: TemperatureSettings,
+    pub charge_detected: bool,
 }
 
 impl Default for SystemStatus {
@@ -275,6 +386,7 @@ impl Default for SystemStatus {
             command_latency_us: 0,
             max_command_latency_us: 0,
             temperature_settings: TemperatureSettings::new(),
+            charge_detected: false,
         }
     }
 }
