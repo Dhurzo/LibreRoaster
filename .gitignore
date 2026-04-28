@@ -52,3 +52,5 @@ Thumbs.db
 
 # Ignore internal documentation files
 internalDoc/
+internalDoc/*.md
+!internalDoc/README.md
