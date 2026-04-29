@@ -73,9 +73,14 @@ The async architecture enables:
 | Command | Description |
 |---------|-------------|
 | `READ` | Request telemetry — returns TC4 standard: `AMB,ET,BT,0.0,0.0` |
-| `PID,ON` | Enable PID auto-control (TC4 standard) |
-| `PID,OFF` | Disable PID (TC4 standard) |
-| `PID,SV,<temp>` | Set PID setpoint value (TC4 standard, alias for `SETTARGET`) |
+| `PID;ON` | Enable PID auto-control (TC4 standard, semicolon) |
+| `PID;OFF` | Disable PID (TC4 standard, semicolon) |
+| `PID;SV;<temp>` | Set PID setpoint value (TC4 standard, semicolon) |
+| `PID;T;<kp>;<ki>;<kd>` | Tune PID constants (TC4 standard, semicolon) |
+| `PID;CHAN;<1-4>` | Set PID input channel (1=ET, 2=BT) |
+| `PID;CT;<ms>` | Set PID cycle time (≥10ms) |
+| `PID;LIMIT;<min>;<max>` | Set PID output limits |
+| `PID,ON` / `PID,OFF` / `PID,SV,<temp>` | Comma variants (legacy fallback — also accepted) |
 | `SETTARGET <temp>` | Set PID target temperature (50-300°C) |
 | `PROFILE;t1,T1;t2,T2;...` | Load roast temperature curve (max 16 setpoints) |
 | `FANPROFILE;t1,s1;t2,s2;...` | Load fan speed curve (max 16 setpoints) |
@@ -88,7 +93,7 @@ The async architecture enables:
 | `UP` / `DOWN` | Increase/decrease heater by 5% |
 | `STATUS` / `STAT` | Full telemetry: 19-field CSV (ET, BT, heater, fan, watchdog, PID state, latency, temp scale) |
 | `REG` | Over‑temperature regression test trigger |
-| `CHAN;<rate>` | Set communication rate (handshake) |
+| `CHAN;<rate>` | Set channel mapping — e.g., `CHAN;1200` = TC1→ET, TC2→BT, ch3/4=off |
 | `UNITS;C` / `UNITS;F` | Set temperature scale — applies to READ, STATUS, and PID outputs |
 | `FILT;<value>` | Set filter value (handshake) |
 | `PIDGAIN <kp> <ki> <kd>` | Tune PID constants at runtime |
