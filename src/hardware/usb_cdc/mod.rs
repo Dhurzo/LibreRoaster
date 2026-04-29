@@ -10,7 +10,8 @@ pub const USB_CDC_BAUD_RATE: u32 = 115200;
 pub fn initialize_usb_cdc_system(
     _usb_device: esp_hal::peripherals::USB_DEVICE,
 ) -> Result<(), UsbCdcError> {
-    // For now, we'll skip USB CDC initialization until we can properly handle the lifetime issues
+    // Transport lifetime/concurrency plumbing is still incomplete on embedded builds.
+    // Keep this as a no-op until USB RX/TX ownership is refactored safely.
     Ok(())
 }
 

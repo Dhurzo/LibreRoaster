@@ -549,9 +549,9 @@ impl RoasterControl {
                 );
 
                 let parts: heapless::Vec<&str, 8> = response.split(',').collect();
-                if response.trim().is_empty() || parts.len() != 4 {
+                if response.trim().is_empty() || parts.len() != 5 {
                     error!(
-                        "Malformed READ response from ArtisanFormatter: expected 4 values, got {}",
+                        "Malformed READ response from ArtisanFormatter: expected 5 values, got {}",
                         parts.len()
                     );
                 }
@@ -562,18 +562,25 @@ impl RoasterControl {
                 );
             }
 
-            crate::config::ArtisanCommand::Chan(_) => {
-                debug!("Chan command received - initialization handled by multiplexer");
+            crate::config::ArtisanCommand::Chan(rate) => {
+                let ack = crate::output::artisan::ArtisanFormatter::format_chan_ack(rate);
+                self.send_text_response(ack.as_str());
+                debug!("Chan command received - sent ack for rate {}", rate);
             }
             crate::config::ArtisanCommand::RunRegression => {
                 info!("Artisan regression command received");
             }
             crate::config::ArtisanCommand::Units(is_fahrenheit) => {
                 let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
-                return self.forward_artisan_manual_command(cmd, current_time);
+                let result = self.forward_artisan_manual_command(cmd, current_time);
+                if result.is_ok() {
+                    self.send_text_response("OK");
+                }
+                return result;
             }
             crate::config::ArtisanCommand::Filt(_) => {
-                debug!("Filt command received - initialization handled by multiplexer");
+                self.send_text_response("OK");
+                debug!("Filt command received - sent OK");
             }
             crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => {
                 self.dispatch.set_pid_gains(kp, ki, kd)?;
@@ -649,6 +656,15 @@ impl RoasterControl {
         );
         let _ = crate::application::service_container::ServiceContainer::get_output_channel()
             .try_send(msg);
+    }
+
+    fn send_text_response(&self, text: &str) {
+        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+
+        if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(text) {
+            let _ = crate::application::service_container::ServiceContainer::get_output_channel()
+                .try_send(msg);
+        }
     }
 
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {

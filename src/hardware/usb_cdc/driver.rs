@@ -1,4 +1,6 @@
 use core::fmt;
+#[cfg(target_arch = "riscv32")]
+use core::ptr;
 
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
@@ -143,8 +145,14 @@ impl UsbCdcDriver {
 static USB_CDC_DRIVER: StaticCell<UsbCdcDriver> = StaticCell::new();
 
 #[cfg(target_arch = "riscv32")]
+static mut USB_CDC_DRIVER_PTR: *mut UsbCdcDriver = ptr::null_mut();
+
+#[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
-    USB_CDC_DRIVER.init(UsbCdcDriver::new(usb));
+    let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb));
+    unsafe {
+        USB_CDC_DRIVER_PTR = driver as *mut UsbCdcDriver;
+    }
     Ok(())
 }
 
@@ -155,9 +163,7 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
 
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
-    // StaticCell doesn't have get_mut(), we need to use a different approach
-    // For now, return None until we can properly implement this
-    None
+    unsafe { USB_CDC_DRIVER_PTR.as_mut() }
 }
 
 #[cfg(not(target_arch = "riscv32"))]
