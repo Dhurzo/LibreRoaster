@@ -173,15 +173,35 @@ impl ArtisanFormatter {
         let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
         let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
         // TC4 standard format: AMBIENT,ET,BT,CHAN3,CHAN4
-        // CHAN3 and CHAN4 are 0.0 (unused). Heater/fan available via STATUS command.
+        // When PID is ON (TC4 PID mode), Artisan expects 3 extra fields:
+        //   res[5] = Heater duty %, res[6] = Fan duty %, res[7] = SV (setpoint temp)
+        // Heater/fan are percentages (0-100), NOT temperatures — never convert to °F.
         let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
-        let _ = core::write!(
-            &mut buf,
-            "{:.1},{:.1},{:.1},0.0,0.0",
-            amb,
-            et,
-            bt,
-        );
+        if status.pid_enabled {
+            let heater = Self::normalize_read_value(status.ssr_output);
+            let fan = Self::normalize_read_value(status.fan_output);
+            let sv = Self::normalize_read_value(
+                status.temperature_settings.convert_to_display(status.target_temp),
+            );
+            let _ = core::write!(
+                &mut buf,
+                "{:.1},{:.1},{:.1},0.0,0.0,{:.1},{:.1},{:.1}",
+                amb,
+                et,
+                bt,
+                heater,
+                fan,
+                sv,
+            );
+        } else {
+            let _ = core::write!(
+                &mut buf,
+                "{:.1},{:.1},{:.1},0.0,0.0",
+                amb,
+                et,
+                bt,
+            );
+        }
         buf
     }
 
@@ -478,7 +498,7 @@ mod tests {
             target_temp: 200.0,
             ssr_output: 75.0,
             fan_output: 50.0,
-            pid_enabled: true,
+            pid_enabled: false,
             artisan_control: false,
             fault_condition: false,
             ssr_hardware_status: SsrHardwareStatus::Available,
@@ -837,6 +857,82 @@ mod tests {
         assert_eq!(parts[0], "0.0", "AMB shows one decimal");
         assert_eq!(parts[1], "120.3", "ET shows one decimal");
         assert_eq!(parts[2], "150.5", "BT shows one decimal");
+    }
+
+    // ── TC4 READ with PID data (8-value format) ──────────────────
+
+    #[test]
+    fn test_read_response_pid_disabled_5_values() {
+        let mut status = create_test_status();
+        // pid_enabled is false by default in create_test_status
+        status.bean_temp = 155.7;
+        status.env_temp = 125.5;
+        status.ambient_temp = 25.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 5, "PID off → 5 values (AMB,ET,BT,CHAN3,CHAN4)");
+    }
+
+    #[test]
+    fn test_read_response_pid_enabled_8_values() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.bean_temp = 155.7;
+        status.env_temp = 125.5;
+        status.target_temp = 200.0;
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 8, "PID on → 8 values (AMB,ET,BT,CHAN3,CHAN4,heater,fan,SV)");
+    }
+
+    #[test]
+    fn test_read_response_pid_values_at_correct_indices() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.target_temp = 200.0;
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 8);
+        assert_eq!(parts[0], "0.0", "AMB");
+        assert_eq!(parts[1], "125.5", "ET");
+        assert_eq!(parts[2], "155.7", "BT");
+        assert_eq!(parts[3], "0.0", "CHAN3");
+        assert_eq!(parts[4], "0.0", "CHAN4");
+        assert_eq!(parts[5], "75.0", "Heater % (TC4 res[5])");
+        assert_eq!(parts[6], "50.0", "Fan % (TC4 res[6])");
+        assert_eq!(parts[7], "200.0", "SV setpoint (TC4 res[7])");
+    }
+
+    #[test]
+    fn test_read_response_pid_sv_respects_fahrenheit() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.target_temp = 200.0; // 200°C = 392°F
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 8);
+        // Temperatures converted: 125.5°C=257.9°F, 155.7°C=312.3°F, 200°C=392.0°F
+        assert_eq!(parts[1], "257.9", "ET converted to °F");
+        assert_eq!(parts[2], "312.3", "BT converted to °F");
+        assert_eq!(parts[7], "392.0", "SV converted to °F");
+        // Heater/fan are percentages — NOT converted
+        assert_eq!(parts[5], "75.0", "Heater % must not be converted");
+        assert_eq!(parts[6], "50.0", "Fan % must not be converted");
     }
 
     #[test]
