@@ -69,11 +69,20 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     "F" | "f" => Ok(ArtisanCommand::Units(true)),
                     _ => Err(ParseError::InvalidValue),
                 }),
-                "FILT" => Some(args
-                    .trim()
-                    .parse::<u8>()
-                    .map(ArtisanCommand::Filt)
-                    .map_err(|_| ParseError::InvalidValue)),
+                "FILT" => {
+                    // Artisan sends comma-separated filter values (e.g., "FILT;70,70,70,70")
+                    // or a single value (e.g., "FILT;5"). The value is acknowledged but
+                    // not used by the firmware — just extract the first token.
+                    let val = args
+                        .trim()
+                        .split(',')
+                        .next()
+                        .unwrap_or("0")
+                        .trim()
+                        .parse::<u8>()
+                        .unwrap_or(0);
+                    Some(Ok(ArtisanCommand::Filt(val)))
+                }
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
@@ -527,9 +536,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_filt_command_invalid_value() {
+    fn test_parse_filt_command_non_numeric_falls_back_to_zero() {
+        // Non-numeric FILT values gracefully fall back to 0
         let result = parse_artisan_command("FILT;abc");
-        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(0))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_multi_value() {
+        // Artisan sends comma-separated filter values: "FILT;70,70,70,70"
+        let result = parse_artisan_command("FILT;70,70,70,70");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(70))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_multi_value_extracts_first() {
+        // Only the first comma-separated value matters
+        let result = parse_artisan_command("FILT;80,90,100,110");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(80))));
     }
 
     #[test]
