@@ -173,6 +173,14 @@ impl RoastProfile {
                 let range = curr.time_secs - prev.time_secs;
                 if range == 0 {
                     return Some(curr.temperature);
+                }
+                let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
+                return Some(prev.temperature + (curr.temperature - prev.temperature) * frac);
+            }
+        }
+        // After last setpoint: hold at final temperature
+        Some(self.setpoints[self.setpoints.len() - 1].temperature)
+    }
 }
 
 #[cfg(test)]
@@ -240,14 +248,6 @@ mod tests {
         assert_eq!(p.setpoints.len(), MAX_PROFILE_SETPOINTS);
         assert_eq!(p.target_at(0), Some(0));
         assert_eq!(p.target_at((MAX_PROFILE_SETPOINTS - 1) as u32 * 10), Some((MAX_PROFILE_SETPOINTS - 1) as u8 * 6));
-    }
-}
-                let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
-                return Some(prev.temperature + (curr.temperature - prev.temperature) * frac);
-            }
-        }
-        // After last setpoint: hold at final temperature
-        Some(self.setpoints[self.setpoints.len() - 1].temperature)
     }
 }
 

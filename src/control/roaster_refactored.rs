@@ -528,21 +528,13 @@ impl RoasterControl {
             crate::config::ArtisanCommand::StatusReport => {
                 self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
-                let response =
-                    crate::output::artisan::ArtisanFormatter::format_status_response(&self.status);
-
-                // Bug #7: Send STATUS response to output channel so Artisan receives it
-                // regardless of the call path (control loop + direct handler both covered)
-                let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
-                if let Ok(line) = heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::try_from(response.as_str()) {
-                    let _ = output_channel.try_send(line);
-                }
+                // STATUS response is emitted by control_loop_task after command returns Ok(()).
+                // Sending it here would produce a duplicate (Bug #3 in internalDoc/BUGS.md).
 
                 debug!(
-                    "STATUS command - SSR status: {:?}, response generated",
+                    "STATUS command - SSR status: {:?}",
                     self.status.ssr_hardware_status
                 );
-                debug!("STATUS payload: {}", response);
             }
 
             crate::config::ArtisanCommand::ReadStatus => {

@@ -342,11 +342,14 @@ LibreRoaster includes a comprehensive test suite. Tests can run on the host (x86
 #### Basic Test Commands
 
 ```bash
-# Run all tests
-cargo test
+# Run all host tests (requires --features test for embassy-time stubs)
+cargo test --target x86_64-unknown-linux-gnu --features test
+
+# Run only library unit tests (no features needed)
+cargo test --lib
 
 # Run specific test by name
-cargo test test_name
+cargo test test_name --features test
 
 # Run with output (see print statements)
 cargo test -- --nocapture
@@ -360,18 +363,19 @@ These tests run on the host (x86_64) without embedded hardware. They validate co
 
 | Test | Command | Purpose |
 |------|---------|---------|
-| **Command Multiplexer Concurrency** | `cargo test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency` | Validates concurrent USB+UART command routing without queue saturation |
-| **Concurrent Sensor Read** | `cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test` | Proves async mutex handles concurrent sensor reads without race conditions |
-| **Mock UART Integration** | `cargo test --target x86_64-unknown-linux-gnu --test mock_uart_integration` | Tests UART communication protocol with mock hardware |
-| **Artisan Integration** | `cargo test --target x86_64-unknown-linux-gnu --test artisan_integration_test` | Validates Artisan command/response protocol compliance |
+| **Command Multiplexer Concurrency** | `cargo test --features test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency` | Validates concurrent USB+UART command routing without queue saturation |
+| **Concurrent Sensor Read** | `cargo test --features "test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu --test concurrent_sensor_test` | Proves async mutex handles concurrent sensor reads without race conditions |
+| **Mock UART Integration** | `cargo test --features test --target x86_64-unknown-linux-gnu --test mock_uart_integration` | Tests UART communication protocol with mock hardware |
+| **Artisan Integration** | `cargo test --features test --target x86_64-unknown-linux-gnu --test artisan_integration_test` | Validates Artisan command/response protocol compliance |
 
 > **Note:** Host tests do not require ESP32-C3 hardware. They run on your development machine using the `std` feature.
+> **The `--features test` flag is required** for host integration tests — it enables `host_time_driver` which provides embassy-time symbols (`_embassy_time_now`) on x86_64.
 
 ### Concurrency Regression Test
 
 - Run the new host-side multiplexer stress test:
   ```bash
-  cargo test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency
+  cargo test --features test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency
   ```
 - The test spawns `queue_processor_task`/`usb_queue_processor_task`, fires concurrent USB+UART commands, and drives `ServiceContainer::roaster_async_sensor_read()` via a `ThreadPool` so the real queue processor is exercised.
 - Instrumentation lives in `libreroaster::application::queue_metrics` (`QueueProcessorMetrics`), and `queue_processor_metrics_snapshot()` returns:
@@ -385,7 +389,7 @@ These tests run on the host (x86_64) without embedded hardware. They validate co
 
 - Execute the host-side concurrent sensor read proof with async lock metrics enabled:
   ```bash
-  cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
+  cargo test --features "test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
   ```
 - The harness boots `ServiceContainer`, populates both async and sync `RoasterControl` instances, then uses a `ThreadPool` to spawn ten `ServiceContainer::roaster_async_sensor_read()` futures and `join_all` the batch so every `Result<(), ContainerError>` is asserted.
 - Internally `ServiceContainer` instruments the embassy mutex with test-only helpers `async_lock_depth_max_for_tests()` and `reset_async_lock_metrics_for_tests()` so the test can confirm `max_async_lock_depth` never exceeds `1` (no parallel holders) and that the counters reset to zero before/after each run.
@@ -398,7 +402,7 @@ LibreRoaster provides Cargo features to enable optional functionality:
 | Feature | Purpose | Command Example |
 |---------|---------|-----------------|
 | `std` | Enable standard library (for host tests) | `cargo test --features std ...` |
-| `test` | Enable test helpers | `cargo test --features test ...` |
+| `test` | Enable test helpers **and host-time stubs** (required for `cargo test` on x86_64) | `cargo test --features test ...` |
 | `async-lock-depth-metrics` | Enable async mutex depth instrumentation for concurrency testing | `cargo test --features async-lock-depth-metrics ...` |
 | `embedded` | Enable embedded binary build | `cargo build --features embedded ...` |
 
