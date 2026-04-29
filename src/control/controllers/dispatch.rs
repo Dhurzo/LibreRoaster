@@ -151,6 +151,14 @@ impl CommandDispatcher {
     pub fn set_pid_gains(&mut self, kp: f32, ki: f32, kd: f32) -> Result<(), RoasterError> {
         self.temp_handler.set_pid_gains(kp, ki, kd)
     }
+
+    pub fn set_pid_cycle_time(&mut self, ms: u32) {
+        self.temp_handler.set_pid_cycle_time(ms);
+    }
+
+    pub fn set_pid_output_limits(&mut self, min: f32, max: f32) {
+        self.temp_handler.set_pid_output_limits(min, max);
+    }
 }
 
 pub enum CommandDispatchResult {

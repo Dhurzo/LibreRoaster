@@ -3,7 +3,6 @@ use crate::config::PID_SAMPLE_TIME_MS;
 const DEFAULT_KP: f32 = 2.0;
 const DEFAULT_KI: f32 = 0.25;
 const DEFAULT_KD: f32 = 0.05;
-const OUTPUT_CAP: f32 = 100.0;
 const SATURATION_EPSILON: f32 = 0.01;
 
 /// Provides the latest actuator status so the PID can obey actual outputs and guard resets.
@@ -43,6 +42,9 @@ pub struct CoffeeRoasterPid {
     integrator_clamped: bool,
     saturation_active: bool,
     last_feedback: Option<PidFeedback>,
+    cycle_time_ms: u32,
+    output_min: f32,
+    output_max: f32,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,9 @@ impl CoffeeRoasterPid {
             integrator_clamped: false,
             saturation_active: false,
             last_feedback: None,
+            cycle_time_ms: PID_SAMPLE_TIME_MS,
+            output_min: 0.0,
+            output_max: 100.0,
         }
     }
 
@@ -95,6 +100,18 @@ impl CoffeeRoasterPid {
     /// Pushes actuator/guard feedback into the PID so the integrator can gate itself when the hardware cannot accept more energy.
     pub fn update_feedback(&mut self, feedback: PidFeedback) {
         self.last_feedback = Some(feedback);
+    }
+
+    pub fn set_cycle_time(&mut self, ms: u32) {
+        self.cycle_time_ms = ms.max(10);
+    }
+
+    pub fn set_output_limits(&mut self, min: f32, max: f32) {
+        self.output_min = min.clamp(0.0, 100.0);
+        self.output_max = max.clamp(0.0, 100.0);
+        if self.output_min > self.output_max {
+            core::mem::swap(&mut self.output_min, &mut self.output_max);
+        }
     }
 
     /// Reports the accumulated integrator term for telemetry consumers.
@@ -152,7 +169,7 @@ impl CoffeeRoasterPid {
             .unwrap_or(false);
 
         let mut mv = (self.kp * error) + (self.ki * self.integrator) + (self.kd * derivative);
-        mv = mv.clamp(0.0, OUTPUT_CAP);
+        mv = mv.clamp(self.output_min, self.output_max);
         mv = self.bound_to_actuator(mv);
 
         self.last_update_ms = Some(timestamp_ms);
@@ -160,18 +177,18 @@ impl CoffeeRoasterPid {
     }
 
     fn delta_seconds(&self, timestamp_ms: u32) -> f32 {
-        const DEFAULT_SECONDS: f32 = PID_SAMPLE_TIME_MS as f32 / 1000.0;
+        let default_seconds = self.cycle_time_ms as f32 / 1000.0;
 
         if let Some(last_ms) = self.last_update_ms {
             let delta = timestamp_ms.saturating_sub(last_ms);
             if delta == 0 {
-                return DEFAULT_SECONDS;
+                return default_seconds;
             }
 
             return (delta as f32) / 1000.0;
         }
 
-        DEFAULT_SECONDS
+        default_seconds
     }
 
     fn should_integrate(&self) -> bool {
@@ -182,7 +199,7 @@ impl CoffeeRoasterPid {
 
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
         if let Some(feedback) = self.last_feedback {
-            let applied = feedback.applied_output.clamp(0.0, OUTPUT_CAP);
+            let applied = feedback.applied_output.clamp(self.output_min, self.output_max);
             if mv > applied + SATURATION_EPSILON {
                 self.integrator_clamped = true;
                 return applied;

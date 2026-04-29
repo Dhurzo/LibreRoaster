@@ -89,6 +89,9 @@ pub enum ArtisanCommand {
     DumpLog,
     Preheat(f32),
     SetFanProfile,
+    SetPidChannel(u8),           // PID;CHAN;2 — 1=ET, 2=BT (default)
+    SetPidCycleTime(u32),        // PID;CT;1000 — cycle time in ms
+    SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
@@ -352,6 +355,10 @@ pub struct SystemStatus {
     pub max_command_latency_us: u32,
     pub temperature_settings: TemperatureSettings,
     pub charge_detected: bool,
+    pub pid_channel: u8,           // 1=ET, 2=BT, default=2
+    pub pid_cycle_time_ms: u32,    // default=100 (PID_SAMPLE_TIME_MS)
+    pub pid_output_min: f32,       // default=0.0
+    pub pid_output_max: f32,       // default=100.0
 }
 
 impl Default for SystemStatus {
@@ -387,6 +394,10 @@ impl Default for SystemStatus {
             max_command_latency_us: 0,
             temperature_settings: TemperatureSettings::new(),
             charge_detected: false,
+            pid_channel: 2,
+            pid_cycle_time_ms: PID_SAMPLE_TIME_MS,
+            pid_output_min: 0.0,
+            pid_output_max: 100.0,
         }
     }
 }

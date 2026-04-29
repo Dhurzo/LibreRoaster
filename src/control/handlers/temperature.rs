@@ -125,6 +125,14 @@ impl TemperatureCommandHandler {
         self.pid_controller = CoffeeRoasterPid::with_gains(kp, ki, kd);
         Ok(())
     }
+
+    pub fn set_pid_cycle_time(&mut self, ms: u32) {
+        self.pid_controller.set_cycle_time(ms);
+    }
+
+    pub fn set_pid_output_limits(&mut self, min: f32, max: f32) {
+        self.pid_controller.set_output_limits(min, max);
+    }
 }
 
 impl RoasterCommandHandler for TemperatureCommandHandler {

@@ -298,7 +298,11 @@ impl RoasterControl {
             }
         }
 
-        let current_pv = self.status.bean_temp;
+        let current_pv = if self.status.pid_channel == 1 {
+            self.status.env_temp
+        } else {
+            self.status.bean_temp
+        };
         self.status.pv = current_pv;
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
@@ -632,6 +636,25 @@ impl RoasterControl {
                     warn!("SetFanProfile received but no fan profile data in buffer");
                 }
             }
+            crate::config::ArtisanCommand::SetPidChannel(ch) => {
+                self.status.pid_channel = ch;
+                info!(
+                    "PID input channel set to {} ({})",
+                    ch,
+                    if ch == 1 { "ET" } else if ch == 2 { "BT" } else { "other" }
+                );
+            }
+            crate::config::ArtisanCommand::SetPidCycleTime(ms) => {
+                self.dispatch.set_pid_cycle_time(ms);
+                self.status.pid_cycle_time_ms = ms;
+                info!("PID cycle time set to {}ms", ms);
+            }
+            crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => {
+                self.dispatch.set_pid_output_limits(min, max);
+                self.status.pid_output_min = min;
+                self.status.pid_output_max = max;
+                info!("PID output limits set to {:.1}% – {:.1}%", min, max);
+            }
         }
 
         Ok(())
@@ -714,7 +737,7 @@ impl RoasterControl {
 
             let output = self
                 .dispatch
-                .get_pid_output(self.status.bean_temp, current_time);
+                .get_pid_output(self.status.pv, current_time);
 
             self.last_pid_update = Some(current_time);
 

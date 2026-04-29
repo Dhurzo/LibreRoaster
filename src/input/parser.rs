@@ -76,6 +76,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     .map_err(|_| ParseError::InvalidValue)),
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
+                "PID" => Some(parse_pid_subcommand(args.trim())),
                 // Unknown init command → fall through to space parsing
                 _ => None,
             };
@@ -171,6 +172,84 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         }
     } else {
         Err(ParseError::UnknownCommand)
+    }
+}
+
+fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
+    let parts: heapless::Vec<&str, 8> = args.split(';').collect();
+    if parts.is_empty() {
+        return Err(ParseError::InvalidValue);
+    }
+
+    match parts[0].trim().to_ascii_uppercase().as_str() {
+        "ON" => Ok(ArtisanCommand::StartRoast),
+        "OFF" => Ok(ArtisanCommand::EmergencyStop),
+        "SV" => {
+            if parts.len() < 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let target = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            if !(50.0..=300.0).contains(&target) {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetTargetTemp(target))
+        }
+        "T" => {
+            if parts.len() < 4 {
+                return Err(ParseError::InvalidValue);
+            }
+            let kp = parts[1].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
+            let ki = parts[2].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
+            let kd = parts[3].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
+            if kp < 0.0 || ki < 0.0 || kd < 0.0 {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+        }
+        "CHAN" => {
+            if parts.len() < 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let ch = parts[1]
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            if !(1..=4).contains(&ch) {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidChannel(ch))
+        }
+        "CT" => {
+            if parts.len() < 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let ms = parts[1]
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            if ms < 10 {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidCycleTime(ms))
+        }
+        "LIMIT" => {
+            if parts.len() < 3 {
+                return Err(ParseError::InvalidValue);
+            }
+            let min = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let max = parts[2]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max))
+        }
+        _ => Err(ParseError::UnknownCommand),
     }
 }
 
@@ -775,5 +854,112 @@ mod tests {
     fn test_pid_sv_out_of_range() {
         assert!(matches!(parse_artisan_command("PID,SV,40"), Err(ParseError::OutOfRange)));
         assert!(matches!(parse_artisan_command("PID,SV,350"), Err(ParseError::OutOfRange)));
+    }
+
+    // ── PID semicolon command tests ──────────
+
+    #[test]
+    fn test_pid_semicolon_on() {
+        assert!(matches!(parse_artisan_command("PID;ON"), Ok(ArtisanCommand::StartRoast)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_off() {
+        assert!(matches!(parse_artisan_command("PID;OFF"), Ok(ArtisanCommand::EmergencyStop)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv() {
+        assert!(matches!(
+            parse_artisan_command("PID;SV;150"),
+            Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 150.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv_decimal() {
+        assert!(matches!(
+            parse_artisan_command("PID;SV;210.5"),
+            Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 210.5).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv_out_of_range() {
+        assert!(matches!(parse_artisan_command("PID;SV;40"), Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t() {
+        let result = parse_artisan_command("PID;T;2.0;0.5;1.0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+            if (kp - 2.0).abs() < f32::EPSILON && (ki - 0.5).abs() < f32::EPSILON && (kd - 1.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t_invalid() {
+        assert!(matches!(parse_artisan_command("PID;T;abc"), Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t_negative() {
+        assert!(matches!(parse_artisan_command("PID;T;-1;0.5;1.0"), Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan() {
+        assert!(matches!(parse_artisan_command("PID;CHAN;2"), Ok(ArtisanCommand::SetPidChannel(2))));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_et() {
+        assert!(matches!(parse_artisan_command("PID;CHAN;1"), Ok(ArtisanCommand::SetPidChannel(1))));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_invalid() {
+        assert!(matches!(parse_artisan_command("PID;CHAN;5"), Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_ct() {
+        assert!(matches!(parse_artisan_command("PID;CT;1000"), Ok(ArtisanCommand::SetPidCycleTime(1000))));
+    }
+
+    #[test]
+    fn test_pid_semicolon_ct_too_low() {
+        assert!(matches!(parse_artisan_command("PID;CT;5"), Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_pid_semicolon_limit() {
+        assert!(matches!(
+            parse_artisan_command("PID;LIMIT;0;100"),
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max)) if min == 0.0 && max == 100.0
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_limit_custom() {
+        assert!(matches!(
+            parse_artisan_command("PID;LIMIT;20;80"),
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max)) if min == 20.0 && max == 80.0
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_unknown_sub() {
+        assert!(matches!(parse_artisan_command("PID;UNKNOWN"), Err(ParseError::UnknownCommand)));
+    }
+
+    #[test]
+    fn test_pid_comma_still_works_on() {
+        assert!(matches!(parse_artisan_command("PID,ON"), Ok(ArtisanCommand::StartRoast)));
+    }
+
+    #[test]
+    fn test_pid_comma_still_works_off() {
+        assert!(matches!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::EmergencyStop)));
     }
 }
