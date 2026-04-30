@@ -8,11 +8,10 @@ pub const USB_CDC_BAUD_RATE: u32 = 115200;
 
 #[cfg(target_arch = "riscv32")]
 pub fn initialize_usb_cdc_system(
-    _usb_device: esp_hal::peripherals::USB_DEVICE,
+    usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
 ) -> Result<(), UsbCdcError> {
-    // Transport lifetime/concurrency plumbing is still incomplete on embedded builds.
-    // Keep this as a no-op until USB RX/TX ownership is refactored safely.
-    Ok(())
+    let usb = esp_hal::usb_serial_jtag::UsbSerialJtag::new(usb_device);
+    driver::init_usb_cdc(usb)
 }
 
 #[cfg(not(target_arch = "riscv32"))]

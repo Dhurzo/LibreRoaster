@@ -12,7 +12,8 @@ use alloc::format;
 use core::cell::RefCell;
 use critical_section;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-use esp_hal::ledc::channel;
+use esp_hal::gpio::DriveMode;
+use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, TimerIFace};
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
 use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO9, LEDC, SPI2};
@@ -56,20 +57,24 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     let mut ledc = Ledc::new(peripherals.ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
-    let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
-    timer0
+    // Make timers static so channels can reference them
+    static TIMER0: StaticCell<esp_hal::ledc::timer::Timer<'static, LowSpeed>> = StaticCell::new();
+    static TIMER1: StaticCell<esp_hal::ledc::timer::Timer<'static, LowSpeed>> = StaticCell::new();
+
+    let mut timer0_ref = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    timer0_ref
         .configure(timer::config::Config {
             duty: timer::config::Duty::Duty8Bit,
             clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_hz(1),
+            frequency: Rate::from_hz(310),
         })
         .map_err(|e| InitError::HardwareInit {
             what: "Timer 0",
             reason: format!("{:?}", e),
         })?;
 
-    let mut timer1 = ledc.timer::<LowSpeed>(timer::Number::Timer1);
-    timer1
+    let mut timer1_ref = ledc.timer::<LowSpeed>(timer::Number::Timer1);
+    timer1_ref
         .configure(timer::config::Config {
             duty: timer::config::Duty::Duty8Bit,
             clock_source: timer::LSClockSource::APBClk,
@@ -80,12 +85,35 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
             reason: format!("{:?}", e),
         })?;
 
-    // Configure channels
+    let timer0 = TIMER0.init(timer0_ref);
+    let timer1 = TIMER1.init(timer1_ref);
+
+    // Configure channels and bind to timers
     let fan_pin = Output::new(peripherals.gpio9, Level::Low, OutputConfig::default());
-    let fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
+    let mut fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
+    fan_channel
+        .configure(channel::config::Config {
+            timer: timer1,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })
+        .map_err(|e| InitError::HardwareInit {
+            what: "Fan channel",
+            reason: format!("{:?}", e),
+        })?;
 
     let ssr_pin = Output::new(peripherals.gpio10, Level::Low, OutputConfig::default());
-    let ssr_channel = ledc.channel(channel::Number::Channel1, ssr_pin);
+    let mut ssr_channel = ledc.channel(channel::Number::Channel1, ssr_pin);
+    ssr_channel
+        .configure(channel::config::Config {
+            timer: timer0,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })
+        .map_err(|e| InitError::HardwareInit {
+            what: "SSR channel",
+            reason: format!("{:?}", e),
+        })?;
 
     let ledc_bus = LedcBus::new(
         fan_channel,

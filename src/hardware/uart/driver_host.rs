@@ -7,6 +7,7 @@ pub enum UartError {
     TransmissionError,
     ReceptionError,
     BufferOverflow,
+    InitError,
 }
 
 impl fmt::Display for UartError {
@@ -15,6 +16,7 @@ impl fmt::Display for UartError {
             UartError::TransmissionError => write!(f, "UART transmission error"),
             UartError::ReceptionError => write!(f, "UART reception error"),
             UartError::BufferOverflow => write!(f, "UART buffer overflow"),
+            UartError::InitError => write!(f, "UART initialization error"),
         }
     }
 }
@@ -60,7 +62,7 @@ impl<T> SyncPointer<T> {
 static UART_PTR: SyncPointer<core::ptr::NonNull<Option<UartDriver>>> =
     SyncPointer::new(core::ptr::NonNull::dangling());
 
-pub fn init_uart(_uart0: ()) -> Result<(), UartError> {
+pub fn init_uart(_uart0: (), _rx: (), _tx: ()) -> Result<(), UartError> {
     let value = UART_DRIVER.init(Some(UartDriver::new()));
     unsafe { *UART_PTR.get() = core::ptr::NonNull::new_unchecked(value) };
     Ok(())

@@ -8,36 +8,39 @@ ESP32-C3 firmware for coffee roaster control with ARTISAN+ serial protocol compa
 
 Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-## Current Milestone: v5.4 Architecture Decomposition & Quality Fixes
+## Current Milestone: v0.1 — First Working Version
 
-**Goal:** Resolve 4 deferred architectural and quality issues identified during the v5.1 code quality review: SRP violation in RoasterControl, DIP violation in ServiceContainer, 24 pre-existing clippy issues, and 1 broken test.
+**Goal:** Firmware compiles, flashes onto ESP32-C3, and boots without panics. USB CDC responds to Artisan READ with TC4-format temperatures. Control loop runs continuously at ~160ms per cycle.
 
 **Target outcomes:**
-- RoasterControl decomposed into focused, single-responsibility controllers
-- ServiceContainer singleton replaced with constructor dependency injection
-- Zero clippy warnings on both ESP32 and host targets
-- All 244 tests passing (including fixed ssr_scheduler test)
-- Artisan protocol 100% compatible — no behavioral changes
+- Firmware boots on ESP32-C3 hardware with no panics or watchdog resets
+- All hardware inits: dual MAX31856 thermocouples, SSR heater, variable-speed fan, RTC WDT
+- USB CDC (ttyACM0) responds to READ command with real temperatures
+- Artisan protocol 100% compatible — READ returns `AMB,ET,BT,0.0,0.0`
+- UART0 (GPIO20/21) driver properly initialized for future communication
+- Host tests pass for command multiplexer and Artisan protocol
 
 ## Requirements
 
 ### Validated
 
-- ✓ Artisan can read roaster telemetry over the serial protocol during a roast session.
-- ✓ Artisan can control heater and fan outputs through the firmware command path.
-- ✓ The project ships embedded diagnostics, traceability, and HIL-oriented tooling that support validation and audits.
-- ✓ v5.1 code quality review completed — 12 improvements committed (heapless hot path, SAFETY docs, error propagation fixes)
+- ✓ Artisan can read roaster telemetry over USB CDC serial protocol.
+- ✓ Firmware boots stably without panics or watchdog resets.
+- ✓ USB CDC uses async (non-blocking) I/O — executor not blocked.
+- ✓ All 7 embassy tasks spawn successfully (UART, USB, queue processors, dual output, control loop, regression).
+- ✓ Control loop cycles at ~160ms with stable SensorRead, ControlUpdate, LedcWrite, WatchdogFeed timing.
+- ✓ x86_64 host builds and tests pass.
 
 ### Active
 
-- [ ] Decompose RoasterControl into focused controllers (SRP fix)
-- [ ] Replace ServiceContainer singleton with constructor dependency injection (DIP fix)
-- [ ] Fix all 24 pre-existing clippy warnings on ESP32 target
-- [ ] Fix broken ssr_scheduler test (guard_rejects_commands_while_busy)
+- [ ] Connect thermocouple and verify temperature readings > 0.0°C
+- [ ] Test Artisan WRITE/OT1/OT2 commands for heater and fan control
+- [ ] Verify RTC WDT recovery under fault conditions
 
 ### Out of Scope
 
-- Net-new product features — this is purely architectural cleanup
+- Net-new product features beyond core stability — focus is reliable baseline
+- Graphical UI or display support
 - Changing Artisan protocol behavior — all responses must remain byte-identical
 - Refactoring test infrastructure beyond the broken test fix
 

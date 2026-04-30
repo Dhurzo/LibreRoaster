@@ -107,7 +107,6 @@ pub async fn control_loop_task() {
     loop {
         let tick_start = Instant::now();
         stage_tracker.start_tick(tick_start);
-        let current_time = tick_start;
         // Reset error tracking for this tick
         tick_app_error = None;
 
@@ -248,7 +247,7 @@ pub async fn control_loop_task() {
         stage_tracker.set_stage(ControlLoopStage::ControlUpdate);
         let control_snapshot = match ServiceContainer::with_roaster_async(
             |roaster: &mut crate::control::roaster_refactored::RoasterControl| match roaster
-                .update_control(current_time)
+                .update_control(Instant::now())
             {
                 Ok(output) => Some(ControlUpdateSnapshot {
                     desired_output: roaster.last_desired_heater_output(),

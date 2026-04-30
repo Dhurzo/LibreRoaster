@@ -5,8 +5,8 @@ LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-
 
 ## Project Status
 
-**Current version:** v5.3 (2026‑04‑27)
-**Milestone:** v5.3 — Full TC4 protocol compatibility, roast profiles, professional-ready.
+**Current version:** v0.1 (2026‑04‑30)
+**Milestone:** v0.1 — First working version. Firmware compiles, flashes onto ESP32-C3, boots stably without panics, and responds to Artisan READ via USB CDC.
 
 ### Recent Changes
 

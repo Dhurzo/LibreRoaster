@@ -16,6 +16,13 @@ pub use tasks::{
 pub const UART_BAUD_RATE: u32 = 115200;
 
 #[cfg(target_arch = "riscv32")]
-pub fn initialize_uart_system(uart0: esp_hal::peripherals::UART0) -> Result<(), UartError> {
-    init_uart(uart0)
+use esp_hal::gpio::interconnect::{PeripheralInput, PeripheralOutput};
+
+#[cfg(target_arch = "riscv32")]
+pub fn initialize_uart_system(
+    uart0: esp_hal::peripherals::UART0<'static>,
+    rx: impl PeripheralInput<'static>,
+    tx: impl PeripheralOutput<'static>,
+) -> Result<(), UartError> {
+    init_uart(uart0, rx, tx)
 }

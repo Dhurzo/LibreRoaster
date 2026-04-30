@@ -8,9 +8,6 @@ use static_cell::StaticCell;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
-#[cfg(target_arch = "riscv32")]
-use embedded_io::Read;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsbCdcError {
     TransmissionError,
@@ -36,80 +33,31 @@ impl fmt::Display for UsbCdcError {
 
 #[cfg(target_arch = "riscv32")]
 pub struct UsbCdcDriver {
-    usb: UsbSerialJtag<'static, esp_hal::Blocking>,
+    usb: UsbSerialJtag<'static, esp_hal::Async>,
 }
 
 #[cfg(target_arch = "riscv32")]
 impl UsbCdcDriver {
-    pub fn new(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Self {
+    pub fn new(usb: UsbSerialJtag<'static, esp_hal::Async>) -> Self {
         Self { usb }
     }
 
-    /// Check if the USB TX buffer can accept more data.
-    /// Returns true if ready to write, false if congested (back-pressure).
-    pub fn is_write_ready(&self) -> bool {
-        // USB Serial JTAG has a 64-byte TX FIFO
-        // We can't directly check FIFO status in blocking mode,
-        // but we can use this as a hook for future implementation
-        // Currently returns true - actual back-pressure handled in writer task
-        true
-    }
-
-    /// Write bytes with back-pressure awareness.
-    /// Returns WouldBlock if the write cannot complete immediately.
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UsbCdcError> {
-        // Try to write - if it fails, return WouldBlock to trigger back-pressure
-        match self.usb.write(data) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(UsbCdcError::WouldBlock),
-        }
-    }
-
-    /// Write bytes with timeout for back-pressure detection.
-    /// If write takes longer than expected, treats as congestion.
-    pub async fn write_bytes_with_timeout(
-        &mut self,
-        data: &[u8],
-        timeout_ticks: u64,
-    ) -> Result<(), UsbCdcError> {
-        use embassy_time::{Duration, Timer};
-
-        // Try write with polling for back-pressure
-        let mut remaining = data.len();
-        let mut offset = 0;
-
-        while remaining > 0 {
-            // Check if we should yield due to potential congestion
-            if !self.is_write_ready() {
-                return Err(UsbCdcError::WouldBlock);
-            }
-
-            match self.usb.write(&data[offset..offset + 1]) {
-                Ok(()) => {
-                    offset += 1;
-                    remaining -= 1;
-                }
-                Err(_) => {
-                    // Brief yield to allow USB hardware to process
-                    Timer::after(Duration::from_ticks(timeout_ticks)).await;
-                    // After timeout, treat as congestion
-                    return Err(UsbCdcError::WouldBlock);
-                }
-            }
-        }
-
+        use embedded_io_async::Write;
+        Write::write(&mut self.usb, data)
+            .await
+            .map_err(|_| UsbCdcError::TransmissionError)?;
+        Write::flush(&mut self.usb)
+            .await
+            .map_err(|_| UsbCdcError::TransmissionError)?;
         Ok(())
     }
 
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
-        self
-            .usb
-            .read(buffer)
+        use embedded_io_async::Read;
+        Read::read(&mut self.usb, buffer)
+            .await
             .map_err(|_| UsbCdcError::ReceptionError)
-    }
-
-    pub fn is_connected(&self) -> bool {
-        false
     }
 }
 
@@ -122,22 +70,12 @@ impl UsbCdcDriver {
         Ok(Self)
     }
 
-    /// Check if the USB TX buffer can accept more data.
-    /// Always returns true for non-riscv32 targets.
-    pub fn is_write_ready(&self) -> bool {
-        true
-    }
-
     pub async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), UsbCdcError> {
         Ok(())
     }
 
     pub async fn read_bytes(&mut self, _buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
         Ok(0)
-    }
-
-    pub fn is_connected(&self) -> bool {
-        false
     }
 }
 
@@ -149,7 +87,7 @@ static mut USB_CDC_DRIVER_PTR: *mut UsbCdcDriver = ptr::null_mut();
 
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
-    let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb));
+    let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb.into_async()));
     unsafe {
         USB_CDC_DRIVER_PTR = driver as *mut UsbCdcDriver;
     }

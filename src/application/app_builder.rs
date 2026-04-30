@@ -15,24 +15,32 @@ use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use alloc::boxed::Box;
 use log::info;
 
-pub struct AppBuilder<'a> {
-    uart0: Option<UART0<'a>>,
+pub struct AppBuilder {
+    uart0: Option<UART0<'static>>,
+    #[cfg(target_arch = "riscv32")]
+    uart_rx: Option<esp_hal::peripherals::GPIO21<'static>>,
+    #[cfg(target_arch = "riscv32")]
+    uart_tx: Option<esp_hal::peripherals::GPIO20<'static>>,
     formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
     sensor_hub: Option<SensorConversionHub>,
 }
 
-impl<'a> Default for AppBuilder<'a> {
+impl Default for AppBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> AppBuilder<'a> {
+impl AppBuilder {
     pub fn new() -> Self {
         Self {
             uart0: None,
+            #[cfg(target_arch = "riscv32")]
+            uart_rx: None,
+            #[cfg(target_arch = "riscv32")]
+            uart_tx: None,
             formatter: None,
             heater: None,
             fan: None,
@@ -40,8 +48,19 @@ impl<'a> AppBuilder<'a> {
         }
     }
 
-    pub fn with_uart(mut self, uart0: UART0<'a>) -> Self {
+    pub fn with_uart(mut self, uart0: UART0<'static>) -> Self {
         self.uart0 = Some(uart0);
+        self
+    }
+
+    #[cfg(target_arch = "riscv32")]
+    pub fn with_uart_pins(
+        mut self,
+        rx: esp_hal::peripherals::GPIO21<'static>,
+        tx: esp_hal::peripherals::GPIO20<'static>,
+    ) -> Self {
+        self.uart_rx = Some(rx);
+        self.uart_tx = Some(tx);
         self
     }
 
@@ -82,6 +101,12 @@ impl<'a> AppBuilder<'a> {
     }
 
     pub fn build(self) -> Result<Application, BuildError> {
+        #[cfg(target_arch = "riscv32")]
+        if let (Some(uart0), Some(rx), Some(tx)) = (self.uart0, self.uart_rx, self.uart_tx) {
+            initialize_uart_system(uart0, rx, tx).map_err(BuildError::UartInit)?;
+        }
+
+        #[cfg(not(target_arch = "riscv32"))]
         if let Some(uart0) = self.uart0 {
             initialize_uart_system(uart0).map_err(BuildError::UartInit)?;
         }
