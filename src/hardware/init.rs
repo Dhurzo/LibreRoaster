@@ -16,8 +16,9 @@ use esp_hal::gpio::DriveMode;
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, TimerIFace};
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO9, LEDC, SPI2};
+use esp_hal::peripherals::{GPIO0, GPIO1, GPIO10, GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, LEDC, SPI2};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
 use static_cell::StaticCell;
 
@@ -25,8 +26,11 @@ use static_cell::StaticCell;
 pub struct InitPeripherals {
     pub ledc: LEDC<'static>,
     pub spi2: SPI2<'static>,
-    pub gpio9: GPIO9<'static>,
+    pub gpio0: GPIO0<'static>,
     pub gpio10: GPIO10<'static>,
+    pub gpio7: GPIO7<'static>,
+    pub gpio6: GPIO6<'static>,
+    pub gpio5: GPIO5<'static>,
     pub gpio4: GPIO4<'static>,
     pub gpio3: GPIO3<'static>,
     pub gpio1: GPIO1<'static>,
@@ -89,7 +93,7 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     let timer1 = TIMER1.init(timer1_ref);
 
     // Configure channels and bind to timers
-    let fan_pin = Output::new(peripherals.gpio9, Level::Low, OutputConfig::default());
+    let fan_pin = Output::new(peripherals.gpio0, Level::Low, OutputConfig::default());
     let mut fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
     fan_channel
         .configure(channel::config::Config {
@@ -126,14 +130,21 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     let ledc_bus = LEDC_BUS.init(ledc_bus);
 
     // Initialize SPI
+    // ESP32-C3 SPI2 (FSPI) IO MUX pin mapping:
+    //   SCK  = GPIO6 (FSPICLK)
+    //   MOSI = GPIO7 (FSPID)
+    //   MISO = GPIO5 (GPIO Matrix — GPIO2/FSPIQ conflicts with strapping)
     let spi = Spi::new(
         peripherals.spi2,
-        SpiConfig::default().with_frequency(Rate::from_khz(1000)),
+        SpiConfig::default().with_frequency(Rate::from_khz(1000)).with_mode(Mode::_1),
     )
     .map_err(|e| InitError::HardwareInit {
         what: "SPI",
         reason: format!("{:?}", e),
-    })?;
+    })?
+    .with_sck(peripherals.gpio6)
+    .with_mosi(peripherals.gpio7)
+    .with_miso(peripherals.gpio5);
 
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<esp_hal::Blocking>>>> =
         StaticCell::new();

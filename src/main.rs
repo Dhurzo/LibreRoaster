@@ -130,8 +130,11 @@ fn main() -> ! {
     let init_peripherals = InitPeripherals {
         ledc: peripherals.LEDC,
         spi2: peripherals.SPI2,
-        gpio9: peripherals.GPIO9,
+        gpio0: peripherals.GPIO0,
         gpio10: peripherals.GPIO10,
+        gpio7: peripherals.GPIO7,
+        gpio6: peripherals.GPIO6,
+        gpio5: peripherals.GPIO5,
         gpio4: peripherals.GPIO4,
         gpio3: peripherals.GPIO3,
         gpio1: peripherals.GPIO1,
@@ -153,7 +156,7 @@ fn main() -> ! {
 
     let mut app = match AppBuilder::new()
         .with_uart(peripherals.UART0)
-        .with_uart_pins(peripherals.GPIO21, peripherals.GPIO20)
+        .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
         .with_real_ssr(hw_handles.ssr)
         .with_fan_control(hw_handles.fan)
         .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor)

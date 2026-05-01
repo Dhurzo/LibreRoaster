@@ -108,9 +108,10 @@ impl RoasterControl {
         env_temp: f32,
         current_time: Instant,
     ) -> Result<(), RoasterError> {
+        let no_fault = Default::default();
         match self
             .sensor
-            .update_temperatures(bean_temp, env_temp, current_time, &mut self.status)
+            .update_temperatures(bean_temp, env_temp, no_fault, no_fault, current_time, &mut self.status)
         {
             Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
@@ -415,11 +416,19 @@ impl RoasterControl {
         // Bug #6 fix: Reject all commands when a fault condition is active.
         // Prevents heater ramp commands from worsening an over-temp situation
         // that was detected between sensor reads.
+        // Exception: READ, STATUS, and STOP are always allowed for monitoring and safety.
         if self.status.fault_condition {
-            warn!("Command rejected: fault condition active");
-            return Err(RoasterError::InvalidState {
-                source: Some("fault_condition_active"),
-            });
+            match command {
+                crate::config::ArtisanCommand::ReadStatus
+                | crate::config::ArtisanCommand::StatusReport
+                | crate::config::ArtisanCommand::EmergencyStop => { /* allow */ }
+                _ => {
+                    warn!("Command rejected: fault condition active");
+                    return Err(RoasterError::InvalidState {
+                        source: Some("fault_condition_active"),
+                    });
+                }
+            }
         }
 
         use crate::config::constants::DEFAULT_TARGET_TEMP;

@@ -189,23 +189,51 @@ impl ServiceContainer {
         #[cfg(any(test, feature = "async-lock-depth-metrics"))]
         let _async_lock_depth_guard = async_lock_depth::AsyncLockDepthGuard::enter();
 
-        let result = {
-            // Use async lock for safe concurrent access
+        // Retry up to 3 times if the async roaster storage is empty.
+        // Handles the init race between control_loop_task and queue_processor_task:
+        // both call ensure_async_roaster_initialized_from_sync() but one may
+        // arrive at the None branch while the other is mid-move.
+        for _ in 0..3 {
             let mut guard = Self::get_instance().roaster.lock().await;
 
-            let roaster = guard.as_mut().ok_or(ContainerError::NotInitialized)?;
+            let roaster = match guard.as_mut() {
+                Some(r) => r,
+                None => {
+                    // Async mutex empty – try to move from sync storage
+                    drop(guard);
+                    Self::ensure_async_roaster_initialized_from_sync().await?;
+                    continue;
+                }
+            };
 
-            // Call async sensor reading method
-            roaster
-                .read_sensors()
-                .await
-                .map_err(|_| ContainerError::NotInitialized)?;
+            // Call async sensor reading method. Preserve the actual error
+            // instead of masking it as NotInitialized.
+            return roaster.read_sensors().await.map_err(|e| {
+                let reason = match e {
+                    crate::control::RoasterError::TemperatureOutOfRange { source } => {
+                        source.unwrap_or("temperature_out_of_range")
+                    }
+                    crate::control::RoasterError::SensorFault { source } => {
+                        source.unwrap_or("sensor_fault")
+                    }
+                    crate::control::RoasterError::InvalidState { source } => {
+                        source.unwrap_or("invalid_state")
+                    }
+                    crate::control::RoasterError::PidError { source } => {
+                        source.unwrap_or("pid_error")
+                    }
+                    crate::control::RoasterError::HardwareError { source } => {
+                        source.unwrap_or("hardware_error")
+                    }
+                    crate::control::RoasterError::EmergencyShutdown { source } => {
+                        source.unwrap_or("emergency_shutdown")
+                    }
+                };
+                ContainerError::SensorError { reason }
+            });
+        }
 
-            // Guard is automatically released when dropped
-            Ok(())
-        };
-
-        result
+        Err(ContainerError::NotInitialized)
     }
 
     /// Ensure async roaster storage is initialized.
@@ -271,6 +299,7 @@ pub enum ContainerError {
     NotInitialized,
     WatchdogUninitialized,
     Watchdog(WatchdogError),
+    SensorError { reason: &'static str },
 }
 
 impl core::fmt::Display for ContainerError {
@@ -280,6 +309,9 @@ impl core::fmt::Display for ContainerError {
             ContainerError::WatchdogUninitialized => write!(f, "Watchdog feeder not initialized"),
             ContainerError::Watchdog(err) => {
                 write!(f, "Watchdog error: {}", err.reason())
+            }
+            ContainerError::SensorError { reason } => {
+                write!(f, "Sensor error: {}", reason)
             }
         }
     }

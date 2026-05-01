@@ -8,14 +8,20 @@ use embedded_hal::spi::SpiDevice;
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 
 /// MAX31856 reports temperature using a 0.0078125°C LSB and two's-complement math.
+/// The 19-bit temperature value occupies bits [23:5] of the 24-bit concatenated
+/// register read (LTCB0<<16 | LTCB1<<8 | LTCB2). Shift right by 5 to align the
+/// LSB to bit 0 before multiplying by the LSB weight.
 pub const MAX31856_LSB: f32 = 0.0078125;
 
 pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     if (raw_temp & 0x800000) != 0 {
-        let temp_complement = (!raw_temp) & 0x7FFFFF;
-        -(temp_complement as i32) as f32 * MAX31856_LSB
+        // Sign bit (bit 23, which is bit 18 of the 19-bit value) set → negative.
+        // Extract 19-bit two's complement absolute value after right-shifting.
+        let temp_shifted = raw_temp >> 5;
+        let temp_complement = (!temp_shifted & 0x7FFFF) + 1;
+        -(temp_complement as f32) * MAX31856_LSB
     } else {
-        raw_temp as f32 * MAX31856_LSB
+        (raw_temp >> 5) as f32 * MAX31856_LSB
     }
 }
 
@@ -97,6 +103,7 @@ impl SensorSample {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 enum SensorChannel {
     Bean,
@@ -296,16 +303,16 @@ impl SensorConversionHub {
         match result {
             Ok(tuple) => Ok(tuple),
             Err(err) => {
-                if let Some(prev) = previous {
-                    let fallback_temp = match channel {
+                let fallback_temp = match (channel, previous) {
+                    (_, Some(prev)) => match channel {
                         SensorChannel::Bean => prev.bean_temp,
                         SensorChannel::Env => prev.env_temp,
-                    };
-                    let fault = SensorFault::from_max31856_error(&err);
-                    Ok((fallback_temp, fault))
-                } else {
-                    Err(err.into())
-                }
+                    },
+                    (SensorChannel::Bean, None) => 0.0,
+                    (SensorChannel::Env, None) => 0.0,
+                };
+                let fault = SensorFault::from_max31856_error(&err);
+                Ok((fallback_temp, fault))
             }
         }
     }

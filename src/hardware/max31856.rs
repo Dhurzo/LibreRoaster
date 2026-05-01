@@ -80,10 +80,16 @@ where
     pub fn new(spi: SPI) -> Result<Self, Max31856Error> {
         let mut max31856 = Max31856 { spi };
 
-        max31856.write_register(0x80, 0x00)?; // Config register 0
-        max31856.write_register(0x81, 0x03)?; // Config register 1 - Type K thermocouple
-        max31856.write_register(0x82, 0x00)?; // Fault mask register
-        log::info!("MAX31856 initialized: Type-K thermocouple, CJ compensation active (register 0x81=0x03)");
+        // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator mode), CJ=0000
+        max31856.write_register(0x80, 0x10)?;
+        // CR1 (0x81): Type K thermocouple, 60 Hz notch filter
+        max31856.write_register(0x81, 0x03)?;
+        // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
+        max31856.write_register(0x82, 0x00)?;
+
+        // Verify config register was written by reading it back
+        let cr1 = max31856.read_register(0x01).unwrap_or(0xFF);
+        log::info!("MAX31856 init: wrote CR1=0x03, read back CR1=0x{:02X}", cr1);
 
         Ok(max31856)
     }
@@ -98,6 +104,9 @@ where
         let fault = self.read_register(0x0F)?;
         let raw_temp =
             ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
+
+        log::info!("MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] raw_temp={:#010x} fault=0x{:02X}",
+            temp_data[0], temp_data[1], temp_data[2], raw_temp, fault);
 
         Ok(Max31856Reading { raw_temp, fault })
     }
@@ -124,7 +133,9 @@ where
     }
 
     pub fn trigger_conversion(&mut self) -> Result<(), Max31856Error> {
-        self.write_register(0x80, 0x80)?;
+        // CR0 with 1SHOT=1 (bit 6) triggers a single conversion in normally-off mode.
+        // Preserve CMODE=0 and OCFAULT settings from init.
+        self.write_register(0x80, 0x50)?;
         Ok(())
     }
 
@@ -133,7 +144,8 @@ where
     }
 
     pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        self.write_register(0x80, 0x80)?; // Set one-shot bit
+        // Trigger one-shot conversion in normally-off mode (CMODE=0, 1SHOT=1)
+        self.write_register(0x80, 0x50)?;
 
         Timer::after(Duration::from_millis(crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64)).await;
 
@@ -219,14 +231,16 @@ where
     }
 
     fn read_register(&mut self, address: u8) -> Result<u8, Max31856Error> {
-        let mut rx_buffer = [0u8; 2];
+        // MAX31856 SPI: A7=0 for read, A7=1 for write.
+        // Two separate phases: address then data.
+        let mut rx_buffer = [0u8; 1];
         let mut operations = [
-            embedded_hal::spi::Operation::Write(&[address | 0x80, 0x00]), // Read operation
+            embedded_hal::spi::Operation::Write(&[address & 0x7F]),
             embedded_hal::spi::Operation::Read(&mut rx_buffer),
         ];
 
         match self.spi.transaction(&mut operations) {
-            Ok(_) => Ok(rx_buffer[1]),
+            Ok(_) => Ok(rx_buffer[0]),
             Err(_) => Err(Max31856Error::CommunicationError {
                 source: "spi_read_failed",
             }),
@@ -234,12 +248,12 @@ where
     }
 
     fn read_registers(&mut self, address: u8, count: usize) -> Result<[u8; 3], Max31856Error> {
+        // MAX31856 SPI: A7=0 for read, data bytes follow.
         let mut rx_buffer = [0u8; 3];
-        let tx = [address | 0x80; 3]; // Read operation
 
         let mut operations = [
-            embedded_hal::spi::Operation::Write(&tx[..count]),
-            embedded_hal::spi::Operation::Read(&mut rx_buffer[..count]),
+            embedded_hal::spi::Operation::Write(&[address & 0x7F]),
+            embedded_hal::spi::Operation::Read(&mut rx_buffer[..count.min(3)]),
         ];
 
         match self.spi.transaction(&mut operations) {

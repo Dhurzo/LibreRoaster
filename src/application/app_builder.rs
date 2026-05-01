@@ -18,9 +18,9 @@ use log::info;
 pub struct AppBuilder {
     uart0: Option<UART0<'static>>,
     #[cfg(target_arch = "riscv32")]
-    uart_rx: Option<esp_hal::peripherals::GPIO21<'static>>,
+    uart_rx: Option<esp_hal::peripherals::GPIO20<'static>>,
     #[cfg(target_arch = "riscv32")]
-    uart_tx: Option<esp_hal::peripherals::GPIO20<'static>>,
+    uart_tx: Option<esp_hal::peripherals::GPIO21<'static>>,
     formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
@@ -56,8 +56,8 @@ impl AppBuilder {
     #[cfg(target_arch = "riscv32")]
     pub fn with_uart_pins(
         mut self,
-        rx: esp_hal::peripherals::GPIO21<'static>,
-        tx: esp_hal::peripherals::GPIO20<'static>,
+        rx: esp_hal::peripherals::GPIO20<'static>,
+        tx: esp_hal::peripherals::GPIO21<'static>,
     ) -> Self {
         self.uart_rx = Some(rx);
         self.uart_tx = Some(tx);

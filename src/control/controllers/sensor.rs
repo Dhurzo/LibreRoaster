@@ -31,7 +31,14 @@ impl SensorController {
         if has_fault {
             status.fault_condition = true;
         }
-        self.update_temperatures(sample.bean_temp, sample.env_temp, sample.timestamp, status)
+        self.update_temperatures(
+            sample.bean_temp,
+            sample.env_temp,
+            sample.bean_fault,
+            sample.env_fault,
+            sample.timestamp,
+            status,
+        )
     }
 
     #[cfg(not(target_arch = "riscv32"))]
@@ -41,17 +48,34 @@ impl SensorController {
         if has_fault {
             status.fault_condition = true;
         }
-        self.update_temperatures(sample.bean_temp, sample.env_temp, sample.timestamp, status)
+        self.update_temperatures(
+            sample.bean_temp,
+            sample.env_temp,
+            sample.bean_fault,
+            sample.env_fault,
+            sample.timestamp,
+            status,
+        )
     }
 
     pub fn update_temperatures(
         &mut self,
         bean_temp: f32,
         env_temp: f32,
+        bean_fault: crate::hardware::sensors::conversion::SensorFault,
+        env_fault: crate::hardware::sensors::conversion::SensorFault,
         current_time: Instant,
         status: &mut SystemStatus,
     ) -> Result<(), RoasterError> {
-        if !Self::is_temperature_valid(bean_temp) || !Self::is_temperature_valid(env_temp) {
+        // Only validate temperature for channels without fault.
+        // A sensor with open thermocouple (e.g. ET not connected) may return
+        // garbage temperatures; we should not let that invalidate the entire read.
+        if !bean_fault.has_fault() && !Self::is_temperature_valid(bean_temp) {
+            return Err(RoasterError::TemperatureOutOfRange {
+                source: Some("temperature_out_of_valid_range"),
+            });
+        }
+        if !env_fault.has_fault() && !Self::is_temperature_valid(env_temp) {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("temperature_out_of_valid_range"),
             });
@@ -61,7 +85,13 @@ impl SensorController {
         status.env_temp = env_temp + ET_THERMOCOUPLE_OFFSET;
         self.last_temp_read = Some(current_time);
 
-        if status.bean_temp >= OVERTEMP_THRESHOLD {
+        // Only check overtemp against valid sensors (ignore faulted ones)
+        if !bean_fault.has_fault() && status.bean_temp >= OVERTEMP_THRESHOLD {
+            return Err(RoasterError::TemperatureOutOfRange {
+                source: Some("overtemp_detected"),
+            });
+        }
+        if !env_fault.has_fault() && status.env_temp >= OVERTEMP_THRESHOLD {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
             });

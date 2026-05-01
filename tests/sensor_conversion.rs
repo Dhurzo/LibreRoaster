@@ -46,12 +46,11 @@ mod conversion_math {
 
     #[test]
     fn test_positive_temperature_conversion() {
-        // ADC value 19199 (0x004B00) should yield ~150.0°C
-        let raw = adc_to_u32([0x00, 0x4B, 0x00]);
+        // 19-bit value 19199 (0x4B00), hardware-aligned at bits [23:5]: 19199 << 5 = 0x96000
+        let raw = adc_to_u32([0x09, 0x60, 0x00]);
         let temp = convert_raw_temp(raw);
 
-        // Using 0.0078125 * 19199 = 149.9921875, which rounds to 150.0
-        // due to floating point precision
+        // 19199 * 0.0078125 = 149.9921875 ≈ 150.0
         let expected = 19199.0 * MAX31856_LSB;
         assert!(
             (temp - expected).abs() < 0.01,
@@ -59,7 +58,6 @@ mod conversion_math {
             expected,
             temp
         );
-        // Also check it's close to 150.0
         assert!(
             (temp - 150.0).abs() < 0.1,
             "Expected close to 150.0, got {}",
@@ -69,12 +67,10 @@ mod conversion_math {
 
     #[test]
     fn test_negative_temperature_conversion() {
-        // Two's complement: 0xFFFAE0 should yield negative temperature
-        let raw = adc_to_u32([0xFF, 0xFA, 0xE0]);
+        // -1311 in 19-bit two's complement: 0x7FAE1. Aligned (<<5): 0xFF5C20
+        let raw = adc_to_u32([0xFF, 0x5C, 0x20]);
         let temp = convert_raw_temp(raw);
 
-        // Two's complement: sign bit set, take complement and negate
-        // (!0xFFFAE0) & 0x7FFFFF = 0x00051F = 1311
         // -1311 * 0.0078125 = -10.2421875
         let expected = -1311.0 * MAX31856_LSB;
         assert!(
@@ -95,41 +91,37 @@ mod conversion_math {
 
     #[test]
     fn test_max_positive_temperature() {
-        // Max positive: 0x7FFFFF = 8388607
-        let raw = 0x7FFFFF;
+        // 19-bit max positive: 0x3FFFF = 262143. Aligned (<<5): 0x7FFFE0
+        let raw = 0x7FFFE0;
         let temp = convert_raw_temp(raw);
-        let expected = 8388607.0 * MAX31856_LSB;
+        let expected = 262143.0 * MAX31856_LSB;
         assert!((temp - expected).abs() < 0.001);
     }
 
     #[test]
     fn test_max_negative_temperature() {
-        // Min negative: 0x800000 (sign bit set, all others zero)
+        // 19-bit min negative: -262144. Two's complement: 0x40000. Aligned (<<5): 0x800000
         let raw = 0x800000;
         let temp = convert_raw_temp(raw);
-        // (!0x800000) & 0x7FFFFF = 0x7FFFFF = 8388607
-        let expected = -8388607.0 * MAX31856_LSB;
+        let expected = -262144.0 * MAX31856_LSB;
         assert!((temp - expected).abs() < 0.001);
     }
 
     #[test]
     fn test_small_positive_temperature() {
-        // Smallest positive: 0x000001
-        let raw = 0x000001;
+        // 1 in 19-bit. Aligned (<<5): 0x20
+        let raw = 0x20;
         let temp = convert_raw_temp(raw);
-        let expected = 1.0 * MAX31856_LSB;
+        let expected = MAX31856_LSB;
         assert!((temp - expected).abs() < 0.001);
     }
 
     #[test]
     fn test_small_negative_temperature() {
-        // Smallest negative: 0xFFFFFF (-1 in two's complement)
-        let raw = 0xFFFFFF;
+        // -1 in 19-bit two's complement: 0x7FFFF. Aligned (<<5): 0xFFFFE0
+        let raw = 0xFFFFE0;
         let temp = convert_raw_temp(raw);
-        // (!0xFFFFFF) & 0x7FFFFF = 0x000000 = 0
-        // Actually 0xFFFFFF has sign bit set, but complement is 0
-        // So temp should be -0.0
-        assert!(temp <= 0.001 && temp >= -0.001);
+        assert!((temp + MAX31856_LSB).abs() < 0.001);
     }
 }
 
@@ -138,8 +130,8 @@ mod hub_integration {
 
     #[test]
     fn test_hub_from_fixture_warm() {
-        // warm-normal fixture: bean=0x004B00, env=0x00C80
-        let fixture = make_fixture([0x00, 0x4B, 0x00], 0x00, [0x00, 0x0C, 0x80], 0x00);
+        // warm-normal fixture: bean=150°C (19199 << 5), env=25°C (3200 << 5)
+        let fixture = make_fixture([0x09, 0x60, 0x00], 0x00, [0x01, 0x90, 0x00], 0x00);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
@@ -159,8 +151,8 @@ mod hub_integration {
 
     #[test]
     fn test_hub_from_fixture_cold_negative() {
-        // cold-negative fixture: bean=0xFFFAE0 (negative), env=0
-        let fixture = make_fixture([0xFF, 0xFA, 0xE0], 0x00, [0x00, 0x00, 0x00], 0x00);
+        // cold-negative fixture: bean=-10.2°C (-1311, aligned), env=0
+        let fixture = make_fixture([0xFF, 0x5C, 0x20], 0x00, [0x00, 0x00, 0x00], 0x00);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
@@ -195,8 +187,8 @@ mod hub_integration {
 
     #[test]
     fn test_hub_from_fixture_env_fault() {
-        // bean-open: env_fault=0x04 (short to GND)
-        let fixture = make_fixture([0x00, 0x4B, 0x00], 0x00, [0x00, 0x00, 0x00], 0x04);
+        // env_fault=0x04 (short to GND), bean=150°C (19199<<5), env=100°C (12800<<5)
+        let fixture = make_fixture([0x09, 0x60, 0x00], 0x00, [0x06, 0x40, 0x00], 0x04);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
@@ -211,8 +203,8 @@ mod hub_integration {
 
     #[test]
     fn test_hub_from_fixture_both_faults() {
-        // Both sensors have faults: bean=0x01, env=0x04
-        let fixture = make_fixture([0x00, 0x00, 0x00], 0x01, [0x00, 0x32, 0x00], 0x04);
+        // Both sensors have faults: bean_fault=0x01 (open), env_fault=0x04 (short to GND)
+        let fixture = make_fixture([0x00, 0x00, 0x00], 0x01, [0x06, 0x40, 0x00], 0x04);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
@@ -235,20 +227,20 @@ mod fixture_consistency {
         let test_cases: Vec<([u8; 3], [u8; 3], f32, f32)> = vec![
             // (bean_adc, env_adc, expected_bean, expected_env)
             (
-                [0x00, 0x4B, 0x00],
-                [0x00, 0x0C, 0x80],
+                [0x09, 0x60, 0x00],
+                [0x01, 0x90, 0x00],
                 19199.0 * MAX31856_LSB,
                 3200.0 * MAX31856_LSB,
             ),
             (
-                [0xFF, 0xFA, 0xE0],
+                [0xFF, 0x5C, 0x20],
                 [0x00, 0x00, 0x00],
                 -1311.0 * MAX31856_LSB,
                 0.0,
             ),
             (
                 [0x00, 0x00, 0x00],
-                [0x00, 0x32, 0x00],
+                [0x06, 0x40, 0x00],
                 0.0,
                 12800.0 * MAX31856_LSB,
             ),
@@ -277,28 +269,26 @@ mod fixture_consistency {
     /// Verify temperature values match what the fixtures expect
     #[test]
     fn test_warm_fixture_temperatures() {
-        // From fixtures: warm-normal
-        let fixture = make_fixture([0x00, 0x4B, 0x00], 0x00, [0x00, 0x0C, 0x80], 0x00);
+        // From fixtures: warm-normal, bean=150°C aligned, env=25°C aligned
+        let fixture = make_fixture([0x09, 0x60, 0x00], 0x00, [0x01, 0x90, 0x00], 0x00);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
 
         // The fixture expects bean ~150.0 and env ~25.0
-        // Our calculation: 19199 * 0.0078125 = 149.9921875 ≈ 150.0
         assert!((sample.bean_temp - 150.0).abs() < 0.1);
         assert!((sample.env_temp - 25.0).abs() < 0.1);
     }
 
     #[test]
     fn test_cold_fixture_temperatures() {
-        // From fixtures: cold-negative
-        let fixture = make_fixture([0xFF, 0xFA, 0xE0], 0x00, [0x00, 0x00, 0x00], 0x00);
+        // From fixtures: cold-negative, bean=-10.2°C aligned, env=0
+        let fixture = make_fixture([0xFF, 0x5C, 0x20], 0x00, [0x00, 0x00, 0x00], 0x00);
 
         let mut hub = SensorConversionHub::new();
         let sample = hub.sample_from_fixture(fixture).expect("Should succeed");
 
         // The fixture expects bean ~-10.2
-        // Our calculation: -1311 * 0.0078125 = -10.2421875 ≈ -10.2
         assert!((sample.bean_temp - (-10.2)).abs() < 0.1);
         assert!((sample.env_temp - 0.0).abs() < 0.01);
     }

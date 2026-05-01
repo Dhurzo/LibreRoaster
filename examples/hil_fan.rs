@@ -1,4 +1,4 @@
-//! HIL Test: Fan PWM on ESP32-C3 (GPIO9, LEDC Channel 0, Timer 1, 25kHz)
+//! HIL Test: Fan PWM on ESP32-C3 (GPIO0, LEDC Channel 0, Timer 1, 25kHz)
 //!
 //! Sweeps duty cycle 0→25→50→75→100→0 and verifies each step via
 //! hardware register readback. Reports results over serial (esp-println).
@@ -91,7 +91,7 @@ fn main() -> ! {
 
     let timer1 = TIMER1.init(timer1);
 
-    let fan_pin = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
+    let fan_pin = Output::new(peripherals.GPIO0, Level::Low, OutputConfig::default());
     let mut fan_ch = ledc.channel(channel::Number::Channel0, fan_pin);
 
     if fan_ch

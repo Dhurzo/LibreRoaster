@@ -1,19 +1,22 @@
 // GPIO Pin Assignments for LibreRoaster ESP32-C3
 // These pins are optimized for the ESP32-C3 capabilities and coffee roaster application
-// Note: ESP32-C3 has strapping pins (e.g. GPIO2/GPIO8/GPIO9). We avoid GPIO2/GPIO8.
-// GPIO9 is a strapping pin but is used for FAN PWM in this project; ensure the external fan driver
-// does not force an invalid strap level during reset/boot.
+// Note: ESP32-C3 has strapping pins (e.g. GPIO2/GPIO8/GPIO9). We avoid GPIO2/GPIO8/GPIO9.
+//
+// SPI2 (FSPI) IO MUX functions on ESP32-C3:
+//   FSPICLK (SCK)  : GPIO6
+//   FSPID   (MOSI) : GPIO7
+//   FSPIQ   (MISO) : GPIO2 (strapping, avoid) → use GPIO5 via GPIO Matrix
 
-pub const SPI_SCLK_PIN: u8 = 7;
-pub const SPI_MOSI_PIN: u8 = 5;
-pub const SPI_MISO_PIN: u8 = 6;
+pub const SPI_SCLK_PIN: u8 = 6;
+pub const SPI_MOSI_PIN: u8 = 7;
+pub const SPI_MISO_PIN: u8 = 5;
 pub const THERMOCOUPLE_BT_CS_PIN: u8 = 4;
 pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3;
 pub const SSR_CONTROL_PIN: u8 = 10;
 pub const HEAT_DETECTION_PIN: u8 = 1;
-pub const FAN_PWM_PIN: u8 = 9;
-pub const UART_TX_PIN: u8 = 20;
-pub const UART_RX_PIN: u8 = 21;
+pub const FAN_PWM_PIN: u8 = 0;
+pub const UART_TX_PIN: u8 = 21;
+pub const UART_RX_PIN: u8 = 20;
 
 pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
 pub const SSR_PWM_FREQUENCY_HZ: u32 = 1;
@@ -31,8 +34,8 @@ pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 pub const MAX_SAFE_TEMP: f32 = 250.0;
 pub const MIN_TEMP: f32 = 0.0;
 pub const MAX_TEMP: f32 = 300.0;
-pub const MIN_VALID_TEMP: f32 = 0.0;
-pub const MAX_VALID_TEMP: f32 = 300.0;
+pub const MIN_VALID_TEMP: f32 = -50.0;
+pub const MAX_VALID_TEMP: f32 = 350.0;
 
 /// PID control loop sample time in milliseconds.
 /// Sensor reads (~160ms) may exceed this interval, see stale-data guard in update_control().

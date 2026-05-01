@@ -148,14 +148,14 @@ Approved golden CSVs live in `tests/hardware/goldens/` and must include the `met
 |------|----------|-------------|------|
 | 3 | MAX31856 #1 CS | Environment Temperature (ET) | SPI bus shared |
 | 4 | MAX31856 #2 CS | Bean Temperature (BT) | SPI bus shared |
-| 5 | SPI MOSI | Master Out Slave In | Shared between MAX31856 chips |
-| 6 | SPI MISO | Master In Slave Out | Shared |
-| 7 | SPI SCLK | Serial Clock | Shared |
-| 9 | Fan PWM | Fan speed control (25kHz) | Strapping pin – safe with pull‑up (see internalDoc/HARDWARE.md) |
+| 6 | SPI SCLK | Serial Clock (FSPICLK) | Shared between MAX31856 chips |
+| 7 | SPI MOSI | Master Out Slave In (FSPID) | Shared |
+| 5 | SPI MISO | Master In Slave Out (GPIO Matrix) | Shared; GPIO2=FSPIQ conflicts with strapping |
+| 0 | Fan PWM | Fan speed control (25kHz) | |
 | 10 | SSR PWM | Heater control (1Hz) | |
 | 1 | Heat Detection | SSR feedback input | Pull‑up enabled |
-| 20 | UART TX | Artisan communication (to Artisan) | |
-| 21 | UART RX | Artisan communication (from Artisan) | |
+| 20 | UART RX | Artisan communication (from Artisan) | Connects to CH341 TX |
+| 21 | UART TX | Artisan communication (to Artisan) | Connects to CH341 RX |
 
 For detailed hardware wiring and strapping pin information, see [HARDWARE.md](internalDoc/HARDWARE.md).
 
