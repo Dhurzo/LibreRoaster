@@ -249,5 +249,189 @@
       "retention_days": 60,
       "evidence_owner": "libreroaster/audits"
     }
+  },
+  {
+    "id": "TC-01",
+    "category": "Thermocouple",
+    "tier": 1,
+    "description": "READ returns plausible ambient temperature from both ET and BT channels",
+    "command_sequence": "READ; READ; READ",
+    "requires_unsafe": false,
+    "expected_columns": ["env_temp", "bean_temp", "fault_condition", "watchdog_flag"],
+    "golden_output": "tests/hardware/goldens/TC-01.csv",
+    "metadata": {
+      "ambient_temp_min": 0.0,
+      "ambient_temp_max": 50.0,
+      "samples": 3,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "TC-02",
+    "category": "Thermocouple",
+    "tier": 1,
+    "description": "Both thermocouple channels report valid, non-identical temperatures",
+    "command_sequence": "STATUS; READ; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["env_temp", "bean_temp", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/TC-02.csv",
+    "metadata": {
+      "dual_channel_max_delta": 15.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "TC-03",
+    "category": "Thermocouple",
+    "tier": 1,
+    "description": "Firmware detects and reports thermocouple fault when sensor disconnected",
+    "command_sequence": "STATUS; [manual_disconnect_tc]; STATUS; READ; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["env_temp", "bean_temp", "fault_condition", "watchdog_flag"],
+    "golden_output": "tests/hardware/goldens/TC-03.csv",
+    "metadata": {
+      "requires_manual_intervention": true,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "TC-04",
+    "category": "Thermocouple",
+    "tier": 1,
+    "description": "Temperature readings stable over 10-second window (no random jumps)",
+    "command_sequence": "READ; READ; READ; READ; READ; READ; READ; READ; READ; READ",
+    "requires_unsafe": false,
+    "expected_columns": ["env_temp", "bean_temp", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/TC-04.csv",
+    "metadata": {
+      "temp_stability_max_delta": 5.0,
+      "samples": 10,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "SSR-01",
+    "category": "SSR",
+    "tier": 1,
+    "description": "OT1 0 sets heater to 0%, STATUS confirms heater=0 and LEDC initialized",
+    "command_sequence": "OT1 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["heater", "fan", "guard_timeouts", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/SSR-01.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "SSR-02",
+    "category": "SSR",
+    "tier": 1,
+    "description": "SSR initialization verification - heater remains 0 after boot and STATUS query",
+    "command_sequence": "STATUS; OT1 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["heater", "guard_timeouts", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/SSR-02.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "SSR-03",
+    "category": "SSR",
+    "tier": 1,
+    "description": "SSR duty cycle set-clear cycle remains at 0 (safe initialization test)",
+    "command_sequence": "OT1 0; STATUS; OT1 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["heater", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/SSR-03.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "FAN-01",
+    "category": "Fan",
+    "tier": 1,
+    "description": "IO3 0 sets fan to 0%, STATUS confirms fan=0",
+    "command_sequence": "IO3 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["fan", "heater", "guard_timeouts", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/FAN-01.csv",
+    "metadata": {
+      "expected_fan": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "FAN-02",
+    "category": "Fan",
+    "tier": 1,
+    "description": "IO3 50 sets fan to ~50%, STATUS confirms",
+    "command_sequence": "IO3 0; IO3 50; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["fan", "heater", "guard_timeouts"],
+    "golden_output": "tests/hardware/goldens/FAN-02.csv",
+    "metadata": {
+      "expected_fan": 50.0,
+      "fan_duty_tolerance_pct": 5.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "FAN-03",
+    "category": "Fan",
+    "tier": 1,
+    "description": "Fan responds correctly across full 0-100% range in 25% steps",
+    "command_sequence": "IO3 0; STATUS; IO3 25; STATUS; IO3 50; STATUS; IO3 75; STATUS; IO3 100; STATUS; IO3 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["fan", "guard_timeouts"],
+    "golden_output": "tests/hardware/goldens/FAN-03.csv",
+    "metadata": {
+      "fan_duty_tolerance_pct": 5.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GPIO-01",
+    "category": "GPIO",
+    "tier": 1,
+    "description": "Heat detection pin (GPIO1) reads HIGH when no load (internal pull-up active)",
+    "command_sequence": "OT1 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["heater", "guard_timeouts", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/GPIO-01.csv",
+    "metadata": {
+      "expected_hardware_status_not_error": true,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  {
+    "id": "GPIO-02",
+    "category": "GPIO",
+    "tier": 1,
+    "description": "GPIO state consistency - multiple STATUS queries return consistent data",
+    "command_sequence": "STATUS; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": ["heater", "fan", "guard_timeouts", "fault_condition"],
+    "golden_output": "tests/hardware/goldens/GPIO-02.csv",
+    "metadata": {
+      "consistency_samples": 3,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
   }
 ]

@@ -74,3 +74,167 @@ python tests/hardware/analysis.py \
 ## Reporting
 
 When you ship a run, link the tarball and the report in your work item, note the `telemetry.csv` run ID, and point to this playbook. Auditors rely on the manifest + report + golden artifact to sign HW-03 off, so keep this workflow atomic and repeatable.
+
+---
+
+## Hardware Component Validation
+
+This section covers hardware component tests (TC-, SSR-, FAN-, GPIO-) which differ from the fault injection scenarios (WD-, GD-, CM-) documented above.
+
+### How Hardware Scenarios Differ
+
+| Attribute | Hardware Scenarios (TC-, SSR-, FAN-, GPIO-) | Fault Injection (WD-, GD-, CM-) |
+|-----------|-----------------------------------------------|------------------------------|
+| **Purpose** | Validate physical hardware components | Test fault handling and recovery |
+| **Safety** | All safe (no heater activation) | May trigger fault conditions |
+| **Firmware** | Main firmware (Tier 1) or test firmware (Tier 2) | Main firmware only |
+| **Read/Write** | Mix of read-only (TC) and safe writes (SSR/FAN/GPIO) | Primarily fault injection commands |
+| **Golden Output** | `tests/hardware/goldens/<ID>.csv` | `tests/hardware/goldens/<ID>.csv` |
+| **Runner** | `validation_runner.py --hardware-mode` or `hardware_test_runner.py` | `validation_runner.py` |
+
+Hardware scenarios exercise real peripherals: thermocouples (SPI), SSR (LEDC PWM), fan (LEDC PWM), and GPIO (heat detection pin). All SSR tests use 0% duty cycle only — the heater is never activated.
+
+### Running Hardware Scenarios via validation_runner
+
+Use the `--hardware-mode` flag to tell the runner to execute hardware scenarios instead of fault injection scenarios:
+
+```bash
+python tests/hardware/validation_runner.py \
+  --port /dev/ttyACM0 \
+  --scenario TC-01 \
+  --hardware-mode
+```
+
+Run all hardware scenarios:
+
+```bash
+python tests/hardware/validation_runner.py \
+  --port /dev/ttyACM0 \
+  --hardware-mode \
+  --run-all
+```
+
+The runner executes the `command_sequence` from `scenario_manifest.json`, captures `STATUS` telemetry, and writes results to `tests/hardware/runs/<SCENARIO>/<TIMESTAMP>/telemetry.csv`.
+
+### Running Tier 2 Test Firmware via hardware_test_runner
+
+Tier 2 tests use dedicated test firmware from `examples/`. These run at the driver level and validate peripherals directly:
+
+```bash
+python tests/hardware/hardware_test_runner.py \
+  --port /dev/ttyACM0 \
+  --example hil_tc
+```
+
+Available test firmware:
+
+| Example | Tests | Safety |
+|---------|-------|--------|
+| `hil_tc` | 6 tests (SPI bus, raw voltage, registers, conversion) | Read-only |
+| `hil_ssr` | 4 tests (LEDC init, zero-duty readback) | SAFE ONLY (no heater) |
+| `hil_fan` | 7 tests (LEDC init, duty sweep 0-100%, frequency) | Safe |
+| `hil_gpio` | 3 tests (pull-up, readback, consistency) | Safe |
+
+The runner handles building and flashing the test firmware automatically. To manually build and flash:
+
+```bash
+# Build test firmware
+cargo build --release --target riscv32imc-unknown-none-elf \
+  --features embedded --example hil_tc
+
+# Flash test firmware
+cargo espflash flash --release --example hil_tc
+```
+
+### Safety Checklist for Hardware Tests
+
+Before running any hardware test, verify:
+
+- [ ] ESP32-C3 is connected via USB and visible (`cargo espflash list`)
+- [ ] Firmware is flashed (main for Tier 1, test firmware for Tier 2)
+- [ ] Heater power is disconnected (recommended for SSR tests)
+- [ ] Thermocouples are connected (for TC tests)
+- [ ] No metal objects near GPIO pins (prevent shorts)
+- [ ] You have proper electrical knowledge if modifying hardware
+
+**Key safety facts:**
+- All SSR tests use 0% duty cycle — heater NEVER activates
+- Fan tests are safe (no heating element involved)
+- Thermocouple tests are read-only
+- GPIO tests only read the heat detection pin state
+
+### Interpreting Hardware Test Results
+
+#### Tier 1 (validation_runner output)
+
+After running a scenario, check the output:
+
+```
+Scenario: TC-01
+Result: PASS
+Telemetry: tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv
+Metadata: tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv.json
+```
+
+Open the telemetry CSV to verify:
+- `env_temp` and `bean_temp` are within expected ranges
+- `fault_condition=0` (no faults)
+- `watchdog_flag=1` (watchdog healthy)
+- `heater` and `fan` values match commanded values (for SSR/FAN tests)
+
+#### Tier 2 (hardware_test_runner output)
+
+The test runner outputs per-test results:
+
+```
+[PASS] hil_tc - Test 1: SPI bus enumeration
+[PASS] hil_tc - Test 2: Raw thermocouple voltage (ET)
+[PASS] hil_tc - Test 3: Raw thermocouple voltage (BT)
+...
+Result: 6/6 tests passed
+```
+
+Any `[FAIL]` indicates a hardware or firmware issue that needs investigation.
+
+### Promoting Hardware Test Runs to Golden Artifacts
+
+Once a hardware scenario passes and you want to promote it as the golden reference:
+
+1. **Identify the validated run** (e.g., `tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv`)
+
+2. **Verify the results** meet golden criteria:
+   - Stable telemetry (temps within 2°C, outputs within 2%)
+   - `watchdog_flag=1`, `failure_count=0`
+   - `guard_timeouts < 3`
+   - `fault_condition=0` (unless scenario expects otherwise)
+
+3. **Copy to golden path** (from `scenario_manifest.json` `golden_output` field):
+   ```bash
+   cp tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv \
+      tests/hardware/goldens/TC-01.csv
+   ```
+
+4. **Bundle for auditors** (same as fault injection scenarios):
+   ```bash
+   tar -czf tests/hardware/goldens/WG-HW03-TC-01-20260501T120000Z.tar.gz \
+     tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv \
+     tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv.json \
+     tests/hardware/reports/TC-01/20260501T120000Z.md \
+     tests/hardware/scenario_manifest.json \
+     tests/hardware/goldens/TC-01.csv
+   ```
+
+5. **Document retention** — golden artifacts must remain available for 60 days (per manifest `metadata.retention_days`).
+
+### Hardware vs Fault Injection: Quick Reference
+
+| Step | Hardware Scenarios | Fault Injection Scenarios |
+|------|---------------------|--------------------------|
+| **Manifest** | `scenario_manifest.json` (TC-, SSR-, FAN-, GPIO-) | `scenario_manifest.json` (WD-, GD-, CM-) |
+| **Runner** | `validation_runner.py --hardware-mode` | `validation_runner.py` |
+| **Tier 2 Runner** | `hardware_test_runner.py --example <name>` | N/A |
+| **Golden Path** | `tests/hardware/goldens/<ID>.csv` | `tests/hardware/goldens/<ID>.csv` |
+| **Reports** | `tests/hardware/reports/<ID>/` | `tests/hardware/reports/<ID>/` |
+| **Analysis** | `analysis.py --scenario TC-01` | `analysis.py --scenario WD-01` |
+
+For the full hardware test plan, see `HARDWARE-TEST-PLAN.md`. For manual PWM verification with an oscilloscope, see `MANUAL-PWM-VERIFICATION.md`. For a quick scenario reference, see `SCENARIO_MATRIX_HW.md`.

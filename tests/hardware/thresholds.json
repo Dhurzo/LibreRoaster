@@ -3,5 +3,11 @@
   "avg_command_latency_ms": 100,
   "thermal_envelope_deg": 5.0,
   "max_watchdog_consecutive_fails": 0,
-  "max_ledc_guard_timeouts": 5
+  "max_ledc_guard_timeouts": 5,
+  "ambient_temp_min": 0.0,
+  "ambient_temp_max": 50.0,
+  "ssr_duty_tolerance_pct": 3.0,
+  "fan_duty_tolerance_pct": 5.0,
+  "temp_stability_delta": 5.0,
+  "dual_channel_max_delta": 15.0
 }

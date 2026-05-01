@@ -11,6 +11,22 @@ license      = "APACHE-2"
 name = "artisan_test"
 path = "examples/artisan_test.rs"
 
+[[example]]
+name = "hil_tc"
+path = "examples/hil_tc.rs"
+
+[[example]]
+name = "hil_fan"
+path = "examples/hil_fan.rs"
+
+[[example]]
+name = "hil_ssr"
+path = "examples/hil_ssr.rs"
+
+[[example]]
+name = "hil_gpio"
+path = "examples/hil_gpio.rs"
+
 [features]
 default = []
 std = ["embedded-hal-02"]
@@ -103,7 +119,9 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 critical-section = "1.2.0"
 
 [dev-dependencies]
-# Test dependencies
+# Test dependencies - only used on host (x86_64).
+# These all require std which is unavailable on riscv32 embedded target.
+[target.'cfg(not(target_arch = "riscv32"))'.dev-dependencies]
 log = "0.4.27"
 critical-section = { version = "1.2.0", features = ["std"] }
 static_cell = "2.1.1"

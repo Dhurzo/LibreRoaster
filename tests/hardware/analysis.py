@@ -47,7 +47,7 @@ def discover_runs(runs_dir, metadata_suffix, scenario_filter=None):
             if os.path.isfile(csv_path):
                 yield scenario.upper(), timestamp, csv_path, metadata_path
 
-def analyze_csv(csv_path, thresholds):
+def analyze_csv(csv_path, thresholds, scenario_entry=None):
     results = {
         'max_command_latency_ms': {'value': 0.0, 'pass': True, 'threshold': thresholds['max_command_latency_ms']},
         'avg_command_latency_ms': {'value': 0.0, 'pass': True, 'threshold': thresholds['avg_command_latency_ms']},
@@ -58,46 +58,158 @@ def analyze_csv(csv_path, thresholds):
     latencies = []
     watchdog_fails = []
     guard_timeouts = 0
+    et_values = []
+    bt_values = []
+    heater_values = []
+    fan_values = []
+    has_read_columns = False
+    has_status_columns = False
+    gpio_status_values = []
     
     try:
         with open(csv_path, 'r') as csvfile:
             reader = csv.DictReader(csvfile)
+            fieldnames = reader.fieldnames or []
+            has_read_columns = 'et' in fieldnames and 'bt' in fieldnames and 'valid' in fieldnames
+            has_status_columns = 'max_command_latency_us' in fieldnames
+
             for row in reader:
-                # Convert us to ms
-                lat = float(row['max_command_latency_us']) / 1000.0
-                latencies.append(lat)
-                
-                wd_fails = int(row['failure_count'])
-                watchdog_fails.append(wd_fails)
-                
-                guard_timeouts = int(row['guard_timeouts'])
-                
+                if has_status_columns:
+                    lat = float(row['max_command_latency_us']) / 1000.0
+                    latencies.append(lat)
+                    
+                    wd_fails = int(row['failure_count'])
+                    watchdog_fails.append(wd_fails)
+                    
+                    guard_timeouts = int(row['guard_timeouts'])
+
+                    try:
+                        et_val = float(row.get('et', 0))
+                        bt_val = float(row.get('bt', 0))
+                        et_values.append(et_val)
+                        bt_values.append(bt_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                    try:
+                        heater_val = float(row.get('heater', 0))
+                        heater_values.append(heater_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                    try:
+                        fan_val = float(row.get('fan', 0))
+                        fan_values.append(fan_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                elif has_read_columns:
+                    try:
+                        et_val = float(row['et'])
+                        bt_val = float(row['bt'])
+                        et_values.append(et_val)
+                        bt_values.append(bt_val)
+                    except (ValueError, TypeError):
+                        pass
+
     except Exception as e:
         print(f"Error reading CSV {csv_path}: {e}")
         return None
 
-    if not latencies:
+    if not latencies and not et_values:
         print("No data found in CSV.")
         return None
 
-    # Latency checks
-    max_lat = max(latencies)
-    avg_lat = sum(latencies) / len(latencies)
-    
-    results['max_command_latency_ms']['value'] = max_lat
-    results['max_command_latency_ms']['pass'] = max_lat <= thresholds['max_command_latency_ms']
-    
-    results['avg_command_latency_ms']['value'] = avg_lat
-    results['avg_command_latency_ms']['pass'] = avg_lat <= thresholds['avg_command_latency_ms']
-    
-    # Watchdog checks
-    max_wd = max(watchdog_fails)
-    results['max_watchdog_consecutive_fails']['value'] = max_wd
-    results['max_watchdog_consecutive_fails']['pass'] = max_wd <= thresholds['max_watchdog_consecutive_fails']
-    
-    # Guard timeout checks (last recorded value is the cumulative count)
-    results['max_ledc_guard_timeouts']['value'] = guard_timeouts
-    results['max_ledc_guard_timeouts']['pass'] = guard_timeouts <= thresholds['max_ledc_guard_timeouts']
+    if latencies:
+        max_lat = max(latencies)
+        avg_lat = sum(latencies) / len(latencies)
+        
+        results['max_command_latency_ms']['value'] = max_lat
+        results['max_command_latency_ms']['pass'] = max_lat <= thresholds['max_command_latency_ms']
+        
+        results['avg_command_latency_ms']['value'] = avg_lat
+        results['avg_command_latency_ms']['pass'] = avg_lat <= thresholds['avg_command_latency_ms']
+        
+        max_wd = max(watchdog_fails) if watchdog_fails else 0
+        results['max_watchdog_consecutive_fails']['value'] = max_wd
+        results['max_watchdog_consecutive_fails']['pass'] = max_wd <= thresholds['max_watchdog_consecutive_fails']
+        
+        results['max_ledc_guard_timeouts']['value'] = guard_timeouts
+        results['max_ledc_guard_timeouts']['pass'] = guard_timeouts <= thresholds['max_ledc_guard_timeouts']
+
+    scenario_id = ''
+    scenario_metadata = {}
+    if scenario_entry:
+        scenario_id = scenario_entry.get('id', '').upper()
+        scenario_metadata = scenario_entry.get('metadata', {}) or {}
+
+    is_tc = scenario_id.startswith('TC-')
+    is_ssr = scenario_id.startswith('SSR-')
+    is_fan = scenario_id.startswith('FAN-')
+    is_gpio = scenario_id.startswith('GPIO-')
+
+    has_temps = len(et_values) > 0 and len(bt_values) > 0
+
+    if is_tc and has_temps:
+        ambient_min = scenario_metadata.get('ambient_temp_min', thresholds.get('ambient_temp_min', 0.0))
+        ambient_max = scenario_metadata.get('ambient_temp_max', thresholds.get('ambient_temp_max', 50.0))
+        all_in_range = all(ambient_min <= v <= ambient_max for v in et_values) and \
+                       all(ambient_min <= v <= ambient_max for v in bt_values)
+        results['ambient_temp_check'] = {
+            'value': 1.0 if all_in_range else 0.0,
+            'pass': all_in_range,
+            'threshold': f'{ambient_min}-{ambient_max}'
+        }
+
+    if is_tc and scenario_id == 'TC-02' and has_temps:
+        max_delta = scenario_metadata.get('dual_channel_max_delta', thresholds.get('dual_channel_max_delta', 15.0))
+        deltas = [abs(e - b) for e, b in zip(et_values, bt_values)]
+        max_actual_delta = max(deltas) if deltas else 0.0
+        results['dual_channel_delta'] = {
+            'value': max_actual_delta,
+            'pass': max_actual_delta < max_delta,
+            'threshold': max_delta
+        }
+
+    if is_tc and scenario_id == 'TC-04' and has_temps:
+        stability_delta = scenario_metadata.get('temp_stability_max_delta', thresholds.get('temp_stability_delta', 5.0))
+        et_range = max(et_values) - min(et_values) if len(et_values) >= 2 else 0.0
+        bt_range = max(bt_values) - min(bt_values) if len(bt_values) >= 2 else 0.0
+        max_variance = max(et_range, bt_range)
+        results['temp_stability'] = {
+            'value': max_variance,
+            'pass': max_variance < stability_delta,
+            'threshold': stability_delta
+        }
+
+    if is_ssr and len(heater_values) > 0:
+        expected_heater = scenario_metadata.get('expected_heater', 0.0)
+        tolerance = thresholds.get('ssr_duty_tolerance_pct', 3.0)
+        max_deviation = max(abs(h - expected_heater) for h in heater_values)
+        results['ssr_duty_accuracy'] = {
+            'value': max_deviation,
+            'pass': max_deviation <= tolerance,
+            'threshold': tolerance
+        }
+
+    if is_fan and len(fan_values) > 0:
+        expected_fan = scenario_metadata.get('expected_fan')
+        tolerance = scenario_metadata.get('fan_duty_tolerance_pct', thresholds.get('fan_duty_tolerance_pct', 5.0))
+        if expected_fan is not None:
+            max_deviation = max(abs(f - expected_fan) for f in fan_values)
+            results['fan_duty_accuracy'] = {
+                'value': max_deviation,
+                'pass': max_deviation <= tolerance,
+                'threshold': tolerance
+            }
+
+    if is_gpio and len(heater_values) > 0:
+        all_consistent = len(set(heater_values)) == 1
+        results['gpio_consistency'] = {
+            'value': len(set(heater_values)),
+            'pass': all_consistent,
+            'threshold': 1
+        }
     
     return results
 
@@ -162,7 +274,13 @@ def generate_report(results, csv_path, template_path, output_path, scenario_entr
         'max_command_latency_ms': 'Max command latency (ms)',
         'avg_command_latency_ms': 'Average command latency (ms)',
         'max_watchdog_consecutive_fails': 'Max watchdog consecutive fails',
-        'max_ledc_guard_timeouts': 'Max LEDC guard timeouts'
+        'max_ledc_guard_timeouts': 'Max LEDC guard timeouts',
+        'ambient_temp_check': 'Ambient temperature in range',
+        'ssr_duty_accuracy': 'SSR duty cycle accuracy (max deviation %)',
+        'fan_duty_accuracy': 'Fan duty cycle accuracy (max deviation %)',
+        'temp_stability': 'Temperature stability (max variance)',
+        'dual_channel_delta': 'Dual channel delta (ET-BT)',
+        'gpio_consistency': 'GPIO consistency (unique values)'
     }
     threshold_lines = ["| Threshold | Result |", "|-----------|--------|"]
     for metric, data in results.items():
@@ -231,7 +349,7 @@ def main():
         if not scenario_entry and metadata_entry.get('manifest_entry'):
             scenario_entry = metadata_entry['manifest_entry']
 
-        results = analyze_csv(csv_path, thresholds)
+        results = analyze_csv(csv_path, thresholds, scenario_entry)
         if not results:
             continue
 
