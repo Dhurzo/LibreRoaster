@@ -1,4 +1,4 @@
-use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, MAX_PROFILE_SETPOINTS};
+use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
 use core::cell::RefCell;
 use critical_section::Mutex;
 

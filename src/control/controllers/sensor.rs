@@ -64,7 +64,7 @@ impl SensorController {
         env_temp: f32,
         bean_fault: crate::hardware::sensors::conversion::SensorFault,
         env_fault: crate::hardware::sensors::conversion::SensorFault,
-        current_time: Instant,
+        _current_time: Instant,
         status: &mut SystemStatus,
     ) -> Result<(), RoasterError> {
         // Only validate temperature for channels without fault.
@@ -83,7 +83,7 @@ impl SensorController {
 
         status.bean_temp = bean_temp + BT_THERMOCOUPLE_OFFSET;
         status.env_temp = env_temp + ET_THERMOCOUPLE_OFFSET;
-        self.last_temp_read = Some(current_time);
+        self.last_temp_read = Some(Instant::now());
 
         // Only check overtemp against valid sensors (ignore faulted ones)
         if !bean_fault.has_fault() && status.bean_temp >= OVERTEMP_THRESHOLD {
@@ -95,6 +95,14 @@ impl SensorController {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
             });
+        }
+
+        // If a sensor is faulted, mark its temperature as NaN so PID rejects it
+        if bean_fault.has_fault() {
+            status.bean_temp = f32::NAN;
+        }
+        if env_fault.has_fault() {
+            status.env_temp = f32::NAN;
         }
 
         Ok(())

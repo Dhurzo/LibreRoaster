@@ -232,7 +232,14 @@ pub fn percentage_to_ledc_duty(percentage: f32) -> u8 {
     let max_duty = (1u32 << SSR_PWM_RESOLUTION) - 1;
     let scaled = ((clamped / 100.0) * max_duty as f32 + 0.5) as u32;
     let scaled = scaled.min(max_duty);
-    scaled as u8
+    let scaled = scaled as u8;
+    
+    // Enforce minimum SSR duty - if duty is too low, snap to 0
+    if scaled > 0 && scaled < crate::config::constants::SSR_MIN_DUTY_TICKS {
+        0
+    } else {
+        scaled
+    }
 }
 
 impl<'a, PIN, DETECT, PWM> SsrControl<'a, PIN, DETECT, PWM>
@@ -283,19 +290,10 @@ where
         self.base.is_pwm_enabled
     }
 
-    pub fn last_lead_delta_ticks(&self) -> i16 {
-        self.base.last_duty_delta_ticks
-    }
-
-    pub fn last_retry_count(&self) -> u8 {
-        self.base.retry_count
-    }
-
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
 
-        self.base.current_duty = ledc_duty as u16;
         self.base.last_duty_delta_ticks = 0;
         self.base.retry_count = 0;
 
@@ -311,6 +309,8 @@ where
             &mut self.base.retry_count,
             &mut self.base.last_duty_delta_ticks,
         )?;
+
+        self.base.current_duty = ledc_duty as u16;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",
@@ -379,19 +379,10 @@ where
         Ok(())
     }
 
-    pub fn get_hardware_status(&self) -> SsrHardwareStatus {
-        self.base.hardware_status
-    }
-
-    pub fn is_heating_available(&self) -> bool {
-        self.base.hardware_status == SsrHardwareStatus::Available
-    }
-
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
 
-        self.base.current_duty = ledc_duty as u16;
         self.base.last_duty_delta_ticks = 0;
         self.base.retry_count = 0;
 
@@ -407,6 +398,8 @@ where
             &mut self.base.retry_count,
             &mut self.base.last_duty_delta_ticks,
         )?;
+
+        self.base.current_duty = ledc_duty as u16;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",

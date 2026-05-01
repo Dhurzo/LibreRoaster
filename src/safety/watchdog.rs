@@ -6,8 +6,6 @@
 /// If the Embassy executor hangs, the RWDT triggers a full system reset
 /// independently of CPU state. On host builds, the hardware WDT is a no-op.
 
-use crate::config::HW_WATCHDOG_TIMEOUT_SECS;
-
 /// Watchdog feeder errors exposed to higher-level services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchdogError {
@@ -36,11 +34,11 @@ impl WatchdogError {
 mod software_watchdog {
     use super::WatchdogError;
     use core::sync::atomic::Ordering;
-    use portable_atomic::AtomicU32;
+    use portable_atomic::AtomicU64;
 
-    /// Counter that must be kept alive by feeding
-    static WATCHDOG_COUNTER: AtomicU32 = AtomicU32::new(0);
-    const MAX_MISSED_FEEDS: u32 = 3;
+    /// Timestamp of last successful feed in milliseconds
+    static LAST_FEED_MS: AtomicU64 = AtomicU64::new(0);
+    const WATCHDOG_TIMEOUT_MS: u64 = 300; // 3 missed ticks = 300ms at 100ms interval
 
     pub struct WatchdogFeeder {
         last_failure: Option<&'static str>,
@@ -48,13 +46,14 @@ mod software_watchdog {
 
     impl WatchdogFeeder {
         pub fn initialize() -> Result<Self, WatchdogError> {
-            WATCHDOG_COUNTER.store(MAX_MISSED_FEEDS - 1, Ordering::SeqCst);
+            LAST_FEED_MS.store(0, Ordering::SeqCst);
             Ok(Self { last_failure: None })
         }
 
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
-            let was_zero = WATCHDOG_COUNTER.swap(MAX_MISSED_FEEDS, Ordering::SeqCst);
-            if was_zero == 0 {
+            let now = embassy_time::Instant::now().as_millis() as u64;
+            let last = LAST_FEED_MS.swap(now, Ordering::SeqCst);
+            if last > 0 && now - last > WATCHDOG_TIMEOUT_MS {
                 self.last_failure = Some("watchdog_timeout");
                 return Err(WatchdogError::FeedFailed("watchdog_timeout"));
             }
@@ -69,7 +68,9 @@ mod software_watchdog {
         }
 
         pub fn is_alive(&self) -> bool {
-            WATCHDOG_COUNTER.load(Ordering::SeqCst) > 0
+            let now = embassy_time::Instant::now().as_millis() as u64;
+            let last = LAST_FEED_MS.load(Ordering::SeqCst);
+            last == 0 || now - last <= WATCHDOG_TIMEOUT_MS
         }
     }
 }
@@ -120,6 +121,7 @@ mod hw_watchdog {
     /// Initialize the hardware WDT timeout.
     /// Must be called once during startup before the control loop begins.
     pub fn init() {
+        // HW WDT timeout is set by the ESP IDF bootloader, not configured here.
         // The IDF bootloader already enables the RWDT with a default
         // timeout. This is a placeholder for future explicit configuration
         // when moving away from the IDF bootloader.

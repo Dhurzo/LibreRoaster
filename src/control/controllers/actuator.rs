@@ -47,10 +47,10 @@ impl ActuatorController {
 
         match self.ssr_guard.next_cycle_allowed(now) {
             Ok(_) => {
-                self.ssr_guard.mark_cycle(now);
                 let power_result = self.heater.set_power(clamped);
                 self.capture_ssr_monitor_metrics(status);
                 power_result?;
+                self.ssr_guard.mark_cycle(now);
                 status.ssr_output = clamped;
                 status.saturation_active = false;
                 status.integrator_clamped = false;
@@ -93,9 +93,17 @@ impl ActuatorController {
         status.ssr_output = 0.0;
         status.ssr_cycle_guard_busy_until_ms = 0;
 
-        let _ = self.heater.set_power(0.0);
+        if let Err(e) = self.heater.set_power(0.0) {
+            log::error!("EMERGENCY: Heater FAILED to shut off: {:?}", e);
+            // Fallback: try direct LEDC write
+            // If the hardware has a direct GPIO for SSR, we'd drive it low here
+            // For now, at minimum log the error
+        }
         self.capture_ssr_monitor_metrics(status);
-        let _ = self.fan.set_speed(100.0);
+        if let Err(e) = self.fan.emergency_set_speed(100.0) {
+            log::error!("EMERGENCY: Fan FAILED to reach 100%: {:?}", e);
+        }
+        status.fan_output = 100.0;
 
         Err(RoasterError::EmergencyShutdown {
             source: Some("emergency_shutdown"),
@@ -128,7 +136,7 @@ impl ActuatorController {
     }
 
     pub fn set_fan_raw(&mut self, speed: f32) -> Result<(), RoasterError> {
-        self.fan.set_speed(speed)
+        self.fan.emergency_set_speed(speed)
     }
 
     pub fn set_last_desired_output(&mut self, output: f32) {

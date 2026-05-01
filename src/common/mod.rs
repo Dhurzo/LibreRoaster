@@ -193,6 +193,12 @@ impl Fan for StubFan {
         Ok(())
     }
 
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        self.calls.borrow_mut().push(FanCall::SetSpeed(percentage));
+        *self.speed.borrow_mut() = percentage;
+        Ok(())
+    }
+
     fn get_speed(&self) -> f32 {
         self.calls.borrow_mut().push(FanCall::GetSpeed);
         *self.speed.borrow()

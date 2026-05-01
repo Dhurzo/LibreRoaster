@@ -36,6 +36,10 @@ impl SafetyCommandHandler {
         self.emergency_flag = false;
     }
 
+    pub fn activate_emergency(&mut self) {
+        self.emergency_flag = true;
+    }
+
     /// Trigger emergency shutdown
     ///
     /// # Arguments

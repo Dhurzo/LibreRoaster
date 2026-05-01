@@ -60,6 +60,11 @@ impl Fan for FanController {
             })
     }
 
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        self.current_speed = percentage.clamp(0.0, 100.0);
+        Ok(())
+    }
+
     fn get_speed(&self) -> f32 {
         self.current_speed
     }

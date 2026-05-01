@@ -119,9 +119,13 @@ pub async fn control_loop_task() {
         let mut cmds_this_tick: usize = 0;
         while let Ok(traced_command) = cmd_channel.try_receive() {
             cmds_this_tick = cmds_this_tick.saturating_add(1);
-            if cmds_this_tick > crate::config::MAX_COMMANDS_PER_TICK {
+            let is_emergency = matches!(
+                &traced_command.command,
+                crate::config::ArtisanCommand::Stop | crate::config::ArtisanCommand::EmergencyStop
+            );
+            if cmds_this_tick > crate::config::MAX_COMMANDS_PER_TICK && !is_emergency {
                 warn!("Command rate limit exceeded — {} commands this tick, skipping remaining", cmds_this_tick);
-                break;
+                continue;
             }
             if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
                 regression::request_regression();

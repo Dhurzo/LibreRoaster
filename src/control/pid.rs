@@ -82,6 +82,11 @@ impl CoffeeRoasterPid {
 
     pub fn enable(&mut self) {
         self.enabled = true;
+        self.integrator = 0.0;
+        self.last_error = 0.0;
+        self.derivative_rate = 0.0;
+        self.last_update_ms = None;
+        self.last_feedback = None;
     }
 
     pub fn disable(&mut self) {

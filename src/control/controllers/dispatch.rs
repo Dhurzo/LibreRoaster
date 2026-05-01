@@ -120,7 +120,7 @@ impl CommandDispatcher {
         status.artisan_control = false;
         self.artisan_handler.clear_manual();
         status.ssr_output = 0.0;
-        status.fan_output = 0.0;
+        // fan_output is set by caller (roaster_refactored.rs stop_streaming) after set_fan_raw
         status.ssr_cycle_guard_busy_until_ms = 0;
     }
 

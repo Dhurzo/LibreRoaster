@@ -90,6 +90,11 @@ where
         // Verify config register was written by reading it back
         let cr1 = max31856.read_register(0x01).unwrap_or(0xFF);
         log::info!("MAX31856 init: wrote CR1=0x03, read back CR1=0x{:02X}", cr1);
+        if cr1 != 0x03 {
+            return Err(Max31856Error::CommunicationError {
+                source: "cr1_readback_mismatch",
+            });
+        }
 
         Ok(max31856)
     }
@@ -152,11 +157,11 @@ where
         self.read_conversion_block()
     }
 
-    #[allow(deprecated)]
+#[allow(deprecated)]
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
-        // Check all fault bits: open(0x01), short-VCC(0x02), short-GND(0x04), CJ-high(0x08), CJ-low(0x10)
-        if reading.fault & 0x1F != 0 {
+        // Check fault bits: CJ Range(0x01), CJ High(0x02), CJ Low(0x04), TC High(0x08), TC Low(0x10), OV/UV(0x20), Open Circuit(0x40)
+        if reading.fault & 0x7F != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });
@@ -177,8 +182,8 @@ where
     /// This prevents blocking the async executor during the 160ms conversion delay.
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature_async().await?;
-        // Check all fault bits: open(0x01), short-VCC(0x02), short-GND(0x04), CJ-high(0x08), CJ-low(0x10)
-        if reading.fault & 0x1F != 0 {
+        // Fault bits: CJ Range(0x01), CJ High(0x02), CJ Low(0x04), TC High(0x08), TC Low(0x10), OV/UV(0x20), Open Circuit(0x40)
+        if reading.fault & 0x7F != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });

@@ -30,6 +30,8 @@ pub trait Heater: Send {
 pub trait Fan: Send {
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError>;
 
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError>;
+
     fn get_speed(&self) -> f32 {
         0.0
     }
@@ -48,6 +50,10 @@ impl<T: Heater + ?Sized> Heater for &mut T {
 impl<T: Fan + ?Sized> Fan for &mut T {
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
         (**self).set_speed(duty)
+    }
+
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        (**self).emergency_set_speed(percentage)
     }
 
     fn get_speed(&self) -> f32 {

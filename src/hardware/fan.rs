@@ -56,9 +56,25 @@ impl<'a> FanController<'a> {
         rounded as u8
     }
 
+    /// fade_duration: 4ms per duty step + 80ms LEDC engine overhead.
+    /// Max 1100ms for full 0→255 transition (255*4 + 80).
     fn fade_duration(delta: u8) -> u16 {
         let base = delta as u16 * 4;
         base + 80
+    }
+
+    /// Emergency set speed: writes duty DIRECTLY to hardware, bypassing the LEDC fade engine.
+    /// Use this during emergency shutdown where immediate fan response is safety-critical.
+    /// Normal speed changes should use `set_speed()` which uses smooth hardware fading.
+    pub fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), FanError> {
+        let duty = Self::percentage_to_duty(percentage);
+        if let Some(handle) = &self.ledc_handle {
+            handle.set_duty(duty).map_err(|_| FanError::PwmError {
+                source: "emergency_set_duty_failed",
+            })?;
+        }
+        self.current_speed = percentage;
+        Ok(())
     }
 
     pub fn set_speed(&mut self, speed_percent: f32) -> Result<(), FanError> {
@@ -131,6 +147,13 @@ impl<'a> Fan for FanController<'a> {
             })
     }
 
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        self.emergency_set_speed(percentage)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_emergency_set_speed"),
+            })
+    }
+
     fn get_speed(&self) -> f32 {
         self.current_speed
     }
@@ -176,12 +199,24 @@ where
         let duty = ((clamped / 100.0) * max_duty as f32) as u32;
 
         self.channel
-            .set_duty(duty as u8)
+            .set_duty(duty.min(255) as u8)
             .map_err(|_| RoasterError::HardwareError {
                 source: Some("fan_simple_ledc"),
             })?;
 
         debug!("SimpleLedcFan set to {:.1}% (duty {})", clamped, duty);
+        Ok(())
+    }
+
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        let clamped = percentage.clamp(0.0, 100.0);
+        let max_duty = 255;
+        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
+        self.channel
+            .set_duty(duty.min(255) as u8)
+            .map_err(|_| RoasterError::HardwareError {
+                source: Some("fan_simple_emergency"),
+            })?;
         Ok(())
     }
 }

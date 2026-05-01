@@ -217,9 +217,16 @@ impl RoasterControl {
         );
 
         if outcome.zero_ssr {
-            let _ = self.actuator.set_heater_power(0.0);
+            if let Err(e) = self.actuator.set_heater_power(0.0) {
+                log::error!("Safety outcome: heater off failed: {:?}", e);
+            }
             self.actuator
                 .capture_ssr_monitor_metrics(&mut self.status);
+            // Also set fan to 100% for cooling during safety events
+            if let Err(e) = self.actuator.set_fan_raw(100.0) {
+                log::error!("Safety outcome: fan 100% failed: {:?}", e);
+            }
+            self.status.fan_output = 100.0;
         }
 
         if outcome.disable_pid {
@@ -248,6 +255,7 @@ impl RoasterControl {
         self.actuator.set_heater_power(0.0)?;
         // Bug #13: Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
         self.actuator.set_fan_raw(100.0)?;
+        self.status.fan_output = 100.0;
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
@@ -259,6 +267,7 @@ impl RoasterControl {
     }
 
     pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
+        self.state = RoasterState::Error;
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
@@ -281,7 +290,7 @@ impl RoasterControl {
                 if self.bt_charge_history.len() >= 10 { let _ = self.bt_charge_history.pop_front(); }
                 let _ = self.bt_charge_history.push_back(bt);
                 if self.bt_charge_history.len() >= 5 {
-                    let (front, back) = self.bt_charge_history.as_slices();
+                    let (front, _back) = self.bt_charge_history.as_slices();
                     let first = front.first().copied().unwrap_or(bt);
                     let drop = first - bt;
                     if drop > CHARGE_DROP_THRESHOLD_C {
@@ -305,6 +314,15 @@ impl RoasterControl {
             self.status.bean_temp
         };
         self.status.pv = current_pv;
+
+        // Reject NaN / infinite PV (faulted sensor) — force heater off
+        if !current_pv.is_finite() && self.status.pid_enabled {
+            warn!("PID input NaN/infinite (sensor fault) — forcing heater to 0%");
+            self.actuator.set_heater_power(0.0)?;
+            self.status.ssr_output = 0.0;
+            self.status.pid_enabled = false;
+            return Ok(0.0);
+        }
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
 
@@ -326,7 +344,7 @@ impl RoasterControl {
                 // (PID_SAMPLE_TIME_MS). Skip PID if data is stale to avoid computing on old readings.
                 let is_stale = if let Some(last_read) = self.sensor.last_temp_read() {
                     current_time.duration_since(last_read)
-                        > Duration::from_millis(PID_SAMPLE_TIME_MS as u64)
+                        > Duration::from_millis(500) // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
                 } else {
                     false
                 };
@@ -513,6 +531,8 @@ impl RoasterControl {
             }
 
             crate::config::ArtisanCommand::EmergencyStop => {
+                self.safety.activate_emergency();
+                self.status.fault_condition = true;
                 self.stop_streaming()?;
                 crate::logging::roast_logger::stop_roast();
                 info!("Artisan+ stop requested - streaming disabled and outputs cleared");

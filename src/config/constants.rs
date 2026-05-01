@@ -29,6 +29,7 @@ pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25kHz silent operation)
 pub const SSR_PWM_RESOLUTION: u8 = 8;
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
+pub const SSR_MIN_DUTY_TICKS: u8 = 3; // ~12ms at 1Hz PWM
 
 pub const PWM_FREQUENCY: u32 = 1000;
 
@@ -49,7 +50,7 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
-pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 5000;
+pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 1000;
 
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
 pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
@@ -140,7 +141,7 @@ impl FanProfile {
                 if range == 0 { return Some(curr.fan_speed); }
                 let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
                 let interp = prev.fan_speed as f32 + (curr.fan_speed as f32 - prev.fan_speed as f32) * frac;
-                return Some((interp + 0.5) as u8);
+                return Some((interp + 0.5).clamp(0.0, 100.0) as u8);
             }
         }
         Some(self.setpoints[self.setpoints.len() - 1].fan_speed)
