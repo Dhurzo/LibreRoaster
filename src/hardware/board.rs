@@ -4,7 +4,7 @@ use esp_hal::ledc::{
     timer::Timer,
     LowSpeed,
 };
-use esp_hal::peripherals::{GPIO0, GPIO1, GPIO10, GPIO3, GPIO4, LEDC, UART0};
+use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO9, LEDC, UART0};
 use esp_hal::uart::Uart;
 
 use crate::hardware::fan::FanController;
@@ -19,5 +19,5 @@ pub struct BoardHardware {
     pub fan: ConcreteFan,
     pub uart0: UART0,
     pub ledc: LEDC,
-    pub gpio0: GPIO0,
+    pub gpio9: GPIO9,
 }

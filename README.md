@@ -151,7 +151,7 @@ Approved golden CSVs live in `tests/hardware/goldens/` and must include the `met
 | 6 | SPI SCLK | Serial Clock (FSPICLK) | Shared between MAX31856 chips |
 | 7 | SPI MOSI | Master Out Slave In (FSPID) | Shared |
 | 5 | SPI MISO | Master In Slave Out (GPIO Matrix) | Shared; GPIO2=FSPIQ conflicts with strapping |
-| 0 | Fan PWM | Fan speed control (25kHz) | |
+| 9 | Fan PWM | Fan speed control (25kHz) | Strapping pin — ensure external pull‑up (see internalDoc/HARDWARE.md) |
 | 10 | SSR PWM | Heater control (1Hz) | |
 | 1 | Heat Detection | SSR feedback input | Pull‑up enabled |
 | 20 | UART RX | Artisan communication (from Artisan) | Connects to CH341 TX |

@@ -130,7 +130,7 @@ fn main() -> ! {
     let init_peripherals = InitPeripherals {
         ledc: peripherals.LEDC,
         spi2: peripherals.SPI2,
-        gpio0: peripherals.GPIO0,
+        gpio9: peripherals.GPIO9,
         gpio10: peripherals.GPIO10,
         gpio7: peripherals.GPIO7,
         gpio6: peripherals.GPIO6,

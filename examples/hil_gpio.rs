@@ -2,7 +2,7 @@
 //!
 //! Validates GPIO1 input with internal pull-up. Reads the pin state,
 //! verifies consistency across multiple samples, and checks for errors.
-//! GPIO0 (fan) and GPIO10 (SSR) are tested by their dedicated firmware.
+//! GPIO9 (fan) and GPIO10 (SSR) are tested by their dedicated firmware.
 //!
 //! Test sequence (3 tests):
 //!   GPIO-RAW-01: Read GPIO1 with pull-up, verify it reads HIGH (no load)

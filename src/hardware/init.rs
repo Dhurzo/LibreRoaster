@@ -16,7 +16,7 @@ use esp_hal::gpio::DriveMode;
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, TimerIFace};
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-use esp_hal::peripherals::{GPIO0, GPIO1, GPIO10, GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, LEDC, SPI2};
+use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO9, LEDC, SPI2};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
@@ -26,7 +26,7 @@ use static_cell::StaticCell;
 pub struct InitPeripherals {
     pub ledc: LEDC<'static>,
     pub spi2: SPI2<'static>,
-    pub gpio0: GPIO0<'static>,
+    pub gpio9: GPIO9<'static>,
     pub gpio10: GPIO10<'static>,
     pub gpio7: GPIO7<'static>,
     pub gpio6: GPIO6<'static>,
@@ -93,7 +93,7 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     let timer1 = TIMER1.init(timer1_ref);
 
     // Configure channels and bind to timers
-    let fan_pin = Output::new(peripherals.gpio0, Level::Low, OutputConfig::default());
+    let fan_pin = Output::new(peripherals.gpio9, Level::Low, OutputConfig::default());
     let mut fan_channel = ledc.channel(channel::Number::Channel0, fan_pin);
     fan_channel
         .configure(channel::config::Config {
