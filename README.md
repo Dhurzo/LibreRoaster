@@ -320,12 +320,22 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 # 2. Verify binary was produced (optional but recommended)
 ls -lh target/riscv32imc-unknown-none-elf/release/libreroaster.bin
 
-# 3. Flash to ESP32-C3
-cargo espflash flash --release
+# 3. Flash to ESP32-C3 (auto-detects port)
+cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded
 
-# 4. Flash and monitor serial output
-cargo espflash flash --release --monitor
+# 4. Flash to a specific port
+cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded --port /dev/ttyACM0
+
+# 5. Flash and monitor serial output (CTRL+C to exit monitor)
+cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded --port /dev/ttyACM0 --monitor
+
+# 6. Monitor only (after flashing)
+cargo espflash monitor --port /dev/ttyACM0
 ```
+
+> **Note:** The `--target riscv32imc-unknown-none-elf --features embedded` flags are required
+> for all flash commands because LibreRoaster targets the ESP32-C3 RISC-V embedded processor.
+> The USB CDC port is typically `/dev/ttyACM0` (Linux) or `/dev/cu.usbmodem-*` (macOS).
 
 **Workflow steps:**
 1. **Build** - Compile the firmware with `--features embedded` to enable the binary target
