@@ -2,13 +2,12 @@
 
 extern crate std;
 
-use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
+use libreroaster::config::ArtisanCommand;
 use libreroaster::control::traits::Fan;
 use libreroaster::control::{RoasterControl, RoasterError};
 use std::boxed::Box;
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[path = "common/mod.rs"]
 mod tests_common;
 use tests_common::{build_test_control, StubHeater};

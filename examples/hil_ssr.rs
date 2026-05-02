@@ -1,23 +1,33 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 
 // SAFE mode only — duty NEVER exceeds 0%. No heater activation.
 
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+#[cfg(target_arch = "riscv32")]
 use esp32c3::LEDC;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig, Pull};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel::{self, ChannelIFace};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::timer::{self, TimerIFace};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::time::Rate;
+#[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
+#[cfg(target_arch = "riscv32")]
 fn read_ledc_duty(channel_number: usize) -> u16 {
     let regs = unsafe { &*LEDC::ptr() };
     let raw = regs.ch(channel_number).duty().read().duty().bits();
     (raw >> 4) as u16
 }
 
+#[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {
     let config = esp_hal::Config::default();
@@ -127,3 +137,6 @@ fn main() -> ! {
 
     loop {}
 }
+
+#[cfg(not(target_arch = "riscv32"))]
+fn main() {}

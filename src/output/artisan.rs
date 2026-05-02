@@ -485,6 +485,7 @@ impl MutableArtisanFormatter {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings};

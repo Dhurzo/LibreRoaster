@@ -3,8 +3,8 @@
 //! Sweeps duty cycle 0→25→50→75→100→0 and verifies each step via
 //! hardware register readback. Reports results over serial (esp-println).
 
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[cfg(target_arch = "riscv32")]
@@ -32,6 +32,7 @@ fn main() {}
 /// Convert fan-speed percentage (0–100) to 8-bit duty ticks (0–255).
 /// Mirrors `FanController::percentage_to_duty()` in `src/hardware/fan.rs`.
 /// Uses integer arithmetic because libm is unavailable in examples.
+#[cfg(target_arch = "riscv32")]
 fn percentage_to_duty(pct: u8) -> u8 {
     let clamped = pct.clamp(0, 100);
     ((clamped as u32 * 255 + 50) / 100).min(255) as u8

@@ -34,6 +34,7 @@
 //! ```
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
+#![allow(deprecated)]
 #![allow(non_snake_case)]
 
 extern crate std;
@@ -295,7 +296,6 @@ fn test_command_response_flow() {
 
     use libreroaster::input::parser::parse_artisan_command;
     use libreroaster::output::artisan::ArtisanFormatter;
-    use libreroaster::output::OutputFormatter;
 
     // Step 1: Artisan sends READ command
     let mut mock = MockUartDriver::new("READ\r\n");

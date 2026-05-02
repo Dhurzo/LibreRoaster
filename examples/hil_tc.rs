@@ -1,20 +1,33 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Level, Output, OutputConfig};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::peripherals::Peripherals;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
+#[cfg(target_arch = "riscv32")]
 use esp_hal::time::Rate;
+#[cfg(target_arch = "riscv32")]
 use esp_println::println;
+#[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
+#[cfg(target_arch = "riscv32")]
 use critical_section;
+#[cfg(target_arch = "riscv32")]
 use core::cell::RefCell;
 
+#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::max31856::Max31856;
+#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
+#[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::sensors::conversion::convert_raw_temp;
 
+#[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {
     let peripherals = Peripherals::take().unwrap();
@@ -132,3 +145,6 @@ fn main() -> ! {
     
     loop {}
 }
+
+#[cfg(not(target_arch = "riscv32"))]
+fn main() {}

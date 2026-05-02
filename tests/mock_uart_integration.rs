@@ -1,10 +1,10 @@
 #![cfg(all(test, not(target_arch = "riscv32")))]
+#![allow(deprecated)]
 
 extern crate std;
 
 use std::boxed::Box;
 use std::string::String as StdString;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::vec::Vec;
 
 use critical_section;
@@ -16,7 +16,6 @@ use libreroaster::application::service_container::ServiceContainer;
 use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
-use libreroaster::input::ArtisanInput;
 use libreroaster::logging::traceability::TRACE_EVENT_MAX_LEN;
 use libreroaster::output::artisan::ArtisanFormatter;
 
@@ -36,6 +35,7 @@ unsafe impl critical_section::Impl for TestCriticalSection {
     unsafe fn release(_restore_state: RawRestoreState) {}
 }
 
+#[allow(dead_code)]
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }

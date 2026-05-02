@@ -11,7 +11,7 @@ use libreroaster::application::queue_metrics::{
     reset_queue_processor_metrics,
 };
 use libreroaster::application::service_container::ServiceContainer;
-use libreroaster::control::{RoasterControl, RoasterError};
+use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::{process_command_data, queue_processor_task};
 use libreroaster::hardware::usb_cdc::tasks::{process_usb_command_data, usb_queue_processor_task};
 use libreroaster::input::ArtisanInput;

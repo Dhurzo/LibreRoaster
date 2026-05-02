@@ -9,17 +9,21 @@
 //!   GPIO-RAW-02: Read GPIO1 10 times, verify all reads identical
 //!   GPIO-RAW-03: Verify no input read errors occurred
 
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Pull};
 
+#[cfg(target_arch = "riscv32")]
 fn report(name: &str, passed: bool, detail: &str) {
     let status = if passed { "PASS" } else { "FAIL" };
     esp_println::println!("TEST:{}:{}:{}", name, status, detail);
 }
 
+#[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {
     let config = esp_hal::Config::default();
@@ -80,3 +84,6 @@ fn main() -> ! {
 
     loop {}
 }
+
+#[cfg(not(target_arch = "riscv32"))]
+fn main() {}

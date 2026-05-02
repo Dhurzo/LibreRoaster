@@ -1,4 +1,5 @@
 #![cfg(all(test, not(target_arch = "riscv32")))]
+#![allow(deprecated)]
 
 extern crate std;
 

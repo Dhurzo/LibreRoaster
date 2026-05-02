@@ -38,6 +38,7 @@
 //! ```
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
+#![allow(deprecated)]
 #![allow(non_snake_case)]
 
 extern crate std;
@@ -46,7 +47,7 @@ use std::println;
 use std::string::String;
 use std::vec::Vec;
 
-use libreroaster::hardware::usb_cdc::driver::{UsbCdcDriver, UsbCdcError};
+use libreroaster::hardware::usb_cdc::driver::UsbCdcError;
 
 /// Mock implementation of UsbCdcDriver for testing
 ///
@@ -146,6 +147,7 @@ impl MockUsbCdcDriver {
     }
 
     /// Add more RX data as bytes
+    #[allow(dead_code)]
     pub fn push_rx_bytes(&mut self, data: &[u8]) {
         self.rx_buffer.extend(data);
     }

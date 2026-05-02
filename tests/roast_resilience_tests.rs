@@ -2,10 +2,7 @@
 /// Verifies firmware doesn't crash or break when hardware is missing,
 /// charge detection fails, or invalid commands are received.
 use libreroaster::config::*;
-use libreroaster::control::pid::PidFeedback;
 use libreroaster::control::roaster_refactored::RoasterControl;
-use libreroaster::control::traits::Fan;
-use libreroaster::control::RoasterError;
 use libreroaster::hardware::sensors::SensorConversionHub;
 use libreroaster::hardware::test_mocks::{MockFan, MockSsr};
 use libreroaster::input::parser::{parse_artisan_command, store_profile, take_profile};
@@ -15,7 +12,7 @@ fn no_profile_start_falls_back_to_default_target() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
+    let rc = RoasterControl::new(
         Box::new(heater), Box::new(fan), hub,
     ).expect("RoasterControl should init without profile");
 

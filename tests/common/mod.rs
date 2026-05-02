@@ -7,7 +7,7 @@
 //! also re-exports the helper that wires a `SensorConversionHub` into
 //! `RoasterControl` so helper suites can build the control consistently.
 
-pub use libreroaster::common::{StubFan, StubHeater, StubThermometer};
+pub use libreroaster::common::{StubFan, StubHeater};
 
 pub use libreroaster::hardware::sensors::SensorConversionHub;
 
@@ -23,6 +23,7 @@ pub fn build_test_control(
     RoasterControl::new(heater, fan, SensorConversionHub::new()).expect("test control should build")
 }
 
+#[allow(dead_code)]
 pub fn init_test_service_container() {
     let roaster = build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()));
     let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
