@@ -439,6 +439,7 @@ impl RoasterControl {
             match command {
                 crate::config::ArtisanCommand::ReadStatus
                 | crate::config::ArtisanCommand::StatusReport
+                | crate::config::ArtisanCommand::Stop
                 | crate::config::ArtisanCommand::EmergencyStop => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
@@ -528,6 +529,12 @@ impl RoasterControl {
                 } else {
                     info!("Artisan+ OT2 fan command processed: {}%", value);
                 }
+            }
+
+            crate::config::ArtisanCommand::Stop => {
+                info!("Artisan+ STOP - stopping roast");
+                self.stop_streaming()?;
+                crate::logging::roast_logger::stop_roast();
             }
 
             crate::config::ArtisanCommand::EmergencyStop => {

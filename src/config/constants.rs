@@ -17,6 +17,7 @@ pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3;
 pub const SSR_CONTROL_PIN: u8 = 10;
 pub const HEAT_DETECTION_PIN: u8 = 1;
 pub const FAN_PWM_PIN: u8 = 9;
+pub const STATUS_LED_PIN: u8 = 8;
 pub const UART_TX_PIN: u8 = 21;
 pub const UART_RX_PIN: u8 = 20;
 
@@ -82,6 +83,7 @@ pub enum ArtisanCommand {
     SetHeater(u8),
     SetFan(u8),
     SetFanSpeed(u8, bool),
+    Stop,
     EmergencyStop,
     IncreaseHeater,
     DecreaseHeater,

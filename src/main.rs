@@ -132,6 +132,7 @@ fn main() -> ! {
         spi2: peripherals.SPI2,
         gpio9: peripherals.GPIO9,
         gpio10: peripherals.GPIO10,
+        gpio8: peripherals.GPIO8,
         gpio7: peripherals.GPIO7,
         gpio6: peripherals.GPIO6,
         gpio5: peripherals.GPIO5,
