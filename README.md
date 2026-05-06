@@ -1,527 +1,176 @@
-# LibreRoaster - OpenSource Coffee Bean Roaster Firmware ☕🔥
+# LibreRoaster
 
-LibreRoaster is a open-source (hackable) coffee bean roaster designed for ESP32-C3 (firmware & hardware). Built with modern embedded Rust using Embassy async framework, featuring dual thermocouple monitoring, PWM heater/fan control, and Artisan+ compatibility via USB or UART communication.
+LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over native USB CDC or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
 
+The project is aimed at builders who want an inspectable roasting controller rather than a closed appliance. The firmware is not a standalone roasting UI. The intended operating model is: Artisan owns the session, LibreRoaster owns the device-side control, telemetry, and safety interlocks.
 
-## Project Status
+## Current technical baseline
 
-**Current version:** v0.1 (2026‑04‑30)
-**Milestone:** v0.1 — First working version. Firmware compiles, flashes onto ESP32-C3, boots stably without panics, and responds to Artisan READ via USB CDC.
+- **Target MCU:** ESP32-C3 (`riscv32imc-unknown-none-elf`)
+- **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
+- **Primary integration:** official Artisan app over serial using a TC4-style command set
+- **Sensors:** two MAX31856 thermocouple channels, mapped to ET and BT
+- **Actuators:** SSR-controlled heater plus PWM fan output
+- **Safety layers:** over-temperature cutoff, watchdog, stale-temperature protection, heat-source detection, LEDC guard
+- **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 
-### Recent Changes
+## What the firmware actually does
 
-- **TC4 protocol compatibility** — READ format matches Artisan standard (AMB,ET,BT,0.0,0.0)
-- **PID auto-control** — `PID,ON`, `PID,OFF`, `PID,SV,<temp>` TC4 commands
-- **Roast profiles** — `PROFILE;0,50;120,150...` with PID curve following + `FANPROFILE` for fan curves
-- **Auto-preheat** — `PREHEAT <temp>` command
-- **Bean charge detection** — Automatic drop detection, `#CHARGE` event
-- **Hardware watchdog** — ESP32-C3 RTC WDT (CPU reset on hang, independent of software)
-- **Fahrenheit conversion** — `UNITS;F` now actively converts output temperatures
-- **Ring-buffer roast logger** — 256-sample backup, retrievable via `#DUMP`
-- **Acoustic first-crack detector** — RMS energy analysis with Welford's algorithm
-- **Rate limiting** — Prevents command queue saturation (MAX 8 commands/tick)
+LibreRoaster boots the ESP32-C3, initializes LEDC, SPI, USB CDC, UART, watchdogs, and sensor/actuator drivers, builds a `RoasterControl` instance through an application builder, and then starts a fixed async task graph.
 
-## Project Philosophy
+At runtime the device does four things continuously:
 
-The project aims to enable anyone with intermediate technical skills to build their own affordable coffee roaster. Due to the cost-focused approach, certain components are chosen over more expensive alternatives - this is evident in the (future) hardware section where even recycled components are utilized.
+1. receive commands from Artisan over USB CDC or UART,
+2. parse those commands into internal control intents,
+3. read temperatures and update control state,
+4. emit TC4-style telemetry and internal diagnostics back to the active channel.
 
-The project is adaptable to both more expensive and more budget-friendly components. The design has also been kept simple, which means the roaster is dependent on ARTISAN+ and does not function in "standalone" mode without ARTISAN+ (a standalone version with a different controller could be considered if there is community interest).
+The important detail is that LibreRoaster is not just a thin protocol shim. It contains a full device-side control core: PID state, roast/fan profile interpolation, preheat behavior, charge detection, watchdog telemetry, and safety shutdown behavior all live inside the firmware.
 
-## Core Value
+## Runtime architecture
 
-Artisan can read temperatures and control heater/fan during a roast session via serial connection.
+### Task topology
 
-## Features
+The embedded build starts these long-lived tasks:
 
-| Feature | Description |
-|---------|-------------|
-| **TC4 Protocol Compatible** | Full Artisan TC4/Arduino protocol — READ, PID, OT1, OT2, IO3, CHAN, UNITS, FILT |
-| **Dual-Channel Artisan Communication** | Connect via USB CDC (native) or UART0 (GPIO20/21) at 115200 baud |
-| **Dual Thermocouple Monitoring** | MAX31856-based ET (Environment) and BT (Bean) temperature sensing |
-| **PWM Output Control** | SSR heater (1Hz) and fan (25kHz) via LEDC PWM (0-100%) |
-| **PID Auto-Control** | `PID,SV,150` command for Artisan-controlled PID with anti-windup, saturation detection |
-| **Roast Profiles** | `PROFILE` and `FANPROFILE` commands for time-temperature-fan curves with linear interpolation |
-| **Rate of Rise (ROR)** | Timestamp-based BT rate-of-change calculation (accurate at any sample rate) |
-| **Auto-Preheat** | `PREHEAT <temp>` command — heats and holds until START |
-| **Bean Charge Detection** | Automatic detection of bean drop via sharp BT decline → `#CHARGE` event |
-| **Hardware Watchdog** | ESP32-C3 RTC WDT — independent CPU reset if control loop hangs >2s |
-| **Ring-Buffer Roast Logger** | Last 256 samples in RAM, retrievable via `#DUMP` |
-| **First-Crack Detection** | Acoustic energy analysis (Welford's algorithm), reports `#CRACK` events |
-| **Fahrenheit Support** | `UNITS;F` converts all temperature outputs to °F |
-| **Command Rate Limiting** | Prevents saturation — max 8 commands per control tick |
+- **USB reader task** — consumes raw USB CDC bytes
+- **UART reader task** — consumes raw UART bytes
+- **USB queue processor task** — parses USB-side commands into the shared command channel
+- **UART queue processor task** — parses UART-side commands into the shared command channel
+- **Control loop task** — drains commands, reads sensors, updates control, feeds watchdogs, emits telemetry
+- **Dual output task** — routes formatted output to the currently active transport
+- **Regression task** — handles explicit over-temperature regression runs on embedded targets
 
-### Async Architecture
+### Shared application model
 
-LibreRoaster uses the **Embassy** async framework for concurrent task execution:
+The system is wired through a singleton `ServiceContainer`. It owns:
 
-| Component | Description |
-|-----------|-------------|
-| **Embassy Executor** | Task scheduler for ESP32-C3 RISC-V |
-| **Async Sensors** | Non-blocking MAX31856 temperature reads using embassy-time timers |
-| **Async UART/USB** | Non-blocking serial communication via embassy traits |
-| **Async Mutex** | Thread-safe access to shared RoasterControl |
-| **Channel Communication** | Inter-task command passing via embassy-sync channels |
+- an async mutex-backed `RoasterControl` instance for task-safe access,
+- a sync mirror used by older critical-section paths,
+- the shared command/output channels,
+- the command multiplexer,
+- and the watchdog feeder.
 
-The async architecture enables:
-- Concurrent USB and UART command processing
-- Non-blocking sensor reads (no busy-wait loops)
-- Predictable timing with embassy-time delays
-- Safe concurrent access to shared state
+This is the central coordination point for the firmware. If you need to understand command flow or state ownership, start there.
 
-### Supported Artisan Commands
+### Control loop structure
 
-| Command | Description |
-|---------|-------------|
-| `READ` | Request telemetry — returns TC4 standard: `AMB,ET,BT,0.0,0.0` |
-| `PID;ON` | Enable PID auto-control (TC4 standard, semicolon) |
-| `PID;OFF` | Disable PID (TC4 standard, semicolon) |
-| `PID;SV;<temp>` | Set PID setpoint value (TC4 standard, semicolon) |
-| `PID;T;<kp>;<ki>;<kd>` | Tune PID constants (TC4 standard, semicolon) |
-| `PID;CHAN;<1-4>` | Set PID input channel (1=ET, 2=BT) |
-| `PID;CT;<ms>` | Set PID cycle time (≥10ms) |
-| `PID;LIMIT;<min>;<max>` | Set PID output limits |
-| `PID,ON` / `PID,OFF` / `PID,SV,<temp>` | Comma variants (legacy fallback — also accepted) |
-| `SETTARGET <temp>` | Set PID target temperature (50-300°C) |
-| `PROFILE;t1,T1;t2,T2;...` | Load roast temperature curve (max 16 setpoints) |
-| `FANPROFILE;t1,s1;t2,s2;...` | Load fan speed curve (max 16 setpoints) |
-| `PREHEAT <temp>` | Heat to target and hold (50-300°C) |
-| `START` | Begin roasting, enable continuous output and PID |
-| `STOP` | Emergency stop — heater OFF, fan 100% |
-| `OT1 <0-100>` | Set heater power percentage |
-| `OT2 <0-100>` | Set fan speed (decimal, auto-cuts heater if out of range) |
-| `IO3 <0-100>` | Set fan speed percentage |
-| `UP` / `DOWN` | Increase/decrease heater by 5% |
-| `STATUS` / `STAT` | Full telemetry: 19-field CSV (ET, BT, heater, fan, watchdog, PID state, latency, temp scale) |
-| `REG` | Over‑temperature regression test trigger |
-| `CHAN;<rate>` | Set channel mapping — e.g., `CHAN;1200` = TC1→ET, TC2→BT, ch3/4=off |
-| `UNITS;C` / `UNITS;F` | Set temperature scale — applies to READ, STATUS, and PID outputs |
-| `FILT;<value>` | Set filter value (handshake) |
-| `PIDGAIN <kp> <ki> <kd>` | Tune PID constants at runtime |
-| `#DUMP` | Retrieve buffered roast data from ring logger |
+The control loop runs on a 100 ms cadence and is internally instrumented in stages:
 
-Automation-focused readers should consult [internalDoc/INSTRUMENTATION_README.MD](internalDoc/INSTRUMENTATION_README.MD) immediately after this table for the STATUS/STAT column definitions, payload expectations, and the way REG logs SAFETY OT-REGRESSION so instrumentation crews can react safely.
+1. **command drain** with rate limiting,
+2. **sensor read**,
+3. **control update**,
+4. **LEDC write / actuation**,
+5. **watchdog feed**,
+6. **telemetry emission**.
 
-## Quick Start
+The loop also records command latency, guard timeout state, watchdog health, and PID internals so automation can inspect not only roast values but also runtime health.
 
-### 1. Flash the Firmware
+## Serial protocol surface
 
-See [FLASH_GUIDE.md](internalDoc/FLASH_GUIDE.md) for detailed flashing instructions.
+LibreRoaster implements a TC4-oriented serial interface rather than the full breadth of Artisan's device ecosystem.
 
-**Summary:**
-1. Connect ESP32-C3 via USB
-2. Use espflash GUI or CLI to flash `libreroaster.bin`
-3. Verify successful flash
+### Implemented command families
 
-### 2. Connect to Artisan
+- **Polling:** `READ`, `STATUS`, `STAT`
+- **Manual actuation:** `OT1`, `OT2`, `IO3`, `UP`, `DOWN`, `STOP`
+- **PID and roast control:** `START`, `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
+- **Profiles:** `PROFILE`, `FANPROFILE`, `PREHEAT`
+- **Handshake / setup:** `CHAN`, `UNITS`, `FILT`
+- **Diagnostics:** `REG`, `#DUMP`
 
-See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for detailed connection instructions.
+### Core response shapes
 
-**Summary:**
-1. Identify the USB port (ttyACM on Linux, /dev/cu.usbmodem-* on macOS, COM on Windows)
-2. Configure Artisan: port + 115200 baud + Arduino/RPi mode
-3. Verify connection with READ command
+- **`READ`** returns the TC4-style line `AMB,ET,BT,0.0,0.0` when PID is off
+- **`READ` with PID enabled** appends `heater,fan,SV`
+- **`STATUS` / `STAT`** returns a 19-field diagnostic line with temperature, actuator, watchdog, PID, latency, and temperature-scale state
 
-## Hardware Requirements
+If you need the exact field ordering and command grammar, use the deeper protocol reference in `internalDoc/PROTOCOL.md`.
 
-| Component | Description |
-|-----------|-------------|
-| ESP32-C3 | RISC-V development board |
-| 2x MAX31856 | Ther
-mocouple amplifier boards |
-| 2x Type-K Thermocouples | Bean Temp and Environment Temp |
-| SSR | Solid State Relay for heater control |
-| Fan | Variable speed fan (PWM controlled) |
+## Hardware model
 
-### HIL Validation and Golden Outputs
+LibreRoaster assumes a simple two-sensor / two-actuator hardware topology:
 
-HW-03 requires every manifest-driven HIL scenario to produce artifact-backed evidence. This HIL validation workflow is the authoritative path for capturing golden outputs, so follow `tests/hardware/HIL-PLAYBOOK.md` to:
+- **ET sensor chip select:** GPIO3
+- **BT sensor chip select:** GPIO4
+- **SPI clock / MOSI / MISO:** GPIO6 / GPIO7 / GPIO5
+- **Fan PWM:** GPIO9
+- **SSR control:** GPIO10
+- **Heat detection input:** GPIO1
+- **UART RX / TX:** GPIO20 / GPIO21
 
-- Select a scenario from `tests/hardware/scenario_manifest.json` and run `tests/hardware/validation_runner.py` using the `--manifest`, `--scenario`, and `--runs-dir` flags so telemetry and metadata land under `tests/hardware/runs/`.
-- Run `tests/hardware/analysis.py` with `--thresholds tests/hardware/thresholds.json` and `--template tests/hardware/report_template.md` to generate a report that embeds scenario metadata, golden artifact links, PASS/FAIL badges, and run metadata for auditors.
-- Bundle the CSV, metadata JSON, markdown report, and manifest entry into a tarball so auditors can verify the path from scenario manifest → telemetry → golden artifact.
+Two constraints matter operationally:
 
-Approved golden CSVs live in `tests/hardware/goldens/` and must include the `metadata.retention_days` value specified in the manifest so artifact retention matches HW-03 expectations.
+1. **GPIO9 is a strapping pin**, so the external fan stage must not force an invalid boot state.
+2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-## Pinout
+The complete electrical and timing notes live in `internalDoc/HARDWARE.md`.
 
-| GPIO | Function | Description | Note |
-|------|----------|-------------|------|
-| 3 | MAX31856 #1 CS | Environment Temperature (ET) | SPI bus shared |
-| 4 | MAX31856 #2 CS | Bean Temperature (BT) | SPI bus shared |
-| 6 | SPI SCLK | Serial Clock (FSPICLK) | Shared between MAX31856 chips |
-| 7 | SPI MOSI | Master Out Slave In (FSPID) | Shared |
-| 5 | SPI MISO | Master In Slave Out (GPIO Matrix) | Shared; GPIO2=FSPIQ conflicts with strapping |
-| 9 | Fan PWM | Fan speed control (25kHz) | Strapping pin — ensure external pull‑up (see internalDoc/HARDWARE.md) |
-| 10 | SSR PWM | Heater control (1Hz) | |
-| 1 | Heat Detection | SSR feedback input | Pull‑up enabled |
-| 20 | UART RX | Artisan communication (from Artisan) | Connects to CH341 TX |
-| 21 | UART TX | Artisan communication (to Artisan) | Connects to CH341 RX |
+## Known architectural constraints
 
-For detailed hardware wiring and strapping pin information, see [HARDWARE.md](internalDoc/HARDWARE.md).
+These are not marketing notes. They are the design boundaries readers should understand before modifying the system.
 
-## Artisan Connection
+- **No persistence layer:** roast state, telemetry buffer, and profiles are RAM-only
+- **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests
+- **Command queue limits:** the main command channel is intentionally small and rate-limited
+- **Sensor timing pressure:** thermocouple reads are slow relative to the nominal PID sample cadence, so stale-data protection matters
+- **Artisan-first workflow:** the firmware does not provide a standalone UI or local roast orchestration layer
 
-LibreRoaster supports two connection methods to Artisan:
+## Build and verification model
 
-| Method | Description |
-|--------|-------------|
-| **USB CDC** | Native ESP32-C3 USB (recommended) — no adapter needed |
-| **UART0** | GPIO20/21 at 115200 baud — requires USB-to-UART adapter |
-
-**Detailed guide:** See [ARTISAN_CONNECTION.md](internalDoc/ARTISAN_CONNECTION.md) for complete connection instructions including wiring diagrams, port identification, and troubleshooting.
-
-**Key settings:**
-- Baud rate: 115200
-- Mode: Arduino/RPi
-- Commands work immediately (handshake disabled)
-
-## Protocol
-
-### READ Response Format (TC4 Standard)
-
-5-value CSV: `AMB,ET,BT,CHAN3,CHAN4`
-
-| Field | Type | Unit | Description |
-|-------|------|------|-------------|
-| AMB | Decimal | °C/°F | Ambient/room temperature |
-| ET | Decimal | °C/°F | Environment (Exhaust) Temperature |
-| BT | Decimal | °C/°F | Bean Temperature |
-| CHAN3 | Fixed | — | `0.0` (unused channel) |
-| CHAN4 | Fixed | — | `0.0` (unused channel) |
-
-Example: `25.0,185.3,201.4,0.0,0.0`
-
-Heater and fan values are available via the `STATUS` command (19-field CSV with safety metrics, PID state, and temperature scale indicator).
-
-### Initialization
-
-Artisan sends handshake sequence (CHAN → UNITS → FILT). LibreRoaster responds with `#` acknowledgment for CHAN and `OK` for UNITS/FILT. TC4 `PID,ON` / `PID,SV,<temp>` commands are supported as Artisan-standard aliases.
-
-## License
-
-Apache 2.0
-
-## Project Structure
-
-```
-├── src/
-│   ├── main.rs              # Main application entry point
-│   ├── lib.rs               # Library interface
-│   ├── application/         # Application architecture
-│   │   ├── mod.rs          # Application module exports
-│   │   ├── app_builder.rs  # Service container and dependency injection
-│   │   ├── service_container.rs # Service management
-│   │   └── tasks.rs        # Application tasks
-│   ├── hardware/           # Hardware abstraction layer
-│   │   ├── mod.rs         # Hardware module exports
-│   │   ├── max31856.rs    # MAX31856 thermocouple driver
-│   │   ├── ssr.rs         # SSR control with LEDC PWM and heat detection
-│   │   ├── fan.rs         # Fan control with LEDC PWM
-│   │   ├── shared_spi.rs  # Shared SPI bus implementation
-│   │   └── uart.rs        # UART communication
-│   ├── control/            # Roaster control logic
-│   │   ├── mod.rs         # Control module exports
-│   │   ├── roaster_refactored.rs # State machine and command processing
-│   │   └── handlers.rs     # Control handlers
-│   ├── input/              # Input processing
-│   │   ├── mod.rs         # Input module exports
-│   │   └── parser.rs      # Artisan command parsing
-│   ├── output/             # Output and formatting
-│   │   ├── mod.rs         # Output module exports
-│   │   ├── artisan.rs     # Artisan protocol formatter
-│   │   └── uart.rs        # UART output
-│   ├── config/             # Configuration
-│   │   └── constants.rs    # Hardware constants and pin assignments
-│   └── error/              # Error handling
-│       └── app_error.rs    # Custom error types
-├── examples/
-│   └── artisan_test.rs     # Artisan protocol example
-├── .cargo/
-│   └── config.toml         # Cargo target configuration
-├── Cargo.toml               # Project dependencies
-├── build.rs                # Build script
-├── rust-toolchain.toml     # Rust toolchain specification
-└── README.md               # This file
-```
-
-## Development
-
-### Prerequisites
-
-Before building LibreRoaster, ensure you have:
-
-1. **Rust Toolchain** (v1.88):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   rustup update stable
-   ```
-
-2. **ESP32-C3 Target**:
-   ```bash
-   rustup target add riscv32imc-unknown-none-elf
-   ```
-
-3. **espflash Tool** (for flashing firmware):
-   ```bash
-   cargo install espflash
-   ```
-
-### Build Commands
+### Embedded build
 
 ```bash
-# Build in release mode
-cargo build --release
-
-# Build in debug mode
-cargo build
-
-# Clean build artifacts
-cargo clean
+cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
-**Note:** For detailed flashing, testing, and debugging instructions, see [DEVELOPMENT.md](internalDoc/DEVELOPMENT.md).
-
-### Quality Baseline and Regression Testing
-
-The project includes automated quality gates and regression checks:
+### Flash
 
 ```bash
-# Run the quality baseline (format, clippy, tests)
+cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded
+```
+
+### Host verification
+
+Integration-style host tests depend on the `test` feature because that enables the host-side Embassy time driver:
+
+```bash
+cargo test --target x86_64-unknown-linux-gnu --features test
+```
+
+Additional quality gates:
+
+```bash
 scripts/quality-baseline.sh
-
-# Run the full regression suite
 scripts/run-regression-checks.sh
 ```
 
-These scripts are the authoritative source for quality policy and regression validation. They are used in CI and should be run before submitting changes.
-#### Building for ESP32-C3
+The development guide in `internalDoc/DEVELOPMENT.md` explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
 
-LibreRoaster is built as an embedded binary for the ESP32-C3 RISC-V processor. The build requires specifying the target explicitly:
+## Technical documentation map
 
-```bash
-# Build for ESP32-C3 embedded target
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
-```
+The main technical documents are:
 
-**Output location:** `target/riscv32imc-unknown-none-elf/release/libreroaster.bin`
+- **`internalDoc/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
+- **`internalDoc/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
+- **`internalDoc/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
+- **`internalDoc/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
+- **`internalDoc/DEVELOPMENT.md`** — build, flash, test, and quality workflow
+- **`internalDoc/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics
+- **`internalDoc/BUGS.md`** — current technical risk report and likely defect inventory
+- **`internalDoc/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
 
-**Audit:** The `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` command is documented in [.planning/phases/95-fix-critical-blockers/95-VERIFICATION.md](.planning/phases/95-fix-critical-blockers/95-VERIFICATION.md), which proves the embedded ELF (`target/riscv32imc-unknown-none-elf/release/libreroaster`) and `.bin` (`target/riscv32imc-unknown-none-elf/release/libreroaster.bin`) artifacts were produced as part of BUILD-01. Rerun the same command to reproduce those binaries and review the audit log for timestamps and artifact sizes.
+## Safety warning
 
-> **Note:** The `--target riscv32imc-unknown-none-elf` flag is required because LibreRoaster is an embedded application (no stdlib), not a host application.
+LibreRoaster is firmware for high-temperature, mains-adjacent hardware.
 
-#### Build and Flash Workflow
+- Do not treat a passing build or test suite as proof of electrical safety.
+- Do not run the roaster unattended.
+- Do not modify the power stage without appropriate electrical competence.
+- Treat watchdog, thermal cutoff, and heat-detection logic as last-resort mitigations, not as substitutes for safe hardware design.
 
-Complete end-to-end workflow to build and flash firmware to ESP32-C3:
+Use this project at your own risk.
 
-```bash
-# 1. Build firmware with embedded features
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+## License
 
-# 2. Verify binary was produced (optional but recommended)
-ls -lh target/riscv32imc-unknown-none-elf/release/libreroaster.bin
-
-# 3. Flash to ESP32-C3 (auto-detects port)
-cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded
-
-# 4. Flash to a specific port
-cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded --port /dev/ttyACM0
-
-# 5. Flash and monitor serial output (CTRL+C to exit monitor)
-cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded --port /dev/ttyACM0 --monitor
-
-# 6. Monitor only (after flashing)
-cargo espflash monitor --port /dev/ttyACM0
-```
-
-> **Note:** The `--target riscv32imc-unknown-none-elf --features embedded` flags are required
-> for all flash commands because LibreRoaster targets the ESP32-C3 RISC-V embedded processor.
-> The USB CDC port is typically `/dev/ttyACM0` (Linux) or `/dev/cu.usbmodem-*` (macOS).
-
-**Workflow steps:**
-1. **Build** - Compile the firmware with `--features embedded` to enable the binary target
-2. **Verify** - Confirm the `.bin` file exists before attempting to flash
-3. **Flash** - Write the binary to ESP32-C3 using espflash
-4. **Monitor** - Optionally view serial output to verify successful boot
-
-For detailed flashing instructions and troubleshooting, see [DEVELOPMENT.md](internalDoc/DEVELOPMENT.md).
-
-### Test Commands
-
-LibreRoaster includes a comprehensive test suite. Tests can run on the host (x86_64) for development without requiring ESP32-C3 hardware.
-
-#### Basic Test Commands
-
-```bash
-# Run all host tests (requires --features test for embassy-time stubs)
-cargo test --target x86_64-unknown-linux-gnu --features test
-
-# Run only library unit tests (no features needed)
-cargo test --lib
-
-# Run specific test by name
-cargo test test_name --features test
-
-# Run with output (see print statements)
-cargo test -- --nocapture
-```
-**Quality and Regression:** For a complete quality and regression check, run the scripts described in [Quality Baseline and Regression Testing](#quality-baseline-and-regression-testing).
-
-
-#### Host Integration Tests
-
-These tests run on the host (x86_64) without embedded hardware. They validate concurrent behavior, command routing, and Artisan protocol compatibility.
-
-| Test | Command | Purpose |
-|------|---------|---------|
-| **Command Multiplexer Concurrency** | `cargo test --features test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency` | Validates concurrent USB+UART command routing without queue saturation |
-| **Concurrent Sensor Read** | `cargo test --features "test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu --test concurrent_sensor_test` | Proves async mutex handles concurrent sensor reads without race conditions |
-| **Mock UART Integration** | `cargo test --features test --target x86_64-unknown-linux-gnu --test mock_uart_integration` | Tests UART communication protocol with mock hardware |
-| **Artisan Integration** | `cargo test --features test --target x86_64-unknown-linux-gnu --test artisan_integration_test` | Validates Artisan command/response protocol compliance |
-
-> **Note:** Host tests do not require ESP32-C3 hardware. They run on your development machine using the `std` feature.
-> **The `--features test` flag is required** for host integration tests — it enables `host_time_driver` which provides embassy-time symbols (`_embassy_time_now`) on x86_64.
-
-### Concurrency Regression Test
-
-- Run the new host-side multiplexer stress test:
-  ```bash
-  cargo test --features test --target x86_64-unknown-linux-gnu --test command_multiplexer_concurrency
-  ```
-- The test spawns `queue_processor_task`/`usb_queue_processor_task`, fires concurrent USB+UART commands, and drives `ServiceContainer::roaster_async_sensor_read()` via a `ThreadPool` so the real queue processor is exercised.
-- Instrumentation lives in `libreroaster::application::queue_metrics` (`QueueProcessorMetrics`), and `queue_processor_metrics_snapshot()` returns:
-  - `queue_depth`: the most recent occupancy of the command queue.
-  - `max_depth`: the highest occupancy observed while the test ran.
-  - `backlog_events`: each time the queue depth hit or exceeded `QUEUE_DEPTH_BACKLOG_THRESHOLD` (currently 24, which is 3/4 of the queue) both producers contributed to the same metric.
-- Operators should verify the snapshot after a run: `max_depth` stays below 24 and `backlog_events == 0`. Any backlog event signals the queue saw saturation and is a prompt to revisit command burst pacing or queue handling.
-- To dive deeper, run the test with `-- --nocapture` and instrument `queue_processor_metrics_snapshot()` in your debugger or additional test helpers to inspect the per-run values.
-
-### Concurrent sensor read instrumentation (ASYNC-06)
-
-- Execute the host-side concurrent sensor read proof with async lock metrics enabled:
-  ```bash
-  cargo test --features "test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
-  ```
-- The harness boots `ServiceContainer`, populates both async and sync `RoasterControl` instances, then uses a `ThreadPool` to spawn ten `ServiceContainer::roaster_async_sensor_read()` futures and `join_all` the batch so every `Result<(), ContainerError>` is asserted.
-- Internally `ServiceContainer` instruments the embassy mutex with test-only helpers `async_lock_depth_max_for_tests()` and `reset_async_lock_metrics_for_tests()` so the test can confirm `max_async_lock_depth` never exceeds `1` (no parallel holders) and that the counters reset to zero before/after each run.
-- Passing runs prove ASYNC-06 for the milestone audit because the host harness proves the async mutex survives concurrent sensor reads without dropped locks or multiple holders, and the README's command plus telemetry proves we can rerun the coverage on demand.
-
-### Development Features
-
-LibreRoaster provides Cargo features to enable optional functionality:
-
-| Feature | Purpose | Command Example |
-|---------|---------|-----------------|
-| `std` | Enable standard library (for host tests) | `cargo test --features std ...` |
-| `test` | Enable test helpers **and host-time stubs** (required for `cargo test` on x86_64) | `cargo test --features test ...` |
-| `async-lock-depth-metrics` | Enable async mutex depth instrumentation for concurrency testing | `cargo test --features async-lock-depth-metrics ...` |
-| `embedded` | Enable embedded binary build | `cargo build --features embedded ...` |
-
-#### Using async-lock-depth-metrics
-
-The `async-lock-depth-metrics` feature instruments the Embassy async mutex to track lock depth during concurrent operations:
-
-- **What it does:** Instruments the embassy mutex to track maximum concurrent holders
-- **When to use:** Running `concurrent_sensor_test` to verify no race conditions
-- **How to interpret results:** `max_async_lock_depth` should never exceed `1` (indicating no parallel holders)
-
-```bash
-# Run concurrent sensor test with lock metrics
-cargo test --features async-lock-depth-metrics --target x86_64-unknown-linux-gnu --test concurrent_sensor_test
-```
-
-#### Combining Features
-
-Multiple features can be combined:
-
-```bash
-# Run host tests with async lock metrics
-cargo test --features "std,test,async-lock-depth-metrics" --target x86_64-unknown-linux-gnu
-```
-
-### Flash Commands
-
-```bash
-# List available ports
-cargo espflash list
-
-# Flash firmware
-cargo espflash flash --release
-
-# Flash and monitor
-cargo espflash flash --release --monitor
-
-# Monitor only
-cargo espflash monitor
-```
-
-## Debugging
-
-### Serial Monitor
-
-```bash
-cargo espflash monitor --speed 115200
-```
-
-### Common Issues
-
-1. **Flash Write Errors**: 
-   - Check USB connection
-   - Try different USB port
-   - Ensure ESP32-C3 is properly connected
-
-2. **Build Errors**:
-   - Update Rust toolchain: `rustup update stable`
-   - Clear build artifacts: `cargo clean`
-   - Check internet connection for dependency downloads
-
-## Safety Features
-
-LibreRoaster implements multiple safety mechanisms:
-
-| Feature | Threshold | Action |
-|---------|-----------|--------|
-| **Over-temperature** | 260°C | Emergency shutdown, cut heater, max fan |
-| **Sensor Timeout** | 1 second | Fault condition, disable heater |
-| **Heat Detection** | SSR feedback | Verify heater is actually turning on |
-| **Fault Conditions** | Any fault | Emergency shutdown, max fan for cooling |
-| **Hardware Watchdog** | 2 seconds | **RTC WDT resets ESP32-C3** (independent of CPU) |
-
-### Safety Guarantees
-
-- **Dual-Layer Watchdog**: Software counter (telemetry via STATUS) + hardware RTC WDT (CPU reset on hang)
-- **Automatic Emergency Shutdown**: If temperature exceeds 260°C or sensor times out, system automatically cuts power to heater and runs fan at 100%
-- **Heat Source Verification**: Monitors SSR feedback to verify heater element is drawing power
-- **Temperature Validity**: Sensor readings older than 1 second are marked invalid
-- **LEDC Guard**: Prevents PWM runaway with timeout detection
-- **Command Rate Limiting**: Prevents queue saturation (max 8/tick)
-- **Manual Emergency**: STOP command immediately cuts heater and sets fan to 100%
-
-## ⚠️ Safety Warning
-
-**This project involves serious safety risks.**
-
-LibreRoaster works with:
-
-- ⚡ **High voltages**
-- 🔥 **Very high temperatures**
-
-Improper handling can result in **severe injury, fire, or death**.
-
-### Please follow these precautions:
-
-- Only work on the hardware if you have **proper electrical knowledge**.
-- Always disconnect power before modifying or servicing the device.
-- Use appropriate **thermal insulation and heat-resistant materials**.
-- **Never leave the roaster unattended while operating.**
-- Keep a **fire extinguisher nearby at all times** when using the roaster.
-- Operate the roaster in a **well-ventilated and fire-safe area**.
-
-> ⚠️ You build and use this project **at your own risk**.  
-> The authors and contributors are **not responsible** for any damage, injury, or loss.
-
----
-
-## 📜 License
-
-This project is open source under APACHE-2 LICENCE.  
-See the `LICENSE` file for more information.
+Apache 2.0.

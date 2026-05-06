@@ -50,7 +50,15 @@ Thumbs.db
 # Logs
 *.log
 
-# Ignore internal documentation files
-internalDoc/
-internalDoc/*.md
+# Ignore internalDoc by default, but keep the maintained core
+# technical documentation and reports visible to git.
+internalDoc/*
+!internalDoc/
 !internalDoc/README.md
+!internalDoc/ARCHITECTURE.md
+!internalDoc/ARTISAN_COMPATIBILITY_REPORT.md
+!internalDoc/ARTISAN_CONNECTION.md
+!internalDoc/BUGS.md
+!internalDoc/DEVELOPMENT.md
+!internalDoc/HARDWARE.md
+!internalDoc/PROTOCOL.md
