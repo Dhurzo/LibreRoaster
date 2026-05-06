@@ -283,6 +283,21 @@ impl RoasterControl {
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
+        // Maximum roast time safety backstop
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            if let Some(start) = self.profile_start_time {
+                let elapsed_secs = current_time.duration_since(start).as_secs() as u32;
+                if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
+                    warn!(
+                        "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
+                        elapsed_secs, crate::config::constants::MAX_ROAST_TIME_SECS
+                    );
+                    self.emergency_shutdown("Maximum roast time exceeded")?;
+                    return Ok(0.0);
+                }
+            }
+        }
+
         // Charge detection: detect bean drop via sharp BT decline
         if self.state == RoasterState::Heating && !self.charge_detected {
             let bt = self.status.bean_temp;
@@ -476,6 +491,7 @@ impl RoasterControl {
                         info!("Artisan+ roast started with profile ({} setpoints)",
                             self.active_profile.as_ref().map_or(0, |p| p.setpoints.len()));
                     } else {
+                        self.profile_start_time = Some(embassy_time::Instant::now());
                         self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
                         info!(
                             "Artisan+ roast started with default target {:.1}°C",
@@ -619,6 +635,15 @@ impl RoasterControl {
                 info!("PID gains updated: Kp={}, Ki={}, Kd={}", kp, ki, kd);
             }
             crate::config::ArtisanCommand::SetTargetTemp(target) => {
+                if !crate::config::constants::is_valid_target_temp(target) {
+                    warn!(
+                        "SetTargetTemp rejected: {:.1}°C outside valid range ({:.0}–{:.0}°C)",
+                        target, crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
+                    );
+                    return Err(RoasterError::InvalidState {
+                        source: Some("target_temp_out_of_range"),
+                    });
+                }
                 self.status.target_temp = target;
                 self.enable_pid_control(target)?;
                 info!("Target temperature set to {:.1}°C", target);
@@ -626,6 +651,18 @@ impl RoasterControl {
             crate::config::ArtisanCommand::SetProfile => {
                 let taken = crate::input::parser::take_profile();
                 if let Some(profile) = taken {
+                    for sp in &profile.setpoints {
+                        if !crate::config::constants::is_valid_target_temp(sp.temperature) {
+                            warn!(
+                                "Profile rejected: setpoint {:.1}°C at {}s outside valid range ({:.0}–{:.0}°C)",
+                                sp.temperature, sp.time_secs,
+                                crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
+                            );
+                            return Err(RoasterError::InvalidState {
+                                source: Some("profile_temp_out_of_range"),
+                            });
+                        }
+                    }
                     let count = profile.setpoints.len();
                     self.active_profile = Some(profile);
                     info!("Profile loaded: {} setpoints", count);

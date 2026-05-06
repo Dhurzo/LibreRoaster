@@ -13,6 +13,10 @@ use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 /// LSB to bit 0 before multiplying by the LSB weight.
 pub const MAX31856_LSB: f32 = 0.0078125;
 
+/// Maximum consecutive sensor read fallbacks before reporting error.
+/// At 100ms control loop cadence, 5 fallbacks = 500ms of stale data.
+const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
+
 pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     if (raw_temp & 0x800000) != 0 {
         // Sign bit (bit 23, which is bit 18 of the 19-bit value) set → negative.
@@ -138,6 +142,8 @@ pub struct SensorConversionHub {
     #[cfg(target_arch = "riscv32")]
     env_sensor: Max31856<EtSpi>,
     last_sample: Option<SensorSample>,
+    bean_consecutive_fallbacks: u8,
+    env_consecutive_fallbacks: u8,
 }
 
 impl SensorConversionHub {
@@ -147,12 +153,18 @@ impl SensorConversionHub {
             bean_sensor,
             env_sensor,
             last_sample: None,
+            bean_consecutive_fallbacks: 0,
+            env_consecutive_fallbacks: 0,
         }
     }
 
     #[cfg(not(target_arch = "riscv32"))]
     pub fn new() -> Self {
-        Self { last_sample: None }
+        Self {
+            last_sample: None,
+            bean_consecutive_fallbacks: 0,
+            env_consecutive_fallbacks: 0,
+        }
     }
 
     pub fn last_sample(&self) -> Option<SensorSample> {
@@ -279,13 +291,17 @@ impl SensorConversionHub {
         let mut sample = previous.unwrap_or_else(|| SensorSample::with_timestamp(timestamp));
         sample.timestamp = timestamp;
 
+        let mut bean_fb = self.bean_consecutive_fallbacks;
         let (bean_temp, bean_fault) =
-            self.resolve_channel(SensorChannel::Bean, bean_result, previous)?;
+            Self::resolve_channel(SensorChannel::Bean, bean_result, previous, &mut bean_fb)?;
+        self.bean_consecutive_fallbacks = bean_fb;
         sample.bean_temp = bean_temp;
         sample.bean_fault = bean_fault;
 
+        let mut env_fb = self.env_consecutive_fallbacks;
         let (env_temp, env_fault) =
-            self.resolve_channel(SensorChannel::Env, env_result, previous)?;
+            Self::resolve_channel(SensorChannel::Env, env_result, previous, &mut env_fb)?;
+        self.env_consecutive_fallbacks = env_fb;
         sample.env_temp = env_temp;
         sample.env_fault = env_fault;
 
@@ -295,14 +311,23 @@ impl SensorConversionHub {
 
     #[allow(dead_code)]
     fn resolve_channel(
-        &self,
         channel: SensorChannel,
         result: SensorChannelResult,
         previous: Option<SensorSample>,
+        consecutive_fallbacks: &mut u8,
     ) -> Result<(f32, SensorFault), RoasterError> {
         match result {
-            Ok(tuple) => Ok(tuple),
+            Ok(tuple) => {
+                *consecutive_fallbacks = 0;
+                Ok(tuple)
+            }
             Err(err) => {
+                *consecutive_fallbacks = consecutive_fallbacks.saturating_add(1);
+                if *consecutive_fallbacks >= MAX_CONSECUTIVE_SENSOR_FALLBACKS {
+                    return Err(RoasterError::HardwareError {
+                        source: Some("consecutive_sensor_fallbacks_exceeded"),
+                    });
+                }
                 let fallback_temp = match (channel, previous) {
                     (_, Some(prev)) => match channel {
                         SensorChannel::Bean => prev.bean_temp,

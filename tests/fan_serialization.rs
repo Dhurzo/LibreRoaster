@@ -48,6 +48,11 @@ impl Fan for StubFanWithTracking {
         Ok(())
     }
 
+    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+        self.speed = percentage;
+        Ok(())
+    }
+
     fn get_speed(&self) -> f32 {
         self.speed
     }

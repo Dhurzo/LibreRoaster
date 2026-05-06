@@ -51,6 +51,8 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
+/// Number of retry attempts to turn off the heater during emergency shutdown.
+pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
 pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 1000;
 
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
@@ -106,7 +108,22 @@ pub const MAX_PROFILE_SETPOINTS: usize = 16;
 pub const MAX_COMMANDS_PER_TICK: usize = 8;
 pub const CHARGE_DROP_THRESHOLD_C: f32 = 20.0;
 pub const CHARGE_DETECTION_WINDOW_S: u32 = 3;
+
+/// Maximum allowed roast duration in seconds (30 minutes).
+/// If exceeded during an active roast, emergency shutdown is triggered.
+/// This is a safety backstop — Artisan normally controls roast duration via STOP.
+pub const MAX_ROAST_TIME_SECS: u32 = 1800;
+
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
+
+/// Returns true if the given temperature is a valid control target.
+/// Uses MIN_TEMP..=MAX_TEMP as the operational range.
+/// Note: This does NOT clamp to MAX_SAFE_TEMP — the safety layer
+/// (OVERTEMP_THRESHOLD) handles emergency cutoff above 260°C.
+/// Artisan users may intentionally target above 250°C for dark roasts.
+pub fn is_valid_target_temp(temp: f32) -> bool {
+    temp.is_finite() && (MIN_TEMP..=MAX_TEMP).contains(&temp)
+}
 
 /// A single setpoint in a roast profile: at time_secs → target temperature °C.
 #[derive(Debug, Clone, Copy)]

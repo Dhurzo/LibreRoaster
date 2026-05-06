@@ -93,11 +93,20 @@ impl ActuatorController {
         status.ssr_output = 0.0;
         status.ssr_cycle_guard_busy_until_ms = 0;
 
-        if let Err(e) = self.heater.set_power(0.0) {
-            log::error!("EMERGENCY: Heater FAILED to shut off: {:?}", e);
-            // Fallback: try direct LEDC write
-            // If the hardware has a direct GPIO for SSR, we'd drive it low here
-            // For now, at minimum log the error
+        let mut heater_off_ok = false;
+        for attempt in 0..crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES {
+            if self.heater.set_power(0.0).is_ok() {
+                heater_off_ok = true;
+                break;
+            }
+            log::warn!("EMERGENCY: Heater off attempt {} failed", attempt + 1);
+        }
+        if !heater_off_ok {
+            log::error!(
+                "EMERGENCY: Heater FAILED to shut off after {} retries",
+                crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES
+            );
+            status.ssr_hardware_status = crate::config::constants::SsrHardwareStatus::Error;
         }
         self.capture_ssr_monitor_metrics(status);
         if let Err(e) = self.fan.emergency_set_speed(100.0) {
