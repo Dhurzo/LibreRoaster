@@ -85,7 +85,7 @@ LibreRoaster implements a TC4-oriented serial interface rather than the full bre
 - **`READ` with PID enabled** appends `heater,fan,SV`
 - **`STATUS` / `STAT`** returns a 19-field diagnostic line with temperature, actuator, watchdog, PID, latency, and temperature-scale state
 
-If you need the exact field ordering and command grammar, use the deeper protocol reference in `internalDoc/PROTOCOL.md`.
+If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`.
 
 ## Hardware model
 
@@ -104,7 +104,7 @@ Two constraints matter operationally:
 1. **GPIO9 is a strapping pin**, so the external fan stage must not force an invalid boot state.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-The complete electrical and timing notes live in `internalDoc/HARDWARE.md`.
+The complete electrical and timing notes live in `docs/HARDWARE.md`.
 
 ## Known architectural constraints
 
@@ -145,20 +145,20 @@ scripts/quality-baseline.sh
 scripts/run-regression-checks.sh
 ```
 
-The development guide in `internalDoc/DEVELOPMENT.md` explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
+The development guide in `docs/DEVELOPMENT.md` explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
 
 ## Technical documentation map
 
 The main technical documents are:
 
-- **`internalDoc/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
-- **`internalDoc/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
-- **`internalDoc/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
-- **`internalDoc/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
-- **`internalDoc/DEVELOPMENT.md`** — build, flash, test, and quality workflow
-- **`internalDoc/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics
-- **`internalDoc/BUGS.md`** — current technical risk report and likely defect inventory
-- **`internalDoc/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
+- **`docs/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
+- **`docs/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
+- **`docs/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
+- **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
+- **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
+- **`docs/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics
+- **`docs/BUGS.md`** — current technical risk report and likely defect inventory
+- **`docs/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
 
 ## Safety warning
 

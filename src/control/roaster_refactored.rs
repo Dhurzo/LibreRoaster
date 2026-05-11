@@ -581,7 +581,7 @@ impl RoasterControl {
                 self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
                 // STATUS response is emitted by control_loop_task after command returns Ok(()).
-                // Sending it here would produce a duplicate (Bug #3 in internalDoc/BUGS.md).
+                // Sending it here would produce a duplicate (Bug #3 in docs/BUGS.md).
 
                 debug!(
                     "STATUS command - SSR status: {:?}",

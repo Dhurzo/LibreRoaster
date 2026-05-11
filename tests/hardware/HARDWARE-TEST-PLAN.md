@@ -290,4 +290,4 @@ After running hardware tests:
 2. For Tier 1: Check `tests/hardware/runs/<SCENARIO>/` for telemetry CSVs
 3. For Tier 2: Check the test runner output for per-test results
 4. If all tests pass, the hardware is validated and ready for roast sessions
-5. If tests fail, consult the troubleshooting section or check `internalDoc/HARDWARE.md`
+5. If tests fail, consult the troubleshooting section or check `docs/HARDWARE.md`

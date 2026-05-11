@@ -1,0 +1,161 @@
+# LibreRoaster Hardware Guide
+
+**Last updated:** 2026-05-02
+
+This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
+
+## 1. Hardware role split
+
+LibreRoaster assumes four major hardware responsibilities:
+
+- **compute and transport** on the ESP32-C3,
+- **temperature acquisition** through two MAX31856 thermocouple front ends,
+- **heater switching** through an SSR-controlled output,
+- **airflow control** through a PWM-driven fan stage.
+
+The firmware is opinionated about this topology. It is adaptable, but not dynamically auto-discovered.
+
+## 2. Pin map used by the firmware
+
+The constants and hardware init code define this effective mapping:
+
+| Signal | GPIO | Notes |
+|---|---:|---|
+| ET thermocouple chip select | 3 | shared SPI bus |
+| BT thermocouple chip select | 4 | shared SPI bus |
+| SPI MISO | 5 | routed through GPIO matrix to avoid strap conflict |
+| SPI SCLK | 6 | FSPI clock |
+| SPI MOSI | 7 | FSPI data out |
+| Fan PWM | 9 | strapping pin; external circuit must not break boot |
+| SSR control PWM | 10 | heater output path |
+| Heat detection input | 1 | pull-up enabled |
+| UART RX | 20 | serial ingress from host adapter |
+| UART TX | 21 | serial egress to host adapter |
+
+## 3. Why the SPI pins look unusual
+
+ESP32-C3 nominal FSPI MISO maps to GPIO2, but GPIO2 is a strapping pin. LibreRoaster avoids that boot-risk path and instead routes MISO through GPIO5 via the GPIO matrix.
+
+That design choice is not cosmetic. It is a boot-reliability measure.
+
+## 4. Thermocouple subsystem
+
+LibreRoaster expects two MAX31856 devices on the same SPI controller with separate chip selects.
+
+### Functional mapping
+
+- **BT**: bean temperature channel
+- **ET**: environment/exhaust temperature channel
+
+Both devices are wrapped through a shared SPI device abstraction and then lifted into a sensor conversion hub above the raw drivers.
+
+### Design consequence
+
+The control core reasons about converted temperatures, not raw MAX31856 frames. That keeps the protocol and PID layers hardware-agnostic once the sensor layer has done its job.
+
+## 5. Actuator subsystem
+
+### Heater path
+
+The heater is driven through an SSR-backed LEDC channel. A separate heat-detection input provides a sanity signal about whether the heating path appears electrically active.
+
+This means LibreRoaster does not blindly trust “PWM command sent” as proof of “heat applied.”
+
+### Fan path
+
+The fan is driven through a second LEDC channel. The firmware expresses fan values in the protocol as percentages and then scales them into the hardware driver’s PWM domain.
+
+Because GPIO9 is a strapping pin, the external fan stage must be designed so it does not assert a dangerous boot level during reset.
+
+## 6. PWM and timer topology
+
+The hardware init code configures two low-speed LEDC timers:
+
+- one timer for the fan at **25 kHz**,
+- one timer for the SSR path.
+
+### Important implementation drift
+
+There is a documented-vs-implemented mismatch in the current codebase:
+
+- the constants module advertises **1 Hz** as the SSR PWM frequency,
+- the hardware init code currently configures the SSR timer at **310 Hz**.
+
+This is not just a documentation detail. It is a technical risk because the rest of the system, and human readers, may reason about heater cycling differently than the actual configured timer does.
+
+That mismatch is captured in `BUGS.md` and should be treated as active technical debt until reconciled.
+
+## 7. Timing values that matter physically
+
+The firmware currently relies on these operational assumptions:
+
+- control-loop cadence around **100 ms**,
+- thermocouple read duration around **160 ms**,
+- watchdog feed interval **100 ms**,
+- hardware watchdog timeout **2 s**,
+- LEDC guard timeout **40 ms**,
+- temperature validity timeout **1000 ms**.
+
+These values shape both roast behavior and failure behavior. If you change them, you are changing more than performance.
+
+## 8. Safety-relevant electrical constraints
+
+### Heat detection
+
+GPIO1 is used as a pulled-up input to detect heater-side activity. Its value feeds safety reasoning about whether the commanded heater state matches observed behavior.
+
+### Strapping pins
+
+The project documentation must always keep these points visible:
+
+- avoid GPIO2 for SPI MISO in this design,
+- treat GPIO9 carefully because it is a strap pin used for fan PWM,
+- avoid external circuitry that forces invalid boot levels.
+
+### High-voltage separation
+
+The firmware docs assume the heater power stage is externally isolated and properly designed. LibreRoaster does not make unsafe hardware safe by software alone.
+
+## 9. Expected supporting hardware
+
+Typical build assumptions are:
+
+- ESP32-C3 development board
+- two MAX31856 boards
+- two type-K thermocouples
+- SSR for heater switching
+- fan stage capable of PWM control
+- appropriate low-voltage supply for logic and fan stage
+- safe isolation and mains-rated heater wiring where applicable
+
+The exact part choices are flexible, but the signal model is not.
+
+## 10. Practical integration notes
+
+### USB-first development
+
+For most development work, native USB CDC is the simplest path because it avoids a separate UART adapter and matches the recommended Artisan setup.
+
+### UART as a secondary transport
+
+UART remains useful for bring-up, debug, and scenarios where USB CDC is unavailable or intentionally isolated.
+
+### Thermal sensor sanity
+
+Before trusting PID behavior, verify that BT and ET are wired to the intended channels. A swapped pair is electrically valid but behaviorally misleading.
+
+## 11. Hardware-facing risks to remember
+
+The hardware layer is stable enough to run, but these are the main points engineers should keep in mind:
+
+1. strap-pin sensitivity on GPIO9,
+2. SSR timer-frequency drift between constants and real init,
+3. slow sensor-read timing relative to nominal control cadence,
+4. the fact that the heat-detection line is safety-relevant, not optional fluff.
+
+## 12. Related documents
+
+- `ARCHITECTURE.md` for how hardware feeds the runtime model
+- `PROTOCOL.md` for how hardware state appears over serial
+- `ARTISAN_CONNECTION.md` for the host-side connection workflow
+- `BUGS.md` for current technical risks and hardware/protocol mismatches

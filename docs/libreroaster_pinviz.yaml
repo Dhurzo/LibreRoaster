@@ -1,0 +1,342 @@
+# LibreRoaster — Realistic Hardware Pinout v5.3
+# Board: ESP32-C3 (RISC-V, 160MHz, 400KB SRAM, 4MB Flash)
+# Sources: src/config/constants.rs, README.md, internalDoc/HARDWARE.md
+# Generated: 2026-04-28
+
+board: esp32c3_devkit_m1
+title: "LibreRoaster v5.3 — Complete Wiring Diagram (ESP32-C3)"
+
+devices:
+  # ═══════════════════════════════════════════════════════════
+  # POWER SUPPLY
+  # ═══════════════════════════════════════════════════════════
+  - id: power_12v
+    label: "12V DC Power Supply (5A+)"
+    position: { x: 20,  y: 450 }
+    pins:
+      - { name: "+12V", voltage: "12V", note: "Fan + MOSFET driver" }
+      - { name: "GND",  voltage: "GND" }
+
+  - id: power_ac
+    label: "AC Mains (110-240V)"
+    position: { x: 550, y: 20 }
+    pins:
+      - { name: "L (Live)",     voltage: "AC", note: "⚠️ Via SSR to heating element" }
+      - { name: "N (Neutral)",  voltage: "AC", note: "Direct to heating element" }
+      - { name: "PE (Ground)",  voltage: "GND", note: "Earth ground — mandatory" }
+
+  # ═══════════════════════════════════════════════════════════
+  # ESP32-C3 MICROCONTROLLER
+  # ═══════════════════════════════════════════════════════════
+  - id: esp32c3
+    label: "ESP32-C3 (RISC-V 160MHz)"
+    template: esp32c3
+    position: { x: 220, y: 250 }
+    pins:
+      # --- SPI Bus (shared between both MAX31856) ---
+      - { name: "GPIO7",  gpio: 7,  function: "SPI SCLK",  type: "output", note: "Clock — shared bus" }
+      - { name: "GPIO5",  gpio: 5,  function: "SPI MOSI",  type: "output", note: "Master Out — shared bus" }
+      - { name: "GPIO6",  gpio: 6,  function: "SPI MISO",  type: "input",  note: "Master In — shared bus" }
+
+      # --- MAX31856 Chip Selects (individual) ---
+      - { name: "GPIO4",  gpio: 4,  function: "BT CS",     type: "output", note: "Bean Temp MAX31856 select" }
+      - { name: "GPIO3",  gpio: 3,  function: "ET CS",     type: "output", note: "Env Temp MAX31856 select" }
+
+      # --- Heater Control ---
+      - { name: "GPIO10", gpio: 10, function: "SSR PWM",   type: "output", note: "1Hz LEDC PWM — zero-cross SSR (safe, no-strapping)" }
+      - { name: "GPIO1",  gpio: 1,  function: "HEAT DETECT", type: "input", note: "SSR feedback — pull-up enabled, verifies heater current" }
+
+      # --- Fan Control ---
+      - { name: "GPIO9",  gpio: 9,  function: "FAN PWM",   type: "output", note: "⚠️ STRAPPING PIN — 25kHz LEDC PWM, needs external pull-up" }
+
+      # --- UART (Artisan Communication) ---
+      - { name: "GPIO20", gpio: 20, function: "UART TX",   type: "output", note: "→ Artisan PC (via USB-UART adapter)" }
+      - { name: "GPIO21", gpio: 21, function: "UART RX",   type: "input",  note: "← Artisan PC (via USB-UART adapter)" }
+
+      # --- Optional: Acoustic First-Crack Detector ---
+      - { name: "GPIO2",  gpio: 2,  function: "MIC ADC",   type: "adc",    note: "⚠️ STRAPPING PIN — analog microphone (optional, Welford RMS algorithm)" }
+
+      # --- Optional: Status LED ---
+      - { name: "GPIO8",  gpio: 8,  function: "LED",        type: "output", note: "⚠️ STRAPPING PIN — error blink indicator (3 shorts → pause)" }
+
+      # --- Power ---
+      - { name: "3.3V",   voltage: "3.3V", note: "Regulated output — powers MAX31856 ×2, SSR logic" }
+      - { name: "5V",     voltage: "5V",   note: "USB power — available but not used in roaster circuit" }
+      - { name: "GND",    voltage: "GND",  note: "Common ground — connect ALL device grounds here" }
+      - { name: "USB-C",  voltage: "5V",   note: "USB CDC (native) + programming + power (500mA min)" }
+
+  # ═══════════════════════════════════════════════════════════
+  # MAX31856 #1 — Bean Temperature (BT)
+  # ═══════════════════════════════════════════════════════════
+  - id: max31856_bt
+    template: max31856_module
+    label: "MAX31856 #1 — Bean Temp (BT)"
+    position: { x: 20, y: 50 }
+    pins:
+      - { name: "CS",   gpio: 4,  note: "Chip Select → ESP32 GPIO4" }
+      - { name: "MOSI", gpio: 5,  note: "SPI MOSI → ESP32 GPIO5 (shared)" }
+      - { name: "MISO", gpio: 6,  note: "SPI MISO → ESP32 GPIO6 (shared)" }
+      - { name: "SCLK", gpio: 7,  note: "SPI Clock → ESP32 GPIO7 (shared)" }
+      - { name: "VCC",  voltage: "3.3V", note: "Powered from ESP32-C3 3.3V rail" }
+      - { name: "GND",  voltage: "GND",  note: "Common ground" }
+      - { name: "T+",   label: "Type-K + (yellow)", note: "Thermocouple positive — inside drum, touching beans" }
+      - { name: "T-",   label: "Type-K – (red)",    note: "Thermocouple negative" }
+
+  # ═══════════════════════════════════════════════════════════
+  # MAX31856 #2 — Environment Temperature (ET)
+  # ═══════════════════════════════════════════════════════════
+  - id: max31856_et
+    template: max31856_module
+    label: "MAX31856 #2 — Env Temp (ET)"
+    position: { x: 20, y: 180 }
+    pins:
+      - { name: "CS",   gpio: 3,  note: "Chip Select → ESP32 GPIO3" }
+      - { name: "MOSI", gpio: 5,  note: "SPI MOSI → ESP32 GPIO5 (shared)" }
+      - { name: "MISO", gpio: 6,  note: "SPI MISO → ESP32 GPIO6 (shared)" }
+      - { name: "SCLK", gpio: 7,  note: "SPI Clock → ESP32 GPIO7 (shared)" }
+      - { name: "VCC",  voltage: "3.3V", note: "Powered from ESP32-C3 3.3V rail" }
+      - { name: "GND",  voltage: "GND",  note: "Common ground" }
+      - { name: "T+",   label: "Type-K + (yellow)", note: "Thermocouple positive — exhaust airflow" }
+      - { name: "T-",   label: "Type-K – (red)",    note: "Thermocouple negative" }
+
+  # ═══════════════════════════════════════════════════════════
+  # SSR — Solid State Relay (Heater Control)
+  # ═══════════════════════════════════════════════════════════
+  - id: ssr
+    template: ssr_module
+    label: "SSR-25DA (25A Zero-Cross Solid State Relay)"
+    position: { x: 420, y: 50 }
+    pins:
+      - { name: "DC+",   gpio: 10, note: "Control input (+) → ESP32 GPIO10 (1Hz PWM)" }
+      - { name: "DC-",   voltage: "GND", note: "Control input (–) → ESP32 GND" }
+      - { name: "AC-IN",  note: "⚠️ AC Live from mains (via terminal block)" }
+      - { name: "AC-OUT", note: "⚠️ AC Live → Heating element" }
+      - { name: "COM",    note: "Feedback output → ESP32 GPIO1 (optional, SSR with feedback)" }
+
+  # ═══════════════════════════════════════════════════════════
+  # HEATING ELEMENT
+  # ═══════════════════════════════════════════════════════════
+  - id: heater
+    label: "Heating Element (AC, 800-2000W)"
+    position: { x: 620, y: 50 }
+    pins:
+      - { name: "L",  note: "AC Live from SSR output" }
+      - { name: "N",  note: "AC Neutral from mains (direct)" }
+      - { name: "PE", note: "Earth ground ⚠️ mandatory" }
+
+  # ═══════════════════════════════════════════════════════════
+  # FAN CONTROLLER — MOSFET Driver + DC Fan
+  # ═══════════════════════════════════════════════════════════
+  - id: mosfet_driver
+    label: "MOSFET Driver (IRF520 / IRLZ44N)"
+    position: { x: 420, y: 180 }
+    pins:
+      - { name: "GATE",  gpio: 9,  note: "PWM signal → ESP32 GPIO9 (25kHz), series 100Ω resistor recommended" }
+      - { name: "DRAIN", note: "Fan (–) — low-side switching" }
+      - { name: "SOURCE", voltage: "GND", note: "Common ground" }
+      - { name: "GATE-GND", note: "10kΩ pull-down resistor (prevents floating gate during boot)" }
+
+  - id: dc_fan
+    label: "DC Fan (12V/24V, PWM @ 25kHz)"
+    position: { x: 620, y: 180 }
+    pins:
+      - { name: "+",   voltage: "12V", note: "From 12V power supply (+)" }
+      - { name: "–",   note: "To MOSFET DRAIN (low-side switch)" }
+      - { name: "TACH", note: "Tachometer (optional, not used)" }
+
+  # ═══════════════════════════════════════════════════════════
+  # UART-TO-USB ADAPTER (Artisan Communication)
+  # ═══════════════════════════════════════════════════════════
+  - id: uart_adapter
+    label: "USB-UART Adapter (FTDI/CH340/CP2102)"
+    position: { x: 420, y: 330 }
+    pins:
+      - { name: "RX",  gpio: 20, note: "← ESP32 GPIO20 (UART TX)" }
+      - { name: "TX",  gpio: 21, note: "→ ESP32 GPIO21 (UART RX)" }
+      - { name: "VCC", voltage: "3.3V", note: "IMPORTANT: set to 3.3V logic level (NOT 5V!)" }
+      - { name: "GND", voltage: "GND", note: "Common ground — MUST be connected" }
+      - { name: "USB-A", note: "→ PC running Artisan" }
+
+  # ═══════════════════════════════════════════════════════════
+  # OPTIONAL: Acoustic Microphone (First-Crack Detector)
+  # ═══════════════════════════════════════════════════════════
+  - id: acoustic_mic
+    label: "Electret Microphone + Amplifier (MAX4466)"
+    position: { x: 20, y: 340 }
+    pins:
+      - { name: "OUT", gpio: 2, note: "Analog output → ESP32 GPIO2 (ADC1 channel 2)" }
+      - { name: "VCC", voltage: "3.3V", note: "Powered from ESP32 3.3V" }
+      - { name: "GND", voltage: "GND", note: "Common ground" }
+
+# ═══════════════════════════════════════════════════════════════
+# BUS CONNECTIONS (shared signal paths)
+# ═══════════════════════════════════════════════════════════════
+connections:
+  # === SPI Bus (shared by both MAX31856) ===
+  - from: { device: max31856_bt, pin: "SCLK" }
+    to:   { device: max31856_et, pin: "SCLK" }
+    label: "SPI SCLK (GPIO7)"
+    color: "#2196F3"
+
+  - from: { device: max31856_bt, pin: "MOSI" }
+    to:   { device: max31856_et, pin: "MOSI" }
+    label: "SPI MOSI (GPIO5)"
+    color: "#4CAF50"
+
+  - from: { device: max31856_bt, pin: "MISO" }
+    to:   { device: max31856_et, pin: "MISO" }
+    label: "SPI MISO (GPIO6)"
+    color: "#FF9800"
+
+  # === 3.3V Power Bus ===
+  - from: { device: esp32c3, pin: "3.3V" }
+    to:   { device: max31856_bt, pin: "VCC" }
+    label: "3.3V rail"
+    color: "#E53935"
+
+  - from: { device: esp32c3, pin: "3.3V" }
+    to:   { device: max31856_et, pin: "VCC" }
+    label: "3.3V rail"
+    color: "#E53935"
+
+  - from: { device: esp32c3, pin: "3.3V" }
+    to:   { device: acoustic_mic, pin: "VCC" }
+    label: "3.3V rail (optional)"
+    color: "#E53935"
+
+  # === GND Bus (ALL devices share ground) ===
+  - from: { device: esp32c3, pin: "GND" }
+    to:   { device: max31856_bt, pin: "GND" }
+    label: "Common GND"
+    color: "#212121"
+
+  - from: { device: esp32c3, pin: "GND" }
+    to:   { device: max31856_et, pin: "GND" }
+    label: "Common GND"
+    color: "#212121"
+
+  - from: { device: esp32c3, pin: "GND" }
+    to:   { device: ssr, pin: "DC-" }
+    label: "SSR control GND"
+    color: "#212121"
+
+  - from: { device: esp32c3, pin: "GND" }
+    to:   { device: mosfet_driver, pin: "SOURCE" }
+    label: "MOSFET source GND"
+    color: "#212121"
+
+  - from: { device: esp32c3, pin: "GND" }
+    to:   { device: uart_adapter, pin: "GND" }
+    label: "UART GND — MANDATORY"
+    color: "#212121"
+
+  # === 12V Power Distribution ===
+  - from: { device: power_12v, pin: "+12V" }
+    to:   { device: dc_fan, pin: "+" }
+    label: "12V fan power"
+    color: "#FF5722"
+
+  - from: { device: power_12v, pin: "GND" }
+    to:   { device: esp32c3, pin: "GND" }
+    label: "Power supply GND → common ground"
+    color: "#212121"
+
+  # === AC Mains → SSR → Heater ===
+  - from: { device: power_ac, pin: "L (Live)" }
+    to:   { device: ssr, pin: "AC-IN" }
+    label: "⚠️ AC Live (via terminal block)"
+    color: "#D32F2F"
+
+  - from: { device: ssr, pin: "AC-OUT" }
+    to:   { device: heater, pin: "L" }
+    label: "⚠️ Switched AC Live → Heater"
+    color: "#D32F2F"
+
+  - from: { device: power_ac, pin: "N (Neutral)" }
+    to:   { device: heater, pin: "N" }
+    label: "AC Neutral (direct)"
+    color: "#1565C0"
+
+  - from: { device: power_ac, pin: "PE (Ground)" }
+    to:   { device: heater, pin: "PE" }
+    label: "Earth ground ⚠️ MANDATORY"
+    color: "#4CAF50"
+
+  # === MOSFET → Fan ===
+  - from: { device: mosfet_driver, pin: "DRAIN" }
+    to:   { device: dc_fan, pin: "–" }
+    label: "Low-side fan switching"
+    color: "#7B1FA2"
+
+# ═══════════════════════════════════════════════════════════════
+# ANNOTATIONS & WARNINGS
+# ═══════════════════════════════════════════════════════════════
+annotations:
+  - text: "⚠️ STRAPPING PIN — GPIO9 is sampled at boot. Ensure fan MOSFET gate has 10kΩ pull-down to prevent floating HIGH during reset."
+    pins: [9]
+    severity: warning
+
+  - text: "⚠️ STRAPPING PIN — GPIO2 is sampled at boot. Only use for analog microphone (high-impedance input, no DC bias issues)."
+    pins: [2]
+    severity: warning
+
+  - text: "⚠️ STRAPPING PIN — GPIO8 is sampled at boot. Safe: used as output LED (active low)."
+    pins: [8]
+    severity: info
+
+  - text: "✅ SAFE — GPIO10 has no strapping function. Ideal for SSR PWM output."
+    pins: [10]
+    severity: info
+
+  - text: "SPI bus is shared: same MOSI/MISO/SCLK for both MAX31856. Only CS pins differ (GPIO3=ET, GPIO4=BT). Always read sensors sequentially."
+    pins: [3, 4, 5, 6, 7]
+    severity: info
+
+  - text: "SSR uses 1Hz PWM (zero-cross). Fan uses 25kHz (above audible range). Both use ESP32-C3 LEDC peripheral."
+    pins: [9, 10]
+    severity: info
+
+  - text: "USB CDC (native ESP32-C3 USB) is the PRIMARY Artisan connection. UART0 (GPIO20/21) is SECONDARY — both channels active simultaneously via Embassy async."
+    pins: [20, 21]
+    severity: info
+
+  - text: "UART adapter MUST be set to 3.3V logic level. 5V TTL will DAMAGE ESP32-C3 GPIOs."
+    pins: [20, 21]
+    severity: critical
+
+  - text: "Heating element ground (PE) MUST be connected to earth. Do NOT skip this — it's a safety requirement."
+    pins: []
+    severity: critical
+
+# ═══════════════════════════════════════════════════════════════
+# LEGEND
+# ═══════════════════════════════════════════════════════════════
+legend:
+  - { color: "#2196F3", label: "SPI bus (shared)" }
+  - { color: "#E53935", label: "3.3V power" }
+  - { color: "#FF5722", label: "12V power" }
+  - { color: "#212121", label: "Ground (GND)" }
+  - { color: "#D32F2F", label: "AC Live (⚠️ HIGH VOLTAGE)" }
+  - { color: "#1565C0", label: "AC Neutral" }
+  - { color: "#4CAF50", label: "Earth/Protective Ground" }
+  - { color: "#7B1FA2", label: "Fan control" }
+
+# ═══════════════════════════════════════════════════════════════
+# BILL OF MATERIALS (summary)
+# ═══════════════════════════════════════════════════════════════
+bom:
+  - { qty: 1, part: "ESP32-C3 Dev Board",              spec: "RISC-V 160MHz, USB-C",                            cost: "$3-8" }
+  - { qty: 2, part: "MAX31856 Module",                 spec: "Type-K thermocouple amplifier, SPI",                cost: "$10-12 each" }
+  - { qty: 2, part: "Type-K Thermocouple",             spec: "Probe type, 0-400°C range",                         cost: "$5-10 each" }
+  - { qty: 1, part: "SSR-25DA",                       spec: "25A, zero-cross, DC 3-32V control",                  cost: "$5-10" }
+  - { qty: 1, part: "MOSFET (IRF520 / IRLZ44N)",       spec: "N-channel, logic-level gate",                       cost: "$1-3" }
+  - { qty: 1, part: "DC Fan 12V",                     spec: "12V/24V, 80-120mm, PWM-compatible",                  cost: "$5-15" }
+  - { qty: 1, part: "Heating Element",                 spec: "AC, 800-2000W (depends on roaster size)",           cost: "$10-30" }
+  - { qty: 1, part: "12V Power Supply",               spec: "5A minimum (for fan + logic)",                      cost: "$10-20" }
+  - { qty: 1, part: "USB-UART Adapter",               spec: "FTDI/CH340/CP2102, 3.3V logic",                    cost: "$3-8" }
+  - { qty: 1, part: "Resistor Kit",                   spec: "100Ω, 10kΩ (gate, pull-down)",                     cost: "$2" }
+  - { qty: 1, part: "Terminal Blocks / Wiring",        spec: "AC-rated for heater connections",                   cost: "$5" }
+  - { qty: 1, part: "Electret Mic + MAX4466 (opt.)",   spec: "Analog, for first-crack detector",                  cost: "$3-5" }
+
+theme: light
+show_legend: true

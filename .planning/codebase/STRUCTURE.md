@@ -51,8 +51,7 @@
 │       └── app_error.rs          # Application errors
 ├── examples/                      # Example code
 │   └── artisan_test.rs
-├── docs/                         # Documentation
-├── internalDoc/                  # Internal documentation
+├── docs/                         # Documentation (architecture, protocol, hardware, bugs, etc.)
 ├── Cargo.toml                    # Project manifest
 ├── Cargo.lock                    # Dependency lock file
 ├── build.rs                      # Build script
