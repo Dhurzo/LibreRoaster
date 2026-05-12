@@ -285,8 +285,8 @@ If a future change affects one of these areas, it is architectural work, not jus
 For a cold technical reader, the best order is:
 
 1. this architecture guide,
-2. the protocol reference,
-3. the hardware guide,
-4. the development guide,
-5. the instrumentation guide,
-6. the bug/risk report.
+2. the protocol reference (`docs/PROTOCOL.md`),
+3. the hardware guide (`docs/HARDWARE.md`),
+4. the development guide (`docs/DEVELOPMENT.md`),
+5. the instrumentation guide (`docs/INSTRUMENTATION.md`),
+6. check source code for current bug/risk information (see `docs/CONTROL_BUG_AUDIT.md` if available).

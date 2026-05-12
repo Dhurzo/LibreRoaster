@@ -83,12 +83,12 @@ Read these in order depending on what you need to do:
 | Understand the full system | `docs/ARCHITECTURE.md` |
 | Add/modify a serial command | `docs/PROTOCOL.md` |
 | Change pin assignments or hardware init | `docs/HARDWARE.md` |
-| Fix a bug | `docs/BUGS.md` + `docs/CONTROL_BUG_AUDIT.md` |
+| Fix a bug | Check `docs/CONTROL_BUG_AUDIT.md` if available, otherwise investigate source code |
 | Build, flash, test | `docs/DEVELOPMENT.md` |
 | Understand telemetry/STATUS fields | `docs/INSTRUMENTATION.md` |
 | Configure Artisan integration | `docs/ARTISAN_CONNECTION.md` |
-| Check compatibility boundaries | `docs/ARTISAN_COMPATIBILITY_REPORT.md` |
-| Follow coding conventions | `docs/CONVENTIONS.md` |
+| Check compatibility boundaries | Review source code and test implementations |
+| Follow coding conventions | See `docs/CONVENTIONS.md` if available, otherwise follow Rust best practices |
 | Run quality gates | `.planning/quality/README.md` |
 
 **Source layout:**
@@ -96,11 +96,22 @@ Read these in order depending on what you need to do:
 - `src/lib.rs` — Library root (`no_std`)
 - `src/application/` — App orchestration, `AppBuilder`, `ServiceContainer`, Embassy tasks
 - `src/control/` — `RoasterControl`, command handlers, PID, safety
+- `src/control/controllers/` — Focused controllers (Temperature, Heater, Fan, Safety)
+- `src/control/handlers/` — Command handlers and artisans
 - `src/hardware/` — MAX31856, SSR, fan, UART, shared SPI
+- `src/hardware/sensors/` — Sensor implementations and conversions
+- `src/hardware/ssr/` — SSR control implementations
+- `src/hardware/uart/` — UART communication
+- `src/hardware/usb_cdc/` — USB CDC communication
 - `src/input/` — Artisan command parser
 - `src/output/` — `ArtisanFormatter`, output manager, scheduler
+- `src/output/formatters/` — Output formatting implementations
 - `src/config/` — Constants, `SystemStatus`, command enums
 - `src/error/` — `AppError` types
+- `src/logging/` — Logging infrastructure and telemetry
+- `src/memory/` — Memory management and ring buffers
+- `src/safety/` — Safety implementations and watchdogs
+- `src/common/` — Common utilities and shared functionality
 
 ## Quality Gates
 

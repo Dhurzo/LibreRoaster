@@ -52,3 +52,27 @@ Thumbs.db
 
 # Ignore all internal documentation - excluded from git tracking
 internalDoc/
+
+# Python build artifacts and cache
+lib/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Additional build artifacts
+*.so
+*.dylib
+*.a
+*.lib
+
+# Test coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
