@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_constant_sanity() {
-        // Verificar que las constantes sean razonables (checked at compile time)
+        // Verify that constants are reasonable (checked at compile time)
         const {
             assert!(ERROR_MSG_MAX_LEN > 0);
         }
@@ -176,7 +176,7 @@ mod tests {
             assert!(RESPONSE_BUFFER_SIZE <= 1024);
         }
 
-        // Verificar constantes de ROR
+        // Verify ROR constants
         const {
             assert!(ROR_WINDOW_SIZE >= ROR_MIN_SAMPLES);
         }
@@ -187,7 +187,7 @@ mod tests {
             assert!(ROR_MIN_SAMPLES >= 2);
         }
 
-        // Verificar que los tamaños sean potencias de 2 o múltiplos comúnmente usados
+        // Verify that sizes are powers of 2 or commonly used multiples
         const {
             assert!(ERROR_MSG_MAX_LEN.is_multiple_of(8) || ERROR_MSG_MAX_LEN == 128);
         }

@@ -1,5 +1,5 @@
 //! End-to-end tests - Full roast cycle simulation
-//! Valida ciclo completo de tueste con todas las fases
+//! Validates complete roast cycle with all phases
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -15,12 +15,12 @@ use embassy_time::Instant;
 fn test_full_roast_cycle() {
     let mut roaster = create_test_roaster();
     
-    // Fase 1: Iniciar tueste
+    // Phase 1: Start roast
     assert_eq!(roaster.get_state(), RoasterState::Idle);
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     assert_eq!(roaster.get_state(), RoasterState::Heating);
     
-    // Fase 2: Calentamiento (usar curva de heating)
+    // Phase 2: Heating (use heating curve)
     let heating = HeatingCurve::new();
     for i in 0..=10 {
         let temp = heating.get_temp_at_second(i);
@@ -28,7 +28,7 @@ fn test_full_roast_cycle() {
         roaster.update_control(Instant::now()).unwrap();
     }
     
-    // Fase 3: Tueste (usar curva de roasting)
+    // Phase 3: Roasting (use roasting curve)
     let roasting = RoastingCurve::new();
     for i in 0..5 {
         let temp = roasting.get_temp_at_second(i * 30);
@@ -36,7 +36,7 @@ fn test_full_roast_cycle() {
         roaster.update_control(Instant::now()).unwrap();
     }
     
-    // Fase 4: Stop y enfriamiento (usar curva de cooling)
+    // Phase 4: Stop and cooling (use cooling curve)
     roaster.process_artisan_command(ArtisanCommand::EmergencyStop).unwrap();
     assert_eq!(roaster.get_state(), RoasterState::EmergencyStop);
     
@@ -53,13 +53,13 @@ fn test_full_roast_cycle() {
         roaster.update_control(Instant::now()).unwrap();
     }
     
-    // Validar transición final
+    // Validate final transition
     assert!(
         matches!(roaster.get_state(), RoasterState::Cooling | RoasterState::Idle),
-        "Debe estar en Cooling o Idle al final"
+        "Must be in Cooling or Idle at the end"
     );
     
-    // Validar estado final
+    // Validate final state
     let status = roaster.get_status();
     assert_eq!(status.ssr_output, 0.0, "SSR debe estar apagado al final");
 }
@@ -108,7 +108,7 @@ fn test_start_enables_pid() {
 fn test_stop_disables_pid() {
     let mut roaster = create_test_roaster();
     
-    // Iniciar y calentar
+    // Start and heat
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     let _ = roaster.update_temperatures(150.0, 140.0, Instant::now());
     roaster.update_control(Instant::now()).unwrap();
@@ -131,13 +131,13 @@ fn test_stop_disables_pid() {
 fn test_read_command_format() {
     let mut roaster = create_test_roaster();
     
-    // Actualizar temperaturas
+    // Update temperatures
     let _ = roaster.update_temperatures(200.0, 190.0, Instant::now());
     
-    // READ command (simulado - en realidad READ no es ArtisanCommand, esto es un test de interfaz)
+    // READ command (simulated - READ is not really ArtisanCommand, this is an interface test)
     let status = roaster.get_status();
     
-    // Validar que los campos tienen valores razonables
+    // Validate fields have reasonable values
     assert!(status.bean_temp > 0.0, "BT debe ser positivo");
     assert!(status.env_temp > 0.0, "ET debe ser positivo");
     assert!(status.ssr_output >= 0.0 && status.ssr_output <= 100.0, "SSR debe estar en rango");
@@ -149,9 +149,9 @@ fn test_read_command_format() {
 fn test_temperature_validation() {
     let mut roaster = create_test_roaster();
     
-    // Intentar actualizar con temperatura inválida
+    // Attempt to update with invalid temperature
     let result = roaster.update_temperatures(400.0, 380.0, Instant::now());
     
-    // Debe retornar error por temperatura fuera de rango
-    assert!(result.is_err(), "Temperatura fuera de rango debe causar error");
+    // Should return error for out-of-range temperature
+    assert!(result.is_err(), "Out-of-range temperature must cause error");
 }

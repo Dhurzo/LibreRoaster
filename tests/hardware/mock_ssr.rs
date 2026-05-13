@@ -1,5 +1,5 @@
 //! Mock hardware tests - SSR with realistic PWM simulation
-//! Simula comportamiento completo de SSR con heat detection y callbacks
+//! Simulates complete SSR behavior with heat detection and callbacks
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -55,24 +55,24 @@ impl Heater for MockSsr {
         let clamped = duty.clamp(0.0, 100.0);
         let prev_duty = *self.current_duty.lock().unwrap();
 
-        // Actualizar duty
+        // Update duty
         *self.current_duty.lock().unwrap() = clamped;
 
-        // Registrar en historial con timestamp
+        // Record in history with timestamp
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u32;
         self.duty_history.lock().unwrap().push((timestamp, clamped));
 
-        // Contar transiciones
+        // Count transitions
         if clamped > 0.0 && prev_duty == 0.0 {
             *self.power_on_count.lock().unwrap() += 1;
         } else if clamped == 0.0 && prev_duty > 0.0 {
             *self.power_off_count.lock().unwrap() += 1;
         }
 
-        // Ejecutar callback si existe
+        // Execute callback if it exists
         if let Some(ref callback) = *self.on_power_change.lock().unwrap() {
             callback(clamped);
         }
@@ -103,12 +103,12 @@ impl Heater for MockSsr {
 fn test_mock_ssr_power_transitions() {
     let mut ssr = MockSsr::new();
 
-    // Encender
+    // Power on
     ssr.set_power(50.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 50.0);
     assert_eq!(*ssr.power_on_count.lock().unwrap(), 1);
 
-    // Apagar
+    // Power off
     ssr.set_power(0.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 0.0);
     assert_eq!(*ssr.power_off_count.lock().unwrap(), 1);
@@ -119,15 +119,15 @@ fn test_mock_ssr_power_transitions() {
 fn test_mock_ssr_clamping() {
     let mut ssr = MockSsr::new();
 
-    // Valor fuera de rango (arriba)
+    // Out of range (above)
     ssr.set_power(150.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 100.0);
 
-    // Valor fuera de rango (abajo)
+    // Out of range (below)
     ssr.set_power(-20.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 0.0);
 
-    // Valor en rango
+    // In range
     ssr.set_power(50.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 50.0);
 }
@@ -137,11 +137,11 @@ fn test_mock_ssr_clamping() {
 fn test_mock_ssr_heat_detection() {
     let mut ssr = MockSsr::new();
 
-    // Sin detección
+    // No detection
     ssr.set_heat_detected(false);
     assert_eq!(ssr.get_status(), SsrHardwareStatus::NotDetected);
 
-    // Con detección
+    // With detection
     ssr.set_heat_detected(true);
     assert_eq!(ssr.get_status(), SsrHardwareStatus::Available);
 }
@@ -190,7 +190,7 @@ fn test_mock_ssr_callback() {
 fn test_mock_ssr_no_callback_default() {
     let ssr = MockSsr::new();
 
-    // Debe funcionar sin callback (no panic)
+    // Should work without callback (no panic)
     ssr.set_power(50.0).unwrap();
     assert_eq!(*ssr.current_duty.lock().unwrap(), 50.0);
 }

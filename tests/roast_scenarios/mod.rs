@@ -1,5 +1,5 @@
 //! Roast scenario simulation tests
-//! Simula fases reales de tueste con curvas de temperatura realistas
+//! Simulates real roasting phases with realistic temperature curves
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -11,7 +11,7 @@ use libreroaster::config::RoasterState;
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::sensors::SensorConversionHub;
 
-/// Simula una curva de calentamiento realista (25°C → 150°C)
+/// Simulates a realistic heating curve (25°C → 150°C)
 pub struct HeatingCurve {
     temps: Vec<f32>,
     intervals_ms: u64,
@@ -19,12 +19,12 @@ pub struct HeatingCurve {
 
 impl HeatingCurve {
     pub fn new() -> Self {
-        // Curva exponencial típica de calentamiento
-        // Modela inercia térmica del sistema
+        // Typical exponential heating curve
+        // Models system thermal inertia
         let temps = vec![
-            25.0, 30.0, 38.0, 48.0, 60.0, // 0-4s: rampa rápida inicial
-            74.0, 88.0, 104.0, 120.0, 138.0, // 5-9s: rampa se desacelera
-            150.0, // 10s: target alcanzado
+            25.0, 30.0, 38.0, 48.0, 60.0, // 0-4s: initial fast ramp
+            74.0, 88.0, 104.0, 120.0, 138.0, // 5-9s: ramp decelerates
+            150.0, // 10s: target reached
         ];
         Self {
             temps,
@@ -41,7 +41,7 @@ impl HeatingCurve {
     }
 }
 
-/// Simula una curva de tueste realista (150°C → 220°C)
+/// Simulates a realistic roasting curve (150°C → 220°C)
 pub struct RoastingCurve {
     temps: Vec<f32>,
     intervals_ms: u64,
@@ -49,20 +49,20 @@ pub struct RoastingCurve {
 
 impl RoastingCurve {
     pub fn new() -> Self {
-        // Curva con estabilización progresiva
-        // Modela la dinámica de tueste real con fluctuaciones
+        // Curve with progressive stabilization
+        // Models real roast dynamics with fluctuations
         let temps = vec![
-            150.0, // 0s: inicio de tueste
-            165.0, // 30s: rampa rápida
-            180.0, // 60s: aproximación a target
-            195.0, // 90s: cerca de target
-            210.0, // 120s: muy cerca de target
-            218.0, // 150s: target casi alcanzado
-            220.0, // 180s: target alcanzado
-            219.0, // 210s: estabilización
-            221.0, // 240s: oscilación mínima
-            220.0, // 270s: estabilización
-            220.0, // 300s: estabilidad
+            150.0, // 0s: roast start
+            165.0, // 30s: fast ramp
+            180.0, // 60s: approaching target
+            195.0, // 90s: close to target
+            210.0, // 120s: very close to target
+            218.0, // 150s: target nearly reached
+            220.0, // 180s: target reached
+            219.0, // 210s: stabilization
+            221.0, // 240s: minimal oscillation
+            220.0, // 270s: stabilization
+            220.0, // 300s: stability
         ];
         Self {
             temps,
@@ -76,7 +76,7 @@ impl RoastingCurve {
     }
 }
 
-/// Simula una curva de enfriamiento realista (220°C → 50°C)
+/// Simulates a realistic cooling curve (220°C → 50°C)
 pub struct CoolingCurve {
     temps: Vec<f32>,
     intervals_ms: u64,
@@ -84,15 +84,15 @@ pub struct CoolingCurve {
 
 impl CoolingCurve {
     pub fn new() -> Self {
-        // Curva exponencial de enfriamiento
-        // Modela la velocidad de enfriamiento del sistema
+        // Exponential cooling curve
+        // Models system cooling rate
         let temps = vec![
-            220.0, // 0s: STOP inmediato
-            180.0, // 30s: enfriamiento rápido
-            140.0, // 60s: enfriamiento medio
-            100.0, // 90s: enfriamiento continúa
-            70.0,  // 120s: temperatura baja
-            50.0,  // 150s: temperatura ambiente
+            220.0, // 0s: immediate STOP
+            180.0, // 30s: fast cooling
+            140.0, // 60s: medium cooling
+            100.0, // 90s: cooling continues
+            70.0,  // 120s: low temperature
+            50.0,  // 150s: ambient temperature
         ];
         Self {
             temps,
@@ -106,7 +106,7 @@ impl CoolingCurve {
     }
 }
 
-/// Helper para crear RoasterControl con mocks configurados
+/// Helper to create RoasterControl with configured mocks
 pub fn create_test_roaster() -> RoasterControl {
     let heater = Box::new(StubHeater::new());
     let fan = Box::new(StubFan::new());

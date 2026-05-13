@@ -1,5 +1,5 @@
 //! Roasting phase simulation tests
-//! Valida fase de tueste (150°C → 220°C)
+//! Validates roasting phase (150°C → 220°C)
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -8,7 +8,7 @@ extern crate std;
 use crate::roast_scenarios::mod::*;
 use libreroaster::config::ArtisanCommand;
 
-/// Test 1: Mantenimiento de temperatura en setpoint
+/// Test 1: Temperature maintenance at setpoint
 #[test]
 fn test_roasting_phase_temp_stability() {
     let mut roaster = create_test_roaster();
@@ -19,7 +19,7 @@ fn test_roasting_phase_temp_stability() {
     
     let mut temps = vec![];
     
-    // Simular 10 lecturas de temperatura en fase estable (220°C target)
+    // Simulate 10 temperature readings in stable phase (220°C target)
     for i in 0..10 {
         let temp = curve.get_temp_at_second(240 + i * 3); // Near target
         temps.push(temp);
@@ -28,18 +28,18 @@ fn test_roasting_phase_temp_stability() {
         roaster.update_control(Instant::now()).unwrap();
     }
     
-    // Validar estabilidad (±3°C aceptable)
+    // Validate stability (±3°C acceptable)
     let mean: f32 = temps.iter().sum::<f32>() / temps.len() as f32;
     let variance: f32 = temps.iter()
         .map(|&t| (t - mean).powi(2))
         .sum::<f32>() / temps.len() as f32;
     let std_dev = variance.sqrt();
     
-    assert!((mean - 220.0).abs() < 5.0, "Temperatura debe estar cerca de target");
-    assert!(std_dev < 3.0, "Desviación estándar debe ser <3°C");
+    assert!((mean - 220.0).abs() < 5.0, "Temperature must be close to target");
+    assert!(std_dev < 3.0, "Standard deviation must be <3°C");
 }
 
-/// Test 2: Rate of Rise (ROR) cálculo correcto
+/// Test 2: Correct Rate of Rise (ROR) calculation
 #[test]
 fn test_roasting_phase_ror_calculation() {
     let mut roaster = create_test_roaster();
@@ -49,7 +49,7 @@ fn test_roasting_phase_ror_calculation() {
     
     let mut ror_values = vec![];
     
-    // Simular varias lecturas con cambios de temperatura
+    // Simulate multiple readings with temperature changes
     for i in 0..7 {
         let temp = curve.get_temp_at_second(i * 30);
         let _ = roaster.update_temperatures(temp, 190.0, Instant::now());
@@ -59,18 +59,18 @@ fn test_roasting_phase_ror_calculation() {
         ror_values.push(status.derivative_rate);
     }
     
-    // ROR debe ser positivo durante calentamiento (temperaturas subiendo)
+    // ROR should be positive during heating (temperatures rising)
     for &ror in &ror_values[0..4] {
-        assert!(ror >= 0.0, "ROR debe ser positivo durante rampa de calentamiento");
+        assert!(ror >= 0.0, "ROR must be positive during heating ramp");
     }
     
-    // ROR debe estar cerca de 0 cerca de target estable
+    // ROR should be near 0 at stable target
     for &ror in &ror_values[5..7] {
-        assert!(ror.abs() < 0.5, "ROR debe ser cercano a 0 en fase estable");
+        assert!(ror.abs() < 0.5, "ROR must be close to 0 in stable phase");
     }
 }
 
-/// Test 3: Comportamiento de fan durante tueste
+/// Test 3: Fan behavior during roasting
 #[test]
 fn test_roasting_phase_fan_control() {
     let mut roaster = create_test_roaster();
@@ -78,29 +78,29 @@ fn test_roasting_phase_fan_control() {
     
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Simular fase de tueste
+    // Simulate roasting phase
     for i in 0..7 {
         let temp = curve.get_temp_at_second(i * 30);
-        let et = temp + 20.0; // ET siempre > BT
+        let et = temp + 20.0; // ET always > BT
         
         let _ = roaster.update_temperatures(temp, et, Instant::now());
         roaster.update_control(Instant::now()).unwrap();
         
         let status = roaster.get_status();
         
-        // Fan debe aumentar para moderar temperatura (20-80%)
+        // Fan should increase to moderate temperature (20-80%)
         assert!(
             status.fan_output >= 20.0,
-            "Fan debe estar >=20% durante tueste"
+            "Fan must be >=20% during roasting"
         );
         assert!(
             status.fan_output <= 80.0,
-            "Fan debe ser <=80% durante tueste"
+            "Fan must be <=80% during roasting"
         );
     }
 }
 
-/// Test 4: Derivative disponible solo después de 2 muestras
+/// Test 4: Derivative available only after 2 samples
 #[test]
 fn test_roasting_phase_derivative_availability() {
     let mut roaster = create_test_roaster();
@@ -108,21 +108,21 @@ fn test_roasting_phase_derivative_availability() {
     
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Primera muestra
+    // First sample
     let temp1 = curve.get_temp_at_second(0);
     let _ = roaster.update_temperatures(temp1, 170.0, Instant::now());
     let status1 = roaster.get_status();
-    assert!(!status1.derivative_available, "Derivative NO disponible tras 1 muestra");
+    assert!(!status1.derivative_available, "Derivative NOT available after 1 sample");
     
-    // Segunda muestra
+    // Second sample
     let temp2 = curve.get_temp_at_second(1);
     let _ = roaster.update_temperatures(temp2, 175.0, Instant::now());
     let status2 = roaster.get_status();
-    assert!(status2.derivative_available, "Derivative disponible tras 2 muestras");
+    assert!(status2.derivative_available, "Derivative available after 2 samples");
     
-    // Tercera muestra
+    // Third sample
     let temp3 = curve.get_temp_at_second(2);
     let _ = roaster.update_temperatures(temp3, 180.0, Instant::now());
     let status3 = roaster.get_status();
-    assert!(status3.derivative_available, "Derivative debe seguir disponible");
+    assert!(status3.derivative_available, "Derivative must remain available");
 }

@@ -1,5 +1,5 @@
 //! Mock hardware tests - Fan with realistic PWM simulation
-//! Simula comportamiento completo de fan con historial de velocidad
+//! Simulates complete fan behavior with speed history
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -50,12 +50,12 @@ impl Fan for MockFan {
         let clamped = speed.clamp(0.0, 100.0);
         let current = *self.current_speed.lock().unwrap();
 
-        // Actualizar velocidad solo si cambió
+        // Update speed only if it changed
         if clamped != current {
             *self.current_speed.lock().unwrap() = clamped;
             *self.speed_change_count.lock().unwrap() += 1;
 
-            // Registrar en historial con timestamp
+            // Record in history with timestamp
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -65,7 +65,7 @@ impl Fan for MockFan {
                 .unwrap()
                 .push((timestamp, clamped));
 
-            // Ejecutar callback si existe
+            // Execute callback if it exists
             if let Some(ref callback) = *self.on_speed_change.lock().unwrap() {
                 callback(clamped);
             }
@@ -98,11 +98,11 @@ fn test_mock_fan_basic_speed() {
 fn test_mock_fan_clamping() {
     let mut fan = MockFan::new();
 
-    // Fuera de rango (arriba)
+    // Out of range (above)
     fan.set_speed(150.0).unwrap();
     assert_eq!(fan.get_speed(), 100.0);
 
-    // Fuera de rango (abajo)
+    // Out of range (below)
     fan.set_speed(-20.0).unwrap();
     assert_eq!(fan.get_speed(), 0.0);
 
@@ -121,7 +121,7 @@ fn test_mock_fan_change_count() {
     fan.set_speed(25.0).unwrap();
     assert_eq!(fan.get_change_count(), 1);
 
-    fan.set_speed(50.0).unwrap(); // Mismo valor, no debe contar
+    fan.set_speed(50.0).unwrap(); // Same value, should not count
     assert_eq!(fan.get_change_count(), 1);
 
     fan.set_speed(75.0).unwrap();
@@ -138,7 +138,7 @@ fn test_mock_fan_speed_history() {
     fan.set_speed(75.0).unwrap();
 
     let history = fan.get_speed_history();
-    assert_eq!(history.len(), 2); // Solo cambios, no duplicados
+    assert_eq!(history.len(), 2); // Only changes, no duplicates
     assert_eq!(history[0].1, 25.0);
     assert_eq!(history[1].1, 50.0);
 }
@@ -172,10 +172,10 @@ fn test_mock_fan_no_duplicate_changes() {
     let mut fan = MockFan::new();
 
     fan.set_speed(50.0).unwrap();
-    fan.set_speed(50.0).unwrap(); // Mismo valor
-    fan.set_speed(50.0).unwrap(); // Mismo valor
-
+    fan.set_speed(50.0).unwrap(); // Same value
+    fan.set_speed(50.0).unwrap(); // Same value
+    
     let history = fan.get_speed_history();
-    assert_eq!(history.len(), 1); // Solo el primero
+    assert_eq!(history.len(), 1); // Only the first
     assert_eq!(history[0].1, 50.0);
 }

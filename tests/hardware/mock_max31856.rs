@@ -1,5 +1,5 @@
 //! Mock hardware tests - MAX31856 with realistic simulation
-//! Simula comportamiento completo de MAX31856 con escenarios de fallo
+//! Simulates complete MAX31856 behavior with fault scenarios
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -46,7 +46,7 @@ impl SpiDevice for MockSpiBus {
     type Error = MockSpiError;
 
     fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
-        // Recordar transacción
+        // Record transaction
         let mut writes = vec![];
         let mut reads = vec![];
 
@@ -56,7 +56,7 @@ impl SpiDevice for MockSpiBus {
                     writes.extend_from_slice(buf);
                 }
                 Operation::Read(buf) => {
-                    // Generar datos de lectura según estado
+                    // Generate read data based on state
                     reads.extend_from_slice(buf);
                 }
                 Operation::Transfer(read, write) => {
@@ -64,15 +64,15 @@ impl SpiDevice for MockSpiBus {
                     reads.extend_from_slice(read);
                 }
                 Operation::TransferInPlace(buf) => {
-                    // Leer y escribir en mismo buffer
+                    // Read and write in same buffer
                     for b in buf {
                         reads.push(*b);
                     }
                 }
                 Operation::DelayNs(ns) => {
-                    // Simular delay
+                    // Simulate delay
                     let _cycles = *ns as u64 / 10;
-                    // Simular spin loop con sleep
+                    // Simulate spin loop with sleep
                     std::thread::sleep(std::time::Duration::from_micros(self.delay_us));
                 }
             }
@@ -106,7 +106,7 @@ impl MockMax31856 {
         Self {
             temp_series: temps,
             temp_index: RefCell::new(0),
-            simulated_latency_ms: 160, // Latencia real de conversión
+            simulated_latency_ms: 160, // Actual conversion latency
             fault_scenario: RefCell::new(FaultScenario::NoFault),
             spi_bus: MockSpiBus::new(),
         }
@@ -133,12 +133,12 @@ impl MockMax31856 {
 
 impl libreroaster::control::traits::Thermometer for MockMax31856 {
     fn read_temperature(&mut self) -> Result<f32, RoasterError> {
-        // Simular delay de 160ms de conversión MAX31856
+        // Simulate 160ms MAX31856 conversion delay
         std::thread::sleep(std::time::Duration::from_millis(self.simulated_latency_ms));
 
         let scenario = *self.fault_scenario.borrow();
 
-        // Generar fault byte según escenario
+        // Generate fault byte according to scenario
         let fault_byte = match scenario {
             FaultScenario::NoFault => 0x00,
             FaultScenario::OpenCircuit => 0x01, // Fault bit 0
@@ -151,7 +151,7 @@ impl libreroaster::control::traits::Thermometer for MockMax31856 {
             return Err(RoasterError::SensorFault);
         }
 
-        // Devolver temperatura de la serie
+        // Return temperature from the series
         let index = *self.temp_index.borrow();
         let temp = if index < self.temp_series.len() {
             self.temp_series[index]
@@ -221,12 +221,12 @@ fn test_mock_max31856_series_wraparound() {
     let temps = vec![100.0, 110.0, 120.0, 130.0];
     let mut mock = MockMax31856::with_temperature_series(temps);
 
-    // Leer más allá de la serie
+    // Read beyond the series
     for _ in 0..10 {
         let temp = mock.read_temperature().unwrap();
         assert!(
             temp >= 100.0 && temp <= 130.0,
-            "Temperatura debe estar en la serie"
+            "Temperature must be in the series"
         );
     }
 }

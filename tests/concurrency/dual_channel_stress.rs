@@ -1,5 +1,5 @@
 //! Concurrency tests - Dual channel stress testing
-//! Valida concurrencia USB + UART sin saturación de colas
+//! Validates USB + UART concurrency without queue saturation
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -21,7 +21,7 @@ pub fn simulate_concurrent_commands(roaster: &mut crate::control::RoasterControl
         })
         .collect();
     
-    // Esperar a que todos los threads completen
+    // Wait for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
@@ -32,11 +32,11 @@ pub fn simulate_concurrent_commands(roaster: &mut crate::control::RoasterControl
 fn test_concurrent_commands_no_crash() {
     let mut roaster = create_test_roaster();
     
-    // Simular 100 comandos concurrentes
+    // Simulate 100 concurrent commands
     simulate_concurrent_commands(&mut roaster, 100);
     
-    // Si llegamos aquí sin panic, el test pasa
-    assert!(true, "Concurrent commands no deben causar crash");
+    // If we reach here without panic, the test passes
+    assert!(true, "Concurrent commands must not cause crash");
 }
 
 /// Test 2: Command processing order is maintained
@@ -45,7 +45,7 @@ fn test_command_order_maintained() {
     let mut roaster = create_test_roaster();
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Enviar comandos en secuencia y verificar que se procesan
+    // Send commands in sequence and verify they are processed
     let commands = vec![
         ArtisanCommand::SetHeater(25),
         ArtisanCommand::SetHeater(50),
@@ -58,10 +58,10 @@ fn test_command_order_maintained() {
         let _ = roaster.process_artisan_command(cmd);
     }
     
-    // Validar que el estado refleja el último comando
+    // Validate state reflects the last command
     let status = roaster.get_status();
-    assert_eq!(status.ssr_output, 75.0, "Último comando SSR debe aplicarse");
-    assert_eq!(status.fan_output, 50.0, "Último comando Fan debe aplicarse");
+    assert_eq!(status.ssr_output, 75.0, "Last SSR command must be applied");
+    assert_eq!(status.fan_output, 50.0, "Last Fan command must be applied");
 }
 
 /// Test 3: Queue depth doesn't overflow under normal load
@@ -70,15 +70,15 @@ fn test_queue_depth_normal_load() {
     let mut roaster = create_test_roaster();
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Simular carga normal de comandos (10 comandos en 500ms)
+    // Simulate normal command load (10 commands in 500ms)
     for i in 0..10 {
         let cmd = ArtisanCommand::SetHeater((i * 10) as u8);
         let _ = roaster.process_artisan_command(cmd);
         thread::sleep(StdDuration::from_millis(50));
     }
     
-    // Si llegamos aquí, el sistema manejó la carga sin saturarse
-    assert!(true, "Sistema debe manejar carga normal sin problemas");
+    // If we reach here, the system handled the load without saturation
+    assert!(true, "System must handle normal load without problems");
 }
 
 /// Test 4: Burst handling
@@ -87,7 +87,7 @@ fn test_burst_handling() {
     let mut roaster = create_test_roaster();
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Simular ráfaga de 50 comandos
+    // Simulate burst of 50 commands
     let start = std::time::Instant::now();
     for i in 0..50 {
         let cmd = ArtisanCommand::SetHeater((i * 2) as u8);
@@ -95,40 +95,40 @@ fn test_burst_handling() {
     }
     let duration = start.elapsed();
     
-    // Ráfaga debe procesarse en tiempo razonable
+    // Burst must process in reasonable time
     assert!(
         duration.as_millis() < 100,
-        "Ráfaga de comandos debe procesarse en <100ms"
+        "Command burst must be processed in <100ms"
     );
 }
 
 /// Test 5: Backlog detection (simulated)
 #[test]
 fn test_backlog_detection() {
-    // Este test simula detección de backlog
-    // En firmware real, QueueProcessorMetrics registra:
-    // - queue_depth: ocupación actual
-    // - max_depth: máxima observada
-    // - backlog_events: veces que depth >= 24 (3/4 de queue capacity)
+    // This test simulates backlog detection
+    // In real firmware, QueueProcessorMetrics records:
+    // - queue_depth: current occupancy
+    // - max_depth: maximum observed
+    // - backlog_events: times depth >= 24 (3/4 of queue capacity)
     
-    // Para host tests, esto es un análisis teórico
+    // For host tests, this is a theoretical analysis
     let queue_capacity = 32;
     let backlog_threshold = 24;
     
     // Simular queue depth observado
-    let queue_depth_observed = 20; // 62.5% de capacidad
+    let queue_depth_observed = 20; // 62.5% of capacity
     
-    // Validar que no hubo backlog events
+    // Validate no backlog events occurred
     assert!(
         queue_depth_observed < backlog_threshold,
-        "Queue depth debe mantenerse abajo del threshold de backlog"
+        "Queue depth must remain below backlog threshold"
     );
     
     // Simular backlog event
     let queue_depth_backlog = 25; // > threshold
     assert!(
         queue_depth_backlog >= backlog_threshold,
-        "Backlog event debe detectarse cuando depth >= threshold"
+        "Backlog event must be detected when depth >= threshold"
     );
 }
 
@@ -139,7 +139,7 @@ fn test_thread_safety_concurrent_operations() {
     
     let roaster = Arc::new(Mutex::new(create_test_roaster()));
     
-    // Múltiples threads accediendo al roaster
+    // Multiple threads accessing the roaster
     let handles: Vec<_> = (0..10)
         .map(|_| {
             let roaster_clone = Arc::clone(&roaster);
@@ -155,6 +155,6 @@ fn test_thread_safety_concurrent_operations() {
         handle.join().unwrap();
     }
     
-    // Si llegamos aquí sin deadlock, el test pasa
-    assert!(true, "Operaciones concurrentes deben ser thread-safe");
+    // If we reach here without deadlock, the test passes
+    assert!(true, "Concurrent operations must be thread-safe");
 }

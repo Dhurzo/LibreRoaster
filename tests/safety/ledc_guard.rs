@@ -1,5 +1,5 @@
 //! Safety tests - LEDC guard mechanism
-//! Valida mecanismo de protección LEDC guard con timeout
+//! Validates LEDC guard protection mechanism with timeout
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -10,24 +10,24 @@ use libreroaster::hardware::ledc_guard::{total_timeouts, LedcGuardError};
 /// Test 1: Total timeouts function exists and returns counter
 #[test]
 fn test_ledc_guard_total_timeouts_function() {
-    // La función total_timeouts debe estar disponible
+    // The total_timeouts function must be available
     let timeouts = total_timeouts();
 
-    // Debe ser un valor u16
-    assert!(timeouts <= u16::MAX, "Timeout counter debe ser u16");
+    // Must be a u16 value
+    assert!(timeouts <= u16::MAX, "Timeout counter must be u16");
 }
 
 /// Test 2: Timeout counter is atomic and thread-safe
 #[test]
 fn test_ledc_guard_timeout_counter_thread_safety() {
-    // Este test valida que la interfaz existe
-    // La atomicidad se valida al usar el contador desde múltiples threads
+    // This test validates the interface exists
+    // Atomicity is validated by using the counter from multiple threads
 
     let timeouts1 = total_timeouts();
     let timeouts2 = total_timeouts();
 
-    // Llamadas consecutivas deben retornar valores consistentes
-    assert!(timeouts2 >= timeouts1, "Counter debe ser no decreciente");
+    // Consecutive calls should return consistent values
+    assert!(timeouts2 >= timeouts1, "Counter must be non-decreasing");
 }
 
 /// Test 3: LEDC guard error has channel field
@@ -38,7 +38,7 @@ fn test_ledc_guard_error_channel_field() {
     assert_eq!(
         error.channel(),
         "SSR",
-        "Error channel debe retornar nombre del canal"
+        "Error channel must return channel name"
     );
 }
 
@@ -53,7 +53,7 @@ fn test_ledc_guard_multiple_errors() {
     assert_ne!(
         error_ssr.channel(),
         error_fan.channel(),
-        "Errores de diferentes canales deben ser diferentes"
+        "Errors from different channels must be different"
     );
 }
 
@@ -66,6 +66,6 @@ fn test_ledc_guard_error_copy_clone() {
     assert_eq!(
         error1.channel(),
         error2.channel(),
-        "Copied error debe ser igual al original"
+        "Copied error must be equal to the original"
     );
 }

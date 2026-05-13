@@ -1,5 +1,5 @@
 //! Timing tests - Control loop timing validation
-//! Valida que el ciclo de control cumple con timing de 100ms
+//! Validates control loop meets 100ms timing requirement
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 
@@ -13,27 +13,27 @@ use std::time::Duration as StdDuration;
 /// Test 1: Control loop timing requirements analysis
 #[test]
 fn test_control_loop_timing_requirements() {
-    // Este test valida que el diseño permite cumplir con 100ms
+    // This test validates the design can meet 100ms requirement
     
     // SensorRead: 160ms async (non-blocking)
     // ControlUpdate: ~10ms sync
     // LedcWrite: ~15ms (con guard)
     // WatchdogFeed: ~2ms sync
     // TelemetryEmit: ~5ms sync
-    // Total sync: ~32ms en worst case
+    // Total sync: ~32ms in worst case
     
-    // El ciclo de 100ms NO es suficiente para completar todas las etapas
-    // porque SensorRead es async y NO bloquea el executor
-    // Mientras se espera 160ms, otras tasks pueden ejecutarse
+    // The 100ms cycle is NOT sufficient to complete all stages
+    // because SensorRead is async and does NOT block the executor
+    // While waiting 160ms, other tasks can execute
     
-    // La única etapa que debe completar en <100ms es:
+    // The only stages that must complete in <100ms are:
     // - ControlUpdate (sync)
     // - WatchdogFeed (sync)
     // - TelemetryEmit (sync)
     // Total sync: ~17ms << 100ms ✓
     
-    // Este es un test teórico de análisis, no ejecución real
-    assert!(true, "Análisis teórico: el diseño permite cumplir con 100ms");
+    // This is a theoretical analysis test, not real execution
+    assert!(true, "Theoretical analysis: the design allows meeting 100ms requirement");
 }
 
 /// Test 2: Command processing latency measurement
@@ -42,14 +42,14 @@ fn test_command_processing_latency() {
     let mut roaster = create_test_roaster();
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Medir latencia de procesamiento de comandos
+    // Measure command processing latency
     let start = std::time::Instant::now();
     
     roaster.process_artisan_command(ArtisanCommand::SetHeater(75)).unwrap();
     
     let duration = start.elapsed();
     
-    // El procesamiento debe ser rápido (<5ms en host, <1ms en ESP32-C3)
+    // Processing should be fast (<5ms on host, <1ms on ESP32-C3)
     assert!(
         duration.as_millis() < 10,
         "Command processing debe completar en <10ms"
@@ -61,17 +61,17 @@ fn test_command_processing_latency() {
 fn test_temperature_update_timing() {
     let mut roaster = create_test_roaster();
     
-    // Medir tiempo de actualización de temperatura
+    // Measure temperature update time
     let start = std::time::Instant::now();
     
     let _ = roaster.update_temperatures(200.0, 190.0, Instant::now());
     
     let duration = start.elapsed();
     
-    // La actualización debe ser muy rápida (<1ms)
+    // Update should be very fast (<1ms)
     assert!(
         duration.as_millis() < 5,
-        "Temperature update debe ser muy rápida"
+        "Temperature update must be very fast"
     );
 }
 
@@ -81,17 +81,17 @@ fn test_control_update_timing() {
     let mut roaster = create_test_roaster();
     roaster.process_artisan_command(ArtisanCommand::StartRoast).unwrap();
     
-    // Actualizar temperatura primero
+    // Update temperature first
     let _ = roaster.update_temperatures(200.0, 190.0, Instant::now());
     
-    // Medir tiempo de control update
+    // Measure control update time
     let start = std::time::Instant::now();
     
     roaster.update_control(Instant::now()).unwrap();
     
     let duration = start.elapsed();
     
-    // Control update debe ser rápido (<10ms)
+    // Control update should be fast (<10ms)
     assert!(
         duration.as_millis() < 20,
         "Control update debe completar en <20ms"
@@ -106,7 +106,7 @@ fn test_multiple_cycles_timing_consistency() {
     
     let mut durations = vec![];
     
-    // Ejecutar 10 ciclos y medir tiempos
+    // Run 10 cycles and measure times
     for i in 0..10 {
         let temp = 100.0 + i as f32;
         let _ = roaster.update_temperatures(temp, 90.0 + i as f32, Instant::now());
@@ -119,12 +119,12 @@ fn test_multiple_cycles_timing_consistency() {
         std::thread::sleep(StdDuration::from_millis(50));
     }
     
-    // Validar que los tiempos son consistentes (no hay outliers grandes)
+    // Validate times are consistent (no large outliers)
     let avg: f32 = durations.iter().sum::<f32>() / durations.len() as f32;
     for &d in &durations {
         assert!(
             (d as f32 - avg).abs() < avg * 0.5,
-            "Timing debe ser consistente (sin outliers >50% de promedio)"
+            "Timing must be consistent (no outliers >50% of average)"
         );
     }
 }
@@ -132,7 +132,7 @@ fn test_multiple_cycles_timing_consistency() {
 /// Test 6: Worst-case sync work estimation
 #[test]
 fn test_worst_case_sync_work() {
-    // Este test analiza el worst-case de trabajo sync en el ciclo
+    // This test analyzes worst-case sync work in the cycle
     
     // ControlUpdate: PID compute (~5μs) + set_percentage SSR (~50μs) + set_speed Fan (~10μs)
     //            = ~65μs
@@ -146,12 +146,12 @@ fn test_worst_case_sync_work() {
     let worst_case_sync_us = 65 + 50 + 5 + 15 = 135; // ~135μs
     let worst_case_sync_ms = worst_case_sync_us as f64 / 1000.0;
     
-    // 135μs = 0.135ms << 100ms (ciclo completo)
+    // 135μs = 0.135ms << 100ms (full cycle)
     assert!(worst_case_sync_ms < 10.0, "Worst-case sync debe ser <10ms");
     
-    // Esto deja margen amplio para variaciones de timing
+    // This leaves ample margin for timing variations
     let margin_ms = 100.0 - worst_case_sync_ms;
-    assert!(margin_ms > 90.0, "Margen de seguridad debe ser >90ms");
+    assert!(margin_ms > 90.0, "Safety margin must be >90ms");
 }
 
 /// Test 7: Async sensor read doesn't block executor
@@ -160,18 +160,18 @@ fn test_async_sensor_read_non_blocking() {
     let mut roaster = create_test_roaster();
     
     // En firmware real, read_sensors() usa Timer::after(160ms).await
-    // Esto es NON-BLOCKING y permite que otras tasks ejecuten
+    // This is NON-BLOCKING and allows other tasks to execute
     
-    // En host tests, la async behavior está stubbed
-    // Este test valida que la interfaz existe
+    // In host tests, async behavior is stubbed
+    // This test validates the interface exists
     
     let start = std::time::Instant::now();
     let _ = roaster.read_sensors(); // This is async but stubbed in host
     let duration = start.elapsed();
     
-    // En host, debe ser rápido. En ESP32-C3, sería async
+    // On host, should be fast. On ESP32-C3, would be async
     assert!(
         duration.as_millis() < 5,
-        "Read sensors debe completar rápidamente en host"
+        "Read sensors must complete quickly on host"
     );
 }
