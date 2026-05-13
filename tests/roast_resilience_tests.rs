@@ -33,14 +33,15 @@ fn charge_not_detected_roast_continues_normally() {
         Box::new(heater), Box::new(fan), hub,
     ).expect("init");
 
-    // Simulate START
-    rc.status_mut().artisan_control = true;
-    rc.enable_pid_control(200.0).expect("PID should enable");
-    rc.status_mut().state = RoasterState::Heating;
+    // Use proper API to start the roast
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START should work");
+    rc.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("SETTARGET should work");
 
     // Simulate a gentle BT decline (5°C over several samples — below threshold)
-    let current_time = embassy_time::Instant::now();
     for bt in [180.0f32, 179.0, 178.5, 178.0, 177.8, 177.5] {
+        let current_time = embassy_time::Instant::now();
         rc.update_temperatures(bt, bt + 50.0, current_time)
             .expect("update should not fail");
         let _ = rc.update_control(current_time);
@@ -61,13 +62,14 @@ fn bt_below_fifty_no_charge_check() {
         Box::new(heater), Box::new(fan), hub,
     ).expect("init");
 
-    rc.status_mut().artisan_control = true;
-    rc.enable_pid_control(200.0).expect("PID should enable");
-    rc.status_mut().state = RoasterState::Heating;
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START should work");
+    rc.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("SETTARGET should work");
 
-    let now = embassy_time::Instant::now();
     // BT below 50°C — charge detection is inactive
     for _ in 0..10 {
+        let now = embassy_time::Instant::now();
         rc.update_temperatures(35.0, 32.0, now)
             .expect("update should not fail");
         let _ = rc.update_control(now);

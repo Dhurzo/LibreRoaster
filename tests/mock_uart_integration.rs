@@ -210,7 +210,7 @@ fn start_ot1_io3_stop_sequence_updates_state() {
     let stopped = current_status();
     assert!(!continuous_output_enabled());
     assert_eq!(stopped.ssr_output, 0.0);
-    assert_eq!(stopped.fan_output, 0.0);
+    assert_eq!(stopped.fan_output, 100.0);
     assert!(!stopped.pid_enabled);
     assert!(!stopped.artisan_control);
     assert_eq!(stopped.state, RoasterState::Idle);

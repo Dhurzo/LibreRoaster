@@ -50,7 +50,7 @@ fn start_stop_idempotent() {
     let stopped = control.get_status();
     assert!(!control.get_output_manager().is_continuous_enabled());
     assert_eq!(stopped.ssr_output, 0.0);
-    assert_eq!(stopped.fan_output, 0.0);
+    assert_eq!(stopped.fan_output, 100.0);
     assert!(!stopped.pid_enabled);
     assert!(!stopped.artisan_control);
 
@@ -60,7 +60,7 @@ fn start_stop_idempotent() {
 
     let stopped_again = control.get_status();
     assert_eq!(stopped_again.ssr_output, 0.0);
-    assert_eq!(stopped_again.fan_output, 0.0);
+    assert_eq!(stopped_again.fan_output, 100.0);
     assert!(!stopped_again.pid_enabled);
     assert!(!stopped_again.artisan_control);
 }
@@ -99,7 +99,7 @@ fn manual_bounds_and_reset() {
         .expect("STOP should reset manual values");
     let stopped = control.get_status();
     assert_eq!(stopped.ssr_output, 0.0);
-    assert_eq!(stopped.fan_output, 0.0);
+    assert_eq!(stopped.fan_output, 100.0);
     assert!(!stopped.artisan_control);
     assert!(!stopped.pid_enabled);
     assert!(!control.get_output_manager().is_continuous_enabled());

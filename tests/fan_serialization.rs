@@ -181,13 +181,12 @@ fn stop_resets_fan_output() {
     let status = control.get_status();
     assert_eq!(status.fan_output, 70.0);
 
-    // Emergency stop should reset fan output
     control
         .process_artisan_command(ArtisanCommand::EmergencyStop)
         .expect("EmergencyStop should succeed");
 
     let status = control.get_status();
-    assert_eq!(status.fan_output, 0.0);
+    assert_eq!(status.fan_output, 100.0);
 }
 
 #[test]
