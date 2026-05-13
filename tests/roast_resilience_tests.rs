@@ -2,7 +2,7 @@
 /// Verifies firmware doesn't crash or break when hardware is missing,
 /// charge detection fails, or invalid commands are received.
 use libreroaster::config::*;
-use libreroaster::control::roaster_refactored::RoasterControl;
+use libreroaster::control::roaster_control::RoasterControl;
 use libreroaster::hardware::sensors::SensorConversionHub;
 use libreroaster::hardware::test_mocks::{MockFan, MockSsr};
 use libreroaster::input::parser::{parse_artisan_command, store_profile, take_profile};

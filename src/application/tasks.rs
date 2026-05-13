@@ -82,6 +82,59 @@ struct WatchdogSnapshot {
     guard_timeouts: u16,
 }
 
+fn report_stage_instrumentation(
+    stage_reporter: &StageReporter,
+    stage_name: StageName,
+    elapsed_ms: u64,
+    guard_timeout_happened: bool,
+    watchdog_state: WatchdogState,
+    output_channel: &Channel<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        String<TRACE_EVENT_MAX_LEN>,
+        { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
+    >,
+) {
+    let guard_state = if guard_timeout_happened {
+        GuardState::Timeout
+    } else {
+        GuardState::Ok
+    };
+    if let Some(report) =
+        stage_reporter.report_simple(stage_name, elapsed_ms, guard_state, watchdog_state)
+    {
+        let _ = output_channel.try_send(report);
+    }
+}
+
+fn report_stage_with_failure(
+    stage_reporter: &StageReporter,
+    stage_name: StageName,
+    elapsed_ms: u64,
+    guard_timeout_happened: bool,
+    watchdog_state: WatchdogState,
+    failure_marker: Option<&'static str>,
+    output_channel: &Channel<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        String<TRACE_EVENT_MAX_LEN>,
+        { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
+    >,
+) {
+    let guard_state = if guard_timeout_happened {
+        GuardState::Timeout
+    } else {
+        GuardState::Ok
+    };
+    if let Some(report) = stage_reporter.report(
+        stage_name,
+        elapsed_ms,
+        guard_state,
+        watchdog_state,
+        failure_marker,
+    ) {
+        let _ = output_channel.try_send(report);
+    }
+}
+
 #[task]
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");
@@ -139,7 +192,7 @@ pub async fn control_loop_task() {
             let output_channel = ServiceContainer::get_output_channel();
 
             let command_outcome = ServiceContainer::with_roaster_async(
-                |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
+                |roaster: &mut crate::control::roaster_control::RoasterControl| {
                     let start_time = Instant::now();
                     let result = roaster.process_artisan_command(traced_command.command);
                     let latency = start_time.elapsed().as_micros() as u32;
@@ -216,19 +269,14 @@ pub async fn control_loop_task() {
         let sensor_elapsed_ms = stage_tracker.elapsed().as_millis();
 
         // Report stage instrumentation (watchdog state not yet known, use previous tick's state)
-        let sensor_guard = if guard_timeout_happened {
-            GuardState::Timeout
-        } else {
-            GuardState::Ok
-        };
-        if let Some(report) = stage_reporter.report_simple(
+        report_stage_instrumentation(
+            &stage_reporter,
             StageName::SensorRead,
             sensor_elapsed_ms,
-            sensor_guard,
+            guard_timeout_happened,
             prev_watchdog_state,
-        ) {
-            let _ = output_channel.try_send(report);
-        }
+            &output_channel,
+        );
 
         if sensor_err.is_none() {
             debug!(
@@ -253,7 +301,7 @@ pub async fn control_loop_task() {
         // Do sync control update separately
         stage_tracker.set_stage(ControlLoopStage::ControlUpdate);
         let control_snapshot = match ServiceContainer::with_roaster_async(
-            |roaster: &mut crate::control::roaster_refactored::RoasterControl| match roaster
+            |roaster: &mut crate::control::roaster_control::RoasterControl| match roaster
                 .update_control(Instant::now())
             {
                 Ok(output) => Some(ControlUpdateSnapshot {
@@ -290,19 +338,14 @@ pub async fn control_loop_task() {
         let control_elapsed_ms = stage_tracker.elapsed().as_millis();
 
         // Report ControlUpdate stage instrumentation
-        let control_guard = if guard_timeout_happened {
-            GuardState::Timeout
-        } else {
-            GuardState::Ok
-        };
-        if let Some(report) = stage_reporter.report_simple(
+        report_stage_instrumentation(
+            &stage_reporter,
             StageName::ControlUpdate,
             control_elapsed_ms,
-            control_guard,
+            guard_timeout_happened,
             prev_watchdog_state,
-        ) {
-            let _ = output_channel.try_send(report);
-        }
+            &output_channel,
+        );
 
         if let Some(snapshot) = control_snapshot {
             if let Some(status) = control_status {
@@ -368,23 +411,18 @@ pub async fn control_loop_task() {
         }
 
         // Report LedcWrite stage instrumentation
-        let ledc_guard = if guard_timeout_happened {
-            GuardState::Timeout
-        } else {
-            GuardState::Ok
-        };
-        if let Some(report) = stage_reporter.report_simple(
+        report_stage_instrumentation(
+            &stage_reporter,
             StageName::LedcWrite,
             ledc_elapsed_ms,
-            ledc_guard,
+            guard_timeout_happened,
             prev_watchdog_state,
-        ) {
-            let _ = output_channel.try_send(report);
-        }
+            &output_channel,
+        );
 
         stage_tracker.set_stage(ControlLoopStage::WatchdogFeed);
         let watchdog_snapshot = match ServiceContainer::with_roaster_async(
-            |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
+            |roaster: &mut crate::control::roaster_control::RoasterControl| {
                 let status = roaster.status_mut();
                 let previous_watchdog_failure = status.watchdog_last_failure;
                 let mut report_watchdog_failure = |reason: &'static str| {
@@ -448,26 +486,21 @@ pub async fn control_loop_task() {
         let watchdog_elapsed_ms = stage_tracker.elapsed().as_millis();
 
         // Report WatchdogFeed stage instrumentation (now we know the watchdog state)
-        let wd_guard = if guard_timeout_happened {
-            GuardState::Timeout
-        } else {
-            GuardState::Ok
-        };
         let wd_state = if watchdog_snapshot.feed_ok {
             WatchdogState::Ok
         } else {
             WatchdogState::Fail
         };
         let failure_marker = watchdog_snapshot.last_failure;
-        if let Some(report) = stage_reporter.report(
+        report_stage_with_failure(
+            &stage_reporter,
             StageName::WatchdogFeed,
             watchdog_elapsed_ms,
-            wd_guard,
+            guard_timeout_happened,
             wd_state,
             failure_marker,
-        ) {
-            let _ = output_channel.try_send(report);
-        }
+            &output_channel,
+        );
 
         // Update previous watchdog state for next tick
         prev_watchdog_state = wd_state;
@@ -514,7 +547,7 @@ pub async fn control_loop_task() {
 
         stage_tracker.set_stage(ControlLoopStage::TelemetryEmit);
         if let Err(err) = ServiceContainer::with_roaster_async(
-            |roaster: &mut crate::control::roaster_refactored::RoasterControl| {
+            |roaster: &mut crate::control::roaster_control::RoasterControl| {
                 is_continuous_now = roaster.get_output_manager().is_continuous_enabled();
                 if is_continuous_now {
                     status_for_output = Some(roaster.get_status());
@@ -561,24 +594,19 @@ pub async fn control_loop_task() {
         let telemetry_elapsed_ms = stage_tracker.elapsed().as_millis();
 
         // Report TelemetryEmit stage instrumentation
-        let telemetry_guard = if guard_timeout_happened {
-            GuardState::Timeout
-        } else {
-            GuardState::Ok
-        };
         let telemetry_wd = if watchdog_snapshot.feed_ok {
             WatchdogState::Ok
         } else {
             WatchdogState::Fail
         };
-        if let Some(report) = stage_reporter.report_simple(
+        report_stage_instrumentation(
+            &stage_reporter,
             StageName::TelemetryEmit,
             telemetry_elapsed_ms,
-            telemetry_guard,
+            guard_timeout_happened,
             telemetry_wd,
-        ) {
-            let _ = output_channel.try_send(report);
-        }
+            &output_channel,
+        );
 
         if let Some(status) = status_for_output {
             debug!(

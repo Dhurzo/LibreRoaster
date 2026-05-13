@@ -3,12 +3,12 @@ pub mod controllers;
 pub mod handlers;
 pub mod pid;
 pub mod policies;
-pub mod roaster_refactored;
+pub mod roaster_control;
 pub mod ssr_scheduler;
 pub mod traits;
 pub use abstractions::{RoasterCommandHandler, RoasterError};
 
 pub use abstractions::*;
 pub use handlers::*;
-pub use roaster_refactored::*;
+pub use roaster_control::*;
 pub use ssr_scheduler::SsrCycleGuard;

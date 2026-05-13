@@ -495,277 +495,335 @@ impl RoasterControl {
             }
         }
 
-        use crate::config::constants::DEFAULT_TARGET_TEMP;
         let current_time = embassy_time::Instant::now();
 
         match command {
-            crate::config::ArtisanCommand::StartRoast => {
-                if self.is_streaming() {
-                    info!("Artisan+ START ignored - streaming already active");
-                    self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
-                } else {
-                    self.status.artisan_control = true;
-                    // Use loaded profile if available, otherwise fall back to default target
-                    if self.active_profile.is_some() {
-                        self.profile_start_time = Some(embassy_time::Instant::now());
-                        // Set initial target from profile
-                        let elapsed = 0u32;
-                        if let Some(target) = self
-                            .active_profile
-                            .as_ref()
-                            .and_then(|p| p.target_at(elapsed))
-                        {
-                            self.status.target_temp = target;
-                            self.enable_pid_control(target)?;
-                        }
-                        info!(
-                            "Artisan+ roast started with profile ({} setpoints)",
-                            self.active_profile
-                                .as_ref()
-                                .map_or(0, |p| p.setpoints.len())
-                        );
-                    } else {
-                        self.profile_start_time = Some(embassy_time::Instant::now());
-                        self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
-                        info!(
-                            "Artisan+ roast started with default target {:.1}°C",
-                            DEFAULT_TARGET_TEMP
-                        );
-                    }
-                    crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
-                    self.dispatch
-                        .get_output_manager_mut()
-                        .enable_continuous_output();
-                    self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
-                    self.state = crate::config::constants::RoasterState::Heating;
-                    self.status.state = self.state;
-                    self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+            crate::config::ArtisanCommand::StartRoast => self.handle_start_roast(),
+            crate::config::ArtisanCommand::SetHeater(value) => self.handle_set_heater(value, current_time),
+            crate::config::ArtisanCommand::SetFan(value) => self.handle_set_fan(value, current_time),
+            crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => self.handle_set_fan_speed(value, was_clamped, current_time),
+            crate::config::ArtisanCommand::Stop => self.handle_stop(),
+            crate::config::ArtisanCommand::EmergencyStop => self.handle_emergency_stop(),
+            crate::config::ArtisanCommand::IncreaseHeater => self.handle_increase_heater(current_time),
+            crate::config::ArtisanCommand::DecreaseHeater => self.handle_decrease_heater(current_time),
+            crate::config::ArtisanCommand::StatusReport => self.handle_status_report(),
+            crate::config::ArtisanCommand::ReadStatus => self.handle_read_status(),
+            crate::config::ArtisanCommand::Chan(rate) => self.handle_chan(rate),
+            crate::config::ArtisanCommand::RunRegression => self.handle_run_regression(),
+            crate::config::ArtisanCommand::Units(is_fahrenheit) => self.handle_units(is_fahrenheit, current_time),
+            crate::config::ArtisanCommand::Filt(val) => self.handle_filt(val),
+            crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => self.handle_set_pid_gain(kp, ki, kd),
+            crate::config::ArtisanCommand::SetTargetTemp(target) => self.handle_set_target_temp(target),
+            crate::config::ArtisanCommand::SetProfile => self.handle_set_profile(),
+            crate::config::ArtisanCommand::DumpLog => self.handle_dump_log(),
+            crate::config::ArtisanCommand::Preheat(target) => self.handle_preheat(target),
+            crate::config::ArtisanCommand::SetFanProfile => self.handle_set_fan_profile(),
+            crate::config::ArtisanCommand::SetPidChannel(ch) => self.handle_set_pid_channel(ch),
+            crate::config::ArtisanCommand::SetPidCycleTime(ms) => self.handle_set_pid_cycle_time(ms),
+            crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => self.handle_set_pid_output_limits(min, max),
+        }
+    }
+
+    // Artisan command handlers (extracted from process_artisan_command)
+
+    fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
+        use crate::config::constants::DEFAULT_TARGET_TEMP;
+        if self.is_streaming() {
+            info!("Artisan+ START ignored - streaming already active");
+            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+        } else {
+            self.status.artisan_control = true;
+            // Use loaded profile if available, otherwise fall back to default target
+            if self.active_profile.is_some() {
+                self.profile_start_time = Some(embassy_time::Instant::now());
+                // Set initial target from profile
+                let elapsed = 0u32;
+                if let Some(target) = self
+                    .active_profile
+                    .as_ref()
+                    .and_then(|p| p.target_at(elapsed))
+                {
+                    self.status.target_temp = target;
+                    self.enable_pid_control(target)?;
                 }
-            }
-
-            crate::config::ArtisanCommand::SetHeater(value) => {
-                self.forward_artisan_manual_command(
-                    crate::config::RoasterCommand::SetHeaterManual(value),
-                    current_time,
-                )?;
-                info!("Artisan+ heater command processed: {}%", value);
-            }
-
-            crate::config::ArtisanCommand::SetFan(value) => {
-                self.forward_artisan_manual_command(
-                    crate::config::RoasterCommand::SetFanManual(value),
-                    current_time,
-                )?;
-
-                info!("Artisan+ fan command processed: {}%", value);
-            }
-
-            crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => {
-                self.forward_artisan_manual_command(
-                    crate::config::RoasterCommand::SetFanManual(value),
-                    current_time,
-                )?;
-
-                if was_clamped {
-                    let _ = self.actuator.set_heater_power(0.0);
-                    self.actuator.capture_ssr_monitor_metrics(&mut self.status);
-                    // Bug #2: Send notification to Artisan via output channel
-                    self.send_ot2_clamped_notification(value);
-                    info!(
-                        "Artisan+ OT2 out of range - heater stopped, fan set to {}%",
-                        value
-                    );
-                } else {
-                    info!("Artisan+ OT2 fan command processed: {}%", value);
-                }
-            }
-
-            crate::config::ArtisanCommand::Stop => {
-                info!("Artisan+ STOP - stopping roast");
-                self.stop_streaming()?;
-                crate::logging::roast_logger::stop_roast();
-            }
-
-            crate::config::ArtisanCommand::EmergencyStop => {
-                self.safety.activate_emergency();
-                self.status.fault_condition = true;
-                self.stop_streaming()?;
-                crate::logging::roast_logger::stop_roast();
-                info!("Artisan+ stop requested - streaming disabled and outputs cleared");
-            }
-
-            crate::config::ArtisanCommand::IncreaseHeater => {
-                self.forward_artisan_manual_command(
-                    crate::config::RoasterCommand::IncreaseHeater,
-                    current_time,
-                )?;
-                info!("Artisan+ UP command processed");
-            }
-
-            crate::config::ArtisanCommand::DecreaseHeater => {
-                self.forward_artisan_manual_command(
-                    crate::config::RoasterCommand::DecreaseHeater,
-                    current_time,
-                )?;
-                info!("Artisan+ DOWN command processed");
-            }
-
-            crate::config::ArtisanCommand::StatusReport => {
-                self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
-
-                // STATUS response is emitted by control_loop_task after command returns Ok(()).
-                // Sending it here would produce a duplicate (Bug #3 in docs/BUGS.md).
-
-                debug!(
-                    "STATUS command - SSR status: {:?}",
-                    self.status.ssr_hardware_status
-                );
-            }
-
-            crate::config::ArtisanCommand::ReadStatus => {
-                self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
-
-                let response = crate::output::artisan::ArtisanFormatter::format_read_response_full(
-                    &self.status,
-                );
-
-                let parts: heapless::Vec<&str, 8> = response.split(',').collect();
-                if response.trim().is_empty() || parts.len() != 5 {
-                    error!(
-                        "Malformed READ response from ArtisanFormatter: expected 5 values, got {}",
-                        parts.len()
-                    );
-                }
-
-                debug!(
-                    "READ command - SSR status: {:?}, response generated",
-                    self.status.ssr_hardware_status
-                );
-            }
-
-            crate::config::ArtisanCommand::Chan(rate) => {
-                let ack = crate::output::artisan::ArtisanFormatter::format_chan_ack(rate);
-                self.send_text_response(ack.as_str());
-                debug!("Chan command received - sent ack for rate {}", rate);
-            }
-            crate::config::ArtisanCommand::RunRegression => {
-                info!("Artisan regression command received");
-            }
-            crate::config::ArtisanCommand::Units(is_fahrenheit) => {
-                let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
-                let result = self.forward_artisan_manual_command(cmd, current_time);
-                if result.is_ok() {
-                    self.send_text_response("OK");
-                }
-                return result;
-            }
-            crate::config::ArtisanCommand::Filt(_) => {
-                self.send_text_response("OK");
-                debug!("Filt command received - sent OK");
-            }
-            crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => {
-                self.dispatch.set_pid_gains(kp, ki, kd)?;
-                info!("PID gains updated: Kp={}, Ki={}, Kd={}", kp, ki, kd);
-            }
-            crate::config::ArtisanCommand::SetTargetTemp(target) => {
-                if !crate::config::constants::is_valid_target_temp(target) {
-                    warn!(
-                        "SetTargetTemp rejected: {:.1}°C outside valid range ({:.0}–{:.0}°C)",
-                        target,
-                        crate::config::constants::MIN_TEMP,
-                        crate::config::constants::MAX_TEMP
-                    );
-                    return Err(RoasterError::InvalidState {
-                        source: Some("target_temp_out_of_range"),
-                    });
-                }
-                self.status.target_temp = target;
-                self.enable_pid_control(target)?;
-                info!("Target temperature set to {:.1}°C", target);
-            }
-            crate::config::ArtisanCommand::SetProfile => {
-                let taken = crate::input::parser::take_profile();
-                if let Some(profile) = taken {
-                    for sp in &profile.setpoints {
-                        if !crate::config::constants::is_valid_target_temp(sp.temperature) {
-                            warn!(
-                                "Profile rejected: setpoint {:.1}°C at {}s outside valid range ({:.0}–{:.0}°C)",
-                                sp.temperature, sp.time_secs,
-                                crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
-                            );
-                            return Err(RoasterError::InvalidState {
-                                source: Some("profile_temp_out_of_range"),
-                            });
-                        }
-                    }
-                    let count = profile.setpoints.len();
-                    self.active_profile = Some(profile);
-                    info!("Profile loaded: {} setpoints", count);
-                } else {
-                    warn!("SetProfile received but no profile data in parser buffer");
-                }
-            }
-            crate::config::ArtisanCommand::DumpLog => {
-                use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
-                let dump = crate::logging::roast_logger::dump();
-                let output_channel =
-                    crate::application::service_container::ServiceContainer::get_output_channel();
-                for line in dump.split('\n') {
-                    if !line.is_empty() {
-                        if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(line) {
-                            let _ = output_channel.try_send(msg);
-                        }
-                    }
-                }
-                info!("Roast log dump requested");
-            }
-            crate::config::ArtisanCommand::Preheat(target) => {
-                self.preheat_target = Some(target);
-                self.state = RoasterState::Preheating;
-                self.status.state = RoasterState::Preheating;
-                self.enable_pid_control(target)?;
-                self.dispatch
-                    .get_output_manager_mut()
-                    .disable_continuous_output();
-                info!("Preheat started — target {:.1}°C", target);
-            }
-            crate::config::ArtisanCommand::SetFanProfile => {
-                let taken = crate::input::parser::fan_profile_take();
-                if let Some(profile) = taken {
-                    let count = profile.setpoints.len();
-                    self.fan_profile = Some(profile);
-                    info!("Fan profile loaded: {} setpoints", count);
-                } else {
-                    warn!("SetFanProfile received but no fan profile data in buffer");
-                }
-            }
-            crate::config::ArtisanCommand::SetPidChannel(ch) => {
-                self.status.pid_channel = ch;
                 info!(
-                    "PID input channel set to {} ({})",
-                    ch,
-                    if ch == 1 {
-                        "ET"
-                    } else if ch == 2 {
-                        "BT"
-                    } else {
-                        "other"
-                    }
+                    "Artisan+ roast started with profile ({} setpoints)",
+                    self.active_profile
+                        .as_ref()
+                        .map_or(0, |p| p.setpoints.len())
+                );
+            } else {
+                self.profile_start_time = Some(embassy_time::Instant::now());
+                self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
+                info!(
+                    "Artisan+ roast started with default target {:.1}°C",
+                    DEFAULT_TARGET_TEMP
                 );
             }
-            crate::config::ArtisanCommand::SetPidCycleTime(ms) => {
-                self.dispatch.set_pid_cycle_time(ms);
-                self.status.pid_cycle_time_ms = ms;
-                info!("PID cycle time set to {}ms", ms);
-            }
-            crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => {
-                self.dispatch.set_pid_output_limits(min, max);
-                self.status.pid_output_min = min;
-                self.status.pid_output_max = max;
-                info!("PID output limits set to {:.1}% – {:.1}%", min, max);
-            }
+            crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
+            self.dispatch
+                .get_output_manager_mut()
+                .enable_continuous_output();
+            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+            self.state = crate::config::constants::RoasterState::Heating;
+            self.status.state = self.state;
+            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+        }
+        Ok(())
+    }
+
+    fn handle_set_heater(&mut self, value: u8, current_time: Instant) -> Result<(), RoasterError> {
+        self.forward_artisan_manual_command(
+            crate::config::RoasterCommand::SetHeaterManual(value),
+            current_time,
+        )?;
+        info!("Artisan+ heater command processed: {}%", value);
+        Ok(())
+    }
+
+    fn handle_set_fan(&mut self, value: u8, current_time: Instant) -> Result<(), RoasterError> {
+        self.forward_artisan_manual_command(
+            crate::config::RoasterCommand::SetFanManual(value),
+            current_time,
+        )?;
+
+        info!("Artisan+ fan command processed: {}%", value);
+        Ok(())
+    }
+
+    fn handle_set_fan_speed(&mut self, value: u8, was_clamped: bool, current_time: Instant) -> Result<(), RoasterError> {
+        self.forward_artisan_manual_command(
+            crate::config::RoasterCommand::SetFanManual(value),
+            current_time,
+        )?;
+
+        if was_clamped {
+            let _ = self.actuator.set_heater_power(0.0);
+            self.actuator.capture_ssr_monitor_metrics(&mut self.status);
+            // Bug #2: Send notification to Artisan via output channel
+            self.send_ot2_clamped_notification(value);
+            info!(
+                "Artisan+ OT2 out of range - heater stopped, fan set to {}%",
+                value
+            );
+        } else {
+            info!("Artisan+ OT2 fan command processed: {}%", value);
+        }
+        Ok(())
+    }
+
+    fn handle_stop(&mut self) -> Result<(), RoasterError> {
+        info!("Artisan+ STOP - stopping roast");
+        self.stop_streaming()?;
+        crate::logging::roast_logger::stop_roast();
+        Ok(())
+    }
+
+    fn handle_emergency_stop(&mut self) -> Result<(), RoasterError> {
+        self.safety.activate_emergency();
+        self.status.fault_condition = true;
+        self.stop_streaming()?;
+        crate::logging::roast_logger::stop_roast();
+        info!("Artisan+ stop requested - streaming disabled and outputs cleared");
+        Ok(())
+    }
+
+    fn handle_increase_heater(&mut self, current_time: Instant) -> Result<(), RoasterError> {
+        self.forward_artisan_manual_command(
+            crate::config::RoasterCommand::IncreaseHeater,
+            current_time,
+        )?;
+        info!("Artisan+ UP command processed");
+        Ok(())
+    }
+
+    fn handle_decrease_heater(&mut self, current_time: Instant) -> Result<(), RoasterError> {
+        self.forward_artisan_manual_command(
+            crate::config::RoasterCommand::DecreaseHeater,
+            current_time,
+        )?;
+        info!("Artisan+ DOWN command processed");
+        Ok(())
+    }
+
+    fn handle_status_report(&mut self) -> Result<(), RoasterError> {
+        self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+
+        // STATUS response is emitted by control_loop_task after command returns Ok(()).
+        // Sending it here would produce a duplicate (Bug #3 in docs/BUGS.md).
+
+        debug!(
+            "STATUS command - SSR status: {:?}",
+            self.status.ssr_hardware_status
+        );
+        Ok(())
+    }
+
+    fn handle_read_status(&mut self) -> Result<(), RoasterError> {
+        self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+
+        let response = crate::output::artisan::ArtisanFormatter::format_read_response_full(
+            &self.status,
+        );
+
+        let parts: heapless::Vec<&str, 8> = response.split(',').collect();
+        if response.trim().is_empty() || parts.len() != 5 {
+            error!(
+                "Malformed READ response from ArtisanFormatter: expected 5 values, got {}",
+                parts.len()
+            );
         }
 
+        debug!(
+            "READ command - SSR status: {:?}, response generated",
+            self.status.ssr_hardware_status
+        );
+        Ok(())
+    }
+
+    fn handle_chan(&mut self, rate: u16) -> Result<(), RoasterError> {
+        let ack = crate::output::artisan::ArtisanFormatter::format_chan_ack(rate);
+        self.send_text_response(ack.as_str());
+        debug!("Chan command received - sent ack for rate {}", rate);
+        Ok(())
+    }
+
+    fn handle_run_regression(&mut self) -> Result<(), RoasterError> {
+        info!("Artisan regression command received");
+        Ok(())
+    }
+
+    fn handle_units(&mut self, is_fahrenheit: bool, current_time: Instant) -> Result<(), RoasterError> {
+        let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
+        let result = self.forward_artisan_manual_command(cmd, current_time);
+        if result.is_ok() {
+            self.send_text_response("OK");
+        }
+        result
+    }
+
+    fn handle_filt(&mut self, _val: u8) -> Result<(), RoasterError> {
+        self.send_text_response("OK");
+        debug!("Filt command received - sent OK");
+        Ok(())
+    }
+
+    fn handle_set_pid_gain(&mut self, kp: f32, ki: f32, kd: f32) -> Result<(), RoasterError> {
+        self.dispatch.set_pid_gains(kp, ki, kd)?;
+        info!("PID gains updated: Kp={}, Ki={}, Kd={}", kp, ki, kd);
+        Ok(())
+    }
+
+    fn handle_set_target_temp(&mut self, target: f32) -> Result<(), RoasterError> {
+        if !crate::config::constants::is_valid_target_temp(target) {
+            warn!(
+                "SetTargetTemp rejected: {:.1}°C outside valid range ({:.0}–{:.0}°C)",
+                target,
+                crate::config::constants::MIN_TEMP,
+                crate::config::constants::MAX_TEMP
+            );
+            return Err(RoasterError::InvalidState {
+                source: Some("target_temp_out_of_range"),
+            });
+        }
+        self.status.target_temp = target;
+        self.enable_pid_control(target)?;
+        info!("Target temperature set to {:.1}°C", target);
+        Ok(())
+    }
+
+    fn handle_set_profile(&mut self) -> Result<(), RoasterError> {
+        let taken = crate::input::parser::take_profile();
+        if let Some(profile) = taken {
+            for sp in &profile.setpoints {
+                if !crate::config::constants::is_valid_target_temp(sp.temperature) {
+                    warn!(
+                        "Profile rejected: setpoint {:.1}°C at {}s outside valid range ({:.0}–{:.0}°C)",
+                        sp.temperature, sp.time_secs,
+                        crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
+                    );
+                    return Err(RoasterError::InvalidState {
+                        source: Some("profile_temp_out_of_range"),
+                    });
+                }
+            }
+            let count = profile.setpoints.len();
+            self.active_profile = Some(profile);
+            info!("Profile loaded: {} setpoints", count);
+        } else {
+            warn!("SetProfile received but no profile data in parser buffer");
+        }
+        Ok(())
+    }
+
+    fn handle_dump_log(&mut self) -> Result<(), RoasterError> {
+        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+        let dump = crate::logging::roast_logger::dump();
+        let output_channel =
+            crate::application::service_container::ServiceContainer::get_output_channel();
+        for line in dump.split('\n') {
+            if !line.is_empty() {
+                if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(line) {
+                    let _ = output_channel.try_send(msg);
+                }
+            }
+        }
+        info!("Roast log dump requested");
+        Ok(())
+    }
+
+    fn handle_preheat(&mut self, target: f32) -> Result<(), RoasterError> {
+        self.preheat_target = Some(target);
+        self.state = RoasterState::Preheating;
+        self.status.state = RoasterState::Preheating;
+        self.enable_pid_control(target)?;
+        self.dispatch
+            .get_output_manager_mut()
+            .disable_continuous_output();
+        info!("Preheat started — target {:.1}°C", target);
+        Ok(())
+    }
+
+    fn handle_set_fan_profile(&mut self) -> Result<(), RoasterError> {
+        let taken = crate::input::parser::fan_profile_take();
+        if let Some(profile) = taken {
+            let count = profile.setpoints.len();
+            self.fan_profile = Some(profile);
+            info!("Fan profile loaded: {} setpoints", count);
+        } else {
+            warn!("SetFanProfile received but no fan profile data in buffer");
+        }
+        Ok(())
+    }
+
+    fn handle_set_pid_channel(&mut self, ch: u8) -> Result<(), RoasterError> {
+        self.status.pid_channel = ch;
+        info!(
+            "PID input channel set to {} ({})",
+            ch,
+            if ch == 1 {
+                "ET"
+            } else if ch == 2 {
+                "BT"
+            } else {
+                "other"
+            }
+        );
+        Ok(())
+    }
+
+    fn handle_set_pid_cycle_time(&mut self, ms: u32) -> Result<(), RoasterError> {
+        self.dispatch.set_pid_cycle_time(ms);
+        self.status.pid_cycle_time_ms = ms;
+        info!("PID cycle time set to {}ms", ms);
+        Ok(())
+    }
+
+    fn handle_set_pid_output_limits(&mut self, min: f32, max: f32) -> Result<(), RoasterError> {
+        self.dispatch.set_pid_output_limits(min, max);
+        self.status.pid_output_min = min;
+        self.status.pid_output_max = max;
+        info!("PID output limits set to {:.1}% – {:.1}%", min, max);
         Ok(())
     }
 
