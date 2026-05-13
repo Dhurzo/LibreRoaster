@@ -190,8 +190,9 @@ fn main() -> ! {
         static_cell::StaticCell::new();
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
 
-    // SAFETY: executor.run() never returns, so &mut app lives forever
-    let app = unsafe { core::mem::transmute::<&mut _, &'static mut _>(&mut app) };
+    static APPLICATION: static_cell::StaticCell<libreroaster::application::Application> =
+        static_cell::StaticCell::new();
+    let app = APPLICATION.init(app);
 
     executor.run(|spawner| {
         spawner.must_spawn(async_main_task(app, spawner));
