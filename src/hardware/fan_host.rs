@@ -33,13 +33,7 @@ impl FanController {
         self.current_speed
     }
 
-    pub fn enable(&mut self) {
-        let _ = self.set_speed(100.0);
-    }
-
-    pub fn disable(&mut self) {
-        let _ = self.set_speed(0.0);
-    }
+    
 
     pub fn is_enabled(&self) -> bool {
         self.current_speed > 0.0

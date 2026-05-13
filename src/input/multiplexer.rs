@@ -27,12 +27,7 @@ impl Instant {
 // Artisan Scope does not perform handshake — it sends commands immediately.
 // The `# ` acknowledgment documented in README is therefore not sent.
 // If re-enabling, restore init_state.rs and uncomment init flow.
-// Placeholder types kept for potential future re-enabling.
-#[allow(dead_code)]
-pub struct InitState;
 
-#[allow(dead_code)]
-pub struct InitEvent;
 
 pub const IDLE_TIMEOUT_SECS: u64 = 60;
 
@@ -56,45 +51,7 @@ impl CommandMultiplexer {
         }
     }
 
-    /// NOTE: Handshake is disabled - Artisan Scope does not require initialization
-    /// Placeholder kept for backwards compatibility
-    #[allow(dead_code)]
-    pub fn init_state(&self) -> InitState {
-        InitState
-    }
-
-    /// NOTE: Always returns true since handshake is disabled
-    #[allow(dead_code)]
-    pub fn is_init_complete(&self) -> bool {
-        true
-    }
-
-    /// NOTE: Handshake values not used (returns None)
-    #[allow(dead_code)]
-    pub fn chan_value(&self) -> Option<u16> {
-        None
-    }
-
-    /// NOTE: Handshake values not used (returns None)
-    #[allow(dead_code)]
-    pub fn units_value(&self) -> Option<bool> {
-        None
-    }
-
-    /// NOTE: Handshake values not used (returns None)
-    #[allow(dead_code)]
-    pub fn filt_value(&self) -> Option<u8> {
-        None
-    }
-
-    /// NOTE: Handshake is disabled - commands are processed immediately
-    #[allow(dead_code)]
-    pub fn on_init_command(
-        &mut self,
-        _command: crate::config::ArtisanCommand,
-    ) -> Result<InitEvent, crate::input::parser::ParseError> {
-        Ok(InitEvent)
-    }
+    
 
     pub fn on_command_received(&mut self, channel: CommChannel) -> bool {
         let now = Instant::now();
@@ -225,14 +182,7 @@ mod tests {
         assert!(allowed, "Same channel commands should be allowed");
     }
 
-    #[test]
-    fn test_handshake_always_complete() {
-        let mux = CommandMultiplexer::new();
-        assert!(mux.is_init_complete(), "Handshake disabled - always ready");
-        assert!(mux.chan_value().is_none(), "No channel value stored");
-        assert!(mux.units_value().is_none(), "No units value stored");
-        assert!(mux.filt_value().is_none(), "No filter value stored");
-    }
+    
 
     #[test]
     fn test_commands_work_without_handshake() {

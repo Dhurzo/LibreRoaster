@@ -85,7 +85,7 @@ pub enum ConfigError {
     CorruptedData,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SafetyLevel {
     Warning,
     Critical,
@@ -233,24 +233,7 @@ impl fmt::Display for AppError {
     }
 }
 
-pub trait ErrorRecovery {
-    fn recover(&mut self, error: &AppError) -> Result<RecoveryResult, RecoveryError>;
-}
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecoveryResult {
-    Recovered,
-    PartialRecovery,
-    Failed,
-    RequiresManualIntervention,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecoveryError {
-    NotRecoverable,
-    RecoveryFailed,
-    SystemInconsistent,
-}
 
 impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {

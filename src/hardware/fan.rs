@@ -118,21 +118,7 @@ impl<'a> FanController<'a> {
         self.current_speed
     }
 
-    pub fn enable(&mut self) {
-        if self.set_speed(100.0).is_err() {
-            error!("Failed to enable fan");
-        } else {
-            info!("Fan enabled at 100%");
-        }
-    }
-
-    pub fn disable(&mut self) {
-        if self.set_speed(0.0).is_err() {
-            error!("Failed to disable fan");
-        } else {
-            info!("Fan disabled");
-        }
-    }
+    
 
     pub fn is_enabled(&self) -> bool {
         self.current_speed > 0.0

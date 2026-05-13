@@ -14,6 +14,6 @@
 //! - `drain_task`: Documentation and architectural decisions
 
 pub mod channel;
-pub mod drain_task;
+
 pub mod roast_logger;
 pub mod traceability;

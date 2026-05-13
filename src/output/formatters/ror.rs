@@ -79,7 +79,6 @@ impl RorCalculator {
     /// # Returns
     ///
     /// ROR value in °C/s, or 0.0 if insufficient samples
-    #[allow(dead_code)]
     fn compute_ror_from_history(history: &[f32]) -> f32 {
         if history.len() < ROR_MIN_SAMPLES {
             return 0.0;

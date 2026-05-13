@@ -12,8 +12,6 @@ pub struct CommandDispatcher {
     pub(crate) temp_handler: TemperatureCommandHandler,
     pub(crate) artisan_handler: ArtisanCommandHandler,
     pub(crate) system_handler: SystemCommandHandler,
-    #[allow(dead_code)]
-    pub(crate) temp_settings: TemperatureSettings,
 }
 
 impl CommandDispatcher {
@@ -23,7 +21,6 @@ impl CommandDispatcher {
             temp_handler,
             artisan_handler: ArtisanCommandHandler::new(),
             system_handler: SystemCommandHandler,
-            temp_settings: TemperatureSettings::new(),
         })
     }
 

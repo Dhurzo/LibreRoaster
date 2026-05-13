@@ -160,9 +160,7 @@ impl ActuatorController {
         self.ssr_guard.next_cycle_allowed(now)
     }
 
-    pub fn ssr_guard_mark_cycle(&mut self, now: Instant) {
-        self.ssr_guard.mark_cycle(now);
-    }
+    
 
     fn busy_window_ms(now: Instant, busy_until: Instant) -> u64 {
         if busy_until > now {

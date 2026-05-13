@@ -144,21 +144,7 @@ impl ServiceContainer {
         })
     }
 
-    /// Sync mutable access to RoasterControl for ISR and critical section contexts
-    /// This is the deprecated API kept for backward compatibility with ISR code
-    #[deprecated(note = "Use with_roaster_async() in async contexts")]
-    pub fn with_roaster_mut<R, F>(f: F) -> Result<R, ContainerError>
-    where
-        F: FnOnce(&mut RoasterControl) -> R,
-    {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            match container.roaster_sync.borrow(cs).borrow_mut().as_mut() {
-                Some(roaster) => Ok(f(roaster)),
-                None => Err(ContainerError::NotInitialized),
-            }
-        })
-    }
+    
 
     /// Async access to RoasterControl - use this in async task contexts
     pub async fn with_roaster_async<R, F>(f: F) -> Result<R, ContainerError>

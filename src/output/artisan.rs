@@ -66,31 +66,6 @@ impl ArtisanFormatter {
         self.ror_calculator.borrow_mut().reset();
     }
 
-    #[allow(dead_code)]
-    fn calculate_delta_bt(current_bt: f32, last_bt: f32) -> f32 {
-        if last_bt != 0.0 {
-            current_bt - last_bt
-        } else {
-            0.0
-        }
-    }
-
-    #[allow(dead_code)]
-    #[deprecated = "Use RorCalculator in formatters module. This assumes 1s sample intervals; control loop runs at ~10Hz."]
-    fn compute_ror_from_history(history: &[f32]) -> f32 {
-        if history.len() < 2 {
-            0.0
-        } else {
-            let samples = history.len();
-            let first_bt = history[0];
-            let last_bt = history[samples - 1];
-
-            // ROR = (BT_current - BT_oldest) / (time_elapsed)
-            // Assuming 1-second intervals between samples
-            (last_bt - first_bt) / (samples as f32 - 1.0)
-        }
-    }
-
     fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
         let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
         let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
@@ -489,7 +464,6 @@ impl MutableArtisanFormatter {
 mod tests {
     use super::*;
     use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings};
-    use alloc::vec;
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
@@ -685,26 +659,7 @@ mod tests {
         assert_eq!(parts[4], "75.0");
     }
 
-    #[test]
-    fn test_ror_calculation_empty_history() {
-        let history: Vec<f32> = vec![];
-        let ror = ArtisanFormatter::compute_ror_from_history(&history);
-        assert_eq!(ror, 0.0);
-    }
-
-    #[test]
-    fn test_ror_calculation_two_samples() {
-        let history = vec![100.0, 105.0];
-        let ror = ArtisanFormatter::compute_ror_from_history(&history);
-        assert_eq!(ror, 5.0);
-    }
-
-    #[test]
-    fn test_ror_calculation_five_samples() {
-        let history = vec![100.0, 102.0, 104.0, 106.0, 108.0];
-        let ror = ArtisanFormatter::compute_ror_from_history(&history);
-        assert_eq!(ror, 2.0);
-    }
+    
 
     #[test]
     fn test_mutable_formatter_ror() {

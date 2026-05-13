@@ -49,15 +49,7 @@ impl ArtisanCommandHandler {
         self.manual_fan = fan;
     }
 
-    /// Set manual heater value
-    pub fn set_manual_heater(&mut self, heater: f32) {
-        self.manual_heater = heater;
-    }
-
-    /// Set manual fan value
-    pub fn set_manual_fan(&mut self, fan: f32) {
-        self.manual_fan = fan;
-    }
+    
 
     /// Clear manual control values
     pub fn clear_manual(&mut self) {
