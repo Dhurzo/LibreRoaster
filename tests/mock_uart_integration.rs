@@ -6,9 +6,9 @@ extern crate std;
 
 use std::boxed::Box;
 use std::string::String as StdString;
+use std::sync::Mutex;
 use std::vec::Vec;
 
-use critical_section::RawRestoreState;
 use embassy_time::Instant;
 use heapless::String;
 
@@ -23,16 +23,11 @@ use libreroaster::output::artisan::ArtisanFormatter;
 mod tests_common;
 use tests_common::{build_test_control, init_test_service_container, StubFan, StubHeater};
 
-struct TestCriticalSection;
+/// Serializes tests that share global ServiceContainer state.
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-critical_section::set_impl!(TestCriticalSection);
-
-unsafe impl critical_section::Impl for TestCriticalSection {
-    unsafe fn acquire() -> RawRestoreState {
-        false
-    }
-
-    unsafe fn release(_restore_state: RawRestoreState) {}
+fn acquire_serial() -> std::sync::MutexGuard<'static, ()> {
+    TEST_MUTEX.lock().expect("test mutex poisoned")
 }
 
 #[allow(dead_code)]
@@ -135,6 +130,7 @@ fn assert_status_unchanged(before: SystemStatus, after: SystemStatus) {
 
 #[test]
 fn read_command_emits_expected_response() {
+    let _guard = acquire_serial();
     init_test_service_container();
     reset_channels();
 
@@ -166,6 +162,7 @@ fn read_command_emits_expected_response() {
 
 #[test]
 fn start_ot1_io3_stop_sequence_updates_state() {
+    let _guard = acquire_serial();
     init_test_service_container();
     reset_channels();
 
@@ -222,6 +219,7 @@ fn start_ot1_io3_stop_sequence_updates_state() {
 
 #[test]
 fn error_paths_emit_err_without_side_effects() {
+    let _guard = acquire_serial();
     init_test_service_container();
     reset_channels();
 

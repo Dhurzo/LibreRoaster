@@ -3,11 +3,21 @@
 extern crate std;
 
 use std::string::String as StdString;
+use std::sync::Mutex;
 use std::vec::Vec;
 
 use libreroaster::application::service_container::ServiceContainer;
 use libreroaster::config::ArtisanCommand;
 use libreroaster::hardware::uart::tasks::process_command_data;
+
+/// Serializes tests that share global ServiceContainer state.
+/// Without this, parallel test threads race on the shared Pipe channels.
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Acquire the test mutex so channels are not interleaved by parallel threads.
+fn acquire_serial() -> std::sync::MutexGuard<'static, ()> {
+    TEST_MUTEX.lock().expect("test mutex poisoned")
+}
 
 fn reset_channels() {
     let cmd_channel = ServiceContainer::get_artisan_channel();
@@ -50,8 +60,26 @@ fn assert_err_tokens(output: &str, expected_code: &str, expected_message: &str) 
     assert_eq!(parts[2], expected_message, "Unexpected error message");
 }
 
+pub fn init_test_service_container() {
+    use libreroaster::common::{StubFan, StubHeater};
+    use libreroaster::control::RoasterControl;
+    use libreroaster::input::ArtisanInput;
+    use libreroaster::hardware::sensors::SensorConversionHub;
+
+    if !ServiceContainer::is_initialized() {
+        let roaster =
+            RoasterControl::new(Box::new(StubHeater::new()), Box::new(StubFan::new()), SensorConversionHub::new())
+                .expect("test control should build");
+        let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
+        ServiceContainer::init_roaster(roaster);
+        ServiceContainer::init_artisan_input(artisan_input);
+    }
+}
+
 #[test]
 fn empty_command_emits_err() {
+    let _guard = acquire_serial();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"\r");
@@ -70,6 +98,8 @@ fn empty_command_emits_err() {
 
 #[test]
 fn unknown_command_is_rejected() {
+    let _guard = acquire_serial();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"BOGUS\r");
@@ -85,6 +115,8 @@ fn unknown_command_is_rejected() {
 
 #[test]
 fn out_of_range_setpoints_error_without_side_effects() {
+    let _guard = acquire_serial();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"OT1 150\r");
@@ -107,6 +139,8 @@ fn out_of_range_setpoints_error_without_side_effects() {
 
 #[test]
 fn malformed_values_emit_invalid_value_err() {
+    let _guard = acquire_serial();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"OT1 abc\r");
@@ -122,6 +156,8 @@ fn malformed_values_emit_invalid_value_err() {
 
 #[test]
 fn valid_commands_pass_through_without_err() {
+    let _guard = acquire_serial();
+    init_test_service_container();
     reset_channels();
 
     process_command_data(b"READ\r");
