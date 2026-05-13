@@ -286,6 +286,10 @@ impl RoasterControl {
             }
         }
 
+        // Re-detect heat source periodically (throttled to ~1s by ActuatorController).
+        // This ensures a mid-roast SSR or wiring fault is detected, not just boot-time.
+        self.actuator.periodic_health_check(current_time);
+
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
         // Maximum roast time safety backstop
@@ -357,12 +361,19 @@ impl RoasterControl {
             debug!("Emergency active - forcing SSR output to 0%");
             0.0
         } else if self.status.artisan_control {
-            let manual_output = self.dispatch.artisan_manual_heater();
-            debug!(
-                "Artisan+ control - manual heater output: {:.1}%",
+            if self.status.ssr_hardware_status
+                != crate::config::constants::SsrHardwareStatus::Available
+            {
+                warn!("Artisan+ manual control: SSR not available - output: 0%");
+                0.0
+            } else {
+                let manual_output = self.dispatch.artisan_manual_heater();
+                debug!(
+                    "Artisan+ control - manual heater output: {:.1}%",
+                    manual_output
+                );
                 manual_output
-            );
-            manual_output
+            }
         } else if self.status.pid_enabled {
             if self.status.ssr_hardware_status
                 == crate::config::constants::SsrHardwareStatus::Available

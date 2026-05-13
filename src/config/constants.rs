@@ -63,7 +63,7 @@ pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
 /// Control loop is expected to feed the Task Watchdog at this cadence.
 pub const WATCHDOG_FEED_INTERVAL_MS: u64 = 100;
 pub const HW_WATCHDOG_TIMEOUT_SECS: u32 = 2;
-pub const LEDC_GUARD_TIMEOUT_MS: u64 = 40;
+pub const LEDC_GUARD_TIMEOUT_MS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {

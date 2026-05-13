@@ -18,6 +18,11 @@ pub trait Heater: Send {
 
     fn get_status(&self) -> SsrHardwareStatus;
 
+    /// Periodic health check — called every ~1s by the control loop.
+    /// Implementations should re-detect heat source, verify PWM integrity, etc.
+    /// Default implementation is a no-op.
+    fn periodic_health_check(&mut self) {}
+
     fn last_duty_delta_ticks(&self) -> i16 {
         0
     }

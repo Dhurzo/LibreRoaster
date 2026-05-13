@@ -12,6 +12,7 @@ pub struct ActuatorController {
     fan: Box<dyn Fan + Send>,
     ssr_guard: SsrCycleGuard,
     last_desired_output: f32,
+    last_health_check: Option<Instant>,
 }
 
 impl ActuatorController {
@@ -21,6 +22,7 @@ impl ActuatorController {
             fan,
             ssr_guard: SsrCycleGuard::new(),
             last_desired_output: 0.0,
+            last_health_check: None,
         }
     }
 
@@ -158,6 +160,17 @@ impl ActuatorController {
 
     pub fn ssr_guard_next_cycle_allowed(&self, now: Instant) -> Result<Instant, Instant> {
         self.ssr_guard.next_cycle_allowed(now)
+    }
+
+    pub fn periodic_health_check(&mut self, now: Instant) {
+        let due = match self.last_health_check {
+            Some(last) => (now - last).as_millis() >= 1000,
+            None => true,
+        };
+        if due {
+            self.last_health_check = Some(now);
+            self.heater.periodic_health_check();
+        }
     }
 
     fn busy_window_ms(now: Instant, busy_until: Instant) -> u64 {

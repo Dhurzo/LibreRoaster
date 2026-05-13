@@ -511,6 +511,17 @@ where
         }
     }
 
+    fn periodic_health_check(&mut self) {
+        // Use a monotonic counter as the time source for the SSR's
+        // built-in 1-second rate limiter (saturating_sub gate).
+        let tick = self
+            .base
+            .last_detection_check
+            .unwrap_or(0)
+            .wrapping_add(100);
+        let _ = self.periodic_check(tick);
+    }
+
     fn last_duty_delta_ticks(&self) -> i16 {
         self.base.last_duty_delta_ticks
     }
@@ -606,6 +617,15 @@ where
             SsrHardwareStatus::NotDetected => GlobalSsrStatus::NotDetected,
             SsrHardwareStatus::Error => GlobalSsrStatus::Error,
         }
+    }
+
+    fn periodic_health_check(&mut self) {
+        let tick = self
+            .base
+            .last_detection_check
+            .unwrap_or(0)
+            .wrapping_add(100);
+        let _ = PeriodicCheck::periodic_check(self, tick);
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {

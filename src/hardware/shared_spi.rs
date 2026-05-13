@@ -51,7 +51,14 @@ where
                         bus.transfer_in_place(buf)?;
                     }
                     Operation::DelayNs(ns) => {
-                        let cycles = (*ns as u64) / 10;
+                        // Cap at 1 ms to prevent unbounded executor blocking.
+                        // Normal SPI inter-byte delays are 100–1000 ns (10–100 iterations);
+                        // larger values would indicate a programming error.
+                        let capped_ns = (*ns).min(1_000_000);
+                        if *ns > 1_000_000 {
+                            log::warn!("SPI DelayNs capped from {} ns to 1 ms", *ns);
+                        }
+                        let cycles = capped_ns / 10;
                         for _ in 0..cycles {
                             core::hint::spin_loop();
                         }
