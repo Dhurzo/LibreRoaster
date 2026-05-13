@@ -1,3 +1,23 @@
+//! Application service container with dual sync/async ownership.
+//!
+//! `RoasterControl` is stored in **two** slots to bridge the sync↔async gap:
+//!
+//! | Slot | Type | Context | Init | Lifecycle |
+//! |------|------|---------|------|-----------|
+//! | `roaster_sync` | `Mutex<RefCell<Option<…>>>` | ISR / critical-section | `AppBuilder::build()` | Deprecated; lazily drained to async |
+//! | `roaster` | `EmbassyMutex<…>` | Async tasks | Lazy move from `roaster_sync` | Primary path during operation |
+//!
+//! **Why two slots?** `AppBuilder::build()` runs outside an async context and
+//! cannot lock an `EmbassyMutex`. It therefore places the instance into the
+//! sync slot first. The first async task that needs the instance calls
+//! `ensure_async_roaster_initialized_from_sync()`, which atomically moves it
+//! from `roaster_sync` into `roaster`. After this move, `roaster_sync` is
+//! drained and all subsequent access goes through the async mutex.
+//!
+//! The sync path (`with_roaster()`) is `#[deprecated]` and exists only for
+//! legacy ISR code that cannot await. New code must use
+//! `with_roaster_async()`.
+
 use crate::control::RoasterControl;
 use crate::input::multiplexer::CommandMultiplexer;
 use crate::input::ArtisanInput;
@@ -11,9 +31,9 @@ use embassy_sync::mutex::Mutex as EmbassyMutex;
 use heapless::String;
 
 pub struct ServiceContainer {
-    /// Async-safe mutex for use in async task contexts
+    /// Async-safe mutex for use in async task contexts (primary path after lazy init)
     pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
-    /// Sync-safe mutex for use in ISR and critical sections
+    /// Sync-safe mutex for ISR/critical-section contexts (deprecated; drained during startup)
     pub roaster_sync: Mutex<RefCell<Option<RoasterControl>>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
     pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
