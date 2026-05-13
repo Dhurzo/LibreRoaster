@@ -106,33 +106,25 @@ pub use stub::WatchdogFeeder;
 
 #[cfg(target_arch = "riscv32")]
 mod hw_watchdog {
+    /// Feed the ESP32-C3 RTC Watchdog Timer (RWDT).
+    ///
+    /// The bootloader enables the RWDT before jumping to the app. We must
+    /// feed it in the control loop to prevent a CPU reset. The unlock
+    /// sequence writes the magic key to WDTWPROTECT before feeding.
+    ///
+    /// Uses the `esp32c3` PAC for register access instead of hardcoded MMIO
+    /// addresses. Register offsets are resolved from the SVD at compile time.
     pub fn feed() {
-        // Feed the ESP32-C3 RTC Watchdog Timer that is enabled by the
-        // IDF bootloader. The RWDT is independent of the CPU — if the
-        // Embassy executor hangs, the RWDT resets the system after the
-        // configured timeout (~2s by default).
-        //
-        // The bootloader configures the RWDT before jumping to the app.
-        // We must feed it in the control loop to prevent reset.
-        // Register addresses are documented in the ESP32-C3 TRM §15.4.
-        const RTC_CNTL_WDTWPROTECT: u32 = 0x6000_80A4;
-        const RTC_CNTL_WDTFEED: u32 = 0x6000_8098;
         const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
 
-        unsafe {
-            core::ptr::write_volatile(RTC_CNTL_WDTWPROTECT as *mut u32, WDT_UNLOCK_KEY);
-            core::ptr::write_volatile(RTC_CNTL_WDTFEED as *mut u32, 1);
-        }
+        let rtc_cntl = unsafe { &*esp32c3::RTC_CNTL::ptr() };
+        rtc_cntl
+            .wdtwprotect()
+            .write(|w| unsafe { w.wdt_wkey().bits(WDT_UNLOCK_KEY) });
+        rtc_cntl.wdtfeed().write(|w| w.wdt_feed().set_bit());
     }
 
-    /// Initialize the hardware WDT timeout.
-    /// Must be called once during startup before the control loop begins.
-    pub fn init() {
-        // HW WDT timeout is set by the ESP IDF bootloader, not configured here.
-        // The IDF bootloader already enables the RWDT with a default
-        // timeout. This is a placeholder for future explicit configuration
-        // when moving away from the IDF bootloader.
-    }
+    pub fn init() {}
 }
 
 #[cfg(not(target_arch = "riscv32"))]
