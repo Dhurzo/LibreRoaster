@@ -29,9 +29,6 @@ target
 # Local configuration (contains secrets)
 config.json
 
-# Lock files (generated)
-Cargo.lock
-
 # Build artifacts and temporary files
 *.bin
 *.elf

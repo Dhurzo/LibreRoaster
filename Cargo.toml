@@ -46,11 +46,12 @@ heapless         = "0.9.2"
 embedded-hal     = "1.0.0"
 embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", optional = true }
 embedded-hal-bus = "0.2.0"
-embedded-io       = "0.7.1"
+embedded-io       = "0.6.1"
 embedded-io-async = "0.6.1"
 embassy-time     = "0.5.0"
 embassy-time-driver = { version = "0.2.1", features = ["tick-hz-1_000_000"] }
 embassy-usb     = "0.5.0"
+embassy-usb-driver = "=0.2.0"
 critical-section = "1.2.0"
 static_cell = "2.1.1"
 log              = "0.4.27"
