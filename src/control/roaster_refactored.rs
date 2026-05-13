@@ -2,7 +2,8 @@ use super::policies::{ManualPolicyOutcome, SafetyPolicyOutcome};
 use super::RoasterError;
 use crate::config::*;
 use crate::control::controllers::{
-    ActuatorController, CommandDispatcher, CommandDispatchResult, SafetyController, SensorController,
+    ActuatorController, CommandDispatchResult, CommandDispatcher, SafetyController,
+    SensorController,
 };
 use crate::control::pid::PidFeedback;
 use crate::control::traits::{Fan, Heater};
@@ -109,10 +110,14 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         let no_fault = Default::default();
-        match self
-            .sensor
-            .update_temperatures(bean_temp, env_temp, no_fault, no_fault, current_time, &mut self.status)
-        {
+        match self.sensor.update_temperatures(
+            bean_temp,
+            env_temp,
+            no_fault,
+            no_fault,
+            current_time,
+            &mut self.status,
+        ) {
             Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
             }) => self.emergency_shutdown("Over-temperature detected"),
@@ -148,7 +153,9 @@ impl RoasterControl {
         }
 
         if self.dispatch.can_handle_manual(command) {
-            let outcome = self.dispatch.evaluate_manual_policy(command, &mut self.status);
+            let outcome = self
+                .dispatch
+                .evaluate_manual_policy(command, &mut self.status);
 
             if outcome.success {
                 self.apply_policy_outcome(&outcome, current_time)?;
@@ -220,8 +227,7 @@ impl RoasterControl {
             if let Err(e) = self.actuator.set_heater_power(0.0) {
                 log::error!("Safety outcome: heater off failed: {:?}", e);
             }
-            self.actuator
-                .capture_ssr_monitor_metrics(&mut self.status);
+            self.actuator.capture_ssr_monitor_metrics(&mut self.status);
             // Also set fan to 100% for cooling during safety events
             if let Err(e) = self.actuator.set_fan_raw(100.0) {
                 log::error!("Safety outcome: fan 100% failed: {:?}", e);
@@ -250,8 +256,7 @@ impl RoasterControl {
             self.status.fault_condition = false;
         }
 
-        self.actuator
-            .capture_ssr_monitor_metrics(&mut self.status);
+        self.actuator.capture_ssr_monitor_metrics(&mut self.status);
         self.actuator.set_heater_power(0.0)?;
         // Bug #13: Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
         self.actuator.set_fan_raw(100.0)?;
@@ -290,7 +295,8 @@ impl RoasterControl {
                 if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
                     warn!(
                         "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
-                        elapsed_secs, crate::config::constants::MAX_ROAST_TIME_SECS
+                        elapsed_secs,
+                        crate::config::constants::MAX_ROAST_TIME_SECS
                     );
                     self.emergency_shutdown("Maximum roast time exceeded")?;
                     return Ok(0.0);
@@ -302,7 +308,9 @@ impl RoasterControl {
         if self.state == RoasterState::Heating && !self.charge_detected {
             let bt = self.status.bean_temp;
             if bt > 50.0 {
-                if self.bt_charge_history.len() >= 10 { let _ = self.bt_charge_history.pop_front(); }
+                if self.bt_charge_history.len() >= 10 {
+                    let _ = self.bt_charge_history.pop_front();
+                }
                 let _ = self.bt_charge_history.push_back(bt);
                 if self.bt_charge_history.len() >= 5 {
                     let (front, _back) = self.bt_charge_history.as_slices();
@@ -314,9 +322,13 @@ impl RoasterControl {
                         self.status.charge_detected = true;
                         info!("#CHARGE detected — BT dropped {:.1}°C", drop);
                         let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
-                        let mut charge_msg = heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::new();
-                        let _ = core::fmt::Write::write_fmt(&mut charge_msg,
-                            core::format_args!("#CHARGE dt={:.1}", drop));
+                        let mut charge_msg = heapless::String::<
+                            { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
+                        >::new();
+                        let _ = core::fmt::Write::write_fmt(
+                            &mut charge_msg,
+                            core::format_args!("#CHARGE dt={:.1}", drop),
+                        );
                         let _ = output_channel.try_send(charge_msg);
                     }
                 }
@@ -358,8 +370,8 @@ impl RoasterControl {
                 // Sensor reads take ~160ms (TEMPERATURE_READ_INTERVAL_MS), PID runs at 100ms
                 // (PID_SAMPLE_TIME_MS). Skip PID if data is stale to avoid computing on old readings.
                 let is_stale = if let Some(last_read) = self.sensor.last_temp_read() {
-                    current_time.duration_since(last_read)
-                        > Duration::from_millis(500) // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
+                    current_time.duration_since(last_read) > Duration::from_millis(500)
+                // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
                 } else {
                     false
                 };
@@ -383,10 +395,16 @@ impl RoasterControl {
 
         self.actuator.set_last_desired_output(desired_output);
         let pid_integrator_value = self.dispatch.pid_integrator_value();
-        let guard_busy = self.actuator.ssr_guard_next_cycle_allowed(current_time).is_err();
-        let applied_output = self
+        let guard_busy = self
             .actuator
-            .apply_guarded_heater(desired_output, current_time, false, &mut self.status)?;
+            .ssr_guard_next_cycle_allowed(current_time)
+            .is_err();
+        let applied_output = self.actuator.apply_guarded_heater(
+            desired_output,
+            current_time,
+            false,
+            &mut self.status,
+        )?;
         let feedback = PidFeedback::new(desired_output, applied_output, guard_busy);
         self.dispatch.set_pid_feedback(feedback);
 
@@ -395,12 +413,13 @@ impl RoasterControl {
         self.status.saturation_active = self.dispatch.pid_saturation_active();
         self.status.integrator_clamped = self.dispatch.pid_integrator_clamped();
 
-        let fan_output = if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
-            let elapsed = current_time.duration_since(start).as_secs() as u32;
-            fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
-        } else {
-            self.dispatch.artisan_manual_fan()
-        };
+        let fan_output =
+            if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
+                let elapsed = current_time.duration_since(start).as_secs() as u32;
+                fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
+            } else {
+                self.dispatch.artisan_manual_fan()
+            };
         self.actuator
             .set_fan_speed(fan_output, &mut self.status)
             .map_err(|_| RoasterError::HardwareError {
@@ -488,8 +507,12 @@ impl RoasterControl {
                             self.status.target_temp = target;
                             self.enable_pid_control(target)?;
                         }
-                        info!("Artisan+ roast started with profile ({} setpoints)",
-                            self.active_profile.as_ref().map_or(0, |p| p.setpoints.len()));
+                        info!(
+                            "Artisan+ roast started with profile ({} setpoints)",
+                            self.active_profile
+                                .as_ref()
+                                .map_or(0, |p| p.setpoints.len())
+                        );
                     } else {
                         self.profile_start_time = Some(embassy_time::Instant::now());
                         self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
@@ -534,8 +557,7 @@ impl RoasterControl {
 
                 if was_clamped {
                     let _ = self.actuator.set_heater_power(0.0);
-                    self.actuator
-                        .capture_ssr_monitor_metrics(&mut self.status);
+                    self.actuator.capture_ssr_monitor_metrics(&mut self.status);
                     // Bug #2: Send notification to Artisan via output channel
                     self.send_ot2_clamped_notification(value);
                     info!(
@@ -638,7 +660,9 @@ impl RoasterControl {
                 if !crate::config::constants::is_valid_target_temp(target) {
                     warn!(
                         "SetTargetTemp rejected: {:.1}°C outside valid range ({:.0}–{:.0}°C)",
-                        target, crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
+                        target,
+                        crate::config::constants::MIN_TEMP,
+                        crate::config::constants::MAX_TEMP
                     );
                     return Err(RoasterError::InvalidState {
                         source: Some("target_temp_out_of_range"),
@@ -673,7 +697,8 @@ impl RoasterControl {
             crate::config::ArtisanCommand::DumpLog => {
                 use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
                 let dump = crate::logging::roast_logger::dump();
-                let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
+                let output_channel =
+                    crate::application::service_container::ServiceContainer::get_output_channel();
                 for line in dump.split('\n') {
                     if !line.is_empty() {
                         if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(line) {
@@ -688,7 +713,9 @@ impl RoasterControl {
                 self.state = RoasterState::Preheating;
                 self.status.state = RoasterState::Preheating;
                 self.enable_pid_control(target)?;
-                self.dispatch.get_output_manager_mut().disable_continuous_output();
+                self.dispatch
+                    .get_output_manager_mut()
+                    .disable_continuous_output();
                 info!("Preheat started — target {:.1}°C", target);
             }
             crate::config::ArtisanCommand::SetFanProfile => {
@@ -706,7 +733,13 @@ impl RoasterControl {
                 info!(
                     "PID input channel set to {} ({})",
                     ch,
-                    if ch == 1 { "ET" } else if ch == 2 { "BT" } else { "other" }
+                    if ch == 1 {
+                        "ET"
+                    } else if ch == 2 {
+                        "BT"
+                    } else {
+                        "other"
+                    }
                 );
             }
             crate::config::ArtisanCommand::SetPidCycleTime(ms) => {
@@ -792,17 +825,12 @@ impl RoasterControl {
                     if (new_target - self.status.target_temp).abs() > 0.5 {
                         self.status.target_temp = new_target;
                         let _ = self.dispatch.set_pid_target(new_target);
-                        debug!(
-                            "Profile target: {:.1}°C at t={}s",
-                            new_target, elapsed
-                        );
+                        debug!("Profile target: {:.1}°C at t={}s", new_target, elapsed);
                     }
                 }
             }
 
-            let output = self
-                .dispatch
-                .get_pid_output(self.status.pv, current_time);
+            let output = self.dispatch.get_pid_output(self.status.pv, current_time);
 
             self.last_pid_update = Some(current_time);
 
@@ -826,14 +854,30 @@ impl RoasterControl {
     }
 
     // Immutable accessor methods
-    pub fn sensor(&self) -> &SensorController { &self.sensor }
-    pub fn actuator(&self) -> &ActuatorController { &self.actuator }
-    pub fn safety(&self) -> &SafetyController { &self.safety }
-    pub fn dispatch(&self) -> &CommandDispatcher { &self.dispatch }
+    pub fn sensor(&self) -> &SensorController {
+        &self.sensor
+    }
+    pub fn actuator(&self) -> &ActuatorController {
+        &self.actuator
+    }
+    pub fn safety(&self) -> &SafetyController {
+        &self.safety
+    }
+    pub fn dispatch(&self) -> &CommandDispatcher {
+        &self.dispatch
+    }
 
     // Mutable accessor methods
-    pub fn sensor_mut(&mut self) -> &mut SensorController { &mut self.sensor }
-    pub fn actuator_mut(&mut self) -> &mut ActuatorController { &mut self.actuator }
-    pub fn safety_mut(&mut self) -> &mut SafetyController { &mut self.safety }
-    pub fn dispatch_mut(&mut self) -> &mut CommandDispatcher { &mut self.dispatch }
+    pub fn sensor_mut(&mut self) -> &mut SensorController {
+        &mut self.sensor
+    }
+    pub fn actuator_mut(&mut self) -> &mut ActuatorController {
+        &mut self.actuator
+    }
+    pub fn safety_mut(&mut self) -> &mut SafetyController {
+        &mut self.safety
+    }
+    pub fn dispatch_mut(&mut self) -> &mut CommandDispatcher {
+        &mut self.dispatch
+    }
 }

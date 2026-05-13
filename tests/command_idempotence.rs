@@ -70,12 +70,18 @@ fn manual_bounds_and_reset() {
     let mut control = build_control();
 
     let heater_err = control.process_artisan_command(ArtisanCommand::SetHeater(150));
-    assert!(matches!(heater_err, Err(RoasterError::InvalidState { source: _ })));
+    assert!(matches!(
+        heater_err,
+        Err(RoasterError::InvalidState { source: _ })
+    ));
     let status_after_invalid = control.get_status();
     assert_eq!(status_after_invalid.ssr_output, 0.0);
 
     let fan_err = control.process_artisan_command(ArtisanCommand::SetFan(150));
-    assert!(matches!(fan_err, Err(RoasterError::InvalidState { source: _ })));
+    assert!(matches!(
+        fan_err,
+        Err(RoasterError::InvalidState { source: _ })
+    ));
     let status_after_fan_invalid = control.get_status();
     assert_eq!(status_after_fan_invalid.fan_output, 0.0);
 

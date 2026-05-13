@@ -27,6 +27,7 @@
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(non_snake_case)]
+#![allow(clippy::expect_used)]
 
 extern crate std;
 
@@ -76,7 +77,10 @@ fn test_status() -> SystemStatus {
 }
 
 /// Simulate sending a USB command string to the mock driver and parsing it.
-fn send_usb_and_parse(mock: &mut MockUsbCdcDriver, data: &str) -> Result<ArtisanCommand, StdString> {
+fn send_usb_and_parse(
+    mock: &mut MockUsbCdcDriver,
+    data: &str,
+) -> Result<ArtisanCommand, StdString> {
     mock.push_rx_data(data);
 
     let mut buffer = [0u8; 64];
@@ -194,7 +198,9 @@ fn test_tc4_read_respects_fahrenheit() {
 
     let mut status = test_status();
     // 25.0°C = 77.0°F, 125.5°C = 257.9°F, 155.7°C = 312.3°F
-    status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+    status
+        .temperature_settings
+        .set_scale(TemperatureScale::Fahrenheit);
 
     let response = ArtisanFormatter::format_read_response_full(&status);
     let parts: Vec<&str> = response.split(',').collect();
@@ -206,7 +212,10 @@ fn test_tc4_read_respects_fahrenheit() {
     assert_eq!(parts[3], "0.0");
     assert_eq!(parts[4], "0.0");
 
-    println!("   ✅ Fahrenheit values correct: AMB={}, ET={}, BT={}", parts[0], parts[1], parts[2]);
+    println!(
+        "   ✅ Fahrenheit values correct: AMB={}, ET={}, BT={}",
+        parts[0], parts[1], parts[2]
+    );
 }
 
 /// TEST-READ-USB-05: PID fields (heater, fan, SV) must NOT be converted in Fahrenheit.
@@ -219,7 +228,9 @@ fn test_tc4_pid_values_not_converted_in_fahrenheit() {
     status.target_temp = 200.0; // 200°C = 392°F
     status.ssr_output = 75.0; // percentage — NOT converted
     status.fan_output = 50.0; // percentage — NOT converted
-    status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+    status
+        .temperature_settings
+        .set_scale(TemperatureScale::Fahrenheit);
 
     let response = ArtisanFormatter::format_read_response_full(&status);
     let parts: Vec<&str> = response.split(',').collect();
@@ -231,7 +242,10 @@ fn test_tc4_pid_values_not_converted_in_fahrenheit() {
     // SV IS a temperature so it IS converted
     assert_eq!(parts[7], "392.0", "SV must be converted to °F");
 
-    println!("   ✅ PID fields correct: heater={}, fan={}, SV={}", parts[5], parts[6], parts[7]);
+    println!(
+        "   ✅ PID fields correct: heater={}, fan={}, SV={}",
+        parts[5], parts[6], parts[7]
+    );
 }
 
 /// TEST-READ-USB-06: Non-finite values normalized to 0.0.
@@ -334,10 +348,17 @@ fn test_read_partial_bytes_accumulate() {
     let trimmed = full.trim_end_matches(['\r', '\n']);
     let result = parse_artisan_command(trimmed);
 
-    assert!(result.is_ok(), "Accumulated bytes should parse as READ, got {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Accumulated bytes should parse as READ, got {:?}",
+        result
+    );
     assert!(matches!(result.unwrap(), ArtisanCommand::ReadStatus));
 
-    println!("   ✅ Partial bytes correctly accumulated: {:?} → READ", full.trim());
+    println!(
+        "   ✅ Partial bytes correctly accumulated: {:?} → READ",
+        full.trim()
+    );
 }
 
 /// TEST-READ-USB-10: USB command without CR terminator is held (not processed).
@@ -404,7 +425,10 @@ fn test_tc4_field_order_amb_first() {
     assert_eq!(parts[1], "180.0", "Second field must be ET");
     assert_eq!(parts[2], "200.0", "Third field must be BT");
 
-    println!("   ✅ TC4 field order correct: AMB={}, ET={}, BT={}", parts[0], parts[1], parts[2]);
+    println!(
+        "   ✅ TC4 field order correct: AMB={}, ET={}, BT={}",
+        parts[0], parts[1], parts[2]
+    );
 }
 
 /// TEST-READ-USB-13: READ ambient temp defaults to 0.0.

@@ -2,6 +2,7 @@
 // This is acceptable because init runs exactly once at startup and is NOT
 // in the hot path. Do NOT use alloc in the control loop or telemetry path.
 
+use crate::config::constants::*;
 use crate::error::app_error::InitError;
 use crate::hardware::fan::FanController;
 use crate::hardware::ledc_bus::{LedcBus, LedcChannelHandle};
@@ -11,13 +12,14 @@ use crate::hardware::ssr::SsrControlSimple;
 use alloc::format;
 use core::cell::RefCell;
 use critical_section;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::gpio::DriveMode;
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, TimerIFace};
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-use crate::config::constants::*;
-use esp_hal::peripherals::{GPIO1, GPIO10, GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO8, GPIO9, LEDC, SPI2};
+use esp_hal::peripherals::{
+    GPIO1, GPIO10, GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO8, GPIO9, LEDC, SPI2,
+};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
@@ -64,13 +66,25 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     // This is a safety net: if someone changes FAN_PWM_PIN in constants.rs
     // but forgets to update init.rs, this will catch it at runtime.
     assert_eq!(FAN_PWM_PIN, 9, "FAN_PWM_PIN must be 9 (GPIO9 for fan PWM)");
-    assert_eq!(SSR_CONTROL_PIN, 10, "SSR_CONTROL_PIN must be 10 (GPIO10 for SSR PWM)");
+    assert_eq!(
+        SSR_CONTROL_PIN, 10,
+        "SSR_CONTROL_PIN must be 10 (GPIO10 for SSR PWM)"
+    );
     assert_eq!(SPI_SCLK_PIN, 6, "SPI_SCLK_PIN must be 6 (GPIO6)");
     assert_eq!(SPI_MOSI_PIN, 7, "SPI_MOSI_PIN must be 7 (GPIO7)");
     assert_eq!(SPI_MISO_PIN, 5, "SPI_MISO_PIN must be 5 (GPIO5)");
-    assert_eq!(THERMOCOUPLE_BT_CS_PIN, 4, "THERMOCOUPLE_BT_CS_PIN must be 4 (GPIO4)");
-    assert_eq!(THERMOCOUPLE_ET_CS_PIN, 3, "THERMOCOUPLE_ET_CS_PIN must be 3 (GPIO3)");
-    assert_eq!(HEAT_DETECTION_PIN, 1, "HEAT_DETECTION_PIN must be 1 (GPIO1)");
+    assert_eq!(
+        THERMOCOUPLE_BT_CS_PIN, 4,
+        "THERMOCOUPLE_BT_CS_PIN must be 4 (GPIO4)"
+    );
+    assert_eq!(
+        THERMOCOUPLE_ET_CS_PIN, 3,
+        "THERMOCOUPLE_ET_CS_PIN must be 3 (GPIO3)"
+    );
+    assert_eq!(
+        HEAT_DETECTION_PIN, 1,
+        "HEAT_DETECTION_PIN must be 1 (GPIO1)"
+    );
     assert_eq!(UART_TX_PIN, 21, "UART_TX_PIN must be 21 (GPIO21)");
     assert_eq!(UART_RX_PIN, 20, "UART_RX_PIN must be 20 (GPIO20)");
     assert_eq!(STATUS_LED_PIN, 8, "STATUS_LED_PIN must be 8 (GPIO8)");
@@ -154,7 +168,9 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     //   MISO = GPIO5 (GPIO Matrix — GPIO2/FSPIQ conflicts with strapping)
     let spi = Spi::new(
         peripherals.spi2,
-        SpiConfig::default().with_frequency(Rate::from_khz(1000)).with_mode(Mode::_1),
+        SpiConfig::default()
+            .with_frequency(Rate::from_khz(1000))
+            .with_mode(Mode::_1),
     )
     .map_err(|e| InitError::HardwareInit {
         what: "SPI",
@@ -204,11 +220,9 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     })?;
 
     // Initialize fan controller
-    let fan = FanController::with_handle(fan_handle).map_err(|e| {
-        InitError::HardwareInit {
-            what: "Fan",
-            reason: format!("{:?}", e),
-        }
+    let fan = FanController::with_handle(fan_handle).map_err(|e| InitError::HardwareInit {
+        what: "Fan",
+        reason: format!("{:?}", e),
     })?;
 
     // Initialize status LED (GPIO8 - strapping pin, push-pull only)

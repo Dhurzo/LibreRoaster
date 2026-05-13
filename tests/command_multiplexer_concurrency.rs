@@ -1,8 +1,8 @@
 #![cfg(all(test, not(target_arch = "riscv32")))]
+#![allow(clippy::expect_used, clippy::type_complexity)]
 
 extern crate std;
 
-use critical_section;
 use futures::executor::{block_on, ThreadPool};
 use futures::future::join_all;
 use futures::task::SpawnExt;

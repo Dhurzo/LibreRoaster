@@ -5,7 +5,6 @@
 /// On ESP32-C3, the RTC Watchdog Timer (RWDT) is fed in the control loop.
 /// If the Embassy executor hangs, the RWDT triggers a full system reset
 /// independently of CPU state. On host builds, the hardware WDT is a no-op.
-
 /// Watchdog feeder errors exposed to higher-level services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchdogError {
@@ -82,10 +81,18 @@ mod stub {
     pub struct WatchdogFeeder;
 
     impl WatchdogFeeder {
-        pub fn initialize() -> Result<Self, WatchdogError> { Ok(Self) }
-        pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> { Ok(()) }
-        pub fn last_failure_reason(&self) -> Option<&'static str> { None }
-        pub fn is_alive(&self) -> bool { true }
+        pub fn initialize() -> Result<Self, WatchdogError> {
+            Ok(Self)
+        }
+        pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
+            Ok(())
+        }
+        pub fn last_failure_reason(&self) -> Option<&'static str> {
+            None
+        }
+        pub fn is_alive(&self) -> bool {
+            true
+        }
     }
 }
 
@@ -134,4 +141,4 @@ mod hw_watchdog {
     pub fn init() {}
 }
 
-pub use hw_watchdog::{init as init_hw_watchdog, feed as feed_hw_watchdog};
+pub use hw_watchdog::{feed as feed_hw_watchdog, init as init_hw_watchdog};

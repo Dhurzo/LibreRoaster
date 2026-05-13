@@ -195,7 +195,10 @@ fn fan_bounds_validation() {
 
     // Invalid value > 100 should fail
     let result = control.process_artisan_command(ArtisanCommand::SetFan(150));
-    assert!(matches!(result, Err(RoasterError::InvalidState { source: _ })));
+    assert!(matches!(
+        result,
+        Err(RoasterError::InvalidState { source: _ })
+    ));
 
     // After failed command, status should remain unchanged
     let status = control.get_status();

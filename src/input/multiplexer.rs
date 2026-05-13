@@ -28,7 +28,6 @@ impl Instant {
 // The `# ` acknowledgment documented in README is therefore not sent.
 // If re-enabling, restore init_state.rs and uncomment init flow.
 
-
 pub const IDLE_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,8 +49,6 @@ impl CommandMultiplexer {
             last_command_time: None,
         }
     }
-
-    
 
     pub fn on_command_received(&mut self, channel: CommChannel) -> bool {
         let now = Instant::now();
@@ -181,8 +178,6 @@ mod tests {
         let allowed = mux.on_command_received(CommChannel::Usb);
         assert!(allowed, "Same channel commands should be allowed");
     }
-
-    
 
     #[test]
     fn test_commands_work_without_handshake() {

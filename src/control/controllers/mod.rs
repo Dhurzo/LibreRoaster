@@ -12,6 +12,6 @@ pub mod safety;
 pub mod sensor;
 
 pub use actuator::ActuatorController;
-pub use dispatch::{CommandDispatcher, CommandDispatchResult};
+pub use dispatch::{CommandDispatchResult, CommandDispatcher};
 pub use safety::SafetyController;
 pub use sensor::SensorController;

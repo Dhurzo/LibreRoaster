@@ -233,8 +233,6 @@ impl fmt::Display for AppError {
     }
 }
 
-
-
 impl From<crate::control::RoasterError> for AppError {
     fn from(err: crate::control::RoasterError) -> Self {
         match err {

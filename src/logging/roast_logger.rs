@@ -11,7 +11,27 @@ const SAMPLE_CAPACITY: usize = 128;
 /// Header written at the start of a dump.
 const CSV_HEADER: &str = "time_s,bt,et,heater,fan,target,ror";
 
-static ROAST_LOGGER: Mutex<RefCell<RoastLogger>> = Mutex::new(RefCell::new(RoastLogger::new_empty()));
+/// Data for a single log sample.
+#[derive(Debug, Clone, Copy)]
+pub struct LogSampleData {
+    /// Elapsed seconds since roast start.
+    pub elapsed_secs: u32,
+    /// Bean temperature (°C).
+    pub bt: f32,
+    /// Environment temperature (°C).
+    pub et: f32,
+    /// Heater output (0-100%).
+    pub heater: f32,
+    /// Fan output (0-100%).
+    pub fan: f32,
+    /// Target temperature (°C).
+    pub target: f32,
+    /// Rate of rise (°C/min).
+    pub ror: f32,
+}
+
+static ROAST_LOGGER: Mutex<RefCell<RoastLogger>> =
+    Mutex::new(RefCell::new(RoastLogger::new_empty()));
 
 /// Start logging a new roast.
 pub fn start_roast(now: Instant) {
@@ -24,11 +44,9 @@ pub fn stop_roast() {
 }
 
 /// Log a sample to the ring buffer.
-pub fn log_sample(
-    elapsed_secs: u32, bt: f32, et: f32, heater: f32, fan: f32, target: f32, ror: f32,
-) {
+pub fn log_sample(data: LogSampleData) {
     critical_section::with(|cs| {
-        ROAST_LOGGER.borrow(cs).borrow_mut().log_sample(elapsed_secs, bt, et, heater, fan, target, ror);
+        ROAST_LOGGER.borrow(cs).borrow_mut().log_sample(data);
     });
 }
 
@@ -77,16 +95,7 @@ impl RoastLogger {
     }
 
     /// Append a CSV-formatted sample. Oldest sample is evicted if buffer is full.
-    pub fn log_sample(
-        &mut self,
-        elapsed_secs: u32,
-        bt: f32,
-        et: f32,
-        heater: f32,
-        fan: f32,
-        target: f32,
-        ror: f32,
-    ) {
+    pub fn log_sample(&mut self, data: LogSampleData) {
         if !self.active {
             return;
         }
@@ -95,7 +104,13 @@ impl RoastLogger {
             &mut entry,
             core::format_args!(
                 "{},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1}",
-                elapsed_secs, bt, et, heater, fan, target, ror
+                data.elapsed_secs,
+                data.bt,
+                data.et,
+                data.heater,
+                data.fan,
+                data.target,
+                data.ror
             ),
         );
         if self.buffer.len() >= LOG_CAPACITY {
@@ -143,8 +158,24 @@ mod tests {
     fn log_and_dump_returns_csv() {
         let mut logger = RoastLogger::new();
         logger.start_roast(Instant::now());
-        logger.log_sample(0, 50.0, 40.0, 0.0, 20.0, 200.0, 0.0);
-        logger.log_sample(1, 52.0, 42.0, 30.0, 25.0, 200.0, 2.0);
+        logger.log_sample(LogSampleData {
+            elapsed_secs: 0,
+            bt: 50.0,
+            et: 40.0,
+            heater: 0.0,
+            fan: 20.0,
+            target: 200.0,
+            ror: 0.0,
+        });
+        logger.log_sample(LogSampleData {
+            elapsed_secs: 1,
+            bt: 52.0,
+            et: 42.0,
+            heater: 30.0,
+            fan: 25.0,
+            target: 200.0,
+            ror: 2.0,
+        });
 
         let dump = logger.dump();
         assert!(dump.starts_with("#DUMP time_s,bt,et"));
@@ -158,7 +189,15 @@ mod tests {
         let mut logger = RoastLogger::new();
         logger.start_roast(Instant::now());
         for i in 0..300u32 {
-            logger.log_sample(i, 100.0, 90.0, 50.0, 30.0, 200.0, 0.0);
+            logger.log_sample(LogSampleData {
+                elapsed_secs: i,
+                bt: 100.0,
+                et: 90.0,
+                heater: 50.0,
+                fan: 30.0,
+                target: 200.0,
+                ror: 0.0,
+            });
         }
         assert_eq!(logger.sample_count(), LOG_CAPACITY);
     }
@@ -166,7 +205,15 @@ mod tests {
     #[test]
     fn inactive_logger_ignores_samples() {
         let mut logger = RoastLogger::new();
-        logger.log_sample(0, 50.0, 40.0, 0.0, 20.0, 200.0, 0.0);
+        logger.log_sample(LogSampleData {
+            elapsed_secs: 0,
+            bt: 50.0,
+            et: 40.0,
+            heater: 0.0,
+            fan: 20.0,
+            target: 200.0,
+            ror: 0.0,
+        });
         assert_eq!(logger.sample_count(), 0);
     }
 

@@ -49,8 +49,6 @@ impl ArtisanCommandHandler {
         self.manual_fan = fan;
     }
 
-    
-
     /// Clear manual control values
     pub fn clear_manual(&mut self) {
         self.manual_heater = 0.0;

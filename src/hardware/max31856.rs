@@ -110,8 +110,14 @@ where
         let raw_temp =
             ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
 
-        log::info!("MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] raw_temp={:#010x} fault=0x{:02X}",
-            temp_data[0], temp_data[1], temp_data[2], raw_temp, fault);
+        log::info!(
+            "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] raw_temp={:#010x} fault=0x{:02X}",
+            temp_data[0],
+            temp_data[1],
+            temp_data[2],
+            raw_temp,
+            fault
+        );
 
         Ok(Max31856Reading { raw_temp, fault })
     }
@@ -152,12 +158,15 @@ where
         // Trigger one-shot conversion in normally-off mode (CMODE=0, 1SHOT=1)
         self.write_register(0x80, 0x50)?;
 
-        Timer::after(Duration::from_millis(crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64)).await;
+        Timer::after(Duration::from_millis(
+            crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64,
+        ))
+        .await;
 
         self.read_conversion_block()
     }
 
-#[allow(deprecated)]
+    #[allow(deprecated)]
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
         // Check fault bits: CJ Range(0x01), CJ High(0x02), CJ Low(0x04), TC High(0x08), TC Low(0x10), OV/UV(0x20), Open Circuit(0x40)

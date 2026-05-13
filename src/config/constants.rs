@@ -99,8 +99,8 @@ pub enum ArtisanCommand {
     DumpLog,
     Preheat(f32),
     SetFanProfile,
-    SetPidChannel(u8),           // PID;CHAN;2 — 1=ET, 2=BT (default)
-    SetPidCycleTime(u32),        // PID;CT;1000 — cycle time in ms
+    SetPidChannel(u8),            // PID;CHAN;2 — 1=ET, 2=BT (default)
+    SetPidCycleTime(u32),         // PID;CT;1000 — cycle time in ms
     SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
 }
 
@@ -143,12 +143,22 @@ pub struct FanProfile {
     pub setpoints: heapless::Vec<FanSetpoint, MAX_PROFILE_SETPOINTS>,
 }
 
+impl Default for FanProfile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FanProfile {
     pub fn new() -> Self {
-        Self { setpoints: heapless::Vec::new() }
+        Self {
+            setpoints: heapless::Vec::new(),
+        }
     }
     pub fn target_at(&self, elapsed_secs: u32) -> Option<u8> {
-        if self.setpoints.is_empty() { return None; }
+        if self.setpoints.is_empty() {
+            return None;
+        }
         if elapsed_secs <= self.setpoints[0].time_secs {
             return Some(self.setpoints[0].fan_speed);
         }
@@ -157,9 +167,12 @@ impl FanProfile {
             let curr = self.setpoints[i];
             if elapsed_secs <= curr.time_secs {
                 let range = curr.time_secs - prev.time_secs;
-                if range == 0 { return Some(curr.fan_speed); }
+                if range == 0 {
+                    return Some(curr.fan_speed);
+                }
                 let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
-                let interp = prev.fan_speed as f32 + (curr.fan_speed as f32 - prev.fan_speed as f32) * frac;
+                let interp =
+                    prev.fan_speed as f32 + (curr.fan_speed as f32 - prev.fan_speed as f32) * frac;
                 return Some((interp + 0.5).clamp(0.0, 100.0) as u8);
             }
         }
@@ -175,9 +188,17 @@ pub struct RoastProfile {
     pub setpoints: heapless::Vec<ProfileSetpoint, MAX_PROFILE_SETPOINTS>,
 }
 
+impl Default for RoastProfile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoastProfile {
     pub fn new() -> Self {
-        Self { setpoints: heapless::Vec::new() }
+        Self {
+            setpoints: heapless::Vec::new(),
+        }
     }
 
     /// Compute target temperature at elapsed_secs using linear interpolation.
@@ -217,7 +238,12 @@ mod tests {
     fn make_fan_profile(pairs: &[(u32, u8)]) -> FanProfile {
         let mut p = FanProfile::new();
         for &(t, s) in pairs {
-            p.setpoints.push(FanSetpoint { time_secs: t, fan_speed: s }).unwrap();
+            p.setpoints
+                .push(FanSetpoint {
+                    time_secs: t,
+                    fan_speed: s,
+                })
+                .unwrap();
         }
         p
     }
@@ -268,11 +294,19 @@ mod tests {
     fn fan_profile_max_setpoints() {
         let mut p = FanProfile::new();
         for i in 0..MAX_PROFILE_SETPOINTS {
-            p.setpoints.push(FanSetpoint { time_secs: i as u32 * 10, fan_speed: i as u8 * 6 }).unwrap();
+            p.setpoints
+                .push(FanSetpoint {
+                    time_secs: i as u32 * 10,
+                    fan_speed: i as u8 * 6,
+                })
+                .unwrap();
         }
         assert_eq!(p.setpoints.len(), MAX_PROFILE_SETPOINTS);
         assert_eq!(p.target_at(0), Some(0));
-        assert_eq!(p.target_at((MAX_PROFILE_SETPOINTS - 1) as u32 * 10), Some((MAX_PROFILE_SETPOINTS - 1) as u8 * 6));
+        assert_eq!(
+            p.target_at((MAX_PROFILE_SETPOINTS - 1) as u32 * 10),
+            Some((MAX_PROFILE_SETPOINTS - 1) as u8 * 6)
+        );
     }
 }
 
@@ -380,10 +414,10 @@ pub struct SystemStatus {
     pub max_command_latency_us: u32,
     pub temperature_settings: TemperatureSettings,
     pub charge_detected: bool,
-    pub pid_channel: u8,           // 1=ET, 2=BT, default=2
-    pub pid_cycle_time_ms: u32,    // default=100 (PID_SAMPLE_TIME_MS)
-    pub pid_output_min: f32,       // default=0.0
-    pub pid_output_max: f32,       // default=100.0
+    pub pid_channel: u8,        // 1=ET, 2=BT, default=2
+    pub pid_cycle_time_ms: u32, // default=100 (PID_SAMPLE_TIME_MS)
+    pub pid_output_min: f32,    // default=0.0
+    pub pid_output_max: f32,    // default=100.0
 }
 
 impl Default for SystemStatus {

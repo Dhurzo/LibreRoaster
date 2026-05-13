@@ -4,9 +4,9 @@
 // SAFE mode only — duty NEVER exceeds 0%. No heater activation.
 
 #[cfg(target_arch = "riscv32")]
-use esp_backtrace as _;
-#[cfg(target_arch = "riscv32")]
 use esp32c3::LEDC;
+#[cfg(target_arch = "riscv32")]
+use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig, Pull};
 #[cfg(target_arch = "riscv32")]
@@ -59,8 +59,7 @@ fn main() -> ! {
         }
     }
 
-    static TIMER0: StaticCell<esp_hal::ledc::timer::Timer<'static, LowSpeed>> =
-        StaticCell::new();
+    static TIMER0: StaticCell<esp_hal::ledc::timer::Timer<'static, LowSpeed>> = StaticCell::new();
     let timer0 = TIMER0.init(timer0);
 
     let ssr_pin = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
@@ -101,7 +100,10 @@ fn main() -> ! {
     }
 
     // SSR-RAW-03: Read GPIO1 heat-detection pin (pull-up)
-    let heat_pin = Input::new(peripherals.GPIO1, InputConfig::default().with_pull(Pull::Up));
+    let heat_pin = Input::new(
+        peripherals.GPIO1,
+        InputConfig::default().with_pull(Pull::Up),
+    );
     let is_high = heat_pin.is_high();
     let pin_label = if is_high { "high" } else { "low" };
     passed += 1;
@@ -128,12 +130,7 @@ fn main() -> ! {
     }
 
     let suite_result = if passed == total { "PASS" } else { "FAIL" };
-    esp_println::println!(
-        "TESTSUITE:COMPLETE:{}/{}:{}",
-        passed,
-        total,
-        suite_result
-    );
+    esp_println::println!("TESTSUITE:COMPLETE:{}/{}:{}", passed, total, suite_result);
 
     loop {}
 }

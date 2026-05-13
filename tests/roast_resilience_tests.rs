@@ -12,9 +12,8 @@ fn no_profile_start_falls_back_to_default_target() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("RoasterControl should init without profile");
+    let rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub)
+        .expect("RoasterControl should init without profile");
 
     let status = rc.get_status();
     assert!(!status.pid_enabled);
@@ -29,9 +28,7 @@ fn charge_not_detected_roast_continues_normally() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     // Use proper API to start the roast
     rc.process_artisan_command(ArtisanCommand::StartRoast)
@@ -58,9 +55,7 @@ fn bt_below_fifty_no_charge_check() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     rc.process_artisan_command(ArtisanCommand::StartRoast)
         .expect("START should work");
@@ -82,9 +77,7 @@ fn fan_profile_empty_does_not_break_control() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     // No fan profile loaded — update_control should use manual fan
     let now = embassy_time::Instant::now();
@@ -104,8 +97,14 @@ fn start_without_preheat_uses_default_or_profile() {
 #[test]
 fn preheat_then_start_transitions_normally() {
     // PREHEAT sets target, START should either continue or transition
-    assert!(matches!(parse_artisan_command("PREHEAT 180"), Ok(ArtisanCommand::Preheat(180.0))));
-    assert!(matches!(parse_artisan_command("START"), Ok(ArtisanCommand::StartRoast)));
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 180"),
+        Ok(ArtisanCommand::Preheat(180.0))
+    ));
+    assert!(matches!(
+        parse_artisan_command("START"),
+        Ok(ArtisanCommand::StartRoast)
+    ));
     // Both parse correctly — the transition is in RoasterControl handler
 }
 
@@ -115,9 +114,7 @@ fn double_start_should_not_break() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     rc.process_artisan_command(ArtisanCommand::StartRoast)
         .expect("first START should succeed");
@@ -132,9 +129,7 @@ fn stop_during_idle_does_not_crash() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     // STOP before START
     let result = rc.process_artisan_command(ArtisanCommand::EmergencyStop);
@@ -144,15 +139,21 @@ fn stop_during_idle_does_not_crash() {
 
 #[test]
 fn preheat_parser_edge_values() {
-    assert!(matches!(parse_artisan_command("PREHEAT 50"), Ok(ArtisanCommand::Preheat(50.0))));
-    assert!(matches!(parse_artisan_command("PREHEAT 300"), Ok(ArtisanCommand::Preheat(300.0))));
-    assert!(matches!(parse_artisan_command("PREHEAT 49"), Err(_)));
-    assert!(matches!(parse_artisan_command("PREHEAT 301"), Err(_)));
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 50"),
+        Ok(ArtisanCommand::Preheat(50.0))
+    ));
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 300"),
+        Ok(ArtisanCommand::Preheat(300.0))
+    ));
+    assert!(parse_artisan_command("PREHEAT 49").is_err());
+    assert!(parse_artisan_command("PREHEAT 301").is_err());
 }
 
 #[test]
 fn fan_profile_out_of_range_returns_error() {
-    assert!(matches!(parse_artisan_command("FANPROFILE;0,20;10,150"), Err(_)));
+    assert!(parse_artisan_command("FANPROFILE;0,20;10,150").is_err());
 }
 
 #[test]
@@ -168,14 +169,24 @@ fn profile_before_start_does_not_activate_until_start() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     // Load a profile
     let mut profile = RoastProfile::new();
-    profile.setpoints.push(ProfileSetpoint { time_secs: 0, temperature: 50.0 }).unwrap();
-    profile.setpoints.push(ProfileSetpoint { time_secs: 120, temperature: 200.0 }).unwrap();
+    profile
+        .setpoints
+        .push(ProfileSetpoint {
+            time_secs: 0,
+            temperature: 50.0,
+        })
+        .unwrap();
+    profile
+        .setpoints
+        .push(ProfileSetpoint {
+            time_secs: 120,
+            temperature: 200.0,
+        })
+        .unwrap();
     store_profile(profile);
     rc.process_artisan_command(ArtisanCommand::SetProfile)
         .expect("profile load should work");
@@ -193,9 +204,7 @@ fn charge_detection_reset_on_stop() {
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let mut rc = RoasterControl::new(
-        Box::new(heater), Box::new(fan), hub,
-    ).expect("init");
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
     rc.status_mut().charge_detected = true;
     rc.status_mut().state = RoasterState::Heating;
@@ -209,18 +218,30 @@ fn charge_detection_reset_on_stop() {
 
 #[test]
 fn preheat_parser_case_insensitive() {
-    assert!(matches!(parse_artisan_command("preheat 200"), Ok(ArtisanCommand::Preheat(200.0))));
-    assert!(matches!(parse_artisan_command("PREHEAT 200"), Ok(ArtisanCommand::Preheat(200.0))));
-    assert!(matches!(parse_artisan_command("Preheat 200"), Ok(ArtisanCommand::Preheat(200.0))));
+    assert!(matches!(
+        parse_artisan_command("preheat 200"),
+        Ok(ArtisanCommand::Preheat(200.0))
+    ));
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 200"),
+        Ok(ArtisanCommand::Preheat(200.0))
+    ));
+    assert!(matches!(
+        parse_artisan_command("Preheat 200"),
+        Ok(ArtisanCommand::Preheat(200.0))
+    ));
 }
 
 #[test]
 fn fanprofile_parser_case_insensitive() {
-    assert!(matches!(parse_artisan_command("fanprofile;0,20"), Ok(ArtisanCommand::SetFanProfile)));
+    assert!(matches!(
+        parse_artisan_command("fanprofile;0,20"),
+        Ok(ArtisanCommand::SetFanProfile)
+    ));
 }
 
 #[test]
 fn empty_commands_handled_gracefully() {
-    assert!(matches!(parse_artisan_command(""), Err(_)));
-    assert!(matches!(parse_artisan_command("   "), Err(_)));
+    assert!(parse_artisan_command("").is_err());
+    assert!(parse_artisan_command("   ").is_err());
 }

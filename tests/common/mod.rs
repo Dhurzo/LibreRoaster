@@ -16,6 +16,7 @@ use libreroaster::control::traits::{Fan, Heater};
 use libreroaster::control::RoasterControl;
 use libreroaster::input::ArtisanInput;
 
+#[allow(clippy::expect_used)]
 pub fn build_test_control(
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
@@ -23,7 +24,7 @@ pub fn build_test_control(
     RoasterControl::new(heater, fan, SensorConversionHub::new()).expect("test control should build")
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::expect_used)]
 pub fn init_test_service_container() {
     let roaster = build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()));
     let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");

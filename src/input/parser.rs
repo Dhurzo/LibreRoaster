@@ -13,9 +13,7 @@ pub fn store_profile(profile: RoastProfile) {
 
 /// Consume the stored profile, returning it and clearing the slot.
 pub fn take_profile() -> Option<RoastProfile> {
-    critical_section::with(|cs| {
-        PARSED_PROFILE.borrow(cs).borrow_mut().take()
-    })
+    critical_section::with(|cs| PARSED_PROFILE.borrow(cs).borrow_mut().take())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,11 +57,12 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     if let Some((cmd, args)) = trimmed.split_once(';') {
         let init_result: Option<Result<ArtisanCommand, ParseError>> =
             match cmd.to_ascii_uppercase().as_str() {
-                "CHAN" => Some(args
-                    .trim()
-                    .parse::<u16>()
-                    .map(ArtisanCommand::Chan)
-                    .map_err(|_| ParseError::InvalidValue)),
+                "CHAN" => Some(
+                    args.trim()
+                        .parse::<u16>()
+                        .map(ArtisanCommand::Chan)
+                        .map_err(|_| ParseError::InvalidValue),
+                ),
                 "UNITS" => Some(match args.trim() {
                     "C" | "c" => Ok(ArtisanCommand::Units(false)),
                     "F" | "f" => Ok(ArtisanCommand::Units(true)),
@@ -158,13 +157,20 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.to_ascii_uppercase().starts_with("PID,SV,") {
         // PID,SV,150 → same as SETTARGET 150
         let sv_str = &cmd[7..]; // After "PID,SV,"
-        let target = sv_str.trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
-        if !(50.0..=300.0).contains(&target) { return Err(ParseError::OutOfRange); }
+        let target = sv_str
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| ParseError::InvalidValue)?;
+        if !(50.0..=300.0).contains(&target) {
+            return Err(ParseError::OutOfRange);
+        }
         Ok(ArtisanCommand::SetTargetTemp(target))
     } else if cmd.eq_ignore_ascii_case("PREHEAT") {
         if parts.len() == 2 {
             let temp = parse_float(parts[1])?;
-            if !(50.0..=300.0).contains(&temp) { return Err(ParseError::OutOfRange); }
+            if !(50.0..=300.0).contains(&temp) {
+                return Err(ParseError::OutOfRange);
+            }
             Ok(ArtisanCommand::Preheat(temp))
         } else {
             Err(ParseError::InvalidValue)
@@ -210,9 +216,18 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             if parts.len() < 4 {
                 return Err(ParseError::InvalidValue);
             }
-            let kp = parts[1].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
-            let ki = parts[2].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
-            let kd = parts[3].trim().parse::<f32>().map_err(|_| ParseError::InvalidValue)?;
+            let kp = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let ki = parts[2]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let kd = parts[3]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
             if kp < 0.0 || ki < 0.0 || kd < 0.0 {
                 return Err(ParseError::OutOfRange);
             }
@@ -320,14 +335,25 @@ fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
         let time_str = parts.next().ok_or(ParseError::InvalidValue)?;
         let temp_str = parts.next().ok_or(ParseError::InvalidValue)?;
 
-        let time_secs: u32 = time_str.trim().parse().map_err(|_| ParseError::InvalidValue)?;
-        let temperature: f32 = temp_str.trim().parse().map_err(|_| ParseError::InvalidValue)?;
+        let time_secs: u32 = time_str
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        let temperature: f32 = temp_str
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
 
         if !(50.0..=300.0).contains(&temperature) {
             return Err(ParseError::OutOfRange);
         }
 
-        profile.setpoints.push(ProfileSetpoint { time_secs, temperature })
+        profile
+            .setpoints
+            .push(ProfileSetpoint {
+                time_secs,
+                temperature,
+            })
             .map_err(|_| ParseError::OutOfRange)?;
     }
 
@@ -344,17 +370,36 @@ fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     let mut profile = FanProfile::new();
     for segment in args.split(';') {
         let segment = segment.trim();
-        if segment.is_empty() { continue; }
+        if segment.is_empty() {
+            continue;
+        }
         let mut parts = segment.splitn(2, ',');
-        let time_secs: u32 = parts.next().ok_or(ParseError::InvalidValue)?
-            .trim().parse().map_err(|_| ParseError::InvalidValue)?;
-        let fan_speed: u8 = parts.next().ok_or(ParseError::InvalidValue)?
-            .trim().parse().map_err(|_| ParseError::InvalidValue)?;
-        if fan_speed > 100 { return Err(ParseError::OutOfRange); }
-        profile.setpoints.push(FanSetpoint { time_secs, fan_speed })
+        let time_secs: u32 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        let fan_speed: u8 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        if fan_speed > 100 {
+            return Err(ParseError::OutOfRange);
+        }
+        profile
+            .setpoints
+            .push(FanSetpoint {
+                time_secs,
+                fan_speed,
+            })
             .map_err(|_| ParseError::OutOfRange)?;
     }
-    if profile.setpoints.is_empty() { return Err(ParseError::EmptyCommand); }
+    if profile.setpoints.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
     crate::input::parser::fan_profile_store(profile);
     Ok(ArtisanCommand::SetFanProfile)
 }
@@ -736,13 +781,19 @@ mod tests {
     #[test]
     fn test_parse_pidgain_command() {
         let result = parse_artisan_command("PIDGAIN 2.0 0.25 0.05");
-        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(2.0, 0.25, 0.05))));
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetPidGain(2.0, 0.25, 0.05))
+        ));
     }
 
     #[test]
     fn test_parse_pidgain_case_insensitive() {
         let result = parse_artisan_command("pidgain 1.5 0.3 0.1");
-        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(1.5, 0.3, 0.1))));
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetPidGain(1.5, 0.3, 0.1))
+        ));
     }
 
     #[test]
@@ -785,111 +836,176 @@ mod tests {
 
     #[test]
     fn test_preheat_basic() {
-        assert!(matches!(parse_artisan_command("PREHEAT 180"), Ok(ArtisanCommand::Preheat(180.0))));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 180"),
+            Ok(ArtisanCommand::Preheat(180.0))
+        ));
     }
 
     #[test]
     fn test_preheat_decimal() {
-        assert!(matches!(parse_artisan_command("PREHEAT 210.5"), Ok(ArtisanCommand::Preheat(210.5))));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 210.5"),
+            Ok(ArtisanCommand::Preheat(210.5))
+        ));
     }
 
     #[test]
     fn test_preheat_min() {
-        assert!(matches!(parse_artisan_command("PREHEAT 50"), Ok(ArtisanCommand::Preheat(50.0))));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 50"),
+            Ok(ArtisanCommand::Preheat(50.0))
+        ));
     }
 
     #[test]
     fn test_preheat_max() {
-        assert!(matches!(parse_artisan_command("PREHEAT 300"), Ok(ArtisanCommand::Preheat(300.0))));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 300"),
+            Ok(ArtisanCommand::Preheat(300.0))
+        ));
     }
 
     #[test]
     fn test_preheat_too_low() {
-        assert!(matches!(parse_artisan_command("PREHEAT 40"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 40"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
     fn test_preheat_too_high() {
-        assert!(matches!(parse_artisan_command("PREHEAT 350"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 350"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
     fn test_preheat_no_value() {
-        assert!(matches!(parse_artisan_command("PREHEAT"), Err(ParseError::InvalidValue)));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT"),
+            Err(ParseError::InvalidValue)
+        ));
     }
 
     #[test]
     fn test_preheat_invalid() {
-        assert!(matches!(parse_artisan_command("PREHEAT abc"), Err(ParseError::InvalidValue)));
+        assert!(matches!(
+            parse_artisan_command("PREHEAT abc"),
+            Err(ParseError::InvalidValue)
+        ));
     }
 
     // ── FANPROFILE command edge cases ──────────
 
     #[test]
     fn test_fanprofile_basic() {
-        assert!(matches!(parse_artisan_command("FANPROFILE;0,20;60,50;120,100"),
-            Ok(ArtisanCommand::SetFanProfile)));
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,20;60,50;120,100"),
+            Ok(ArtisanCommand::SetFanProfile)
+        ));
     }
 
     #[test]
     fn test_fanprofile_single_setpoint() {
-        assert!(matches!(parse_artisan_command("FANPROFILE;0,30"), Ok(ArtisanCommand::SetFanProfile)));
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,30"),
+            Ok(ArtisanCommand::SetFanProfile)
+        ));
     }
 
     #[test]
     fn test_fanprofile_empty() {
-        assert!(matches!(parse_artisan_command("FANPROFILE;"), Err(ParseError::EmptyCommand)));
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;"),
+            Err(ParseError::EmptyCommand)
+        ));
     }
 
     #[test]
     fn test_fanprofile_out_of_range() {
-        assert!(matches!(parse_artisan_command("FANPROFILE;0,150"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,150"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
     fn test_fanprofile_invalid_format() {
-        assert!(matches!(parse_artisan_command("FANPROFILE;abc,def"), Err(ParseError::InvalidValue)));
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;abc,def"),
+            Err(ParseError::InvalidValue)
+        ));
     }
 
     // ── TC4 PID commands ──────────────────────
 
     #[test]
     fn test_pid_on_maps_to_start() {
-        assert!(matches!(parse_artisan_command("PID,ON"), Ok(ArtisanCommand::StartRoast)));
+        assert!(matches!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
     }
 
     #[test]
     fn test_pid_off_maps_to_stop() {
-        assert!(matches!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::EmergencyStop)));
+        assert!(matches!(
+            parse_artisan_command("PID,OFF"),
+            Ok(ArtisanCommand::EmergencyStop)
+        ));
     }
 
     #[test]
     fn test_pid_sv_maps_to_settarget() {
-        assert!(matches!(parse_artisan_command("PID,SV,150"), Ok(ArtisanCommand::SetTargetTemp(150.0))));
-        assert!(matches!(parse_artisan_command("PID,SV,210.5"), Ok(ArtisanCommand::SetTargetTemp(210.5))));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,150"),
+            Ok(ArtisanCommand::SetTargetTemp(150.0))
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,210.5"),
+            Ok(ArtisanCommand::SetTargetTemp(210.5))
+        ));
     }
 
     #[test]
     fn test_pid_sv_case_insensitive() {
-        assert!(matches!(parse_artisan_command("pid,sv,200"), Ok(ArtisanCommand::SetTargetTemp(200.0))));
+        assert!(matches!(
+            parse_artisan_command("pid,sv,200"),
+            Ok(ArtisanCommand::SetTargetTemp(200.0))
+        ));
     }
 
     #[test]
     fn test_pid_sv_out_of_range() {
-        assert!(matches!(parse_artisan_command("PID,SV,40"), Err(ParseError::OutOfRange)));
-        assert!(matches!(parse_artisan_command("PID,SV,350"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,40"),
+            Err(ParseError::OutOfRange)
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,350"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     // ── PID semicolon command tests ──────────
 
     #[test]
     fn test_pid_semicolon_on() {
-        assert!(matches!(parse_artisan_command("PID;ON"), Ok(ArtisanCommand::StartRoast)));
+        assert!(matches!(
+            parse_artisan_command("PID;ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_off() {
-        assert!(matches!(parse_artisan_command("PID;OFF"), Ok(ArtisanCommand::EmergencyStop)));
+        assert!(matches!(
+            parse_artisan_command("PID;OFF"),
+            Ok(ArtisanCommand::EmergencyStop)
+        ));
     }
 
     #[test]
@@ -910,7 +1026,10 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_sv_out_of_range() {
-        assert!(matches!(parse_artisan_command("PID;SV;40"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PID;SV;40"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
@@ -923,37 +1042,58 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_t_invalid() {
-        assert!(matches!(parse_artisan_command("PID;T;abc"), Err(ParseError::InvalidValue)));
+        assert!(matches!(
+            parse_artisan_command("PID;T;abc"),
+            Err(ParseError::InvalidValue)
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_t_negative() {
-        assert!(matches!(parse_artisan_command("PID;T;-1;0.5;1.0"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PID;T;-1;0.5;1.0"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_chan() {
-        assert!(matches!(parse_artisan_command("PID;CHAN;2"), Ok(ArtisanCommand::SetPidChannel(2))));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;2"),
+            Ok(ArtisanCommand::SetPidChannel(2))
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_chan_et() {
-        assert!(matches!(parse_artisan_command("PID;CHAN;1"), Ok(ArtisanCommand::SetPidChannel(1))));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;1"),
+            Ok(ArtisanCommand::SetPidChannel(1))
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_chan_invalid() {
-        assert!(matches!(parse_artisan_command("PID;CHAN;5"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;5"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_ct() {
-        assert!(matches!(parse_artisan_command("PID;CT;1000"), Ok(ArtisanCommand::SetPidCycleTime(1000))));
+        assert!(matches!(
+            parse_artisan_command("PID;CT;1000"),
+            Ok(ArtisanCommand::SetPidCycleTime(1000))
+        ));
     }
 
     #[test]
     fn test_pid_semicolon_ct_too_low() {
-        assert!(matches!(parse_artisan_command("PID;CT;5"), Err(ParseError::OutOfRange)));
+        assert!(matches!(
+            parse_artisan_command("PID;CT;5"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     #[test]
@@ -974,16 +1114,25 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_unknown_sub() {
-        assert!(matches!(parse_artisan_command("PID;UNKNOWN"), Err(ParseError::UnknownCommand)));
+        assert!(matches!(
+            parse_artisan_command("PID;UNKNOWN"),
+            Err(ParseError::UnknownCommand)
+        ));
     }
 
     #[test]
     fn test_pid_comma_still_works_on() {
-        assert!(matches!(parse_artisan_command("PID,ON"), Ok(ArtisanCommand::StartRoast)));
+        assert!(matches!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
     }
 
     #[test]
     fn test_pid_comma_still_works_off() {
-        assert!(matches!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::EmergencyStop)));
+        assert!(matches!(
+            parse_artisan_command("PID,OFF"),
+            Ok(ArtisanCommand::EmergencyStop)
+        ));
     }
 }

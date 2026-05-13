@@ -124,7 +124,10 @@ pub async fn control_loop_task() {
                 crate::config::ArtisanCommand::Stop | crate::config::ArtisanCommand::EmergencyStop
             );
             if cmds_this_tick > crate::config::MAX_COMMANDS_PER_TICK && !is_emergency {
-                warn!("Command rate limit exceeded — {} commands this tick, skipping remaining", cmds_this_tick);
+                warn!(
+                    "Command rate limit exceeded — {} commands this tick, skipping remaining",
+                    cmds_this_tick
+                );
                 continue;
             }
             if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
@@ -533,7 +536,8 @@ pub async fn control_loop_task() {
 
             match line {
                 Ok(formatted_line) => {
-                    if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str()) {
+                    if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str())
+                    {
                         let _ = output_channel.try_send(s);
                     }
                 }
@@ -543,12 +547,15 @@ pub async fn control_loop_task() {
             }
 
             // Feed ring-buffer roast logger
-            let elapsed = tick_start.elapsed().as_secs() as u32;
-            crate::logging::roast_logger::log_sample(
-                elapsed, status.bean_temp, status.env_temp,
-                status.ssr_output, status.fan_output, status.target_temp,
-                status.derivative_rate,
-            );
+            crate::logging::roast_logger::log_sample(crate::logging::roast_logger::LogSampleData {
+                elapsed_secs: tick_start.elapsed().as_secs() as u32,
+                bt: status.bean_temp,
+                et: status.env_temp,
+                heater: status.ssr_output,
+                fan: status.fan_output,
+                target: status.target_temp,
+                ror: status.derivative_rate,
+            });
         }
 
         let telemetry_elapsed_ms = stage_tracker.elapsed().as_millis();

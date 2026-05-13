@@ -50,8 +50,11 @@ fn main() -> ! {
     if pin_state {
         report("gpio_raw_01_pullup_high", true, "pin_state=high");
     } else {
-        report("gpio_raw_01_pullup_high", true,
-            "pin_state=low:pull_up_not_asserted_or_externally_pulled_low");
+        report(
+            "gpio_raw_01_pullup_high",
+            true,
+            "pin_state=low:pull_up_not_asserted_or_externally_pulled_low",
+        );
     }
     passed += 1;
 
@@ -77,8 +80,10 @@ fn main() -> ! {
 
     passed += 1;
 
-    esp_println::println!("TESTSUITE:COMPLETE:{}/{}:{}",
-        passed, passed + failed,
+    esp_println::println!(
+        "TESTSUITE:COMPLETE:{}/{}:{}",
+        passed,
+        passed + failed,
         if failed == 0 { "PASS" } else { "FAIL" }
     );
 

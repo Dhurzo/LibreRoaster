@@ -17,6 +17,7 @@
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(deprecated)]
+#![allow(clippy::expect_used)]
 
 extern crate std;
 
@@ -262,7 +263,7 @@ fn test_ror_calculation_across_reads() {
 
         // ROR is 0 for first reading, then may be 0 or positive depending on
         // whether embassy-time has advanced between calls (not guaranteed in tests)
-        let min_expected = if i == 0 { 0.0 } else { 0.0 };
+        let min_expected = 0.0;
         assert!(
             ror_value >= min_expected,
             "Reading {} ROR should be >= {:.1}, got {:.2}",
@@ -380,29 +381,25 @@ fn test_error_handling_integration() {
 
         assert!(result.is_err(), "'{}' should fail to parse", input);
 
-        match result.unwrap_err() {
-            error => {
-                // Check error type matches
-                match (&error, &expected_error) {
-                    (ParseError::UnknownCommand, ParseError::UnknownCommand) => {
-                        println!("   ✅ '{}' → UnknownCommand", input);
-                    }
-                    (ParseError::EmptyCommand, ParseError::EmptyCommand) => {
-                        println!("   ✅ '{}' → EmptyCommand", input);
-                    }
-                    (ParseError::InvalidValue, ParseError::InvalidValue) => {
-                        println!("   ✅ '{}' → InvalidValue", input);
-                    }
-                    (ParseError::OutOfRange, ParseError::OutOfRange) => {
-                        println!("   ✅ '{}' → OutOfRange", input);
-                    }
-                    _ => {
-                        panic!(
-                            "Wrong error type for '{}': got {:?}, expected {:?}",
-                            input, error, expected_error
-                        );
-                    }
-                }
+        let error = result.unwrap_err();
+        match (&error, &expected_error) {
+            (ParseError::UnknownCommand, ParseError::UnknownCommand) => {
+                println!("   ✅ '{}' → UnknownCommand", input);
+            }
+            (ParseError::EmptyCommand, ParseError::EmptyCommand) => {
+                println!("   ✅ '{}' → EmptyCommand", input);
+            }
+            (ParseError::InvalidValue, ParseError::InvalidValue) => {
+                println!("   ✅ '{}' → InvalidValue", input);
+            }
+            (ParseError::OutOfRange, ParseError::OutOfRange) => {
+                println!("   ✅ '{}' → OutOfRange", input);
+            }
+            _ => {
+                panic!(
+                    "Wrong error type for '{}': got {:?}, expected {:?}",
+                    input, error, expected_error
+                );
             }
         }
     }
@@ -484,12 +481,18 @@ fn test_complete_flow() {
     // Step 5: Verify response format (7-field TC4/Arduino format)
     assert!(response.contains("120.3"), "Should contain ET");
     assert!(response.contains("150.5"), "Should contain BT");
-    assert!(response.contains("0.0"), "Should contain AMB (ambient temp)");
+    assert!(
+        response.contains("0.0"),
+        "Should contain AMB (ambient temp)"
+    );
     assert!(response.contains("75.0"), "Should contain Heater");
     assert!(response.contains("50.0"), "Should contain Fan speed");
 
     let parts: Vec<&str> = response.split(',').collect();
-    assert!(parts.len() >= 5, "Response should have at least 5 fields (TC4/Arduino format)");
+    assert!(
+        parts.len() >= 5,
+        "Response should have at least 5 fields (TC4/Arduino format)"
+    );
 
     println!(
         "   ✅ Complete flow: '{}' → {:?} → '{}'",

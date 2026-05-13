@@ -118,8 +118,6 @@ impl<'a> FanController<'a> {
         self.current_speed
     }
 
-    
-
     pub fn is_enabled(&self) -> bool {
         self.current_speed > 0.0
     }

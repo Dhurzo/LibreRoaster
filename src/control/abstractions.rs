@@ -153,8 +153,6 @@ impl OutputController {
         Ok(())
     }
 
-    
-
     pub fn enable_continuous_output(&mut self) {
         self.continuous_enabled = true;
     }

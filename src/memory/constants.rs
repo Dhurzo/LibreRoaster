@@ -140,29 +140,59 @@ mod tests {
 
     #[test]
     fn test_constant_sanity() {
-        // Verificar que las constantes sean razonables
-        assert!(ERROR_MSG_MAX_LEN > 0);
-        assert!(ERROR_MSG_MAX_LEN <= 1024); // No demasiado grande
+        // Verificar que las constantes sean razonables (checked at compile time)
+        const {
+            assert!(ERROR_MSG_MAX_LEN > 0);
+        }
+        const {
+            assert!(ERROR_MSG_MAX_LEN <= 1024);
+        }
 
-        assert!(ARTISAN_CMD_MAX_LEN > 0);
-        assert!(ARTISAN_CMD_MAX_LEN <= 256);
+        const {
+            assert!(ARTISAN_CMD_MAX_LEN > 0);
+        }
+        const {
+            assert!(ARTISAN_CMD_MAX_LEN <= 256);
+        }
 
-        assert!(REPORT_BUFFER_SIZE > 0);
-        assert!(REPORT_BUFFER_SIZE <= 256); // Increased buffer size
+        const {
+            assert!(REPORT_BUFFER_SIZE > 0);
+        }
+        const {
+            assert!(REPORT_BUFFER_SIZE <= 256);
+        }
 
-        assert!(BT_HISTORY_SIZE > 0);
-        assert!(BT_HISTORY_SIZE <= 32); // Historial razonable
+        const {
+            assert!(BT_HISTORY_SIZE > 0);
+        }
+        const {
+            assert!(BT_HISTORY_SIZE <= 32);
+        }
 
-        assert!(COMMAND_BUFFER_SIZE >= RESPONSE_BUFFER_SIZE / 2);
-        assert!(RESPONSE_BUFFER_SIZE <= 1024); // Buffer de respuesta manejable
+        const {
+            assert!(COMMAND_BUFFER_SIZE >= RESPONSE_BUFFER_SIZE / 2);
+        }
+        const {
+            assert!(RESPONSE_BUFFER_SIZE <= 1024);
+        }
 
         // Verificar constantes de ROR
-        assert!(ROR_WINDOW_SIZE >= ROR_MIN_SAMPLES);
-        assert!(ROR_FILTER_ALPHA > 0.0 && ROR_FILTER_ALPHA < 1.0);
-        assert!(ROR_MIN_SAMPLES >= 2);
+        const {
+            assert!(ROR_WINDOW_SIZE >= ROR_MIN_SAMPLES);
+        }
+        const {
+            assert!(ROR_FILTER_ALPHA > 0.0 && ROR_FILTER_ALPHA < 1.0);
+        }
+        const {
+            assert!(ROR_MIN_SAMPLES >= 2);
+        }
 
         // Verificar que los tamaños sean potencias de 2 o múltiplos comúnmente usados
-        assert!(ERROR_MSG_MAX_LEN % 8 == 0 || ERROR_MSG_MAX_LEN == 128);
-        assert!(ARTISAN_CMD_MAX_LEN % 8 == 0 || ARTISAN_CMD_MAX_LEN == 64);
+        const {
+            assert!(ERROR_MSG_MAX_LEN.is_multiple_of(8) || ERROR_MSG_MAX_LEN == 128);
+        }
+        const {
+            assert!(ARTISAN_CMD_MAX_LEN.is_multiple_of(8) || ARTISAN_CMD_MAX_LEN == 64);
+        }
     }
 }

@@ -26,6 +26,12 @@
 
 #![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(non_snake_case)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::type_complexity
+)]
 
 extern crate std;
 
@@ -36,8 +42,7 @@ use embassy_time::Instant;
 
 use libreroaster::common::{StubFan, StubHeater};
 use libreroaster::config::{
-    ArtisanCommand, ProfileSetpoint, RoasterState, RoastProfile, SystemStatus,
-    TemperatureScale,
+    ArtisanCommand, ProfileSetpoint, RoastProfile, RoasterState, SystemStatus, TemperatureScale,
 };
 use libreroaster::control::RoasterControl;
 use libreroaster::hardware::sensors::SensorConversionHub;
@@ -54,7 +59,7 @@ impl PreheatCurve {
     fn temp_at(&self, step: usize) -> f32 {
         // Simulated exponential approach: 25 → 180 over 30 steps
         let temps: [f32; 31] = [
-            25.0, 30.0, 37.0, 46.0, 57.0,  // 0-4
+            25.0, 30.0, 37.0, 46.0, 57.0, // 0-4
             70.0, 84.0, 99.0, 114.0, 128.0, // 5-9
             140.0, 150.0, 158.0, 164.0, 169.0, // 10-14
             173.0, 176.0, 178.0, 179.0, 180.0, // 15-19
@@ -136,8 +141,7 @@ impl SimulationContext {
         let heater = Box::new(StubHeater::new());
         let fan = Box::new(StubFan::new());
         let sensor_hub = SensorConversionHub::new();
-        let roaster =
-            RoasterControl::new(heater, fan, sensor_hub).expect("RoasterControl init");
+        let roaster = RoasterControl::new(heater, fan, sensor_hub).expect("RoasterControl init");
         Self {
             roaster,
             curve: RoastSimCurve::Idle,
@@ -151,25 +155,19 @@ impl SimulationContext {
             RoastSimCurve::Preheating(ref curve) => {
                 let bt = curve.temp_at(self.step);
                 let et = bt - 5.0; // ET trails BT slightly during preheat
-                let _ = self
-                    .roaster
-                    .update_temperatures(bt, et, Instant::now());
+                let _ = self.roaster.update_temperatures(bt, et, Instant::now());
                 let _ = self.roaster.update_control(Instant::now());
             }
             RoastSimCurve::Roasting(ref curve) => {
                 let bt = curve.temp_at(self.step);
                 let et = bt + 15.0; // ET > BT during active roast
-                let _ = self
-                    .roaster
-                    .update_temperatures(bt, et, Instant::now());
+                let _ = self.roaster.update_temperatures(bt, et, Instant::now());
                 let _ = self.roaster.update_control(Instant::now());
             }
             RoastSimCurve::Cooling(ref curve) => {
                 let bt = curve.temp_at(self.step);
                 let et = bt - 10.0; // ET cools faster
-                let _ = self
-                    .roaster
-                    .update_temperatures(bt, et, Instant::now());
+                let _ = self.roaster.update_temperatures(bt, et, Instant::now());
                 let _ = self.roaster.update_control(Instant::now());
             }
         }
@@ -244,13 +242,13 @@ fn assert_valid_read_response(response: &str, label: &str) {
         let heater: f32 = parts[5].parse().unwrap();
         let fan: f32 = parts[6].parse().unwrap();
         assert!(
-            heater >= 0.0 && heater <= 100.0,
+            (0.0..=100.0).contains(&heater),
             "{}: Heater {} out of range [0,100]",
             label,
             heater
         );
         assert!(
-            fan >= 0.0 && fan <= 100.0,
+            (0.0..=100.0).contains(&fan),
             "{}: Fan {} out of range [0,100]",
             label,
             fan
@@ -318,7 +316,10 @@ fn test_preheat_phase_read_verification() {
     let response = ArtisanFormatter::format_read_response_full(&status);
     assert_valid_read_response(&response, "after preheat");
 
-    println!("   ✅ Preheat complete, BT={:.1}°C, READ={}", status.bean_temp, response);
+    println!(
+        "   ✅ Preheat complete, BT={:.1}°C, READ={}",
+        status.bean_temp, response
+    );
 }
 
 /// TEST-ARTISAN-SIM-03: Profile loading — Artisan sends PROFILE command.
@@ -328,13 +329,17 @@ fn test_profile_loading_via_artisan() {
 
     // Simulate Artisan sending PROFILE;0,50;60,150;120,200;180,220
     let cmd = parse_artisan_command("PROFILE;0,50;60,150;120,200;180,220");
-    assert!(matches!(cmd, Ok(ArtisanCommand::SetProfile)),
-        "PROFILE should parse to SetProfile");
+    assert!(
+        matches!(cmd, Ok(ArtisanCommand::SetProfile)),
+        "PROFILE should parse to SetProfile"
+    );
 
     // Simulate Artisan sending FANPROFILE;0,30;60,50;120,70;180,80
     let cmd = parse_artisan_command("FANPROFILE;0,30;60,50;120,70;180,80");
-    assert!(matches!(cmd, Ok(ArtisanCommand::SetFanProfile)),
-        "FANPROFILE should parse to SetFanProfile");
+    assert!(
+        matches!(cmd, Ok(ArtisanCommand::SetFanProfile)),
+        "FANPROFILE should parse to SetFanProfile"
+    );
 
     println!("   ✅ Profile and fan profile commands parse correctly");
 }
@@ -381,7 +386,11 @@ fn test_full_roast_lifecycle_with_read() {
 
     // START roast (no prior OT1 — START transitions state to Heating)
     sim.send(ArtisanCommand::StartRoast);
-    assert_eq!(sim.state(), RoasterState::Heating, "After START, state should be Heating");
+    assert_eq!(
+        sim.state(),
+        RoasterState::Heating,
+        "After START, state should be Heating"
+    );
 
     // After START, Artisan typically sets manual heater via OT1
     sim.send(ArtisanCommand::SetHeater(80));
@@ -403,7 +412,10 @@ fn test_full_roast_lifecycle_with_read() {
     );
     let response = ArtisanFormatter::format_read_response_full(&s);
     assert_valid_read_response(&response, "roast-end");
-    println!("   Phase 3 ✅ Roast complete BT={:.1}°C, READ={}", s.bean_temp, response);
+    println!(
+        "   Phase 3 ✅ Roast complete BT={:.1}°C, READ={}",
+        s.bean_temp, response
+    );
 
     // ── Phase 4: STOP + Cooldown ──────────────────────────────────────
     sim.send(ArtisanCommand::EmergencyStop);
@@ -424,7 +436,10 @@ fn test_full_roast_lifecycle_with_read() {
     );
     let response = ArtisanFormatter::format_read_response_full(&s);
     assert_valid_read_response(&response, "cooling-end");
-    println!("   Phase 4b ✅ Cooldown complete BT={:.1}°C, READ={}", s.bean_temp, response);
+    println!(
+        "   Phase 4b ✅ Cooldown complete BT={:.1}°C, READ={}",
+        s.bean_temp, response
+    );
 
     println!("\n   ✅ Full Artisan roast lifecycle simulation PASSED");
 }
@@ -480,7 +495,10 @@ fn test_stop_during_roast_reflected_in_read() {
         "Heater should be >0%% during roast, got {:.1}%%",
         s.ssr_output
     );
-    println!("   Mid-roast: heater={:.1}%%, fan={:.1}%%", s.ssr_output, s.fan_output);
+    println!(
+        "   Mid-roast: heater={:.1}%%, fan={:.1}%%",
+        s.ssr_output, s.fan_output
+    );
 
     // STOP
     sim.send(ArtisanCommand::EmergencyStop);
@@ -538,7 +556,10 @@ fn test_temperature_scale_switching_during_roast() {
         expected_f,
         bt_c
     );
-    println!("   ✅ °F conversion: {:.1}°C → {:.1}°F (via READ={})", bt_c, bt_f, response_f);
+    println!(
+        "   ✅ °F conversion: {:.1}°C → {:.1}°F (via READ={})",
+        bt_c, bt_f, response_f
+    );
 }
 
 /// TEST-ARTISAN-SIM-08: READ response during all roasting states.
@@ -551,9 +572,7 @@ fn test_read_in_all_states() {
 
     let mut sim = SimulationContext::new();
 
-    let states_to_check: &[(RoasterState, &str)] = &[
-        (RoasterState::Idle, "Idle"),
-    ];
+    let states_to_check: &[(RoasterState, &str)] = &[(RoasterState::Idle, "Idle")];
 
     for &(_state, label) in states_to_check {
         let response = ArtisanFormatter::format_read_response_full(&sim.status());

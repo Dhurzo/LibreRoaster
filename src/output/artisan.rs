@@ -28,8 +28,8 @@
 // - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
 use crate::config::SystemStatus;
 use crate::memory::{
-    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, RESPONSE_BUFFER_SIZE, ROR_FILTER_ALPHA,
-    ROR_MIN_SAMPLES, TIME_FORMAT_SIZE,
+    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, RESPONSE_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES,
+    TIME_FORMAT_SIZE,
 };
 use crate::output::formatters::{CsvFormatter, RorCalculator, TimeFormatter};
 use crate::output::traits::{OutputError, OutputFormatter};
@@ -144,9 +144,21 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
-        let amb = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.ambient_temp));
-        let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
-        let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
+        let amb = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.ambient_temp),
+        );
+        let et = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.bean_temp),
+        );
         // TC4 standard format: AMBIENT,ET,BT,CHAN3,CHAN4
         // When PID is ON (TC4 PID mode), Artisan expects 3 extra fields:
         //   res[5] = Heater duty %, res[6] = Fan duty %, res[7] = SV (setpoint temp)
@@ -156,7 +168,9 @@ impl ArtisanFormatter {
             let heater = Self::normalize_read_value(status.ssr_output);
             let fan = Self::normalize_read_value(status.fan_output);
             let sv = Self::normalize_read_value(
-                status.temperature_settings.convert_to_display(status.target_temp),
+                status
+                    .temperature_settings
+                    .convert_to_display(status.target_temp),
             );
             let _ = core::write!(
                 &mut buf,
@@ -169,13 +183,7 @@ impl ArtisanFormatter {
                 sv,
             );
         } else {
-            let _ = core::write!(
-                &mut buf,
-                "{:.1},{:.1},{:.1},0.0,0.0",
-                amb,
-                et,
-                bt,
-            );
+            let _ = core::write!(&mut buf, "{:.1},{:.1},{:.1},0.0,0.0", amb, et, bt,);
         }
         buf
     }
@@ -186,32 +194,51 @@ impl ArtisanFormatter {
     /// The STATUS line consists of 18 fields (ET, BT, heater, fan, watchdog flags,
     /// failure reason, PID state, and latency metrics). This must fit in 512 bytes.
     pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
-        let et = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.env_temp));
-        let bt = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.bean_temp));
+        let et = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.bean_temp),
+        );
         let heater = Self::normalize_read_value(status.ssr_output);
         let fan = Self::normalize_read_value(status.fan_output);
         let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
         let failure_count = status.watchdog_consecutive_failures;
-        let failure_reason = match status.watchdog_last_failure {
-            Some(reason) => reason,
-            None => "none",
-        };
+        let failure_reason = status.watchdog_last_failure.unwrap_or("none");
         let guard_timeouts = status.ledc_guard_timeouts;
         let regression_flag = if status.overtemp_regression_active {
             1
         } else {
             0
         };
-        let pv = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
-        let mv = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.mv));
-        let integrator_value = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.integrator_value));
-        let derivative_value = Self::normalize_read_value(status.temperature_settings.convert_to_display(status.derivative_rate));
+        let pv =
+            Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
+        let mv =
+            Self::normalize_read_value(status.temperature_settings.convert_to_display(status.mv));
+        let integrator_value = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.integrator_value),
+        );
+        let derivative_value = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.derivative_rate),
+        );
         let saturation_flag = if status.saturation_active { 1 } else { 0 };
         let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
         let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
         let command_latency = status.command_latency_us;
         let max_command_latency = status.max_command_latency_us;
-        let temp_scale_indicator = if status.temperature_settings.is_fahrenheit() { 1u8 } else { 0u8 };
+        let temp_scale_indicator = if status.temperature_settings.is_fahrenheit() {
+            1u8
+        } else {
+            0u8
+        };
 
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
         // Safety: Verify buffer capacity before writing to catch overflow bugs in development.
@@ -331,7 +358,10 @@ impl MutableArtisanFormatter {
         *self = Self::default();
     }
 
-    pub fn format(&mut self, status: &SystemStatus) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
+    pub fn format(
+        &mut self,
+        status: &SystemStatus,
+    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
         let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
 
@@ -340,7 +370,9 @@ impl MutableArtisanFormatter {
         let ror = self.calculate_ror(bt_c, Instant::now());
 
         // Convert temperatures for display
-        let et = status.temperature_settings.convert_to_display(status.env_temp);
+        let et = status
+            .temperature_settings
+            .convert_to_display(status.env_temp);
         let bt_display = status.temperature_settings.convert_to_display(bt_c);
         let gas = status.ssr_output; // SSR output as gas control
 
@@ -416,7 +448,8 @@ impl MutableArtisanFormatter {
         let ror = Self::compute_ror_with_timestamps(usable_bt, usable_ts);
 
         // Apply IIR filter for smoothing
-        let filtered_ror = ArtisanFormatter::apply_iir_filter(ror, self.last_filtered_ror, ROR_FILTER_ALPHA);
+        let filtered_ror =
+            ArtisanFormatter::apply_iir_filter(ror, self.last_filtered_ror, ROR_FILTER_ALPHA);
 
         self.last_filtered_ror = filtered_ror;
         filtered_ror
@@ -449,8 +482,8 @@ impl MutableArtisanFormatter {
         let first_ts = timestamps[0];
         let last_ts = timestamps[timestamps.len() - 1];
 
-        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_secs() as f32) +
-            (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
+        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_secs() as f32)
+            + (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
         if time_elapsed_secs > 0.0 {
             (last_bt - first_bt) / time_elapsed_secs
         } else {
@@ -463,7 +496,9 @@ impl MutableArtisanFormatter {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::config::{RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings};
+    use crate::config::{
+        RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings,
+    };
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
@@ -659,8 +694,6 @@ mod tests {
         assert_eq!(parts[4], "75.0");
     }
 
-    
-
     #[test]
     fn test_mutable_formatter_ror() {
         let mut formatter = MutableArtisanFormatter::new();
@@ -757,7 +790,11 @@ mod tests {
         let response = ArtisanFormatter::format_read_response_full(&status);
 
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 5, "TC4 READ must have exactly 5 values (AMB,ET,BT,CHAN3,CHAN4)");
+        assert_eq!(
+            parts.len(),
+            5,
+            "TC4 READ must have exactly 5 values (AMB,ET,BT,CHAN3,CHAN4)"
+        );
     }
 
     #[test]
@@ -771,14 +808,19 @@ mod tests {
         let response = ArtisanFormatter::format_read_response_full(&status);
         let parts: Vec<&str> = response.split(',').collect();
         assert_eq!(parts.len(), 5);
-        assert_eq!(parts[0], "25.0", "AMB should be ambient_temp (first per TC4)");
+        assert_eq!(
+            parts[0], "25.0",
+            "AMB should be ambient_temp (first per TC4)"
+        );
         assert_eq!(parts[1], "125.5", "ET should be env_temp (second per TC4)");
         assert_eq!(parts[2], "155.7", "BT should be bean_temp (third per TC4)");
         assert_eq!(parts[3], "0.0", "CHAN3 placeholder");
         assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
 
         // Test Fahrenheit conversion
-        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
         let response_f = ArtisanFormatter::format_read_response_full(&status);
         let parts_f: Vec<&str> = response_f.split(',').collect();
         // 25.0°C = 77.0°F, 125.5°C = 257.9°F, 155.7°C = 312.3°F
@@ -842,7 +884,11 @@ mod tests {
 
         let response = ArtisanFormatter::format_read_response_full(&status);
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 8, "PID on → 8 values (AMB,ET,BT,CHAN3,CHAN4,heater,fan,SV)");
+        assert_eq!(
+            parts.len(),
+            8,
+            "PID on → 8 values (AMB,ET,BT,CHAN3,CHAN4,heater,fan,SV)"
+        );
     }
 
     #[test]
@@ -877,7 +923,9 @@ mod tests {
         status.target_temp = 200.0; // 200°C = 392°F
         status.ssr_output = 75.0;
         status.fan_output = 50.0;
-        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
 
         let response = ArtisanFormatter::format_read_response_full(&status);
         let parts: Vec<&str> = response.split(',').collect();
@@ -940,7 +988,9 @@ mod tests {
         status.fan_output = 42.0;
         status.command_latency_us = 1250;
         status.max_command_latency_us = 5000;
-        status.temperature_settings.set_scale(TemperatureScale::Fahrenheit);
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
 
         let response = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = response.split(',').collect();
@@ -953,7 +1003,13 @@ mod tests {
         assert_eq!(parts[3], "42.0", "Fan unchanged");
         assert_eq!(parts[9], "302.9", "PV converted to Fahrenheit");
         assert_eq!(parts[10], "191.3", "MV converted to Fahrenheit (88.5°C)");
-        assert_eq!(parts[11], "98.8", "Integrator converted to Fahrenheit (37.1°C)");
-        assert_eq!(parts[12], "31.24", "Derivative converted to Fahrenheit (-0.42°C)");
+        assert_eq!(
+            parts[11], "98.8",
+            "Integrator converted to Fahrenheit (37.1°C)"
+        );
+        assert_eq!(
+            parts[12], "31.24",
+            "Derivative converted to Fahrenheit (-0.42°C)"
+        );
     }
 }

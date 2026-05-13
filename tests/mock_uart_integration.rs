@@ -1,5 +1,6 @@
 #![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(deprecated)]
+#![allow(clippy::expect_used)]
 
 extern crate std;
 
@@ -7,7 +8,6 @@ use std::boxed::Box;
 use std::string::String as StdString;
 use std::vec::Vec;
 
-use critical_section;
 use critical_section::RawRestoreState;
 use embassy_time::Instant;
 use heapless::String;

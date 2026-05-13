@@ -204,7 +204,9 @@ impl CoffeeRoasterPid {
 
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
         if let Some(feedback) = self.last_feedback {
-            let applied = feedback.applied_output.clamp(self.output_min, self.output_max);
+            let applied = feedback
+                .applied_output
+                .clamp(self.output_min, self.output_max);
             if mv > applied + SATURATION_EPSILON {
                 self.integrator_clamped = true;
                 return applied;

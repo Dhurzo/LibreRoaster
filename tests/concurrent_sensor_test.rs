@@ -2,7 +2,6 @@
 
 extern crate std;
 
-use critical_section;
 use critical_section::RawRestoreState;
 use futures::executor::{block_on, ThreadPool};
 use futures::future::join_all;

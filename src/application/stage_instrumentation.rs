@@ -172,8 +172,8 @@ mod tests {
     #[test]
     fn test_stage_reporter_new() {
         let _reporter = StageReporter::new();
-        // Just verify it can be created
-        assert!(true);
+        // Just verify it can be created and cloned
+        let _clone = _reporter.clone();
     }
 
     #[test]

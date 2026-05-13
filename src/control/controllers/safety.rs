@@ -1,7 +1,7 @@
+use crate::config::RoasterCommand;
 use crate::config::SystemStatus;
 use crate::control::handlers::SafetyCommandHandler;
 use crate::control::policies::{SafetyPolicy, SafetyPolicyOutcome};
-use crate::config::RoasterCommand;
 
 pub struct SafetyController {
     handler: SafetyCommandHandler,
@@ -22,15 +22,17 @@ impl SafetyController {
         status.overtemp_regression_active = active;
     }
 
-    pub fn evaluate(&mut self, command: RoasterCommand, status: &mut SystemStatus) -> SafetyPolicyOutcome {
+    pub fn evaluate(
+        &mut self,
+        command: RoasterCommand,
+        status: &mut SystemStatus,
+    ) -> SafetyPolicyOutcome {
         self.handler.evaluate(command, status)
     }
 
     pub fn is_emergency_active(&self) -> bool {
         self.handler.is_emergency_active()
     }
-
-    
 
     pub fn activate_emergency(&mut self) {
         self.handler.activate_emergency();

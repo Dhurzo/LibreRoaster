@@ -160,8 +160,6 @@ impl ActuatorController {
         self.ssr_guard.next_cycle_allowed(now)
     }
 
-    
-
     fn busy_window_ms(now: Instant, busy_until: Instant) -> u64 {
         if busy_until > now {
             busy_until.duration_since(now).as_millis()

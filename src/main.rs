@@ -85,12 +85,16 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
 
 #[cfg(target_arch = "riscv32")]
 #[embassy_executor::task]
-async fn async_main_task(app: &'static mut libreroaster::application::Application, spawner: Spawner) -> ! {
+async fn async_main_task(
+    app: &'static mut libreroaster::application::Application,
+    spawner: Spawner,
+) -> ! {
     if let Err(e) = app.start_tasks(spawner).await {
         enter_safe_shutdown(InitError::TaskSpawn {
             what: "main",
             reason: alloc::format!("{:?}", e),
-        }).await;
+        })
+        .await;
     }
 
     // All tasks spawned successfully — this task sleeps forever
@@ -141,7 +145,9 @@ fn main() -> ! {
         gpio1: peripherals.GPIO1,
     };
 
-    let hw_handles = run_init_or_panic(libreroaster::hardware::init::init_hardware(init_peripherals));
+    let hw_handles = run_init_or_panic(libreroaster::hardware::init::init_hardware(
+        init_peripherals,
+    ));
 
     info!("Sensors initialized (BT: GPIO4, ET: GPIO3)");
     info!("SSR control initialized");
@@ -175,11 +181,13 @@ fn main() -> ! {
 
     // Start RTOS scheduler (must precede embassy executor)
     let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
-    let sw_int = esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    let sw_int =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     // Create and run embassy executor inside the RTOS main task
-    static EXECUTOR: static_cell::StaticCell<esp_rtos::embassy::Executor> = static_cell::StaticCell::new();
+    static EXECUTOR: static_cell::StaticCell<esp_rtos::embassy::Executor> =
+        static_cell::StaticCell::new();
     let executor = EXECUTOR.init(esp_rtos::embassy::Executor::new());
 
     // SAFETY: executor.run() never returns, so &mut app lives forever

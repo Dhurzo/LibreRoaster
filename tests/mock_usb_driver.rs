@@ -195,6 +195,12 @@ impl MockUsbCdcDriver {
     }
 }
 
+impl Default for MockUsbCdcDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Implement mock read_bytes method
 impl MockUsbCdcDriver {
     /// Read bytes from the RX buffer

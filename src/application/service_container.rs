@@ -144,8 +144,6 @@ impl ServiceContainer {
         })
     }
 
-    
-
     /// Async access to RoasterControl - use this in async task contexts
     pub async fn with_roaster_async<R, F>(f: F) -> Result<R, ContainerError>
     where
@@ -159,13 +157,11 @@ impl ServiceContainer {
     }
 
     pub async fn read_bean_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| roaster.get_status().bean_temp)
-            .await
+        Self::with_roaster_async(|roaster| roaster.get_status().bean_temp).await
     }
 
     pub async fn read_env_temperature() -> Result<f32, ContainerError> {
-        Self::with_roaster_async(|roaster| roaster.get_status().env_temp)
-            .await
+        Self::with_roaster_async(|roaster| roaster.get_status().env_temp).await
     }
 
     // This holds the async mutex for the entire sensor read duration (~160ms),

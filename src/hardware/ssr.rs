@@ -233,7 +233,7 @@ pub fn percentage_to_ledc_duty(percentage: f32) -> u8 {
     let scaled = ((clamped / 100.0) * max_duty as f32 + 0.5) as u32;
     let scaled = scaled.min(max_duty);
     let scaled = scaled as u8;
-    
+
     // Enforce minimum SSR duty - if duty is too low, snap to 0
     if scaled > 0 && scaled < crate::config::constants::SSR_MIN_DUTY_TICKS {
         0

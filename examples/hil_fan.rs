@@ -8,6 +8,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[cfg(target_arch = "riscv32")]
+use esp32c3;
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{DriveMode, Level, Output, OutputConfig};
@@ -21,8 +23,6 @@ use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
 use esp_hal::peripherals::Peripherals;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::time::Rate;
-#[cfg(target_arch = "riscv32")]
-use esp32c3;
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
