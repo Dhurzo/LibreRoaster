@@ -1,10 +1,48 @@
-# LibreRoaster
+# LibreRoaster ☕🔥
+
+**Open Source Coffee Bean Roaster**  
+Firmware written in **Rust** for the ESP32-C3
 
 LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over native USB CDC or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
 
 The project is aimed at builders who want an inspectable roasting controller rather than a closed appliance. The firmware is not a standalone roasting UI. The intended operating model is: Artisan owns the session, LibreRoaster owns the device-side control, telemetry, and safety interlocks.
 
-## Current technical baseline
+**Why LibreRoaster exists →** Read the [Project Philosophy](docs/PHILOSOPHY.md).
+
+---
+
+## 🚧 Project Status
+
+**Alpha — hardware bring-up in progress.**
+
+| Milestone | Status |
+|-----------|--------|
+| Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
+| Boot without panics, USB CDC log output functional | ✅ Pass |
+| 380+ host-side unit & integration tests | ✅ Pass |
+| Thermocouple reads via MAX31856 (SPI) | ⚠️ Partial — data received but intermittent corruption / decode errors |
+| End-to-end roast session controlled by Artisan | ❌ Not tested |
+| Real coffee roasted using LibreRoaster | ❌ Not yet |
+
+**What this means in practice:** the firmware boots, talks over serial, and reads sensor data — but the thermocouple pipeline still shows noise or framing errors under real conditions. **No roast has been performed using LibreRoaster.** Do not connect this to a live heater without independent safety mechanisms.
+
+For the latest work-in-progress code, check the **`develop`** branch.
+
+## 🔮 Roadmap
+
+### DIY Drum Roaster Build Guide 🛠️
+
+We are working on a **complete hardware assembly guide** for a DIY drum coffee roaster compatible with LibreRoaster. The guide will include:
+
+- 📐 Step-by-step build instructions with a full bill of materials
+- 💰 Component selection focused on **minimum cost** without compromising safety
+- 🔌 Plug-and-play compatibility with the LibreRoaster ESP32-C3 firmware
+
+The guide is **currently in progress** and will be published once validated. If you want to contribute or follow along, check the issues and discussions in this repo.
+
+---
+
+## 📋 Current technical baseline
 
 - **Target MCU:** ESP32-C3 (`riscv32imc-unknown-none-elf`)
 - **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
@@ -14,7 +52,9 @@ The project is aimed at builders who want an inspectable roasting controller rat
 - **Safety layers:** over-temperature cutoff, watchdog, stale-temperature protection, heat-source detection, LEDC guard
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 
-## What the firmware actually does
+---
+
+## 🧠 What the firmware actually does
 
 LibreRoaster boots the ESP32-C3, initializes LEDC, SPI, USB CDC, UART, watchdogs, and sensor/actuator drivers, builds a `RoasterControl` instance through an application builder, and then starts a fixed async task graph.
 
@@ -27,7 +67,9 @@ At runtime the device does four things continuously:
 
 The important detail is that LibreRoaster is not just a thin protocol shim. It contains a full device-side control core: PID state, roast/fan profile interpolation, preheat behavior, charge detection, watchdog telemetry, and safety shutdown behavior all live inside the firmware.
 
-## Runtime architecture
+---
+
+## ⚙️ Runtime architecture
 
 ### Task topology
 
@@ -66,7 +108,9 @@ The control loop runs on a 100 ms cadence and is internally instrumented in stag
 
 The loop also records command latency, guard timeout state, watchdog health, and PID internals so automation can inspect not only roast values but also runtime health.
 
-## Serial protocol surface
+---
+
+## 📡 Serial protocol surface
 
 LibreRoaster implements a TC4-oriented serial interface rather than the full breadth of Artisan's device ecosystem.
 
@@ -87,7 +131,9 @@ LibreRoaster implements a TC4-oriented serial interface rather than the full bre
 
 If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`.
 
-## Hardware model
+---
+
+## 🔌 Hardware model
 
 LibreRoaster assumes a simple two-sensor / two-actuator hardware topology:
 
@@ -106,7 +152,9 @@ Two constraints matter operationally:
 
 The complete electrical and timing notes live in `docs/HARDWARE.md`.
 
-## Known architectural constraints
+---
+
+## 🔒 Known architectural constraints
 
 These are not marketing notes. They are the design boundaries readers should understand before modifying the system.
 
@@ -114,9 +162,10 @@ These are not marketing notes. They are the design boundaries readers should und
 - **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests
 - **Command queue limits:** the main command channel is intentionally small and rate-limited
 - **Sensor timing pressure:** thermocouple reads are slow relative to the nominal PID sample cadence, so stale-data protection matters
-- **Artisan-first workflow:** the firmware does not provide a standalone UI or local roast orchestration layer
 
-## Build and verification model
+---
+
+## 🔨 Build and verification model
 
 ### Embedded build
 
@@ -147,10 +196,13 @@ scripts/run-regression-checks.sh
 
 The development guide in `docs/DEVELOPMENT.md` explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
 
-## Technical documentation map
+---
+
+## 📚 Technical documentation map
 
 The main technical documents are:
 
+- **`docs/PHILOSOPHY.md`** — project goals, design principles, and hardware vision
 - **`docs/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
 - **`docs/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
 - **`docs/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
@@ -160,17 +212,36 @@ The main technical documents are:
 - **`docs/BUGS.md`** — current technical risk report and likely defect inventory
 - **`docs/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
 
-## Safety warning
+---
 
-LibreRoaster is firmware for high-temperature, mains-adjacent hardware.
+## ⚠️ Safety Warning
+
+**This project involves serious safety risks.**
+
+LibreRoaster is firmware for high-temperature, mains-adjacent hardware. It works with:
+
+- ⚡ **High voltages**
+- 🔥 **Very high temperatures**
+
+Improper handling can result in **severe injury, fire, or death**.
+
+### Please follow these precautions:
 
 - Do not treat a passing build or test suite as proof of electrical safety.
 - Do not run the roaster unattended.
 - Do not modify the power stage without appropriate electrical competence.
+- Always disconnect power before modifying or servicing the device.
+- Use appropriate **thermal insulation and heat-resistant materials**.
+- Keep a **fire extinguisher nearby at all times** when using the roaster.
+- Operate the roaster in a **well-ventilated and fire-safe area**.
 - Treat watchdog, thermal cutoff, and heat-detection logic as last-resort mitigations, not as substitutes for safe hardware design.
 
-Use this project at your own risk.
+> ⚠️ You build and use this project **at your own risk**.  
+> The authors and contributors are **not responsible** for any damage, injury, or loss.
 
-## License
+---
 
-Apache 2.0.
+## 📜 License
+
+This project is open source under the **Apache 2.0** license.  
+See the `LICENSE` file for more information.
