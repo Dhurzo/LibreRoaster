@@ -63,13 +63,16 @@ fn assert_err_tokens(output: &str, expected_code: &str, expected_message: &str) 
 pub fn init_test_service_container() {
     use libreroaster::common::{StubFan, StubHeater};
     use libreroaster::control::RoasterControl;
-    use libreroaster::input::ArtisanInput;
     use libreroaster::hardware::sensors::SensorConversionHub;
+    use libreroaster::input::ArtisanInput;
 
     if !ServiceContainer::is_initialized() {
-        let roaster =
-            RoasterControl::new(Box::new(StubHeater::new()), Box::new(StubFan::new()), SensorConversionHub::new())
-                .expect("test control should build");
+        let roaster = RoasterControl::new(
+            Box::new(StubHeater::new()),
+            Box::new(StubFan::new()),
+            SensorConversionHub::new(),
+        )
+        .expect("test control should build");
         let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
         ServiceContainer::init_roaster(roaster);
         ServiceContainer::init_artisan_input(artisan_input);
