@@ -19,7 +19,7 @@
 //! Estos módulos operan en paths críticos de tiempo real y **NO** deben realizar
 //! ninguna allocation dinámica durante su ejecución.
 //!
-//! ```rust
+//! ```text
 //! // ✅ Permitido en HOT PATH
 //! heapless::Vec<u8, 64>
 //! heapless::String<32>
@@ -51,7 +51,7 @@
 //! Estos módulos operan durante la inicialización del sistema o en paths no críticos
 //! donde las allocations no impactan el rendimiento en tiempo real.
 //!
-//! ```rust
+//! ```text
 //! // ✅ Permitido en INITIALIZATION
 //! alloc::boxed::Box<dyn Trait>  // para dynamic dispatch
 //! alloc::string::String         // para mensajes de configuración

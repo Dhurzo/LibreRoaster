@@ -9,8 +9,8 @@
 //! # Usage
 //!
 //! ```rust
-//! use crate::common::{StubFan, StubHeater, StubThermometer};
-//! use crate::control::traits::{Fan, Heater, Thermometer};
+//! use libreroaster::common::{StubFan, StubHeater, StubThermometer};
+//! use libreroaster::control::traits::{Fan, Heater, Thermometer};
 //! ```
 
 use alloc::vec::Vec;
@@ -60,6 +60,10 @@ pub enum ThermometerCall {
 /// # Example
 ///
 /// ```rust
+/// use libreroaster::common::{StubHeater, HeaterCall};
+/// use libreroaster::config::constants::SsrHardwareStatus;
+/// use libreroaster::control::traits::Heater;
+///
 /// let mut heater = StubHeater::new();
 /// heater.set_status(SsrHardwareStatus::Available);
 ///
@@ -138,6 +142,9 @@ impl Heater for StubHeater {
 /// # Example
 ///
 /// ```rust
+/// use libreroaster::common::StubFan;
+/// use libreroaster::control::traits::Fan;
+///
 /// let mut fan = StubFan::new();
 /// fan.set_speed(75.0).unwrap();
 ///
@@ -215,6 +222,9 @@ impl Fan for StubFan {
 /// # Example
 ///
 /// ```rust
+/// use libreroaster::common::StubThermometer;
+/// use libreroaster::control::traits::Thermometer;
+///
 /// let mut thermometer = StubThermometer::with_temp(150.0);
 /// let temp = thermometer.read_temperature().unwrap();
 /// assert_eq!(temp, 150.0);
