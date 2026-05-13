@@ -499,28 +499,48 @@ impl RoasterControl {
 
         match command {
             crate::config::ArtisanCommand::StartRoast => self.handle_start_roast(),
-            crate::config::ArtisanCommand::SetHeater(value) => self.handle_set_heater(value, current_time),
-            crate::config::ArtisanCommand::SetFan(value) => self.handle_set_fan(value, current_time),
-            crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => self.handle_set_fan_speed(value, was_clamped, current_time),
+            crate::config::ArtisanCommand::SetHeater(value) => {
+                self.handle_set_heater(value, current_time)
+            }
+            crate::config::ArtisanCommand::SetFan(value) => {
+                self.handle_set_fan(value, current_time)
+            }
+            crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => {
+                self.handle_set_fan_speed(value, was_clamped, current_time)
+            }
             crate::config::ArtisanCommand::Stop => self.handle_stop(),
             crate::config::ArtisanCommand::EmergencyStop => self.handle_emergency_stop(),
-            crate::config::ArtisanCommand::IncreaseHeater => self.handle_increase_heater(current_time),
-            crate::config::ArtisanCommand::DecreaseHeater => self.handle_decrease_heater(current_time),
+            crate::config::ArtisanCommand::IncreaseHeater => {
+                self.handle_increase_heater(current_time)
+            }
+            crate::config::ArtisanCommand::DecreaseHeater => {
+                self.handle_decrease_heater(current_time)
+            }
             crate::config::ArtisanCommand::StatusReport => self.handle_status_report(),
             crate::config::ArtisanCommand::ReadStatus => self.handle_read_status(),
             crate::config::ArtisanCommand::Chan(rate) => self.handle_chan(rate),
             crate::config::ArtisanCommand::RunRegression => self.handle_run_regression(),
-            crate::config::ArtisanCommand::Units(is_fahrenheit) => self.handle_units(is_fahrenheit, current_time),
+            crate::config::ArtisanCommand::Units(is_fahrenheit) => {
+                self.handle_units(is_fahrenheit, current_time)
+            }
             crate::config::ArtisanCommand::Filt(val) => self.handle_filt(val),
-            crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => self.handle_set_pid_gain(kp, ki, kd),
-            crate::config::ArtisanCommand::SetTargetTemp(target) => self.handle_set_target_temp(target),
+            crate::config::ArtisanCommand::SetPidGain(kp, ki, kd) => {
+                self.handle_set_pid_gain(kp, ki, kd)
+            }
+            crate::config::ArtisanCommand::SetTargetTemp(target) => {
+                self.handle_set_target_temp(target)
+            }
             crate::config::ArtisanCommand::SetProfile => self.handle_set_profile(),
             crate::config::ArtisanCommand::DumpLog => self.handle_dump_log(),
             crate::config::ArtisanCommand::Preheat(target) => self.handle_preheat(target),
             crate::config::ArtisanCommand::SetFanProfile => self.handle_set_fan_profile(),
             crate::config::ArtisanCommand::SetPidChannel(ch) => self.handle_set_pid_channel(ch),
-            crate::config::ArtisanCommand::SetPidCycleTime(ms) => self.handle_set_pid_cycle_time(ms),
-            crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => self.handle_set_pid_output_limits(min, max),
+            crate::config::ArtisanCommand::SetPidCycleTime(ms) => {
+                self.handle_set_pid_cycle_time(ms)
+            }
+            crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => {
+                self.handle_set_pid_output_limits(min, max)
+            }
         }
     }
 
@@ -591,7 +611,12 @@ impl RoasterControl {
         Ok(())
     }
 
-    fn handle_set_fan_speed(&mut self, value: u8, was_clamped: bool, current_time: Instant) -> Result<(), RoasterError> {
+    fn handle_set_fan_speed(
+        &mut self,
+        value: u8,
+        was_clamped: bool,
+        current_time: Instant,
+    ) -> Result<(), RoasterError> {
         self.forward_artisan_manual_command(
             crate::config::RoasterCommand::SetFanManual(value),
             current_time,
@@ -662,9 +687,8 @@ impl RoasterControl {
     fn handle_read_status(&mut self) -> Result<(), RoasterError> {
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
-        let response = crate::output::artisan::ArtisanFormatter::format_read_response_full(
-            &self.status,
-        );
+        let response =
+            crate::output::artisan::ArtisanFormatter::format_read_response_full(&self.status);
 
         let parts: heapless::Vec<&str, 8> = response.split(',').collect();
         if response.trim().is_empty() || parts.len() != 5 {
@@ -693,7 +717,11 @@ impl RoasterControl {
         Ok(())
     }
 
-    fn handle_units(&mut self, is_fahrenheit: bool, current_time: Instant) -> Result<(), RoasterError> {
+    fn handle_units(
+        &mut self,
+        is_fahrenheit: bool,
+        current_time: Instant,
+    ) -> Result<(), RoasterError> {
         let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
         let result = self.forward_artisan_manual_command(cmd, current_time);
         if result.is_ok() {
