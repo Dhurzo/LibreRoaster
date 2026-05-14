@@ -28,7 +28,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 
 For the latest work-in-progress code, check the **`develop`** branch.
 
-## 🔮 Roadmap
+## 🔮 Hardware Roadmap
 
 ### DIY Drum Roaster Build Guide 🛠️
 

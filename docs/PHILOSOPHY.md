@@ -4,15 +4,15 @@
 
 ## The Core Premise
 
-**Coffee roasting should not be a luxury.**
+**Coffee roasting should be accessible to everyone.**
 
-Commercial roasters cost thousands. Even entry-level machines with basic PID control carry a premium that puts consistent, repeatable roasting out of reach for most hobbyists, small cafés, and developing-region producers. Meanwhile, the knowledge to roast well is freely available — what's missing is accessible, reliable, open hardware.
+The knowledge to roast well is freely available — what's missing is accessible, reliable, open hardware that puts precise control in the hands of hobbyists, small cafés, and coffee enthusiasts everywhere.
 
 LibreRoaster exists to close that gap.
 
 ## Democratize the Roast
 
-The project's goal is straightforward: **make it possible to build a competent coffee roaster for a fraction of the cost of commercial options**, without sacrificing the control surface that makes modern roasting precise and repeatable.
+The project's goal is straightforward: **make it possible to build a competent coffee roaster using accessible, affordable components**, without sacrificing the control surface that makes modern roasting precise and repeatable.
 
 This means:
 
@@ -31,7 +31,7 @@ A companion **DIY build guide** is in progress, covering:
 - Step-by-step mechanical and electrical assembly
 - Plug-and-play compatibility with the LibreRoaster firmware
 
-The intent is that someone with basic maker tools and moderate soldering ability can build a functional roaster for a fraction of commercial pricing.
+The intent is that someone with basic maker tools and moderate soldering ability can build a functional roaster using affordable, readily available components.
 
 ## Beyond Drum: Fluid Bed and General-Purpose Use
 
@@ -46,11 +46,11 @@ The design philosophy is: **build for drum, but don't hardcode against it.** The
 
 | Principle | What it means in practice |
 |-----------|---------------------------|
-| **Cost-conscious** | Every hardware choice justified by cost-to-performance ratio. No prestige components. |
-| **Artisan-first** | The firmware is a device-side controller. Artisan is the operator's interface. Don't reinvent the UI. |
-| **Safety-critical realism** | Thermal cutoffs, watchdogs, and guards exist in firmware, but are treated as *last resort*. Safe hardware design is the operator's responsibility. |
-| **Inspectability over abstraction** | The codebase favors clarity over cleverness. A roaster controller should be understandable by anyone reading the source. |
-| **No vendor lock-in** | Standard protocols (TC4 serial), standard components (MAX31856, ESP32-C3, generic SSRs), standard tools (Artisan, cargo, espflash). |
+| **Value-focused** | Every hardware choice is carefully balanced for performance and accessibility. Prioritizing practical, proven components over unnecessary complexity. |
+| **Community-driven** | The firmware serves as a device-side controller, complementing established tools like Artisan that provide the operator interface. Building on existing standards rather than creating proprietary alternatives. |
+| **Safety-aware design** | Thermal protections and monitoring are integrated into the firmware, but always with the understanding that safe hardware implementation is ultimately the builder's responsibility. |
+| **Transparency first** | The codebase prioritizes clarity and maintainability. A roaster controller should be understandable and modifiable by anyone who reads the source. |
+| **Open standards** | Using widely-adopted protocols (TC4 serial), common components (MAX31856, ESP32-C3, generic SSRs), and standard development tools (cargo, espflash) to ensure broad compatibility. |
 
 ## What LibreRoaster Is Not
 
