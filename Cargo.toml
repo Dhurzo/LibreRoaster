@@ -33,6 +33,7 @@ std = ["embedded-hal-02"]
 test = ["std"]
 async-lock-depth-metrics = []
 embedded = []
+simulated-sensors = []
 regression = ["embedded-hal-mock"]
 
 [[bin]]

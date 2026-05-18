@@ -140,7 +140,9 @@ fn main() -> ! {
         gpio7: peripherals.GPIO7,
         gpio6: peripherals.GPIO6,
         gpio5: peripherals.GPIO5,
+        #[cfg(not(feature = "simulated-sensors"))]
         gpio4: peripherals.GPIO4,
+        #[cfg(not(feature = "simulated-sensors"))]
         gpio3: peripherals.GPIO3,
         gpio1: peripherals.GPIO1,
     };
@@ -149,7 +151,10 @@ fn main() -> ! {
         init_peripherals,
     ));
 
+    #[cfg(not(feature = "simulated-sensors"))]
     info!("Sensors initialized (BT: GPIO4, ET: GPIO3)");
+    #[cfg(feature = "simulated-sensors")]
+    info!("Simulated sensors active (no real thermocouples required)");
     info!("SSR control initialized");
     info!("Fan controller initialized");
 
@@ -161,20 +166,32 @@ fn main() -> ! {
 
     info!("Wake the f*** up samurai we have beans to burn!");
 
-    let mut app = match AppBuilder::new()
-        .with_uart(peripherals.UART0)
-        .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
-        .with_real_ssr(hw_handles.ssr)
-        .with_fan_control(hw_handles.fan)
-        .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor)
-        .with_formatter(ArtisanFormatter::new())
-        .build()
-    {
-        Ok(app) => app,
-        Err(e) => {
-            log::error!("AppBuilder failed: {:?}", e);
-            loop {
-                esp_hal::rom::ets_delay_us(1_000_000);
+    let app = {
+        #[cfg(not(feature = "simulated-sensors"))]
+        let builder = AppBuilder::new()
+            .with_uart(peripherals.UART0)
+            .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
+            .with_real_ssr(hw_handles.ssr)
+            .with_fan_control(hw_handles.fan)
+            .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor)
+            .with_formatter(ArtisanFormatter::new());
+
+        #[cfg(feature = "simulated-sensors")]
+        let builder = AppBuilder::new()
+            .with_uart(peripherals.UART0)
+            .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
+            .with_real_ssr(hw_handles.ssr)
+            .with_fan_control(hw_handles.fan)
+            .with_simulated_sensors()
+            .with_formatter(ArtisanFormatter::new());
+
+        match builder.build() {
+            Ok(app) => app,
+            Err(e) => {
+                log::error!("AppBuilder failed: {:?}", e);
+                loop {
+                    esp_hal::rom::ets_delay_us(1_000_000);
+                }
             }
         }
     };

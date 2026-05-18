@@ -1,11 +1,14 @@
 use crate::control::RoasterError;
 use crate::hardware::max31856::Max31856Error;
 use embassy_time::Instant;
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
 use embedded_hal::spi::SpiDevice;
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
+
+#[cfg(feature = "simulated-sensors")]
+use super::simulated::SimulatedSensorSource;
 
 /// MAX31856 reports temperature using a 0.0078125°C LSB and two's-complement math.
 /// The 19-bit temperature value occupies bits [23:5] of the 24-bit concatenated
@@ -137,21 +140,33 @@ impl FixtureReading {
 }
 
 pub struct SensorConversionHub {
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     bean_sensor: Max31856<BtSpi>,
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     env_sensor: Max31856<EtSpi>,
+    #[cfg(feature = "simulated-sensors")]
+    simulated_source: SimulatedSensorSource,
     last_sample: Option<SensorSample>,
     bean_consecutive_fallbacks: u8,
     env_consecutive_fallbacks: u8,
 }
 
 impl SensorConversionHub {
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     pub fn new(bean_sensor: Max31856<BtSpi>, env_sensor: Max31856<EtSpi>) -> Self {
         Self {
             bean_sensor,
             env_sensor,
+            last_sample: None,
+            bean_consecutive_fallbacks: 0,
+            env_consecutive_fallbacks: 0,
+        }
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    pub fn new_simulated(source: SimulatedSensorSource) -> Self {
+        Self {
+            simulated_source: source,
             last_sample: None,
             bean_consecutive_fallbacks: 0,
             env_consecutive_fallbacks: 0,
@@ -165,6 +180,24 @@ impl SensorConversionHub {
             bean_consecutive_fallbacks: 0,
             env_consecutive_fallbacks: 0,
         }
+    }
+
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
+    #[allow(dead_code)]
+    fn new_uninit() -> Self {
+        panic!("from_fixture requires simulated-sensors feature or host target");
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    #[allow(dead_code)]
+    fn new_uninit() -> Self {
+        Self::new_simulated(SimulatedSensorSource::default_curve())
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[allow(dead_code)]
+    fn new_uninit() -> Self {
+        Self::new()
     }
 
     pub fn last_sample(&self) -> Option<SensorSample> {
@@ -194,19 +227,27 @@ impl SensorConversionHub {
 
     #[cfg(feature = "regression")]
     pub fn from_fixture(fixture: FixtureReading) -> Result<Self, RoasterError> {
-        let mut hub = Self::new();
+        let mut hub = Self::new_uninit();
         hub.sample_from_fixture(fixture)?;
         Ok(hub)
     }
 
     pub async fn sample(&mut self) -> Result<SensorSample, RoasterError> {
-        #[cfg(target_arch = "riscv32")]
+        #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
         {
             let timestamp = Instant::now();
             let (bean, env) = self.sample_parallel().await;
             self.build_sample(timestamp, bean, env)
         }
-        #[cfg(not(target_arch = "riscv32"))]
+        #[cfg(feature = "simulated-sensors")]
+        {
+            let timestamp = Instant::now();
+            let (bean_temp, env_temp) = self.simulated_source.current_temperatures();
+            let bean_result: SensorChannelResult = Ok((bean_temp, SensorFault::default()));
+            let env_result: SensorChannelResult = Ok((env_temp, SensorFault::default()));
+            self.build_sample(timestamp, bean_result, env_result)
+        }
+        #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
         {
             let timestamp = Instant::now();
             let sample = SensorSample::with_timestamp(timestamp);
@@ -215,19 +256,19 @@ impl SensorConversionHub {
         }
     }
 
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
     async fn read_bean_async(&mut self) -> SensorChannelResult {
         Self::read_sensor_async(&mut self.bean_sensor).await
     }
 
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
     async fn read_env_async(&mut self) -> SensorChannelResult {
         Self::read_sensor_async(&mut self.env_sensor).await
     }
 
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
     async fn read_sensor_async<SPI>(sensor: &mut Max31856<SPI>) -> SensorChannelResult
     where
@@ -240,7 +281,7 @@ impl SensorConversionHub {
         ))
     }
 
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     async fn sample_parallel(&mut self) -> (SensorChannelResult, SensorChannelResult) {
         // Trigger both sensor conversions in parallel by starting both conversions
         // before any await, then wait once, then read both results.
@@ -346,7 +387,7 @@ impl SensorConversionHub {
     }
 }
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
 impl Default for SensorConversionHub {
     fn default() -> Self {
         Self::new()
