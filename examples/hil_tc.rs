@@ -8,11 +8,13 @@ use critical_section;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+#[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Level, Output, OutputConfig};
 #[cfg(target_arch = "riscv32")]
-use esp_hal::peripherals::Peripherals;
-#[cfg(target_arch = "riscv32")]
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
+#[cfg(target_arch = "riscv32")]
+use esp_hal::spi::Mode;
 #[cfg(target_arch = "riscv32")]
 use esp_hal::time::Rate;
 #[cfg(target_arch = "riscv32")]
@@ -28,9 +30,14 @@ use libreroaster::hardware::sensors::conversion::convert_raw_temp;
 use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 
 #[cfg(target_arch = "riscv32")]
+#[expect(
+    deprecated,
+    reason = "HIL test uses blocking SPI - sync read_raw_temperature is appropriate here"
+)]
 #[esp_hal::main]
 fn main() -> ! {
-    let peripherals = Peripherals::take().unwrap();
+    let config = esp_hal::Config::default();
+    let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 32 * 1024);
     esp_println::logger::init_logger(log::LevelFilter::Info);
@@ -39,9 +46,14 @@ fn main() -> ! {
 
     let spi = Spi::new(
         peripherals.SPI2,
-        SpiConfig::default().with_frequency(Rate::from_khz(1000)),
+        SpiConfig::default()
+            .with_frequency(Rate::from_khz(1000))
+            .with_mode(Mode::_1),
     )
-    .unwrap();
+    .unwrap()
+    .with_sck(peripherals.GPIO6)
+    .with_mosi(peripherals.GPIO7)
+    .with_miso(peripherals.GPIO5);
 
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<esp_hal::Blocking>>>> =
         StaticCell::new();

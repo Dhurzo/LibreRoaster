@@ -95,7 +95,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     }
 
     // Fall back to space delimiter for operational commands
-    let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().collect();
+    // Use take(4) to prevent heapless::Vec overflow on garbage input (>4 tokens)
+    let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().take(4).collect();
 
     if parts.is_empty() {
         return Err(ParseError::UnknownCommand);
@@ -191,7 +192,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
 }
 
 fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
-    let parts: heapless::Vec<&str, 8> = args.split(';').collect();
+    let parts: heapless::Vec<&str, 8> = args.split(';').take(8).collect();
     if parts.is_empty() {
         return Err(ParseError::InvalidValue);
     }

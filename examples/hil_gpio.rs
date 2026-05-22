@@ -18,6 +18,9 @@ use esp_backtrace as _;
 use esp_hal::gpio::{Input, InputConfig, Pull};
 
 #[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[cfg(target_arch = "riscv32")]
 fn report(name: &str, passed: bool, detail: &str) {
     let status = if passed { "PASS" } else { "FAIL" };
     esp_println::println!("TEST:{}:{}:{}", name, status, detail);

@@ -21,6 +21,9 @@ use esp_hal::time::Rate;
 use static_cell::StaticCell;
 
 #[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[cfg(target_arch = "riscv32")]
 fn read_ledc_duty(channel_number: usize) -> u16 {
     let regs = unsafe { &*LEDC::ptr() };
     let raw = regs.ch(channel_number).duty().read().duty().bits();
@@ -49,7 +52,7 @@ fn main() -> ! {
     match timer0.configure(timer::config::Config {
         duty: timer::config::Duty::Duty8Bit,
         clock_source: timer::LSClockSource::APBClk,
-        frequency: Rate::from_hz(1),
+        frequency: Rate::from_hz(310),
     }) {
         Ok(_) => {}
         Err(_) => {

@@ -26,6 +26,9 @@ use esp_hal::time::Rate;
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
+#[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
