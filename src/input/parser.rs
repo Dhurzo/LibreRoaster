@@ -153,7 +153,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.eq_ignore_ascii_case("PID,ON") {
         Ok(ArtisanCommand::StartRoast)
     } else if cmd.eq_ignore_ascii_case("PID,OFF") {
-        Ok(ArtisanCommand::EmergencyStop)
+        Ok(ArtisanCommand::Stop)
     } else if cmd.to_ascii_uppercase().starts_with("PID,SV,") {
         // PID,SV,150 → same as SETTARGET 150
         let sv_str = &cmd[7..]; // After "PID,SV,"
@@ -198,7 +198,7 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
 
     match parts[0].trim().to_ascii_uppercase().as_str() {
         "ON" => Ok(ArtisanCommand::StartRoast),
-        "OFF" => Ok(ArtisanCommand::EmergencyStop),
+        "OFF" => Ok(ArtisanCommand::Stop),
         "SV" => {
             if parts.len() < 2 {
                 return Err(ParseError::InvalidValue);
@@ -954,7 +954,7 @@ mod tests {
     fn test_pid_off_maps_to_stop() {
         assert!(matches!(
             parse_artisan_command("PID,OFF"),
-            Ok(ArtisanCommand::EmergencyStop)
+            Ok(ArtisanCommand::Stop)
         ));
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
     fn test_pid_semicolon_off() {
         assert!(matches!(
             parse_artisan_command("PID;OFF"),
-            Ok(ArtisanCommand::EmergencyStop)
+            Ok(ArtisanCommand::Stop)
         ));
     }
 
@@ -1132,7 +1132,7 @@ mod tests {
     fn test_pid_comma_still_works_off() {
         assert!(matches!(
             parse_artisan_command("PID,OFF"),
-            Ok(ArtisanCommand::EmergencyStop)
+            Ok(ArtisanCommand::Stop)
         ));
     }
 }

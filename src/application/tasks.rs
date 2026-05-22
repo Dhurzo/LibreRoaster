@@ -807,7 +807,10 @@ fn send_handler_error(
     let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
     let _ = message.push_str("ERR handler_failed ");
     let _ = message.push_str(error.message_token());
-
+    // Append error source for diagnostics (e.g. ":fault_condition_active", ":ssr_cycle_busy")
+    if let Some(source) = error.source() {
+        let _ = core::write!(&mut message, ":{}", source);
+    }
     let _ = output_channel.try_send(message);
 }
 

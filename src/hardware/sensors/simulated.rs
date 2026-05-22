@@ -131,6 +131,265 @@ impl RoastCurve {
         curve
     }
 
+    /// Create a light roast profile: shorter, milder curve peaking at 210°C BT.
+    ///
+    /// Approximate profile:
+    /// - 0–30s:   Charge from ambient 25°C
+    /// - 30–120s: Ramp to 140°C BT / 165°C ET (rapid drying)
+    /// - 120–240s: Ramp to 180°C BT / 210°C ET (Maillard onset)
+    /// - 240–360s: Ramp to 200°C BT / 230°C ET (early first crack)
+    /// - 360–420s: Ramp to 210°C BT / 238°C ET (light development)
+    /// - 420–480s: Hold at 210°C BT / 238°C ET
+    pub fn light_roast() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 25.0,
+            env_temp: 25.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 30,
+            bean_temp: 90.0,
+            env_temp: 115.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 60,
+            bean_temp: 120.0,
+            env_temp: 145.0,
+        });
+        // Drying phase
+        curve.add_point(CurvePoint {
+            time_secs: 120,
+            bean_temp: 140.0,
+            env_temp: 165.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 180,
+            bean_temp: 160.0,
+            env_temp: 190.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 240,
+            bean_temp: 180.0,
+            env_temp: 210.0,
+        });
+        // Maillard / early first crack
+        curve.add_point(CurvePoint {
+            time_secs: 300,
+            bean_temp: 190.0,
+            env_temp: 220.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 360,
+            bean_temp: 200.0,
+            env_temp: 230.0,
+        });
+        // Light development
+        curve.add_point(CurvePoint {
+            time_secs: 420,
+            bean_temp: 210.0,
+            env_temp: 238.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 480,
+            bean_temp: 210.0,
+            env_temp: 238.0,
+        });
+        curve
+    }
+
+    /// Create a dark roast profile: longer, deeper curve peaking at 245°C BT.
+    ///
+    /// Approximate profile:
+    /// - 0–60s:   Charge from ambient 25°C
+    /// - 60–180s: Ramp to 150°C BT / 180°C ET (extended drying)
+    /// - 180–360s: Ramp to 200°C BT / 228°C ET (Maillard phase)
+    /// - 360–540s: Ramp to 225°C BT / 248°C ET (first crack through second crack)
+    /// - 540–660s: Ramp to 245°C BT / 256°C ET (dark development)
+    /// - 660–720s: Hold at 245°C BT / 256°C ET
+    pub fn dark_roast() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 25.0,
+            env_temp: 25.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 30,
+            bean_temp: 75.0,
+            env_temp: 95.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 60,
+            bean_temp: 110.0,
+            env_temp: 140.0,
+        });
+        // Extended drying
+        curve.add_point(CurvePoint {
+            time_secs: 120,
+            bean_temp: 130.0,
+            env_temp: 160.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 180,
+            bean_temp: 150.0,
+            env_temp: 180.0,
+        });
+        // Maillard phase
+        curve.add_point(CurvePoint {
+            time_secs: 240,
+            bean_temp: 170.0,
+            env_temp: 200.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 300,
+            bean_temp: 185.0,
+            env_temp: 215.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 360,
+            bean_temp: 200.0,
+            env_temp: 228.0,
+        });
+        // First crack → second crack
+        curve.add_point(CurvePoint {
+            time_secs: 420,
+            bean_temp: 210.0,
+            env_temp: 238.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 480,
+            bean_temp: 220.0,
+            env_temp: 245.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 540,
+            bean_temp: 230.0,
+            env_temp: 250.0,
+        });
+        // Dark development
+        curve.add_point(CurvePoint {
+            time_secs: 600,
+            bean_temp: 240.0,
+            env_temp: 254.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 660,
+            bean_temp: 245.0,
+            env_temp: 256.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 720,
+            bean_temp: 245.0,
+            env_temp: 256.0,
+        });
+        curve
+    }
+
+    /// Create a fast roast test profile: quick aggressive ramp peaking at 220°C BT in ~300s.
+    ///
+    /// Approximate profile:
+    /// - 0–20s:   Rapid charge from ambient 25°C
+    /// - 20–60s:  Aggressive ramp to 130°C BT / 155°C ET
+    /// - 60–150s: Ramp to 180°C BT / 210°C ET
+    /// - 150–240s: Ramp to 210°C BT / 238°C ET
+    /// - 240–300s: Ramp to 220°C BT / 245°C ET (short development)
+    pub fn fast_roast() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 25.0,
+            env_temp: 25.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 20,
+            bean_temp: 80.0,
+            env_temp: 110.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 60,
+            bean_temp: 130.0,
+            env_temp: 155.0,
+        });
+        // Aggressive mid-ramp
+        curve.add_point(CurvePoint {
+            time_secs: 100,
+            bean_temp: 160.0,
+            env_temp: 185.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 150,
+            bean_temp: 180.0,
+            env_temp: 210.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 200,
+            bean_temp: 200.0,
+            env_temp: 228.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 240,
+            bean_temp: 210.0,
+            env_temp: 238.0,
+        });
+        // Short development
+        curve.add_point(CurvePoint {
+            time_secs: 270,
+            bean_temp: 218.0,
+            env_temp: 244.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 300,
+            bean_temp: 220.0,
+            env_temp: 245.0,
+        });
+        curve
+    }
+
+    /// Create a minimal pinout verification curve: ramps 25°C → 200°C → 25°C in ~120s.
+    ///
+    /// Intended for quick GPIO / hardware verification without a full roast cycle.
+    /// Approximate profile:
+    /// - 0–50s:   Ramp from ambient 25°C to 200°C BT / 225°C ET
+    /// - 50–100s: Hold at 200°C BT / 225°C ET (exercise steady-state)
+    /// - 100–120s: Cool back down to 25°C BT / 25°C ET
+    pub fn pinout_verify() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 25.0,
+            env_temp: 25.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 15,
+            bean_temp: 80.0,
+            env_temp: 100.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 30,
+            bean_temp: 130.0,
+            env_temp: 155.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 50,
+            bean_temp: 200.0,
+            env_temp: 225.0,
+        });
+        // Hold steady
+        curve.add_point(CurvePoint {
+            time_secs: 100,
+            bean_temp: 200.0,
+            env_temp: 225.0,
+        });
+        // Cooldown
+        curve.add_point(CurvePoint {
+            time_secs: 120,
+            bean_temp: 25.0,
+            env_temp: 25.0,
+        });
+        curve
+    }
+
     /// Add a waypoint to the curve. Points **must** be added in ascending
     /// `time_secs` order. Returns `false` if the curve is full.
     pub fn add_point(&mut self, point: CurvePoint) -> bool {
@@ -392,5 +651,198 @@ mod tests {
             env_temp: 99.0,
         }));
         assert_eq!(curve.len(), MAX_CURVE_POINTS);
+    }
+
+    #[test]
+    fn light_roast_has_points_and_reasonable_bounds() {
+        let curve = RoastCurve::light_roast();
+        assert!(!curve.is_empty());
+        assert!(curve.len() > 5);
+
+        let (bean, env) = curve.temperatures_at(0);
+        assert!(
+            bean > 20.0 && bean < 30.0,
+            "BT at t=0 should be ~25, got {bean}"
+        );
+        assert!(
+            env > 20.0 && env < 30.0,
+            "ET at t=0 should be ~25, got {env}"
+        );
+
+        let (bean_mid, _) = curve.temperatures_at(120);
+        assert!(
+            bean_mid > 130.0 && bean_mid < 160.0,
+            "BT at t=120s should be in drying zone, got {bean_mid}"
+        );
+
+        let (bean_end, env_end) = curve.temperatures_at(480);
+        assert!(
+            bean_end > 200.0 && bean_end <= 210.0,
+            "BT at t=480s should peak near 210, got {bean_end}"
+        );
+        assert!(
+            env_end < 250.0,
+            "ET at t=480s should stay below 250, got {env_end}"
+        );
+    }
+
+    #[test]
+    fn light_roast_monotonic_bt_during_ramp() {
+        let curve = RoastCurve::light_roast();
+        let (bt_0, _) = curve.temperatures_at(0);
+        let (bt_120, _) = curve.temperatures_at(120);
+        let (bt_240, _) = curve.temperatures_at(240);
+        let (bt_360, _) = curve.temperatures_at(360);
+        let (bt_420, _) = curve.temperatures_at(420);
+        assert!(bt_0 < bt_120, "BT should increase 0→120s");
+        assert!(bt_120 < bt_240, "BT should increase 120→240s");
+        assert!(bt_240 < bt_360, "BT should increase 240→360s");
+        assert!(bt_360 < bt_420, "BT should increase 360→420s");
+    }
+
+    #[test]
+    fn dark_roast_has_points_and_reasonable_bounds() {
+        let curve = RoastCurve::dark_roast();
+        assert!(!curve.is_empty());
+        assert!(curve.len() > 5);
+
+        let (bean, env) = curve.temperatures_at(0);
+        assert!(
+            bean > 20.0 && bean < 30.0,
+            "BT at t=0 should be ~25, got {bean}"
+        );
+        assert!(
+            env > 20.0 && env < 30.0,
+            "ET at t=0 should be ~25, got {env}"
+        );
+
+        let (bean_end, env_end) = curve.temperatures_at(720);
+        assert!(
+            bean_end > 240.0 && bean_end <= 245.0,
+            "BT at t=720s should peak near 245, got {bean_end}"
+        );
+        assert!(
+            env_end <= 258.0,
+            "ET at t=720s should stay below 260, got {env_end}"
+        );
+    }
+
+    #[test]
+    fn dark_roast_monotonic_bt_during_ramp() {
+        let curve = RoastCurve::dark_roast();
+        let (bt_0, _) = curve.temperatures_at(0);
+        let (bt_180, _) = curve.temperatures_at(180);
+        let (bt_360, _) = curve.temperatures_at(360);
+        let (bt_540, _) = curve.temperatures_at(540);
+        let (bt_660, _) = curve.temperatures_at(660);
+        assert!(bt_0 < bt_180, "BT should increase 0→180s");
+        assert!(bt_180 < bt_360, "BT should increase 180→360s");
+        assert!(bt_360 < bt_540, "BT should increase 360→540s");
+        assert!(bt_540 < bt_660, "BT should increase 540→660s");
+    }
+
+    #[test]
+    fn fast_roast_has_points_and_reasonable_bounds() {
+        let curve = RoastCurve::fast_roast();
+        assert!(!curve.is_empty());
+        assert!(curve.len() > 5);
+
+        let (bean, env) = curve.temperatures_at(0);
+        assert!(
+            bean > 20.0 && bean < 30.0,
+            "BT at t=0 should be ~25, got {bean}"
+        );
+        assert!(
+            env > 20.0 && env < 30.0,
+            "ET at t=0 should be ~25, got {env}"
+        );
+
+        let (bean_end, env_end) = curve.temperatures_at(300);
+        assert!(
+            bean_end > 215.0 && bean_end <= 220.0,
+            "BT at t=300s should peak near 220, got {bean_end}"
+        );
+        assert!(
+            env_end <= 250.0,
+            "ET at t=300s should stay below 250, got {env_end}"
+        );
+    }
+
+    #[test]
+    fn fast_roast_monotonic_bt_during_ramp() {
+        let curve = RoastCurve::fast_roast();
+        let (bt_0, _) = curve.temperatures_at(0);
+        let (bt_60, _) = curve.temperatures_at(60);
+        let (bt_150, _) = curve.temperatures_at(150);
+        let (bt_240, _) = curve.temperatures_at(240);
+        let (bt_300, _) = curve.temperatures_at(300);
+        assert!(bt_0 < bt_60, "BT should increase 0→60s");
+        assert!(bt_60 < bt_150, "BT should increase 60→150s");
+        assert!(bt_150 < bt_240, "BT should increase 150→240s");
+        assert!(bt_240 < bt_300, "BT should increase 240→300s");
+    }
+
+    #[test]
+    fn pinout_verify_has_points_and_reasonable_bounds() {
+        let curve = RoastCurve::pinout_verify();
+        assert!(!curve.is_empty());
+        assert!(curve.len() >= 4);
+
+        let (bean, env) = curve.temperatures_at(0);
+        assert!(
+            bean > 20.0 && bean < 30.0,
+            "BT at t=0 should be ~25, got {bean}"
+        );
+        assert!(
+            env > 20.0 && env < 30.0,
+            "ET at t=0 should be ~25, got {env}"
+        );
+    }
+
+    #[test]
+    fn pinout_verify_monotonic_ramp_up_and_cooldown() {
+        let curve = RoastCurve::pinout_verify();
+        let (bt_0, _) = curve.temperatures_at(0);
+        let (bt_30, _) = curve.temperatures_at(30);
+        let (bt_50, _) = curve.temperatures_at(50);
+        let (bt_100, _) = curve.temperatures_at(100);
+        let (bt_120, _) = curve.temperatures_at(120);
+
+        assert!(bt_0 < bt_30, "BT should increase 0→30s");
+        assert!(bt_30 < bt_50, "BT should increase 30→50s");
+        assert!(
+            (bt_50 - bt_100).abs() < 1.0,
+            "BT should hold steady 50→100s, got {bt_50}→{bt_100}"
+        );
+        assert!(
+            bt_120 < bt_100,
+            "BT should decrease during cooldown 100→120s"
+        );
+    }
+
+    #[test]
+    fn all_curves_stay_below_overtemp() {
+        let overtemp_bt = 250.0_f32;
+        let overtemp_et = 260.0_f32;
+
+        let curves: Vec<(&str, RoastCurve)> = vec![
+            ("medium", RoastCurve::default_medium_roast()),
+            ("light", RoastCurve::light_roast()),
+            ("dark", RoastCurve::dark_roast()),
+            ("fast", RoastCurve::fast_roast()),
+            ("pinout_verify", RoastCurve::pinout_verify()),
+        ];
+
+        for (name, curve) in curves {
+            let (bt, et) = curve.temperatures_at(0);
+            assert!(
+                bt <= overtemp_bt,
+                "{name}: BT at t=0 should be ≤250, got {bt}"
+            );
+            assert!(
+                et <= overtemp_et,
+                "{name}: ET at t=0 should be ≤260, got {et}"
+            );
+        }
     }
 }
