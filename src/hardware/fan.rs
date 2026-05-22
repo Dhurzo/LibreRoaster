@@ -69,7 +69,7 @@ impl<'a> FanController<'a> {
     pub fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), FanError> {
         let duty = Self::percentage_to_duty(percentage);
         if let Some(handle) = &self.ledc_handle {
-            handle.set_duty(duty).map_err(|_| FanError::PwmError {
+            handle.set_duty_raw(duty).map_err(|_| FanError::PwmError {
                 source: "emergency_set_duty_failed",
             })?;
         }
@@ -87,19 +87,22 @@ impl<'a> FanController<'a> {
 
             if duty_delta > FADE_THRESHOLD_DUTY {
                 let duration = Self::fade_duration(duty_delta);
+                // start_duty_fade expects percentage (0-100), convert raw duty
+                let current_pct = ((current_duty as u32 * 100 + 127) / 255) as u8;
+                let target_pct = ((target_duty as u32 * 100 + 127) / 255) as u8;
                 debug!(
-                    "Fan fade {} → {} (Δ{}), {}ms",
-                    current_duty, target_duty, duty_delta, duration
+                    "Fan fade {}→{} duty ({}%→{}%), {}ms",
+                    current_duty, target_duty, current_pct, target_pct, duration
                 );
                 handle
-                    .start_duty_fade(current_duty, target_duty, duration)
+                    .start_duty_fade(current_pct, target_pct, duration)
                     .map_err(|_| FanError::PwmError {
                         source: "start_duty_fade_failed",
                     })?;
             } else {
                 debug!("Fan set duty {} (delta {})", target_duty, duty_delta);
                 handle
-                    .set_duty(target_duty)
+                    .set_duty_raw(target_duty)
                     .map_err(|_| FanError::PwmError {
                         source: "set_duty_failed",
                     })?;

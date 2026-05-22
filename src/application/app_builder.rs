@@ -1,7 +1,7 @@
 use crate::application::service_container::ServiceContainer;
 use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterControl;
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use crate::hardware::sensors::SensorConversionHub;
 use crate::hardware::uart::initialize_uart_system;
@@ -14,6 +14,9 @@ use crate::safety::regression;
 use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use alloc::boxed::Box;
 use log::info;
+
+#[cfg(feature = "simulated-sensors")]
+use crate::hardware::sensors::SimulatedSensorSource;
 
 pub struct AppBuilder {
     uart0: Option<UART0<'static>>,
@@ -80,13 +83,20 @@ impl AppBuilder {
         self
     }
 
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     pub fn with_temperature_sensors(
         self,
         bean_sensor: Max31856<BtSpi>,
         env_sensor: Max31856<EtSpi>,
     ) -> Self {
         let hub = SensorConversionHub::new(bean_sensor, env_sensor);
+        self.with_sensor_conversion_hub(hub)
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    pub fn with_simulated_sensors(self) -> Self {
+        let source = SimulatedSensorSource::default_curve();
+        let hub = SensorConversionHub::new_simulated(source);
         self.with_sensor_conversion_hub(hub)
     }
 

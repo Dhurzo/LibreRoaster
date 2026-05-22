@@ -29,15 +29,6 @@ use static_cell::StaticCell;
 #[cfg(not(target_arch = "riscv32"))]
 fn main() {}
 
-/// Convert fan-speed percentage (0–100) to 8-bit duty ticks (0–255).
-/// Mirrors `FanController::percentage_to_duty()` in `src/hardware/fan.rs`.
-/// Uses integer arithmetic because libm is unavailable in examples.
-#[cfg(target_arch = "riscv32")]
-fn percentage_to_duty(pct: u8) -> u8 {
-    let clamped = pct.clamp(0, 100);
-    ((clamped as u32 * 255 + 50) / 100).min(255) as u8
-}
-
 #[cfg(target_arch = "riscv32")]
 /// Read current duty from LEDC Channel 0 hardware register.
 /// Mirrors `LedcBus::read_register()` in `src/hardware/ledc_bus.rs`.
@@ -113,8 +104,8 @@ fn main() -> ! {
 
     macro_rules! duty_test {
         ($name:literal, $pct:expr, $expected_duty:expr, $tolerance:expr) => {{
-            let duty = percentage_to_duty($pct);
-            let _ = fan_ch.set_duty(duty);
+            // Pass percentage directly — Channel::set_duty expects 0-100
+            let _ = fan_ch.set_duty($pct);
             delay_ms(2); // allow hardware to latch the new duty value
 
             let readback = read_duty_ch0();

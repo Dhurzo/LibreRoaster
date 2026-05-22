@@ -105,6 +105,7 @@
             | (_, ArtisanCommand::SetFan(_))
             | (_, ArtisanCommand::IncreaseHeater)
             | (_, ArtisanCommand::DecreaseHeater)
+            | (_, ArtisanCommand::Stop)
             | (_, ArtisanCommand::EmergencyStop) => {
                 if self.state == InitState::Ready {
                     Ok(InitEvent::OperationalCommand)

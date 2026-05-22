@@ -1,8 +1,8 @@
 use crate::hardware::ledc_guard::{LedcGuard, LedcGuardError};
-use crate::hardware::ssr::LedcDutyReader;
+use crate::hardware::ssr::{DutyWriteError, LedcDutyReader};
 use core::cell::{Cell, RefCell};
 use esp32c3::LEDC;
-use esp_hal::ledc::channel::{self, ChannelIFace};
+use esp_hal::ledc::channel::{self, ChannelHW, ChannelIFace};
 use esp_hal::ledc::LowSpeed;
 use log::warn;
 
@@ -130,6 +130,25 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
+    /// Set duty as a raw 8-bit value (0-255 for 8-bit resolution), bypassing
+    /// [`ChannelIFace::set_duty`]'s percentage conversion. Use this when you
+    /// have already computed a raw duty value via [`percentage_to_ledc_duty`].
+    pub fn set_duty_raw(&self, duty: u8) -> Result<(), channel::Error> {
+        let entry = self.entry();
+        match self.bus.with_channel_mut(entry, |channel| {
+            ChannelHW::set_duty_hw(channel, duty as u32);
+        }) {
+            Ok(_) => {
+                self.bus.store_duty(entry, duty);
+                Ok(())
+            }
+            Err(err) => {
+                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                Err(channel::Error::Channel)
+            }
+        }
+    }
+
     pub fn start_duty_fade(
         &self,
         start_duty: u8,
@@ -164,6 +183,10 @@ impl<'a> LedcChannelHandle<'a> {
 impl<'a> LedcDutyReader for LedcChannelHandle<'a> {
     fn read_duty_ticks(&self) -> u16 {
         self.bus.read_register(self.entry())
+    }
+
+    fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError> {
+        LedcChannelHandle::set_duty_raw(self, duty).map_err(|_| DutyWriteError)
     }
 }
 

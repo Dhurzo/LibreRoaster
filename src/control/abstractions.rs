@@ -65,6 +65,17 @@ impl RoasterError {
             RoasterError::EmergencyShutdown { .. } => "emergency_shutdown",
         }
     }
+
+    pub fn source(&self) -> Option<&'static str> {
+        match self {
+            RoasterError::TemperatureOutOfRange { source }
+            | RoasterError::SensorFault { source }
+            | RoasterError::InvalidState { source }
+            | RoasterError::PidError { source }
+            | RoasterError::HardwareError { source }
+            | RoasterError::EmergencyShutdown { source } => *source,
+        }
+    }
 }
 
 impl From<SsrError> for RoasterError {

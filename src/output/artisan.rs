@@ -239,14 +239,15 @@ impl ArtisanFormatter {
         } else {
             0u8
         };
+        let fault_flag = if status.fault_condition { 1 } else { 0 };
 
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
         // Safety: Verify buffer capacity before writing to catch overflow bugs in development.
-        // STATUS response with 19 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
+        // STATUS response with 20 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
         debug_assert!(buf.capacity() >= RESPONSE_BUFFER_SIZE);
         let _ = core::write!(
             &mut buf,
-            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{},{}",
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{},{},{}",
             et,
             bt,
             heater,
@@ -265,7 +266,8 @@ impl ArtisanFormatter {
             derivative_available_flag,
             command_latency,
             max_command_latency,
-            temp_scale_indicator
+            temp_scale_indicator,
+            fault_flag
         );
         buf
     }
@@ -596,7 +598,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
 
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
 
         assert_eq!(parts[0], "120.3");
         assert_eq!(parts[1], "150.5");
@@ -616,6 +618,8 @@ mod tests {
         assert_eq!(parts[15], "1");
         assert_eq!(parts[16], "1250");
         assert_eq!(parts[17], "5000");
+        assert_eq!(parts[18], "0");
+        assert_eq!(parts[19], "0"); // fault_condition = false
     }
 
     #[test]
@@ -628,7 +632,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "0");
@@ -646,7 +650,7 @@ mod tests {
         let output = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = output.split(',').collect();
 
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
         assert_eq!(parts[11], "51.2");
         assert_eq!(parts[12], "0.73");
         assert_eq!(parts[13], "1");
@@ -661,7 +665,7 @@ mod tests {
 
         assert!(output.contains(",none,"));
         let parts: Vec<&str> = output.split(',').collect();
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
         assert_eq!(parts[12], "0.00");
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "0");
@@ -954,7 +958,7 @@ mod tests {
 
         let response = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
 
         assert_eq!(parts[0], "120.3", "ET in Celsius");
         assert_eq!(parts[1], "150.5", "BT in Celsius");
@@ -974,6 +978,8 @@ mod tests {
         assert_eq!(parts[15], "1");
         assert_eq!(parts[16], "1250");
         assert_eq!(parts[17], "5000");
+        assert_eq!(parts[18], "0");
+        assert_eq!(parts[19], "0", "fault_condition should be false");
     }
 
     #[test]
@@ -994,7 +1000,7 @@ mod tests {
 
         let response = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = response.split(',').collect();
-        assert_eq!(parts.len(), 19);
+        assert_eq!(parts.len(), 20);
 
         // 120.3°C = 248.5°F, 150.5°C = 302.9°F
         assert_eq!(parts[0], "248.5", "ET converted to Fahrenheit");

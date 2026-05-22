@@ -8,8 +8,22 @@ use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::LowSpeed;
 use log::{debug, error, info, warn};
 
+/// Error returned when a raw duty write to the LEDC hardware fails.
+/// The only failure mode is the LEDC guard timeout (logged as a warning internally).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DutyWriteError;
+
 pub trait LedcDutyReader {
     fn read_duty_ticks(&self) -> u16;
+
+    /// Set duty directly in hardware, bypassing the percentage conversion
+    /// that [`ChannelIFace::set_duty`] applies. The duty value MUST be in the
+    /// raw resolution range (e.g. 0-255 for 8-bit).
+    ///
+    /// This is the correct method to call when you have already computed a raw
+    /// duty value via [`percentage_to_ledc_duty`]. Calling [`ChannelIFace::set_duty`]
+    /// with a raw value > 100 will fail because it expects a percentage (0-100).
+    fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError>;
 }
 
 #[cfg(target_arch = "riscv32")]
@@ -43,7 +57,7 @@ where
     *retry_count = retry_count.saturating_add(1);
 
     pwm_channel
-        .set_duty(commanded)
+        .set_duty_raw(commanded)
         .map_err(|_| SsrError::PwmError {
             source: "set_duty_failed",
         })?;
@@ -256,9 +270,11 @@ where
         pin.set_low().map_err(|_| SsrError::OutputError {
             source: "pin_init_failed",
         })?;
-        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError {
-            source: "channel_init_failed",
-        })?;
+        pwm_channel
+            .set_duty_raw(0)
+            .map_err(|_| SsrError::PwmError {
+                source: "channel_init_failed",
+            })?;
 
         let mut ssr = SsrControl {
             pin,
@@ -298,7 +314,7 @@ where
         self.base.retry_count = 0;
 
         self.pwm_channel
-            .set_duty(ledc_duty)
+            .set_duty_raw(ledc_duty)
             .map_err(|_| SsrError::PwmError {
                 source: "set_duty_failed",
             })?;
@@ -340,9 +356,11 @@ where
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     pub fn new(detection_pin: DETECT, pwm_channel: PWM) -> Result<Self, SsrError> {
-        pwm_channel.set_duty(0).map_err(|_| SsrError::PwmError {
-            source: "channel_init_failed",
-        })?;
+        pwm_channel
+            .set_duty_raw(0)
+            .map_err(|_| SsrError::PwmError {
+                source: "channel_init_failed",
+            })?;
 
         let mut ssr = SsrControlSimple {
             detection_pin,
@@ -361,8 +379,18 @@ where
     }
 
     fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
-        self.base
-            .detect_heat_source(current_time, || self.detection_pin.is_low())
+        #[cfg(feature = "simulated-sensors")]
+        {
+            // Simulation: treat heat source as always available so heater/PID
+            // can be tested without connecting GPIO1 to GND.
+            self.base
+                .detect_heat_source(current_time, || Ok::<bool, core::convert::Infallible>(true))
+        }
+        #[cfg(not(feature = "simulated-sensors"))]
+        {
+            self.base
+                .detect_heat_source(current_time, || self.detection_pin.is_low())
+        }
     }
 
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
@@ -387,7 +415,7 @@ where
         self.base.retry_count = 0;
 
         self.pwm_channel
-            .set_duty(ledc_duty)
+            .set_duty_raw(ledc_duty)
             .map_err(|_| SsrError::PwmError {
                 source: "set_duty_failed",
             })?;

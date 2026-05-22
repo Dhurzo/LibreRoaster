@@ -167,13 +167,33 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ## 🔨 Build and verification model
 
-### Embedded build
+### Embedded build (real sensors)
 
 ```bash
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
-### Flash
+### Simulated sensors mode
+
+Build and flash with the `simulated-sensors` feature to run on a bare ESP32-C3 **without any thermocouples or actuators connected**. The firmware generates synthetic temperature readings from a configurable roast curve and feeds them through the entire control stack — PID, safety, telemetry, and Artisan serial protocol — exactly as if real sensors were connected.
+
+Useful for:
+- Verifying Artisan serial connectivity over USB CDC or UART
+- Validating PID tuning against a known temperature trajectory
+- End-to-end firmware regression without hardware risk
+- Demonstrating the roaster control surface without a physical machine
+
+```bash
+cargo build --release --target riscv32imc-unknown-none-elf \
+  --features "embedded,simulated-sensors"
+
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features "embedded,simulated-sensors"
+```
+
+See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
+
+### Flash (real sensors)
 
 ```bash
 cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded
@@ -209,6 +229,7 @@ The main technical documents are:
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics
+- **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
 - **`docs/BUGS.md`** — current technical risk report and likely defect inventory
 - **`docs/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
 

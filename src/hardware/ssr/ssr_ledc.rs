@@ -1,6 +1,7 @@
-use super::LedcDutyReader;
+use super::{DutyWriteError, LedcDutyReader};
 use esp32c3::LEDC;
-use esp_hal::ledc::{channel, LowSpeed};
+use esp_hal::ledc::channel::{self, ChannelHW};
+use esp_hal::ledc::LowSpeed;
 
 pub struct LedcChannelMonitor<'a> {
     channel: channel::Channel<'a, LowSpeed>,
@@ -25,6 +26,11 @@ impl<'a> LedcDutyReader for LedcChannelMonitor<'a> {
         let regs = unsafe { &*LEDC::ptr() };
         let raw = regs.ch(self.channel_index()).duty().read().duty().bits();
         (raw >> 4) as u16
+    }
+
+    fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError> {
+        ChannelHW::set_duty_hw(&self.channel, duty as u32);
+        Ok(())
     }
 }
 
