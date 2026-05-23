@@ -406,16 +406,19 @@ impl RoasterControl {
 
         self.actuator.set_last_desired_output(desired_output);
         let pid_integrator_value = self.dispatch.pid_integrator_value();
-        let guard_busy = self
-            .actuator
-            .ssr_guard_next_cycle_allowed(current_time)
-            .is_err();
         let applied_output = self.actuator.apply_guarded_heater(
             desired_output,
             current_time,
             false,
             &mut self.status,
         )?;
+        // Compute guard_busy AFTER apply_guarded_heater so the PID feedback
+        // reflects the post-mark_cycle() guard state, not a stale pre-apply
+        // snapshot. This keeps anti-windup in sync with the actual hardware.
+        let guard_busy = self
+            .actuator
+            .ssr_guard_next_cycle_allowed(current_time)
+            .is_err();
         let feedback = PidFeedback::new(desired_output, applied_output, guard_busy);
         self.dispatch.set_pid_feedback(feedback);
 

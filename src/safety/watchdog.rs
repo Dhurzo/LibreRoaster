@@ -124,7 +124,40 @@ mod hw_watchdog {
         rtc_cntl.wdtfeed().write(|w| w.wdt_feed().set_bit());
     }
 
-    pub fn init() {}
+    /// Configures the RTC Watchdog Timer with a ~2 s timeout.
+    ///
+    /// The RWDT runs off the internal 150 kHz RTC slow clock and resets
+    /// the CPU if the control loop stops feeding it.  This init is
+    /// explicit (not relying on bootloader defaults) so the safety net
+    /// is always active regardless of the flash toolchain used.
+    pub fn init() {
+        const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
+        // RTC_SLOW_CLK ≈ 150 kHz  →  ~2 s = 300 000 cycles
+        const WDT_STAGE0_HOLD: u32 = 300_000;
+
+        let rtc_cntl = unsafe { &*esp32c3::RTC_CNTL::ptr() };
+
+        rtc_cntl
+            .wdtwprotect()
+            .write(|w| unsafe { w.wdt_wkey().bits(WDT_UNLOCK_KEY) });
+
+        rtc_cntl
+            .wdtconfig1()
+            .write(|w| unsafe { w.hold().bits(WDT_STAGE0_HOLD) });
+
+        rtc_cntl.wdtconfig0().modify(|_, w| unsafe {
+            w.wdt_en()
+                .set_bit()
+                .wdt_stg0()
+                .bits(2) // 2 = reset CPU on stage-0 timeout
+                .wdt_flashboot_mod_en()
+                .set_bit()
+        });
+
+        rtc_cntl
+            .wdtwprotect()
+            .write(|w| unsafe { w.wdt_wkey().bits(0) });
+    }
 }
 
 #[cfg(not(target_arch = "riscv32"))]

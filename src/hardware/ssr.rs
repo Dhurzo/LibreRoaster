@@ -539,15 +539,8 @@ where
         }
     }
 
-    fn periodic_health_check(&mut self) {
-        // Use a monotonic counter as the time source for the SSR's
-        // built-in 1-second rate limiter (saturating_sub gate).
-        let tick = self
-            .base
-            .last_detection_check
-            .unwrap_or(0)
-            .wrapping_add(100);
-        let _ = self.periodic_check(tick);
+    fn periodic_health_check(&mut self, current_time_ms: u32) {
+        let _ = self.periodic_check(current_time_ms);
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {
@@ -647,13 +640,8 @@ where
         }
     }
 
-    fn periodic_health_check(&mut self) {
-        let tick = self
-            .base
-            .last_detection_check
-            .unwrap_or(0)
-            .wrapping_add(100);
-        let _ = PeriodicCheck::periodic_check(self, tick);
+    fn periodic_health_check(&mut self, current_time_ms: u32) {
+        let _ = PeriodicCheck::periodic_check(self, current_time_ms);
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {

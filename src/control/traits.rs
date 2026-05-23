@@ -20,8 +20,10 @@ pub trait Heater: Send {
 
     /// Periodic health check — called every ~1s by the control loop.
     /// Implementations should re-detect heat source, verify PWM integrity, etc.
+    /// `current_time_ms` is a real monotonic timestamp in milliseconds so the
+    /// implementation can apply its own rate-limiting using the actual wall clock.
     /// Default implementation is a no-op.
-    fn periodic_health_check(&mut self) {}
+    fn periodic_health_check(&mut self, _current_time_ms: u32) {}
 
     fn last_duty_delta_ticks(&self) -> i16 {
         0
@@ -49,6 +51,10 @@ impl<T: Heater + ?Sized> Heater for &mut T {
 
     fn get_status(&self) -> SsrHardwareStatus {
         (**self).get_status()
+    }
+
+    fn periodic_health_check(&mut self, current_time_ms: u32) {
+        (**self).periodic_health_check(current_time_ms);
     }
 }
 

@@ -169,7 +169,10 @@ impl ActuatorController {
         };
         if due {
             self.last_health_check = Some(now);
-            self.heater.periodic_health_check();
+            // Convert Embassy Instant to ms so the heater impl can apply its
+            // own rate-limiting against real wall-clock time (not fake ticks).
+            let current_time_ms = now.as_millis() as u32;
+            self.heater.periodic_health_check(current_time_ms);
         }
     }
 
