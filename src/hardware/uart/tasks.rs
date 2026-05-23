@@ -91,11 +91,11 @@ fn push_to_event_queue(data: &[u8]) {
     });
 }
 
-/// Process complete lines (0x0D terminated) from the event queue
+/// Process complete lines (CR or LF terminated) from the event queue
 fn process_event_queue() {
     let has_terminator = EVENT_QUEUE.lock(|cell| {
         if let Some(queue) = cell.borrow().as_ref() {
-            queue.iter().any(|&b| b == 0x0D)
+            queue.iter().any(|&b| b == 0x0D || b == 0x0A)
         } else {
             false
         }
@@ -108,27 +108,18 @@ fn process_event_queue() {
         EVENT_QUEUE.lock(|cell| {
             if let Some(queue) = cell.borrow_mut().as_mut() {
                 while let Some(byte) = queue.pop_front() {
-                    let _ = command_data.push(byte);
-                    if byte == 0x0D {
+                    if byte == 0x0D || byte == 0x0A {
                         break;
                     }
+                    let _ = command_data.push(byte);
                 }
                 extracted = true;
             }
         });
 
         if extracted && !command_data.is_empty() {
-            // Remove the terminator (last byte if it's 0x0D)
-            let last_idx = command_data.len() - 1;
-            if command_data[last_idx] == 0x0D {
-                // Truncate to remove terminator
-                command_data.truncate(last_idx);
-            }
-
-            // Process the complete command
-            if !command_data.is_empty() {
-                handle_command_data_internal(&command_data);
-            }
+            // Command data already excludes terminators — process directly
+            handle_command_data_internal(&command_data);
         }
     }
 }
@@ -303,8 +294,10 @@ pub fn process_command_data(data: &[u8]) {
     // Compatibility path (mainly tests): process a single frame directly.
     let mut command = Vec::<u8, 64>::new();
     for &byte in data {
-        if byte == 0x0D {
-            handle_command_data_internal(&command);
+        if byte == 0x0D || byte == 0x0A {
+            if !command.is_empty() {
+                handle_command_data_internal(&command);
+            }
             return;
         }
 

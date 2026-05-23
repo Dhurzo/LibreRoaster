@@ -75,8 +75,10 @@ pub fn process_usb_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
 
     for &byte in data {
-        if byte == 0x0D {
-            handle_complete_usb_command(&command);
+        if byte == 0x0D || byte == 0x0A {
+            if !command.is_empty() {
+                handle_complete_usb_command(&command);
+            }
             return;
         }
 

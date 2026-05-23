@@ -72,6 +72,12 @@ impl CommandDispatcher {
         self.temp_handler.enable_pid();
         status.pid_enabled = true;
         status.target_temp = target_temp;
+        // Ensure telemetry starts emitting when PID is enabled.
+        // Without this, SETTARGET/SETTARGET+START leaves the system
+        // in a state where pid_enabled=true but is_continuous_enabled()=false,
+        // causing is_streaming() to return true (blocking START) while
+        // emit_telemetry_stage() produces no output.
+        self.get_output_manager_mut().enable_continuous_output();
         info!("PID control re-enabled with target: {:.1}°C", target_temp);
         Ok(())
     }
