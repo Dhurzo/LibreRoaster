@@ -1,3 +1,4 @@
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 /// Edge case tests for roast flow resilience.
 /// Verifies firmware doesn't crash or break when hardware is missing,
 /// charge detection fails, or invalid commands are received.

@@ -1,3 +1,4 @@
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 //! Integration tests for Parser + Formatter flow
 //!
 //! These tests verify the complete Artisan+ protocol flow:

@@ -1,3 +1,4 @@
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 //! Full Artisan roast simulation (host-side state machine, no hardware needed)
 //!
 //! Simulates Artisan+ controlling a roast via stub hardware and the internal

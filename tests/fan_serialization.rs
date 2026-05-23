@@ -1,4 +1,4 @@
-#![cfg(all(test, not(target_arch = "riscv32")))]
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 
 extern crate std;
 
