@@ -5,7 +5,7 @@ Firmware written in **Rust** for the ESP32-C3
 
 LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over **native USB CDC** (recommended — no extra hardware) or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
 
-> **New to LibreRoaster?** Use the ESP32-C3's **native USB port** to connect to Artisan — plus a **10kΩ pull-up on GPIO9** for reliable boot. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for why.
+> **New to LibreRoaster?** Use the ESP32-C3's **native USB port** to connect to Artisan. If you're building a **custom board** (like LibreRoaster), add a **10kΩ pull-up on GPIO9** for reliable boot. Official dev boards already include it. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for why.
 
 The project is aimed at builders who want an inspectable roasting controller rather than a closed appliance. The firmware is not a standalone roasting UI. The intended operating model is: Artisan owns the session, LibreRoaster owns the device-side control, telemetry, and safety interlocks.
 
@@ -149,7 +149,7 @@ LibreRoaster assumes a simple two-sensor / two-actuator hardware topology:
 
 Two constraints matter operationally:
 
-1. **GPIO9 is a strapping pin** — it determines boot mode at reset. Without a 10kΩ pull-up to 3.3V, boot is unpredictable (floating pin). **Strongly recommended for both USB and UART.** See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md).
+1. **GPIO9 is a strapping pin** — it determines boot mode at reset. **Official ESP32-C3 dev boards** (DevKitC-02, DevKitM-1, RUST-1) include the pull-up already — no extra resistor needed. **Custom boards** (like LibreRoaster) need a **10kΩ pull-up to 3.3V**. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
 For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md).
@@ -175,7 +175,7 @@ These are not marketing notes. They are the design boundaries readers should und
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
-> **Flash tip:** Use the ESP32-C3's **native USB port** (`/dev/ttyACM0`). For reliable boot, add a **10kΩ pull-up from GPIO9 to 3.3V** — without it, GPIO9 floats and boot mode is random regardless of USB or UART. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for full explanation.
+> **Flash tip:** Use the ESP32-C3's **native USB port** (`/dev/ttyACM0`). For reliable boot on **custom boards** (like LibreRoaster), add a **10kΩ pull-up from GPIO9 to 3.3V**. Official dev boards already include this pull-up — no extra resistor needed. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 
 ### Simulated sensors mode
 

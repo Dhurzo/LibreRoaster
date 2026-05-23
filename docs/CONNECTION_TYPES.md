@@ -12,7 +12,9 @@ This document explains the two connection methods for communicating with LibreRo
 |--------------|----------|
 | Plug and play, no extra hardware | **USB (native)** — just a USB cable |
 | Use an existing USB-UART adapter (CH340/CP2102) | **UART** |
-| Guaranteed boot every time | Either + **10kΩ pull-up on GPIO9** |
+| Guaranteed boot every time | Either (see §4.1: official dev board vs custom) |
+| Use an official ESP32-C3 dev board (DevKitC-02, DevKitM-1, RUST-1) | **No extra resistor** — GPIO9 pull-up already on board |
+| Build a custom board with a bare ESP32-C3 module | **Add 10kΩ pull-up on GPIO9** |
 | Flash firmware via serial | **USB** (recommended) or **UART** |
 
 ---
@@ -114,6 +116,30 @@ This holds GPIO9 at a defined HIGH level during reset, making boot **determinist
 
 > ⚠️ **Not 10Ω!** A 10Ω resistor would draw 330mA and likely damage the GPIO pad. Use **10kΩ** (brown-black-orange).
 
+### 4.1 Official dev boards vs custom boards
+
+**Not all ESP32-C3 boards need an external pull-up.**
+
+Official Espressif development boards already include a pull-up resistor on GPIO9:
+
+| Board | GPIO9 pull-up | Extra resistor needed? |
+|-------|---------------|----------------------|
+| **ESP32-C3-DevKitC-02** | ✅ Built-in (via CP2102 + module) | ❌ No |
+| **ESP32-C3-DevKitM-1** | ✅ Built-in (module-level) | ❌ No |
+| **ESP32-C3-DevKit-RUST-1** | ✅ Built-in (module-level) | ❌ No |
+| **ESP32-C3-DevKit-RUST-2** | ✅ Built-in (module-level) | ❌ No |
+| **Bare ESP32-C3 module** (e.g. ESP32-C3-WROOM-02 on a custom PCB) | ❌ Floating | ✅ **10kΩ to 3.3V** |
+| **LibreRoaster (custom board)** | ❌ Floating (fan on GPIO9) | ✅ **10kΩ to 3.3V** |
+
+**Why the difference?** Official dev boards use an ESP32-C3 module (WROOM, MINI) whose substrate PCB includes the GPIO9 pull-up. When you buy a bare module or design a custom board, that pull-up isn't present — the pin is floating at reset.
+
+**How to check your board:**
+1. Look at the board documentation — most dev board guides mention the strapping pin
+2. Measure GPIO9 with a multimeter at power-on — if you see 3.3V (high-Z), the pull-up is likely built-in
+3. Run the boot test below: if boot is 100% reliable across many resets, you're fine without an extra resistor
+
+> **For LibreRoaster specifically**, the external 10kΩ pull-up is required AND the fan driver circuit on GPIO9 must be high-impedance during boot so it doesn't override the strapping level.
+
 ### With the pull-up installed
 
 | Connection | Boot |
@@ -188,9 +214,9 @@ The firmware runs USB CDC and UART transport tasks concurrently. You can connect
 | Feature | USB (native) | UART (CH340) |
 |---------|-------------|--------------|
 | Extra hardware | **None** | USB-UART adapter + wiring |
-| GPIO9 pull-up needed? | **Strongly recommended** | **Strongly recommended** |
-| Why? | GPIO9 is floating — boot is random without it | Same |
-| Boot without pull-up | Sometimes works (we got lucky) | Sometimes works |
+| GPIO9 pull-up needed (custom board)? | **Yes — 10kΩ to 3.3V** | **Yes — 10kΩ to 3.3V** |
+| GPIO9 pull-up needed (official dev board)? | **No — already on board** | **No — already on board** |
+| Boot without pull-up (custom board) | Sometimes works (floating = random) | Sometimes works (same) |
 | Boot with pull-up | ✅ Always | ✅ Always |
 | Flash firmware | ✅ | ✅ |
 | Artisan communication | ✅ | ✅ |
@@ -198,7 +224,7 @@ The firmware runs USB CDC and UART transport tasks concurrently. You can connect
 ### Your setup checklist
 
 1. ✅ Flash firmware via USB: `cargo espflash flash --port /dev/ttyACM0`
-2. 🔧 **Add 10kΩ pull-up from GPIO9 to 3.3V** (highly recommended)
+2. ❓ **Check if you need the pull-up** — see §4.1 (official dev board: no resistor needed; custom board like LibreRoaster: add 10kΩ from GPIO9 to 3.3V)
 3. ✅ Connect ESP32-C3 to PC via native USB
 4. ✅ Configure Artisan: serial port → `/dev/ttyACM0` → 115200 → TC4
 5. ☕ Roast
