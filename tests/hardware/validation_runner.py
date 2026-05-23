@@ -50,15 +50,37 @@ def is_hardware_scenario(scenario_id):
     return scenario_id.startswith(('TC-', 'SSR-', 'FAN-', 'GPIO-'))
 
 
-def send_and_read(ser, command, timeout_chars=100):
-    """Send a command and read one response line."""
-    ser.write(f"{command}\n".encode('utf-8'))
-    line = ser.readline().decode('utf-8', errors='replace').strip()
-    return line
+def send_and_read(ser, command, timeout=3.0):
+    """Send command and read protocol response, filtering log/echo lines."""
+    ser.write(f"{command}\r\n".encode('utf-8'))
+    ser.flush()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if ser.in_waiting:
+            raw = ser.read(ser.in_waiting).decode('ascii', errors='replace')
+            for raw_line in raw.split('\n'):
+                line = raw_line.strip('\r').strip()
+                if not line:
+                    continue
+                if line.startswith('[') or line.startswith('\x1b'):
+                    continue
+                if line.startswith('INFO') or line.startswith('WARN'):
+                    continue
+                return line
+        time.sleep(0.05)
+    return ''
 
 
 def execute_hardware_sequence(ser, scenario_entry, csv_path, args, max_latency_ref):
     """Execute hardware command sequence from manifest entry."""
+    # ESP32-C3 resets when USB CDC port opens — wait for boot + drain
+    time.sleep(3.0)
+    ser.reset_input_buffer()
+    # Send a STATUS to flush streaming CSV that accumulated during boot
+    ser.write(b"STATUS\r\n")
+    ser.flush()
+    time.sleep(0.5)
+    ser.reset_input_buffer()
     command_sequence = scenario_entry.get('command_sequence', '')
     run_dir = os.path.dirname(csv_path)
     read_csv_path = os.path.join(run_dir, 'read_telemetry.csv')
@@ -128,7 +150,7 @@ def execute_hardware_sequence(ser, scenario_entry, csv_path, args, max_latency_r
                     continue
 
                 parts = line.split(',')
-                if len(parts) == 18:
+                if len(parts) >= 19:
                     row = {
                         'timestamp': datetime.utcnow().isoformat(),
                         'et': parts[0],
@@ -274,7 +296,7 @@ def main():
 
         try:
             while True:
-                ser.write(b"STATUS\n")
+                ser.write(b"STATUS\r\n")
                 line = ser.readline().decode('utf-8', errors='replace').strip()
 
                 if line:
@@ -284,7 +306,7 @@ def main():
                         continue
 
                     parts = line.split(',')
-                    if len(parts) == 18:
+                    if len(parts) >= 19:
                         row = {
                             'timestamp': datetime.utcnow().isoformat(),
                             'et': parts[0],
