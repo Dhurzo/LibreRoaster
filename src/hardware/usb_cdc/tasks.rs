@@ -76,9 +76,7 @@ pub fn process_usb_command_data(data: &[u8]) {
 
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
-            if !command.is_empty() {
-                handle_complete_usb_command(&command);
-            }
+            handle_complete_usb_command(&command);
             return;
         }
 

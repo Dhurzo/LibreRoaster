@@ -295,9 +295,7 @@ pub fn process_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
-            if !command.is_empty() {
-                handle_command_data_internal(&command);
-            }
+            handle_command_data_internal(&command);
             return;
         }
 
