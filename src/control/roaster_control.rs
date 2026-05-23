@@ -691,9 +691,11 @@ impl RoasterControl {
             crate::output::artisan::ArtisanFormatter::format_read_response_full(&self.status);
 
         let parts: heapless::Vec<&str, 8> = response.split(',').take(8).collect();
-        if response.trim().is_empty() || parts.len() != 5 {
+        let expected = if self.status.pid_enabled { 8 } else { 5 };
+        if response.trim().is_empty() || parts.len() != expected {
             error!(
-                "Malformed READ response from ArtisanFormatter: expected 5 values, got {}",
+                "Malformed READ response from ArtisanFormatter: expected {} values, got {}",
+                expected,
                 parts.len()
             );
         }

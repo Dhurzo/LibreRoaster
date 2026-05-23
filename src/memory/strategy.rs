@@ -107,7 +107,7 @@
 //!
 //! ### For HOT PATH Operations
 //!
-//! ```rust
+//! ```no_run
 //! use heapless::{String, Vec};
 //!
 //! pub fn read_temperature(&mut self) -> Result<f32, TemperatureError> {
@@ -125,7 +125,7 @@
 //!
 //! ### For INITIALIZATION Operations
 //!
-//! ```rust
+//! ```no_run
 //! use alloc::{boxed::Box, string::String};
 //!
 //! pub fn build_system() -> Result<System, BuildError> {
@@ -139,7 +139,7 @@
 //!
 //! ### For MIXED Operations
 //!
-//! ```rust
+//! ```no_run
 //! use heapless::String;
 //!
 //! pub enum AppError {

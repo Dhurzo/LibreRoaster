@@ -1,3 +1,4 @@
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
 use crate::error::AppError;
@@ -162,7 +163,10 @@ pub fn trace_guard(
 }
 
 fn emit_event(event: String<TRACE_EVENT_MAX_LEN>) {
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
     let _ = ServiceContainer::get_output_channel().try_send(event);
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    let _ = event;
 }
 
 fn format_trace_event<F>(

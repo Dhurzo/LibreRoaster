@@ -71,19 +71,8 @@ Because GPIO9 is a strapping pin, the external fan stage must be designed so it 
 
 The hardware init code configures two low-speed LEDC timers:
 
-- one timer for the fan at **25 kHz**,
-- one timer for the SSR path.
-
-### Important implementation drift
-
-There is a documented-vs-implemented mismatch in the current codebase:
-
-- the constants module advertises **1 Hz** as the SSR PWM frequency,
-- the hardware init code currently configures the SSR timer at **310 Hz**.
-
-This is not just a documentation detail. It is a technical risk because the rest of the system, and human readers, may reason about heater cycling differently than the actual configured timer does.
-
-That mismatch is captured in `BUGS.md` and should be treated as active technical debt until reconciled.
+- one timer for the SSR at **310 Hz**,
+- one timer for the fan at **25 kHz**.
 
 ## 7. Timing values that matter physically
 
@@ -149,9 +138,8 @@ Before trusting PID behavior, verify that BT and ET are wired to the intended ch
 The hardware layer is stable enough to run, but these are the main points engineers should keep in mind:
 
 1. strap-pin sensitivity on GPIO9,
-2. SSR timer-frequency drift between constants and real init,
-3. slow sensor-read timing relative to nominal control cadence,
-4. the fact that the heat-detection line is safety-relevant, not optional fluff.
+2. slow sensor-read timing relative to nominal control cadence,
+3. the fact that the heat-detection line is safety-relevant, not optional fluff.
 
 ## 12. Related documents
 

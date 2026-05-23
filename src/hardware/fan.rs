@@ -4,7 +4,7 @@ use crate::hardware::ledc_bus::LedcChannelHandle;
 use core::marker::PhantomData;
 use esp_hal::ledc::{channel::ChannelIFace, LowSpeed};
 use libm::floorf;
-use log::{debug, error, info};
+use log::{debug, info};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanError {

@@ -22,17 +22,15 @@ pub const UART_TX_PIN: u8 = 21;
 pub const UART_RX_PIN: u8 = 20;
 
 pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
-pub const SSR_PWM_FREQUENCY_HZ: u32 = 1;
+pub const SSR_PWM_FREQUENCY_HZ: u32 = 310;
 pub const FAN_LEDC_CHANNEL: u8 = 0;
 pub const SSR_LEDC_CHANNEL: u8 = 1;
-pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (~1Hz zero-crossing)
+pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (310 Hz PWM)
 pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25kHz silent operation)
 pub const SSR_PWM_RESOLUTION: u8 = 8;
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
-pub const SSR_MIN_DUTY_TICKS: u8 = 3; // ~12ms at 1Hz PWM
-
-pub const PWM_FREQUENCY: u32 = 1000;
+pub const SSR_MIN_DUTY_TICKS: u8 = 3; // ~38µs at 310Hz PWM (3/256 × 1/310s)
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 pub const MAX_SAFE_TEMP: f32 = 250.0;

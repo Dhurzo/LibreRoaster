@@ -3,7 +3,9 @@
 **Open Source Coffee Bean Roaster**  
 Firmware written in **Rust** for the ESP32-C3
 
-LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over native USB CDC or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
+LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over **native USB CDC** (recommended — no extra hardware) or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
+
+> **New to LibreRoaster?** Use the ESP32-C3's **native USB port** to connect to Artisan — plus a **10kΩ pull-up on GPIO9** for reliable boot. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for why.
 
 The project is aimed at builders who want an inspectable roasting controller rather than a closed appliance. The firmware is not a standalone roasting UI. The intended operating model is: Artisan owns the session, LibreRoaster owns the device-side control, telemetry, and safety interlocks.
 
@@ -46,7 +48,7 @@ The guide is **currently in progress** and will be published once validated. If 
 
 - **Target MCU:** ESP32-C3 (`riscv32imc-unknown-none-elf`)
 - **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
-- **Primary integration:** official Artisan app over serial using a TC4-style command set
+- **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-style command set. UART via GPIO20/21 is also supported.
 - **Sensors:** two MAX31856 thermocouple channels, mapped to ET and BT
 - **Actuators:** SSR-controlled heater plus PWM fan output
 - **Safety layers:** over-temperature cutoff, watchdog, stale-temperature protection, heat-source detection, LEDC guard
@@ -147,10 +149,10 @@ LibreRoaster assumes a simple two-sensor / two-actuator hardware topology:
 
 Two constraints matter operationally:
 
-1. **GPIO9 is a strapping pin**, so the external fan stage must not force an invalid boot state.
+1. **GPIO9 is a strapping pin** — it determines boot mode at reset. Without a 10kΩ pull-up to 3.3V, boot is unpredictable (floating pin). **Strongly recommended for both USB and UART.** See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md).
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-The complete electrical and timing notes live in `docs/HARDWARE.md`.
+For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md).
 
 ---
 
@@ -173,6 +175,8 @@ These are not marketing notes. They are the design boundaries readers should und
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 ```
 
+> **Flash tip:** Use the ESP32-C3's **native USB port** (`/dev/ttyACM0`). For reliable boot, add a **10kΩ pull-up from GPIO9 to 3.3V** — without it, GPIO9 floats and boot mode is random regardless of USB or UART. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for full explanation.
+
 ### Simulated sensors mode
 
 Build and flash with the `simulated-sensors` feature to run on a bare ESP32-C3 **without any thermocouples or actuators connected**. The firmware generates synthetic temperature readings from a configurable roast curve and feeds them through the entire control stack — PID, safety, telemetry, and Artisan serial protocol — exactly as if real sensors were connected.
@@ -188,7 +192,7 @@ cargo build --release --target riscv32imc-unknown-none-elf \
   --features "embedded,simulated-sensors"
 
 cargo espflash flash --release --target riscv32imc-unknown-none-elf \
-  --features "embedded,simulated-sensors"
+  --features "embedded,simulated-sensors" --port /dev/ttyACM0
 ```
 
 See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
@@ -196,7 +200,8 @@ See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve pre
 ### Flash (real sensors)
 
 ```bash
-cargo espflash flash --release --target riscv32imc-unknown-none-elf --features embedded
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features embedded --port /dev/ttyACM0
 ```
 
 ### Host verification
@@ -226,6 +231,7 @@ The main technical documents are:
 - **`docs/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
 - **`docs/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
 - **`docs/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
+- **`docs/CONNECTION_TYPES.md`** — USB vs UART: which connection to use, why USB boots reliably without extra hardware, and how to make UART work
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics

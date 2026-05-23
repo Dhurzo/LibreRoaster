@@ -1,9 +1,9 @@
 extern crate alloc;
 
 use crate::application::service_container::{ContainerError, ServiceContainer};
-use crate::application::stage_instrumentation::{
-    GuardState, StageName, StageReporter, WatchdogState,
-};
+#[cfg(any(feature = "instrumentation", feature = "test"))]
+use crate::application::stage_instrumentation::GuardState;
+use crate::application::stage_instrumentation::{StageName, StageReporter, WatchdogState};
 use crate::config::SystemStatus;
 use crate::error::AppError;
 use crate::hardware::ledc_guard;
@@ -116,6 +116,7 @@ impl TickState {
     }
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn report_stage_instrumentation(
     stage_reporter: &StageReporter,
     stage_name: StageName,
@@ -140,6 +141,22 @@ fn report_stage_instrumentation(
     }
 }
 
+#[cfg(not(any(feature = "instrumentation", feature = "test")))]
+fn report_stage_instrumentation(
+    _stage_reporter: &StageReporter,
+    _stage_name: StageName,
+    _elapsed_ms: u64,
+    _guard_timeout_happened: bool,
+    _watchdog_state: WatchdogState,
+    _output_channel: &Channel<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        String<TRACE_EVENT_MAX_LEN>,
+        { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
+    >,
+) {
+}
+
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn report_stage_with_failure(
     stage_reporter: &StageReporter,
     stage_name: StageName,
@@ -167,6 +184,22 @@ fn report_stage_with_failure(
     ) {
         let _ = output_channel.try_send(report);
     }
+}
+
+#[cfg(not(any(feature = "instrumentation", feature = "test")))]
+fn report_stage_with_failure(
+    _stage_reporter: &StageReporter,
+    _stage_name: StageName,
+    _elapsed_ms: u64,
+    _guard_timeout_happened: bool,
+    _watchdog_state: WatchdogState,
+    _failure_marker: Option<&'static str>,
+    _output_channel: &Channel<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        String<TRACE_EVENT_MAX_LEN>,
+        { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
+    >,
+) {
 }
 
 async fn drain_commands(tick_state: &mut TickState) {
