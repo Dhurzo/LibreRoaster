@@ -204,6 +204,23 @@ cargo espflash flash --release --target riscv32imc-unknown-none-elf \
   --features embedded --port /dev/ttyACM0
 ```
 
+### Flash and monitor logs
+
+Add `--monitor` to flash and immediately open the serial monitor, so you see boot logs and runtime output right after flashing:
+
+```bash
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features embedded --monitor
+```
+
+`espflash` flashes the firmware, reboots the device, and attaches the serial monitor in one step. Useful for verifying the firmware boots correctly without manual steps. Press `Ctrl + ]` to exit the monitor.
+
+To monitor an already-flashed device without reflashing:
+
+```bash
+cargo espflash monitor --port /dev/ttyACM0 --speed 115200
+```
+
 ### Host verification
 
 Integration-style host tests depend on the `test` feature because that enables the host-side Embassy time driver:
