@@ -65,7 +65,9 @@ The ESP32-C3's UART0 is available on GPIO20 (RX) and GPIO21 (TX) for connection 
 
 ### Observed behavior (real hardware)
 
-Without a pull-up resistor, GPIO9 is floating and its boot-time value is **unpredictable**:
+Without a pull-up resistor, GPIO9 behavior depends on the board's USB-serial chip:
+
+**Boards with native USB only** (ESP32-C3-DevKitC-02, RUST-1): GPIO9 is floating, boot mode is **unpredictable**:
 
 ```
 # Sometimes HIGH → boot from flash ✅
@@ -75,6 +77,16 @@ rst:0x1 (POWERON), boot:0xc (SPI_FAST_FLASH_BOOT)
 rst:0x1 (POWERON), boot:0x4 (DOWNLOAD(USB/UART0/1))
 waiting for download
 ```
+
+**Boards with CH9102/CH340 auto-program circuit** (AI-C3, similar AliExpress boards): GPIO9 is **deterministically LOW** because the USB-serial chip's RTS line drives it through the auto-program transistor:
+
+```
+# Always LOW → never boots from flash ❌
+rst:0x15 (USB_UART_CHIP_RESET), boot:0x4 (DOWNLOAD(USB/UART0/1))
+waiting for download
+```
+
+Verified: 10/10 consecutive resets showed `boot:0x4` on an AI-C3 board. Only a physical power cycle (USB disconnect+reconnect) allowed a single flash boot, because the POR resets the GPIO pad to its default (input + weak pull-up).
 
 ### Flashing over UART
 
@@ -128,15 +140,26 @@ Official Espressif development boards already include a pull-up resistor on GPIO
 | **ESP32-C3-DevKitM-1** | ✅ Built-in (module-level) | ❌ No |
 | **ESP32-C3-DevKit-RUST-1** | ✅ Built-in (module-level) | ❌ No |
 | **ESP32-C3-DevKit-RUST-2** | ✅ Built-in (module-level) | ❌ No |
+| **AI-C3** (AliExpress purple PCB, ESP32-C3-MINI-1 + CH9102) | ❌ CH9102 auto-program circuit pulls GPIO9 LOW via RTS | ✅ **10kΩ to 3.3V** |
 | **Bare ESP32-C3 module** (e.g. ESP32-C3-WROOM-02 on a custom PCB) | ❌ Floating | ✅ **10kΩ to 3.3V** |
 | **LibreRoaster (custom board)** | ❌ Floating (fan on GPIO9) | ✅ **10kΩ to 3.3V** |
 
 **Why the difference?** Official dev boards use an ESP32-C3 module (WROOM, MINI) whose substrate PCB includes the GPIO9 pull-up. When you buy a bare module or design a custom board, that pull-up isn't present — the pin is floating at reset.
 
+**But some boards have a different problem — the CH9102 auto-program circuit.**
+
+On boards like the **AI-C3**, the USB-to-serial chip (CH9102) drives GPIO9 through the auto-program circuit (RTS → transistor → GPIO9). This circuit is designed to enter download mode for flashing, but if RTS is asserted at any time (driver loading, port open, power sequencing), it can hold GPIO9 LOW during reset, preventing boot. The ESP32-C3's internal 45kΩ weak pull-up cannot overcome this transistor pull-down.
+
+These boards show consistent `boot:0x4 (DOWNLOAD)` on every reset — not random, but **deterministically blocked** from booting.
+
 **How to check your board:**
 1. Look at the board documentation — most dev board guides mention the strapping pin
 2. Measure GPIO9 with a multimeter at power-on — if you see 3.3V (high-Z), the pull-up is likely built-in
-3. Run the boot test below: if boot is 100% reliable across many resets, you're fine without an extra resistor
+3. Run the boot test below:
+   - Flash any firmware with `cargo espflash flash ... --monitor`
+   - If you always see `boot:0xc (SPI_FAST_FLASH_BOOT)` → no extra resistor needed
+   - If you see `boot:0x4 (DOWNLOAD)` consistently (10/10 resets) → **you need the pull-up**
+   - If boot mode varies randomly → **you need the pull-up**
 
 > **For LibreRoaster specifically**, the external 10kΩ pull-up is required AND the fan driver circuit on GPIO9 must be high-impedance during boot so it doesn't override the strapping level.
 
@@ -216,7 +239,8 @@ The firmware runs USB CDC and UART transport tasks concurrently. You can connect
 | Extra hardware | **None** | USB-UART adapter + wiring |
 | GPIO9 pull-up needed (custom board)? | **Yes — 10kΩ to 3.3V** | **Yes — 10kΩ to 3.3V** |
 | GPIO9 pull-up needed (official dev board)? | **No — already on board** | **No — already on board** |
-| Boot without pull-up (custom board) | Sometimes works (floating = random) | Sometimes works (same) |
+| Boot without pull-up (floating pin — bare module) | Sometimes works (floating = random) | Sometimes works (same) |
+| Boot without pull-up (CH9102 board — AI-C3, etc.) | ❌ Always `boot:0x4` (RTS pulls GPIO9 LOW) | ❌ Always `boot:0x4` (same) |
 | Boot with pull-up | ✅ Always | ✅ Always |
 | Flash firmware | ✅ | ✅ |
 | Artisan communication | ✅ | ✅ |
@@ -224,7 +248,10 @@ The firmware runs USB CDC and UART transport tasks concurrently. You can connect
 ### Your setup checklist
 
 1. ✅ Flash firmware via USB: `cargo espflash flash --port /dev/ttyACM0`
-2. ❓ **Check if you need the pull-up** — see §4.1 (official dev board: no resistor needed; custom board like LibreRoaster: add 10kΩ from GPIO9 to 3.3V)
+2. ❓ **Check if you need the pull-up** — see §4.1
+   - Official dev board (DevKitC-02, RUST-1/2, etc.) → no resistor needed
+   - **AI-C3** or similar AliExpress board with CH9102 → **add 10kΩ GPIO9 → 3.3V** (boot is blocked without it)
+   - Bare module or custom PCB → **add 10kΩ GPIO9 → 3.3V**
 3. ✅ Connect ESP32-C3 to PC via native USB
 4. ✅ Configure Artisan: serial port → `/dev/ttyACM0` → 115200 → TC4
 5. ☕ Roast
