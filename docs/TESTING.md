@@ -233,3 +233,117 @@ python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 # HIL test runner (flash + capture + validate + report)
 python3 tests/hardware/hardware_test_runner.py --port /dev/ttyUSB0
 ```
+
+---
+
+## 9. Interactive Hardware Verification
+
+When you need to verify the firmware on real hardware without running a full HIL script, you can flash with simulated sensors and send commands interactively via serial.
+
+### 9.1 Setup: flash + monitor
+
+Flash with simulated sensors (no real thermocouples needed) and open a serial monitor:
+
+```bash
+# Terminal A: flash without monitor, then open picocom
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features "embedded,simulated-sensors"
+
+picocom /dev/ttyACM0 -b 115200
+```
+
+Using `picocom` (or `screen`) instead of `espflash --monitor` lets you send commands from a second terminal without "Device or resource busy" errors.
+
+### 9.2 Why firmware is silent after boot
+
+The firmware boots successfully and displays log messages, but emits **no telemetry** because continuous output is **disabled by default** (`OutputController::continuous_enabled = false` in `src/control/abstractions.rs`). Telemetry is only emitted every ~100ms when continuous output is enabled.
+
+Continuous output is enabled by these commands:
+- `START` — begins roast, enables PID and continuous telemetry
+- `OT1 <pct>` — manual heater control (0-100)
+- `IO3 <pct>` — manual fan control (0-100)
+- `UP` / `DOWN` — incremental heater adjustment
+
+It is disabled by:
+- `STOP` — emergency stop, disables PID and continuous output
+
+Commands like `READ` and `STATUS` return a **single response** regardless of continuous output state.
+
+### 9.3 Sending commands from a second terminal
+
+With picocom running in Terminal A, use Terminal B to send commands:
+
+```bash
+# Single-shot readings (work regardless of continuous output state)
+echo "READ"   > /dev/ttyACM0     # TC4-format reading (5 or 8 fields)
+echo "STATUS" > /dev/ttyACM0     # 19-field diagnostic line
+
+# Enable continuous output and view simulated curves
+echo "SETTARGET 200" > /dev/ttyACM0  # Set PID target to 200°C
+echo "START"         > /dev/ttyACM0  # Begin roast, enable continuous telemetry
+
+# Alternative: manual control also enables continuous output
+echo "OT1 50"  > /dev/ttyACM0   # Heater at 50%, enables continuous telemetry
+echo "IO3 75"  > /dev/ttyACM0   # Fan at 75%, enables continuous telemetry
+
+# Stop
+echo "STOP"    > /dev/ttyACM0   # Disable PID and continuous output
+```
+
+After `START` or `OT1`, Terminal A (picocom) will show telemetry lines every ~100ms:
+
+```
+120.0,180.5,150.3,3.2,0.0
+120.2,181.0,150.7,3.4,0.0
+120.4,181.4,151.2,3.1,0.0
+```
+
+Fields: `time_s,ET,BT,ROR,heater_pct`.
+
+### 9.4 Command protocol details
+
+| Command | Args | Effect |
+|---------|------|--------|
+| `READ` | none | Returns single TC4 response (`AMB,ET,BT,...`) |
+| `STATUS` / `STAT` | none | Returns 19-field diagnostic line |
+| `CHAN;0` | channel number | Set Artisan channel (0=USB, 1=UART) |
+| `UNITS;C` / `UNITS;F` | temp scale | Set Celsius or Fahrenheit |
+| `SETTARGET 200` | target °C | Set PID target temperature |
+| `START` | **no args** | Begin roast, enable PID and continuous output |
+| `STOP` | none | Emergency stop, disable PID and output |
+| `OT1 75` | 0-100 | Manual heater at given percentage |
+| `IO3 75` | 0-100 | Manual fan at given percentage |
+| `UP` / `DOWN` | none | Incremental heater adjustment |
+| `PREHEAT 180` | target °C | Set preheat target |
+
+**Important:** `START` takes no arguments. To set a target temperature and start, send `SETTARGET 200` first, then `START`. The parser (`src/input/parser.rs`) requires `parts.len() == 1` for the `START` command — sending `START 200` results in `UnknownCommand`.
+
+### 9.5 What to observe
+
+When continuous telemetry is active with simulated sensors, verify:
+
+1. **Temperature evolution** — BT rises through the simulated medium roast curve (25 → 225°C over ~10 min), ET stays higher (25 → 250°C)
+2. **No fault conditions** — simulated sensors never fault, so no `ERR` lines from stale temperature or overtemp
+3. **PID terms** — if PID is enabled (`START` was sent), `SV` field appears in 8-field `READ` response
+4. **Heater output** — SSR remains at 0% unless GPIO1 is externally pulled low (heat source detection pin)
+
+### 9.6 Host-side roast simulation (no hardware)
+
+To see a full roast lifecycle output without hardware:
+
+```bash
+# The test has println! diagnostics — use --nocapture to see them
+cargo test --test artisan_roast_simulation --features test -- --nocapture
+```
+
+This prints each phase: handshake → preheat → profile load → charge → active roast → stop → cooldown, with READ responses at each step.
+
+### 9.7 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ERR invalid_value empty_command` | Empty line sent (newline without content) | Normal when pressing Enter — harmless |
+| `ERR invalid_value unknown_command` | Command not recognized | Check command syntax (e.g., `START` not `START 200`) |
+| No telemetry after `START` | Continuous output was already off before START, or START failed silently | Send `READ` first to verify the device is responsive, then `STATUS` to check `pid_enabled` |
+| `cr1_readback_mismatch` on boot | Real MAX31856 connected but not responding | Use `--features "embedded,simulated-sensors"` to skip MAX31856 init |
+| `/dev/ttyACM0: Dispositivo o recurso ocupado` | espflash monitor or another terminal holds the port | Kill the existing monitor, use picocom/screen instead, or type commands directly into the espflash monitor window |
