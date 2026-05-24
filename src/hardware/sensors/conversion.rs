@@ -20,6 +20,11 @@ pub const MAX31856_LSB: f32 = 0.0078125;
 /// At 100ms control loop cadence, 5 fallbacks = 500ms of stale data.
 const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
 
+/// Exponential moving average alpha for temperature filtering.
+/// 0.2 gives moderate smoothing — rejects single-bit SPI glitches (~0.25°C)
+/// while keeping the filter responsive to real temperature changes.
+const EMA_ALPHA: f32 = 0.2;
+
 pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     if (raw_temp & 0x800000) != 0 {
         // Sign bit (bit 23, which is bit 18 of the 19-bit value) set → negative.
@@ -149,6 +154,10 @@ pub struct SensorConversionHub {
     last_sample: Option<SensorSample>,
     bean_consecutive_fallbacks: u8,
     env_consecutive_fallbacks: u8,
+    bean_filtered: f32,
+    bean_filter_initialized: bool,
+    env_filtered: f32,
+    env_filter_initialized: bool,
 }
 
 impl SensorConversionHub {
@@ -160,6 +169,10 @@ impl SensorConversionHub {
             last_sample: None,
             bean_consecutive_fallbacks: 0,
             env_consecutive_fallbacks: 0,
+            bean_filtered: 0.0,
+            bean_filter_initialized: false,
+            env_filtered: 0.0,
+            env_filter_initialized: false,
         }
     }
 
@@ -170,6 +183,10 @@ impl SensorConversionHub {
             last_sample: None,
             bean_consecutive_fallbacks: 0,
             env_consecutive_fallbacks: 0,
+            bean_filtered: 0.0,
+            bean_filter_initialized: false,
+            env_filtered: 0.0,
+            env_filter_initialized: false,
         }
     }
 
@@ -179,6 +196,10 @@ impl SensorConversionHub {
             last_sample: None,
             bean_consecutive_fallbacks: 0,
             env_consecutive_fallbacks: 0,
+            bean_filtered: 0.0,
+            bean_filter_initialized: false,
+            env_filtered: 0.0,
+            env_filter_initialized: false,
         }
     }
 
@@ -336,16 +357,36 @@ impl SensorConversionHub {
         sample.timestamp = timestamp;
 
         let mut bean_fb = self.bean_consecutive_fallbacks;
-        let (bean_temp, bean_fault) =
+        let (mut bean_temp, bean_fault) =
             Self::resolve_channel(SensorChannel::Bean, bean_result, previous, &mut bean_fb)?;
         self.bean_consecutive_fallbacks = bean_fb;
+
+        if bean_fb == 0 && !bean_fault.has_fault() {
+            if self.bean_filter_initialized {
+                bean_temp = EMA_ALPHA * bean_temp + (1.0 - EMA_ALPHA) * self.bean_filtered;
+            } else {
+                self.bean_filter_initialized = true;
+            }
+            self.bean_filtered = bean_temp;
+        }
+
         sample.bean_temp = bean_temp;
         sample.bean_fault = bean_fault;
 
         let mut env_fb = self.env_consecutive_fallbacks;
-        let (env_temp, env_fault) =
+        let (mut env_temp, env_fault) =
             Self::resolve_channel(SensorChannel::Env, env_result, previous, &mut env_fb)?;
         self.env_consecutive_fallbacks = env_fb;
+
+        if env_fb == 0 && !env_fault.has_fault() {
+            if self.env_filter_initialized {
+                env_temp = EMA_ALPHA * env_temp + (1.0 - EMA_ALPHA) * self.env_filtered;
+            } else {
+                self.env_filter_initialized = true;
+            }
+            self.env_filtered = env_temp;
+        }
+
         sample.env_temp = env_temp;
         sample.env_fault = env_fault;
 

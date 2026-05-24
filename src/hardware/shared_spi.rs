@@ -108,6 +108,12 @@ where
 
         let _ = self.cs.set_high();
 
+        // Add 1µs delay after CS goes high to meet MAX31856 tCS requirement (≥400ns between transactions on shared bus)
+        // On ESP32-C3 at 160MHz, ~160+ cycles = ~1µs using spin_loop()
+        for _ in 0..160 {
+            core::hint::spin_loop();
+        }
+
         result
     }
 }

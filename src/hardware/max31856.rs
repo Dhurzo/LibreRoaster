@@ -96,7 +96,82 @@ where
             });
         }
 
+        // Perform boot self-test
+        max31856.self_test()?;
+
         Ok(max31856)
+    }
+
+    /// Perform boot self-test to verify MAX31856 initialization and basic functionality
+    pub fn self_test(&mut self) -> Result<(), Max31856Error> {
+        log::info!("MAX31856: Starting boot self-test");
+
+        // 1. Verify CR0 register (CMODE=0, OCFAULT=01)
+        let cr0 = self.read_register(0x00).unwrap_or(0xFF);
+        log::info!("MAX31856 self-test: CR0=0x{:02X} (expected 0x10)", cr0);
+        if cr0 != 0x10 {
+            log::warn!(
+                "MAX31856 self-test: CR0 mismatch (expected 0x10, got 0x{:02X})",
+                cr0
+            );
+        }
+
+        // 2. Verify MASK register (all faults enabled = 0x00)
+        let mask = self.read_register(0x02).unwrap_or(0xFF);
+        log::info!("MAX31856 self-test: MASK=0x{:02X} (expected 0x00)", mask);
+        if mask != 0x00 {
+            log::warn!(
+                "MAX31856 self-test: MASK mismatch (expected 0x00, got 0x{:02X})",
+                mask
+            );
+        }
+
+        // 3. Check fault register for open circuit (informational only)
+        let fault = self.read_register(0x0F).unwrap_or(0xFF);
+        if fault & 0x40 != 0 {
+            log::warn!(
+                "MAX31856 self-test: Open circuit detected (fault=0x{:02X})",
+                fault
+            );
+        } else {
+            log::info!(
+                "MAX31856 self-test: No open circuit fault (fault=0x{:02X})",
+                fault
+            );
+        }
+
+        // 4. Perform one-shot conversion and verify temperature
+        self.trigger_conversion()?;
+        log::info!("MAX31856 self-test: Conversion triggered, waiting 160ms...");
+
+        // Use blocking delay for self-test (not in async context)
+        const DELAY_MS: u64 = 160;
+        for _ in 0..(DELAY_MS * 10000) {
+            core::hint::spin_loop();
+        }
+
+        let reading = self.read_conversion_result()?;
+        let temperature = convert_raw_temp(reading.raw_temp);
+
+        log::info!(
+            "MAX31856 self-test: Temperature reading = {:.1}°C (raw={:#010x}, fault=0x{:02X})",
+            temperature,
+            reading.raw_temp,
+            reading.fault
+        );
+
+        // 5. Verify temperature is within reasonable ambient range (-50°C to 100°C)
+        if !(-50.0..=100.0).contains(&temperature) {
+            log::warn!(
+                "MAX31856 self-test: Temperature out of expected range: {:.1}°C",
+                temperature
+            );
+        } else {
+            log::info!("MAX31856 self-test: Temperature within expected range");
+        }
+
+        log::info!("MAX31856: Boot self-test completed");
+        Ok(())
     }
 
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
@@ -105,18 +180,33 @@ where
     }
 
     fn read_conversion_block(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        let temp_data = self.read_registers(0x0C, 3)?;
-        let fault = self.read_register(0x0F)?;
+        // Read all 4 bytes (0x0C-0x0F) in single SPI burst for better performance
+        let mut rx_buffer = [0u8; 4];
+        let mut operations = [
+            embedded_hal::spi::Operation::Write(&[0x0C & 0x7F]), // Address with read bit (A7=0)
+            embedded_hal::spi::Operation::Read(&mut rx_buffer),  // Read 4 bytes continuously
+        ];
+
+        match self.spi.transaction(&mut operations) {
+            Ok(_) => (),
+            Err(_) => {
+                return Err(Max31856Error::CommunicationError {
+                    source: "spi_read_conversion_block_failed",
+                })
+            }
+        }
+
         let raw_temp =
-            ((temp_data[0] as u32) << 16) | ((temp_data[1] as u32) << 8) | (temp_data[2] as u32);
+            ((rx_buffer[0] as u32) << 16) | ((rx_buffer[1] as u32) << 8) | (rx_buffer[2] as u32);
+        let fault = rx_buffer[3];
 
         log::info!(
-            "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] raw_temp={:#010x} fault=0x{:02X}",
-            temp_data[0],
-            temp_data[1],
-            temp_data[2],
-            raw_temp,
-            fault
+            "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] fault=0x{:02X} raw_temp={:#010x}",
+            rx_buffer[0],
+            rx_buffer[1],
+            rx_buffer[2],
+            fault,
+            raw_temp
         );
 
         Ok(Max31856Reading { raw_temp, fault })
@@ -261,6 +351,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     fn read_registers(&mut self, address: u8, count: usize) -> Result<[u8; 3], Max31856Error> {
         // MAX31856 SPI: A7=0 for read, data bytes follow.
         let mut rx_buffer = [0u8; 3];

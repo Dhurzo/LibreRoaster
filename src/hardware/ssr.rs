@@ -109,7 +109,12 @@ pub struct SsrControlBase {
     pub(crate) retry_count: u8,
     pub(crate) last_detection_check: Option<u32>,
     pub(crate) is_pwm_enabled: bool,
+    #[allow(dead_code)]
+    heat_mismatch_count: u8,
 }
+
+#[allow(dead_code)]
+const HEAT_MISMATCH_MAX: u8 = 5;
 
 /// Trait for heat source detection functionality.
 /// Implementations must provide detection logic.
@@ -143,6 +148,7 @@ impl SsrControlBase {
             retry_count: 0,
             last_detection_check: None,
             is_pwm_enabled: true,
+            heat_mismatch_count: 0,
         }
     }
 
@@ -188,6 +194,70 @@ impl SsrControlBase {
                 Err(SsrError::InputError {
                     source: "detection_pin_read_failed",
                 })
+            }
+        }
+    }
+
+    pub fn cross_check_heat_detection<F, E>(
+        &mut self,
+        current_duty: u16,
+        read_pin: F,
+    ) -> Result<(), SsrError>
+    where
+        F: FnMut() -> Result<bool, E>,
+    {
+        #[cfg(feature = "simulated-sensors")]
+        {
+            let _ = (current_duty, read_pin);
+            return Ok(());
+        }
+
+        #[cfg(not(feature = "simulated-sensors"))]
+        {
+            let mut read_pin = read_pin;
+            match read_pin() {
+                Ok(is_detected) => {
+                    let heat_detected = is_detected;
+
+                    if current_duty > 0 && !heat_detected {
+                        self.heat_mismatch_count = self.heat_mismatch_count.saturating_add(1);
+                        warn!(
+                            "Heat detection mismatch: heater ON (duty {}) but no heat detected (mismatch count: {})",
+                            current_duty, self.heat_mismatch_count
+                        );
+
+                        if self.heat_mismatch_count >= HEAT_MISMATCH_MAX {
+                            error!("Heat detection mismatch limit reached - SSR error");
+                            self.hardware_status = SsrHardwareStatus::Error;
+                            return Err(SsrError::HeatSourceNotDetected {
+                                source: "heat_mismatch_limit_reached",
+                            });
+                        }
+                    } else if current_duty == 0 && heat_detected {
+                        error!(
+                            "Heat detection mismatch: heater OFF but heat still present - SSR error"
+                        );
+                        self.hardware_status = SsrHardwareStatus::Error;
+                        return Err(SsrError::HeatSourceNotDetected {
+                            source: "heat_present_when_heater_off",
+                        });
+                    } else {
+                        self.heat_mismatch_count = 0;
+                    }
+
+                    Ok(())
+                }
+                Err(_) => {
+                    if self.hardware_status != SsrHardwareStatus::Error {
+                        error!(
+                            "SSR detection pin error during cross-check - switching to error state"
+                        );
+                        self.hardware_status = SsrHardwareStatus::Error;
+                    }
+                    Err(SsrError::InputError {
+                        source: "detection_pin_read_failed_during_cross_check",
+                    })
+                }
             }
         }
     }
@@ -381,8 +451,6 @@ where
     fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError> {
         #[cfg(feature = "simulated-sensors")]
         {
-            // Simulation: treat heat source as always available so heater/PID
-            // can be tested without connecting GPIO1 to GND.
             self.base
                 .detect_heat_source(current_time, || Ok::<bool, core::convert::Infallible>(true))
         }
@@ -403,6 +471,9 @@ where
         if should_check {
             self.detect_heat_source(current_time)?;
         }
+
+        self.base
+            .cross_check_heat_detection(self.base.current_duty, || self.detection_pin.is_low())?;
 
         Ok(())
     }
@@ -435,6 +506,9 @@ where
             ledc_duty,
             self.is_heating_available()
         );
+
+        self.base
+            .cross_check_heat_detection(self.base.current_duty, || self.detection_pin.is_low())?;
 
         Ok(())
     }

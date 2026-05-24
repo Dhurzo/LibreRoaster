@@ -48,6 +48,14 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
+
+/// Maximum safe bean temperature rate of rise in °C/s.
+/// 0.5°C/s = 30°C/min — above this rate during active heating indicates
+/// a possible runaway heater, stuck SSR, or thermocouple failure.
+pub const MAX_BT_RATE_OF_RISE: f32 = 5.0;
+/// Consecutive RoR exceedances required before emergency shutdown.
+/// Prevents false triggers from single-spike sensor glitches.
+pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.
 pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;

@@ -7,12 +7,16 @@ use alloc::boxed::Box;
 use embassy_time::Instant;
 use log::{error, info, warn};
 
+const SSR_SLEW_RATE_PER_SEC: f32 = 50.0;
+
 pub struct ActuatorController {
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
     ssr_guard: SsrCycleGuard,
     last_desired_output: f32,
     last_health_check: Option<Instant>,
+    slewing_output: f32,
+    last_slew_update: Option<Instant>,
 }
 
 impl ActuatorController {
@@ -23,6 +27,8 @@ impl ActuatorController {
             ssr_guard: SsrCycleGuard::new(),
             last_desired_output: 0.0,
             last_health_check: None,
+            slewing_output: 0.0,
+            last_slew_update: None,
         }
     }
 
@@ -37,6 +43,8 @@ impl ActuatorController {
         self.update_guard_busy_ms(now, status);
 
         if clamped <= 0.0 {
+            self.slewing_output = 0.0;
+            self.last_slew_update = Some(now);
             let power_result = self.heater.set_power(0.0);
             self.capture_ssr_monitor_metrics(status);
             power_result?;
@@ -49,15 +57,38 @@ impl ActuatorController {
 
         match self.ssr_guard.next_cycle_allowed(now) {
             Ok(_) => {
-                let power_result = self.heater.set_power(clamped);
+                let actual_output = if self.slewing_output < 1.0 && clamped > 0.0 {
+                    let mut actual_output = self.slewing_output;
+
+                    if let Some(last_update) = self.last_slew_update {
+                        let dt_secs = now.duration_since(last_update).as_micros() as f32 * 1e-6;
+
+                        if dt_secs > 0.0 {
+                            let max_step = SSR_SLEW_RATE_PER_SEC * dt_secs;
+                            let step = (clamped - actual_output).min(max_step);
+                            actual_output = (actual_output + step).min(clamped);
+                        }
+                    } else {
+                        actual_output = clamped;
+                    }
+
+                    actual_output
+                } else {
+                    clamped
+                };
+
+                self.slewing_output = actual_output;
+                self.last_slew_update = Some(now);
+
+                let power_result = self.heater.set_power(actual_output);
                 self.capture_ssr_monitor_metrics(status);
                 power_result?;
                 self.ssr_guard.mark_cycle(now);
-                status.ssr_output = clamped;
+                status.ssr_output = actual_output;
                 status.saturation_active = false;
                 status.integrator_clamped = false;
                 self.update_guard_busy_ms(now, status);
-                Ok(clamped)
+                Ok(actual_output)
             }
             Err(busy_until) => {
                 status.saturation_active = true;
@@ -94,6 +125,8 @@ impl ActuatorController {
         status.state = crate::config::constants::RoasterState::Error;
         status.ssr_output = 0.0;
         status.ssr_cycle_guard_busy_until_ms = 0;
+        self.slewing_output = 0.0;
+        self.last_slew_update = None;
 
         let mut heater_off_ok = false;
         for attempt in 0..crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES {

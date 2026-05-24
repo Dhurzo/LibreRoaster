@@ -340,6 +340,12 @@ impl RoasterControl {
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
 
+        if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
+            warn!("Rate-of-rise check failed: {:?}", e);
+            self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
+            return Ok(0.0);
+        }
+
         let desired_output = if self.safety.is_emergency_active() {
             debug!("Emergency active - forcing SSR output to 0%");
             0.0

@@ -2,6 +2,7 @@ use crate::config::*;
 use crate::control::RoasterError;
 use crate::hardware::sensors::{SensorConversionHub, SensorSample};
 use embassy_time::Instant;
+use log::warn;
 
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
@@ -11,6 +12,7 @@ pub struct SensorController {
     last_pv_sample: Option<f32>,
     last_pv_sample_time: Option<Instant>,
     last_filtered_derivative: f32,
+    ror_exceeded_count: u8,
 }
 
 impl SensorController {
@@ -21,6 +23,7 @@ impl SensorController {
             last_pv_sample: None,
             last_pv_sample_time: None,
             last_filtered_derivative: 0.0,
+            ror_exceeded_count: 0,
         }
     }
 
@@ -140,5 +143,32 @@ impl SensorController {
 
     pub fn is_temperature_valid(temp: f32) -> bool {
         (MIN_VALID_TEMP..=MAX_VALID_TEMP).contains(&temp)
+    }
+
+    pub fn check_rate_of_rise(&mut self, status: &SystemStatus) -> Result<(), RoasterError> {
+        if !status.derivative_available || !status.pid_enabled {
+            self.ror_exceeded_count = 0;
+            return Ok(());
+        }
+
+        if status.derivative_rate > MAX_BT_RATE_OF_RISE {
+            self.ror_exceeded_count = self.ror_exceeded_count.saturating_add(1);
+            warn!(
+                "BT RoR {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
+                status.derivative_rate,
+                MAX_BT_RATE_OF_RISE,
+                self.ror_exceeded_count,
+                ROR_EXCEEDED_CONSECUTIVE_LIMIT
+            );
+            if self.ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+                return Err(RoasterError::TemperatureOutOfRange {
+                    source: Some("rate_of_rise_exceeded"),
+                });
+            }
+        } else {
+            self.ror_exceeded_count = 0;
+        }
+
+        Ok(())
     }
 }
