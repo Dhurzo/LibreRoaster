@@ -3,6 +3,8 @@
 **Open Source Coffee Bean Roaster**  
 Firmware written in **Rust** for the ESP32-C3
 
+[![CI](https://github.com/Dhurzo/LibreRoaster/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhurzo/LibreRoaster/actions/workflows/ci.yml)
+
 LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over **native USB CDC** (recommended — no extra hardware) or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
 
 > **New to LibreRoaster?** Use the ESP32-C3's **native USB port** to connect to Artisan. If you're building a **custom board** (like LibreRoaster), add a **10kΩ pull-up on GPIO9** for reliable boot. Official dev boards already include it. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for why.
@@ -15,20 +17,23 @@ The project is aimed at builders who want an inspectable roasting controller rat
 
 ## 🚧 Project Status
 
-**Alpha — hardware bring-up in progress.**
+**v0.1 Alpha** — development in progress on the `develop` branch.
+
+> **Latest tag:** [`v0.1`](https://github.com/Dhurzo/LibreRoaster/releases/tag/v0.1) (2026-04-30)
 
 | Milestone | Status |
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
-| Boot without panics, USB CDC log output functional | ✅ Pass |
-| 380+ host-side unit & integration tests | ✅ Pass |
-| Thermocouple reads via MAX31856 (SPI) | ⚠️ Partial — data received but intermittent corruption / decode errors |
-| End-to-end roast session controlled by Artisan | ❌ Not tested |
+| Boot without panics, USB CDC + UART functional | ✅ Pass |
+| ~244 host-side unit & integration tests | ✅ 243/244 pass (1 pre-existing failure) |
+| Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
+| Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
+| PID control, profiles, safety interlocks | ✅ Implemented |
+| Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
+| End-to-end roast with real Artisan | ❌ Not yet tested |
 | Real coffee roasted using LibreRoaster | ❌ Not yet |
 
-**What this means in practice:** the firmware boots, talks over serial, and reads sensor data — but the thermocouple pipeline still shows noise or framing errors under real conditions. **No roast has been performed using LibreRoaster.** Do not connect this to a live heater without independent safety mechanisms.
-
-For the latest work-in-progress code, check the **`develop`** branch.
+**What this means in practice:** the firmware compiles, flashes, boots, receives serial commands, and runs complete synthetic roast curves — including PID control, safety interlocks, and TC4-compatible telemetry — all tested on the host and on real ESP32-C3 hardware in simulated-sensors mode. **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
 
 ## 🔮 Hardware Roadmap
 
@@ -48,11 +53,14 @@ The guide is **currently in progress** and will be published once validated. If 
 
 - **Target MCU:** ESP32-C3 (`riscv32imc-unknown-none-elf`)
 - **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
-- **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-style command set. UART via GPIO20/21 is also supported.
-- **Sensors:** two MAX31856 thermocouple channels, mapped to ET and BT
-- **Actuators:** SSR-controlled heater plus PWM fan output
-- **Safety layers:** over-temperature cutoff, watchdog, stale-temperature protection, heat-source detection, LEDC guard
+- **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-compatible command set (20+ commands). UART via GPIO20/21 is also supported.
+- **Sensors:** two MAX31856 thermocouple channels (Type K), mapped to ET and BT, shared SPI bus at 1 MHz. EMA-filtered readings with boot self-test.
+- **Actuators:** SSR-controlled heater (310 Hz LEDC PWM, GPIO10) + PWM fan (25 kHz LEDC PWM, GPIO9) with slew-rate limiting and heat-source cross-check
+- **Safety layers:** 8 independent layers — dual watchdog (software + hardware RWDT), over-temperature cutoff (260°C), rate-of-rise protection (30°C/min), stale-temperature guard (1s), heat-source detection (GPIO1), SSR stuck-on detection, max roast time (30 min), fault-command rejection
+- **Control:** full PID with anti-windup, configurable channel (ET/BT), profile interpolation, preheat behavior
+- **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
+- **Focused controllers:** TemperatureController, HeaterController, FanController, SafetyController (v5.4)
 
 ---
 
@@ -87,26 +95,32 @@ The embedded build starts these long-lived tasks:
 
 ### Shared application model
 
-The system is wired through a singleton `ServiceContainer`. It owns:
+The system is wired through a `ServiceContainer` (dependency injection). It owns:
 
 - an async mutex-backed `RoasterControl` instance for task-safe access,
-- a sync mirror used by older critical-section paths,
 - the shared command/output channels,
 - the command multiplexer,
 - and the watchdog feeder.
+
+`RoasterControl` is decomposed into four focused controllers (v5.4):
+
+- **TemperatureController** — sensor reads, validation, EMA filtering, rate-of-rise monitoring
+- **HeaterController** — SSR PWM with slew-rate limiting, cycle guard, heat-source cross-check
+- **FanController** — PWM fan with hardware fading, emergency full-speed override
+- **SafetyController** — emergency flag management, safety policy evaluation
 
 This is the central coordination point for the firmware. If you need to understand command flow or state ownership, start there.
 
 ### Control loop structure
 
-The control loop runs on a 100 ms cadence and is internally instrumented in stages:
+The control loop runs on a ~160 ms cadence (dominated by MAX31856 conversion time) and is internally instrumented in stages:
 
 1. **command drain** with rate limiting,
-2. **sensor read**,
-3. **control update**,
-4. **LEDC write / actuation**,
-5. **watchdog feed**,
-6. **telemetry emission**.
+2. **sensor read** (MAX31856 one-shot conversion, EMA filter),
+3. **control update** (PID computation, profile interpolation, safety checks),
+4. **LEDC write / actuation** (slew-rate-limited SSR, fan speed),
+5. **watchdog feed** (dual-layer: software + hardware RWDT),
+6. **telemetry emission** (TC4-compatible + 20-field STATUS).
 
 The loop also records command latency, guard timeout state, watchdog health, and PID internals so automation can inspect not only roast values but also runtime health.
 
@@ -114,22 +128,24 @@ The loop also records command latency, guard timeout state, watchdog health, and
 
 ## 📡 Serial protocol surface
 
-LibreRoaster implements a TC4-oriented serial interface rather than the full breadth of Artisan's device ecosystem.
+LibreRoaster implements a TC4-compatible serial interface with 20+ commands spanning polling, manual actuation, PID control, profiles, handshake, and diagnostics.
 
 ### Implemented command families
 
 - **Polling:** `READ`, `STATUS`, `STAT`
-- **Manual actuation:** `OT1`, `OT2`, `IO3`, `UP`, `DOWN`, `STOP`
-- **PID and roast control:** `START`, `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
+- **Manual actuation:** `OT1`, `OT2`, `IO3`, `UP`, `DOWN`, `START`, `STOP`
+- **PID and roast control:** `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
 - **Profiles:** `PROFILE`, `FANPROFILE`, `PREHEAT`
 - **Handshake / setup:** `CHAN`, `UNITS`, `FILT`
 - **Diagnostics:** `REG`, `#DUMP`
 
 ### Core response shapes
 
-- **`READ`** returns the TC4-style line `AMB,ET,BT,0.0,0.0` when PID is off
-- **`READ` with PID enabled** appends `heater,fan,SV`
-- **`STATUS` / `STAT`** returns a 19-field diagnostic line with temperature, actuator, watchdog, PID, latency, and temperature-scale state
+- **`READ`** returns the TC4-style line `AMB,ET,BT,0.0,0.0` when PID is off (5 fields)
+- **`READ` with PID enabled** appends `heater,fan,SV` (8 fields)
+- **`STATUS` / `STAT`** returns a 20-field diagnostic line with temperature, actuator, watchdog, PID, latency, emergency flags, and temperature-scale state
+- **Continuous telemetry** streams `time,ET,BT,ROR,Gas` during active sessions
+- **Errors** return `ERR <code> <message>` format
 
 If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`.
 
@@ -161,28 +177,67 @@ For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md).
 These are not marketing notes. They are the design boundaries readers should understand before modifying the system.
 
 - **No persistence layer:** roast state, telemetry buffer, and profiles are RAM-only
-- **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests
+- **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests (under `test` feature)
 - **Command queue limits:** the main command channel is intentionally small and rate-limited
-- **Sensor timing pressure:** thermocouple reads are slow relative to the nominal PID sample cadence, so stale-data protection matters
+- **Sensor timing pressure:** MAX31856 conversion time (~160 ms) dominates the control loop cadence; stale-data protection is critical
 
 ---
 
 ## 🔨 Build and verification model
 
-### Embedded build (real sensors)
+### Prerequisites
+
+- Rust stable toolchain (`rustup default stable`)
+- `rust-src` component: `rustup component add rust-src`
+- ESP32-C3 target: `rustup target add riscv32imc-unknown-none-elf`
+- `cargo install espflash` (for flashing)
+- `cargo install cargo-generate` (optional, for project templates)
+
+### Host verification
+
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). ~244 tests run on x86_64:
 
 ```bash
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+cargo test --target x86_64-unknown-linux-gnu --features test
 ```
 
-> **Flash tip:** Use the ESP32-C3's **native USB port** (`/dev/ttyACM0`). For reliable boot on **custom boards** (like LibreRoaster), add a **10kΩ pull-up from GPIO9 to 3.3V**. Official dev boards already include this pull-up — no extra resistor needed. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
+### CI pipeline
+
+GitHub Actions runs 4 parallel jobs on every push/PR to `develop` and `main`:
+
+| Job | Command |
+|-----|---------|
+| Format | `cargo fmt --all -- --check` |
+| Clippy | `cargo clippy --locked --all-targets` |
+| Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests` |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` |
+
+### Embedded build & flash
+
+```bash
+# Build (real sensors)
+cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+
+# Flash
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features embedded --port /dev/ttyACM0
+
+# Flash + monitor
+cargo espflash flash --release --target riscv32imc-unknown-none-elf \
+  --features embedded --monitor
+
+# Monitor only (already flashed)
+cargo espflash monitor --port /dev/ttyACM0 --speed 115200
+```
+
+> **Flash tip:** Use the ESP32-C3's **native USB port** (`/dev/ttyACM0`). For reliable boot on **custom boards**, add a **10kΩ pull-up from GPIO9 to 3.3V**. Official dev boards already include this pull-up. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md).
 
 ### Simulated sensors mode
 
 Build and flash with the `simulated-sensors` feature to run on a bare ESP32-C3 **without any thermocouples or actuators connected**. The firmware generates synthetic temperature readings from a configurable roast curve and feeds them through the entire control stack — PID, safety, telemetry, and Artisan serial protocol — exactly as if real sensors were connected.
 
 Useful for:
-- Verifying Artisan serial connectivity over USB CDC or UART
+- Verifying serial connectivity over USB CDC or UART
 - Validating PID tuning against a known temperature trajectory
 - End-to-end firmware regression without hardware risk
 - Demonstrating the roaster control surface without a physical machine
@@ -197,46 +252,14 @@ cargo espflash flash --release --target riscv32imc-unknown-none-elf \
 
 See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
 
-### Flash (real sensors)
-
-```bash
-cargo espflash flash --release --target riscv32imc-unknown-none-elf \
-  --features embedded --port /dev/ttyACM0
-```
-
-### Flash and monitor logs
-
-Add `--monitor` to flash and immediately open the serial monitor, so you see boot logs and runtime output right after flashing:
-
-```bash
-cargo espflash flash --release --target riscv32imc-unknown-none-elf \
-  --features embedded --monitor
-```
-
-`espflash` flashes the firmware, reboots the device, and attaches the serial monitor in one step. Useful for verifying the firmware boots correctly without manual steps. Press `Ctrl + ]` to exit the monitor.
-
-To monitor an already-flashed device without reflashing:
-
-```bash
-cargo espflash monitor --port /dev/ttyACM0 --speed 115200
-```
-
-### Host verification
-
-Integration-style host tests depend on the `test` feature because that enables the host-side Embassy time driver:
-
-```bash
-cargo test --target x86_64-unknown-linux-gnu --features test
-```
-
-Additional quality gates:
+### Additional quality checks
 
 ```bash
 scripts/quality-baseline.sh
 scripts/run-regression-checks.sh
 ```
 
-The development guide in `docs/DEVELOPMENT.md` explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
+The development guide in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) explains the feature matrix, the host-vs-embedded split, and the recommended verification workflow in more detail.
 
 ---
 
@@ -248,13 +271,13 @@ The main technical documents are:
 - **`docs/ARCHITECTURE.md`** — runtime architecture, task graph, state ownership, timing, safety invariants
 - **`docs/PROTOCOL.md`** — command grammar, responses, telemetry fields, compatibility boundaries
 - **`docs/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
-- **`docs/CONNECTION_TYPES.md`** — USB vs UART: which connection to use, why USB boots reliably without extra hardware, and how to make UART work
+- **`docs/CONNECTION_TYPES.md`** — USB vs UART: which connection to use, why USB boots reliably without extra hardware
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
-- **`docs/INSTRUMENTATION_README.MD`** — deep explanation of the 19-field status line and internal diagnostics
+- **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
 - **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
-- **`docs/BUGS.md`** — current technical risk report and likely defect inventory
-- **`docs/ARTISAN_COMPATIBILITY_REPORT.md`** — compatibility assessment against the official Artisan application
+- **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
+- **`docs/pinout.md`** — pin mapping reference
 
 ---
 
