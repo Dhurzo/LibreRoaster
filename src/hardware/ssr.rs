@@ -26,12 +26,6 @@ pub trait LedcDutyReader {
     fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError>;
 }
 
-#[cfg(target_arch = "riscv32")]
-mod ssr_ledc;
-
-#[cfg(target_arch = "riscv32")]
-pub use ssr_ledc::LedcChannelMonitor;
-
 fn monitor_ledc_after_set<'a, PWM>(
     pwm_channel: &mut PWM,
     commanded: u8,

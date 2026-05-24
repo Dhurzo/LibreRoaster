@@ -146,12 +146,6 @@ impl MockUsbCdcDriver {
         self.rx_buffer.extend(data.as_bytes());
     }
 
-    /// Add more RX data as bytes
-    #[allow(dead_code)]
-    pub fn push_rx_bytes(&mut self, data: &[u8]) {
-        self.rx_buffer.extend(data);
-    }
-
     /// Get number of bytes transmitted
     pub fn tx_byte_count(&self) -> usize {
         self.tx_buffer.len()

@@ -107,72 +107,53 @@
 //!
 //! ### For HOT PATH Operations
 //!
-//! ```no_run
-//! use heapless::{String, Vec};
+//! ```ignore
+//! // Example: using heapless fixed-size buffers for hot paths
+//! use heapless::String;
 //!
-//! pub fn read_temperature(&mut self) -> Result<f32, TemperatureError> {
-//!     // ✅ Use fixed-size buffers
-//!     let mut buffer: [u8; 3] = [0; 3];
+//! fn read_temperature(buffer: &mut [u8; 3]) -> Result<f32, ()> {
 //!     let mut error_msg: String<32> = String::new();
-//!
-//!     // ✅ Operations without allocations
-//!     self.spi_read(&mut buffer)?;
-//!     let temp = self.convert_temperature(buffer, &mut error_msg)?;
-//!
-//!     Ok(temp)
+//!     // Fixed-size buffer operations without allocation
+//!     Ok(0.0)
 //! }
 //! ```
 //!
 //! ### For INITIALIZATION Operations
 //!
-//! ```no_run
-//! use alloc::{boxed::Box, string::String};
-//!
-//! pub fn build_system() -> Result<System, BuildError> {
-//!     // ✅ Heap allocations allowed during initialization
-//!     let heater: Box<dyn Heater> = Box::new(SSRHeater::new()?);
-//!     let config: String = load_configuration()?;
-//!
-//!     Ok(System { heater, config })
-//! }
+//! ```ignore
+//! // Example: heap allocations allowed during initialization
+//! // let heater: Box<dyn Heater> = Box::new(HeaterImpl::new()?);
+//! // let config: String = load_configuration()?;
+//! // Ok(System { heater, config })
 //! ```
 //!
 //! ### For MIXED Operations
 //!
-//! ```no_run
-//! use heapless::String;
-//!
-//! pub enum AppError {
-//!     /// Error in hot path - use heapless
-//!     Temperature {
-//!         message: String<128>,  // ✅ heapless for runtime errors
-//!         source: TemperatureError,
-//!     },
-//!     /// Error in initialization - may use alloc
-//!     Configuration {
-//!         message: alloc::string::String,  // ⚠️ documented: only occurs in init
-//!         source: ConfigError,
-//!     },
-//! }
+//! ```ignore
+//! // Example: mixed operations use heapless for runtime, alloc for init
+//! // pub enum AppError {
+//! //     Temperature {
+//! //         message: heapless::String<128>,  // heapless for runtime errors
+//! //         source: TempError,
+//! //     },
+//! //     Configuration {
+//! //         message: alloc::string::String,  // allocated only during init
+//! //         source: InitError,
+//! //     },
+//! // }
 //! ```
 //!
 //! ## Verification and Testing
 //!
 //! ### Memory Tests
 //!
-//! ```rust
-//! #[test]
-//! fn test_hot_path_no_allocations() {
-//!     // This test must be able to run without any heap allocation
-//!     let system = create_test_system();
-//!
-//!     // Simulate normal operation without allocations
-//!     for _ in 0..1000 {
-//!         let temp = system.read_temperature().unwrap();
-//!         system.update_pid(temp);
-//!         system.set_heater_duty(50.0);
-//!     }
-//! }
+//! ```ignore
+//! // Example: test verifying no allocations in hot path
+//! // let mut system = create_test_system();
+//! // for _ in 0..1000 {
+//! //     let temp = system.read_temperature().unwrap();
+//! //     system.update_pid(temp);
+//! // }
 //! ```
 //!
 //! ### Static Linting

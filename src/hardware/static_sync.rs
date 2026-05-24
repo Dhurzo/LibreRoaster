@@ -18,7 +18,7 @@ impl<T> SyncCell<T> {
     /// Returns raw pointer to inner data
     ///
     /// Callers use this pattern:
-    /// ```rust
+    /// ```ignore
     /// *CELL.get() = Some(value);
     /// ```
     pub fn get(&self) -> *mut T {

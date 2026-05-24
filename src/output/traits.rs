@@ -16,15 +16,3 @@ pub trait OutputFormatter {
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError>;
 }
-
-pub trait PrintScheduler {
-    #[allow(async_fn_in_trait)]
-    async fn should_print(&mut self) -> bool;
-
-    fn reset(&mut self);
-}
-
-pub trait SerialOutput {
-    #[allow(async_fn_in_trait)]
-    async fn print(&mut self, data: &str) -> Result<(), OutputError>;
-}

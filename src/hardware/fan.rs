@@ -1,8 +1,6 @@
 use crate::control::traits::Fan;
 use crate::control::RoasterError;
 use crate::hardware::ledc_bus::LedcChannelHandle;
-use core::marker::PhantomData;
-use esp_hal::ledc::{channel::ChannelIFace, LowSpeed};
 use libm::floorf;
 use log::{debug, info};
 
@@ -155,65 +153,6 @@ impl<'a> Default for FanController<'a> {
         }
     }
 }
-
-pub struct SimpleLedcFan<'a, C>
-where
-    C: ChannelIFace<'a, LowSpeed>,
-{
-    channel: C,
-    _phantom: PhantomData<&'a ()>,
-}
-
-impl<'a, C> SimpleLedcFan<'a, C>
-where
-    C: ChannelIFace<'a, LowSpeed>,
-{
-    pub fn new(channel: C) -> Self {
-        Self {
-            channel,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, C> Fan for SimpleLedcFan<'a, C>
-where
-    C: ChannelIFace<'a, LowSpeed>,
-{
-    fn set_speed(&mut self, speed_percent: f32) -> Result<(), RoasterError> {
-        let clamped = speed_percent.clamp(0.0, 100.0);
-        let max_duty = 255;
-        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
-
-        self.channel
-            .set_duty(duty.min(255) as u8)
-            .map_err(|_| RoasterError::HardwareError {
-                source: Some("fan_simple_ledc"),
-            })?;
-
-        debug!("SimpleLedcFan set to {:.1}% (duty {})", clamped, duty);
-        Ok(())
-    }
-
-    fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
-        let clamped = percentage.clamp(0.0, 100.0);
-        let max_duty = 255;
-        let duty = ((clamped / 100.0) * max_duty as f32) as u32;
-        self.channel
-            .set_duty(duty.min(255) as u8)
-            .map_err(|_| RoasterError::HardwareError {
-                source: Some("fan_simple_emergency"),
-            })?;
-        Ok(())
-    }
-}
-
-// SAFETY: SimpleLedcFan owns its LEDC channel exclusively. On single-core
-// ESP32-C3 with Embassy cooperative scheduling, ownership transfer via
-// `Box<dyn Fan + Send>` guarantees no concurrent access. The inner Channel
-// holds a reference to the Timer which is stored in the static LedcBus and
-// outlives all channel users.
-unsafe impl<'a, C> Send for SimpleLedcFan<'a, C> where C: ChannelIFace<'a, LowSpeed> {}
 
 #[cfg(test)]
 mod tests {

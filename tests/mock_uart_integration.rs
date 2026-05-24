@@ -4,7 +4,6 @@
 
 extern crate std;
 
-use std::boxed::Box;
 use std::string::String as StdString;
 use std::sync::Mutex;
 use std::vec::Vec;
@@ -14,25 +13,19 @@ use heapless::String;
 
 use libreroaster::application::service_container::ServiceContainer;
 use libreroaster::config::{ArtisanCommand, RoasterState, SystemStatus};
-use libreroaster::control::RoasterControl;
 use libreroaster::hardware::uart::tasks::process_command_data;
 use libreroaster::logging::traceability::TRACE_EVENT_MAX_LEN;
 use libreroaster::output::artisan::ArtisanFormatter;
 
 #[path = "common/mod.rs"]
 mod tests_common;
-use tests_common::{build_test_control, init_test_service_container, StubFan, StubHeater};
+use tests_common::init_test_service_container;
 
 /// Serializes tests that share global ServiceContainer state.
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn acquire_serial() -> std::sync::MutexGuard<'static, ()> {
     TEST_MUTEX.lock().expect("test mutex poisoned")
-}
-
-#[allow(dead_code)]
-fn build_control() -> RoasterControl {
-    build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
 fn reset_channels() {

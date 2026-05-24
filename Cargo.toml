@@ -8,10 +8,6 @@ authors      = ["Juan Ángel López"]
 license      = "APACHE-2"
 
 [[example]]
-name = "artisan_test"
-path = "examples/artisan_test.rs"
-
-[[example]]
 name = "hil_tc"
 path = "examples/hil_tc.rs"
 

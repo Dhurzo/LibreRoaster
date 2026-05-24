@@ -226,8 +226,6 @@ impl Application {
 pub enum BuildError {
     UartInit(crate::hardware::uart::UartError),
     RoasterInit(crate::control::RoasterError),
-    FanInit(crate::hardware::fan::FanError),
-    SsrInit(crate::hardware::ssr::SsrError),
     ArtisanInit(crate::input::InputError),
     WatchdogInit(WatchdogError),
     ContainerInit(&'static str),
@@ -239,8 +237,6 @@ impl core::fmt::Display for BuildError {
         match self {
             BuildError::UartInit(e) => write!(f, "UART initialization failed: {:?}", e),
             BuildError::RoasterInit(e) => write!(f, "Roaster initialization failed: {:?}", e),
-            BuildError::FanInit(e) => write!(f, "Fan controller initialization failed: {:?}", e),
-            BuildError::SsrInit(e) => write!(f, "SSR control initialization failed: {:?}", e),
             BuildError::ArtisanInit(e) => write!(f, "Artisan input initialization failed: {:?}", e),
             BuildError::WatchdogInit(e) => write!(f, "Watchdog initialization failed: {:?}", e),
             BuildError::ContainerInit(e) => {

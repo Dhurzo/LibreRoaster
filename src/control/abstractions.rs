@@ -126,17 +126,6 @@ impl From<InputError> for RoasterError {
     }
 }
 
-pub trait PidController {
-    type Error;
-
-    fn set_target(&mut self, target: f32) -> Result<(), Self::Error>;
-    fn enable(&mut self);
-    fn disable(&mut self);
-    fn compute_output(&mut self, current_temp: f32, current_time: u32) -> f32;
-    fn is_enabled(&self) -> bool;
-    fn get_target(&self) -> f32;
-}
-
 pub trait RoasterCommandHandler {
     fn handle_command(
         &mut self,

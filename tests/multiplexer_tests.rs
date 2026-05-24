@@ -22,14 +22,6 @@ use std::println;
 
 use libreroaster::input::multiplexer::{CommChannel, CommandMultiplexer, IDLE_TIMEOUT_SECS};
 
-/// Helper function to advance time by specified seconds
-/// Note: embassy_time::Instant uses Duration internally
-#[allow(dead_code)]
-fn advance_time(_seconds: u64) {
-    // In unit tests, Instant::now() doesn't actually advance
-    // We test behavior at the logic level
-}
-
 // ========================================================================
 // ============================================================================
 // MULTIPLEXER INITIALIZATION TESTS

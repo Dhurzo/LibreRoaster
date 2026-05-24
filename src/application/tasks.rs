@@ -60,11 +60,6 @@ impl StageTracker {
         self.current_stage = stage;
     }
 
-    #[allow(dead_code)]
-    fn current_stage(&self) -> ControlLoopStage {
-        self.current_stage
-    }
-
     fn elapsed(&self) -> Duration {
         Instant::now().duration_since(self.tick_start)
     }

@@ -31,10 +31,6 @@ pub enum AppError {
     Safety {
         severity: SafetyLevel,
     },
-
-    Configuration {
-        source: ConfigError,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,14 +55,12 @@ pub enum HardwareError {
     UartError,
     FanError,
     SsrError,
-    GpioError,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommunicationError {
     UartError,
     ProtocolError,
-    SerializationError,
     TimeoutError,
 }
 
@@ -76,13 +70,6 @@ pub enum InitError {
     HardwareInit { what: &'static str, reason: String },
     TaskSpawn { what: &'static str, reason: String },
     MemoryAllocation { what: &'static str, reason: String },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfigError {
-    InvalidValue,
-    MissingConfig,
-    CorruptedData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -104,7 +91,7 @@ impl AppError {
             }
             AppError::Hardware { .. } | AppError::Control { .. } => false,
             AppError::Safety { severity } => matches!(severity, SafetyLevel::Warning),
-            AppError::Initialization { .. } | AppError::Configuration { .. } => false,
+            AppError::Initialization { .. } => false,
         }
     }
 
@@ -124,7 +111,6 @@ impl AppError {
             AppError::Communication { .. } => "communication",
             AppError::Initialization { .. } => "initialization",
             AppError::Safety { .. } => "safety",
-            AppError::Configuration { .. } => "configuration",
         }
     }
 
@@ -147,12 +133,10 @@ impl AppError {
                 HardwareError::UartError => "Communication hardware error",
                 HardwareError::FanError => "Fan controller error",
                 HardwareError::SsrError => "Heating element error",
-                HardwareError::GpioError => "GPIO hardware error",
             },
             AppError::Communication { source } => match source {
                 CommunicationError::UartError => "Communication error",
                 CommunicationError::ProtocolError => "Protocol error",
-                CommunicationError::SerializationError => "Data formatting error",
                 CommunicationError::TimeoutError => "Communication timeout",
             },
             AppError::Initialization { source } => match source {
@@ -165,11 +149,6 @@ impl AppError {
                 SafetyLevel::Warning => "Safety warning",
                 SafetyLevel::Critical => "Safety critical error",
                 SafetyLevel::Emergency => "Emergency shutdown required",
-            },
-            AppError::Configuration { source } => match source {
-                ConfigError::InvalidValue => "Invalid configuration",
-                ConfigError::MissingConfig => "Missing configuration",
-                ConfigError::CorruptedData => "Configuration data corrupted",
             },
         }
     }
@@ -193,12 +172,10 @@ impl AppError {
                 HardwareError::UartError => "uart_error",
                 HardwareError::FanError => "fan_error",
                 HardwareError::SsrError => "ssr_error",
-                HardwareError::GpioError => "gpio_error",
             }),
             AppError::Communication { source } => Some(match source {
                 CommunicationError::UartError => "comm_uart_error",
                 CommunicationError::ProtocolError => "protocol_error",
-                CommunicationError::SerializationError => "serialization_error",
                 CommunicationError::TimeoutError => "timeout_error",
             }),
             AppError::Initialization { source } => Some(match source {
@@ -211,11 +188,6 @@ impl AppError {
                 SafetyLevel::Warning => "safety_warning",
                 SafetyLevel::Critical => "safety_critical",
                 SafetyLevel::Emergency => "safety_emergency",
-            }),
-            AppError::Configuration { source } => Some(match source {
-                ConfigError::InvalidValue => "config_invalid",
-                ConfigError::MissingConfig => "config_missing",
-                ConfigError::CorruptedData => "config_corrupted",
             }),
         }
     }

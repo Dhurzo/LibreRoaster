@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use log::info;
-
 #[cfg(target_arch = "riscv32")]
 use embassy_time::Instant;
 

@@ -1,4 +1,4 @@
-use crate::control::traits::{AsyncThermometer, Thermometer};
+use crate::control::traits::Thermometer;
 use crate::control::RoasterError;
 use crate::hardware::sensors::conversion::convert_raw_temp;
 use embassy_time::{Duration, Timer};
@@ -350,29 +350,6 @@ where
             }),
         }
     }
-
-    #[allow(dead_code)]
-    fn read_registers(&mut self, address: u8, count: usize) -> Result<[u8; 3], Max31856Error> {
-        // MAX31856 SPI: A7=0 for read, data bytes follow.
-        let mut rx_buffer = [0u8; 3];
-
-        let mut operations = [
-            embedded_hal::spi::Operation::Write(&[address & 0x7F]),
-            embedded_hal::spi::Operation::Read(&mut rx_buffer[..count.min(3)]),
-        ];
-
-        match self.spi.transaction(&mut operations) {
-            Ok(_) => {
-                let mut result = [0u8; 3];
-                let len = count.min(3);
-                result[..len].copy_from_slice(&rx_buffer[..len]);
-                Ok(result)
-            }
-            Err(_) => Err(Max31856Error::CommunicationError {
-                source: "spi_read_multiple_failed",
-            }),
-        }
-    }
 }
 
 impl<SPI> Thermometer for Max31856<SPI>
@@ -381,16 +358,6 @@ where
 {
     fn read_temperature(&mut self) -> Result<f32, RoasterError> {
         Self::read_temperature(self).map_err(|e| e.into())
-    }
-}
-
-impl<SPI> AsyncThermometer for Max31856<SPI>
-where
-    SPI: SpiDevice + Send,
-{
-    async fn read_temperature_async(&mut self) -> Result<f32, RoasterError> {
-        // Use read_with_retry for reliability (max_retries=2 = 3 attempts)
-        Self::read_with_retry(self, 2).await.map_err(|e| e.into())
     }
 }
 
