@@ -143,7 +143,7 @@ fn test_worst_case_sync_work() {
     // TelemetryEmit: Formatter.format (~10μs) + channel send (~5μs)
     //            = ~15μs
     
-    let worst_case_sync_us = 65 + 50 + 5 + 15 = 135; // ~135μs
+    let worst_case_sync_us: u32 = 65 + 50 + 5 + 15; // ~135μs
     let worst_case_sync_ms = worst_case_sync_us as f64 / 1000.0;
     
     // 135μs = 0.135ms << 100ms (full cycle)

@@ -1,9 +1,10 @@
 use core::fmt;
-#[cfg(target_arch = "riscv32")]
-use core::ptr;
 
 #[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
+
+#[cfg(target_arch = "riscv32")]
+use crate::hardware::static_sync::SyncCell;
 
 #[cfg(target_arch = "riscv32")]
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
@@ -83,13 +84,13 @@ impl UsbCdcDriver {
 static USB_CDC_DRIVER: StaticCell<UsbCdcDriver> = StaticCell::new();
 
 #[cfg(target_arch = "riscv32")]
-static mut USB_CDC_DRIVER_PTR: *mut UsbCdcDriver = ptr::null_mut();
+static USB_CDC_DRIVER_PTR: SyncCell<*mut UsbCdcDriver> = SyncCell::new(core::ptr::null_mut());
 
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
     let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb.into_async()));
     unsafe {
-        USB_CDC_DRIVER_PTR = driver as *mut UsbCdcDriver;
+        *USB_CDC_DRIVER_PTR.get() = driver as *mut UsbCdcDriver;
     }
     Ok(())
 }
@@ -101,7 +102,7 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
 
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
-    unsafe { USB_CDC_DRIVER_PTR.as_mut() }
+    unsafe { (*USB_CDC_DRIVER_PTR.get()).as_mut() }
 }
 
 #[cfg(not(target_arch = "riscv32"))]

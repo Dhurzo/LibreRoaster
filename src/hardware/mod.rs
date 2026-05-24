@@ -18,6 +18,7 @@ pub mod ssr;
 #[path = "ssr_stub.rs"]
 pub mod ssr;
 
+pub mod static_sync;
 pub mod test_mocks;
 pub mod uart;
 #[cfg(target_arch = "riscv32")]

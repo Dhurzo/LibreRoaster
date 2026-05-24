@@ -24,24 +24,6 @@ impl SensorController {
         }
     }
 
-    #[cfg(target_arch = "riscv32")]
-    pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
-        let sample = self.sensor_hub.sample().await?;
-        let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
-        if has_fault {
-            status.fault_condition = true;
-        }
-        self.update_temperatures(
-            sample.bean_temp,
-            sample.env_temp,
-            sample.bean_fault,
-            sample.env_fault,
-            sample.timestamp,
-            status,
-        )
-    }
-
-    #[cfg(not(target_arch = "riscv32"))]
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
         let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();

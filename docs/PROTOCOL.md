@@ -110,7 +110,7 @@ These commands return the deep telemetry line used for automation, debugging, an
 Response shape:
 
 ```text
-ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale
+ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale,FaultFlag
 ```
 
 Field map:
@@ -134,6 +134,7 @@ Field map:
 17. Last command latency in microseconds
 18. Maximum observed command latency in microseconds
 19. Temperature-scale flag (`0` = Celsius, `1` = Fahrenheit)
+20. Fault condition flag (`0` = normal, `1` = emergency fault active)
 
 `STATUS` is the right interface for anything that needs runtime health, not just roast temperatures.
 

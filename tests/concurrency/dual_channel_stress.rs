@@ -36,7 +36,6 @@ fn test_concurrent_commands_no_crash() {
     simulate_concurrent_commands(&mut roaster, 100);
     
     // If we reach here without panic, the test passes
-    assert!(true, "Concurrent commands must not cause crash");
 }
 
 /// Test 2: Command processing order is maintained
@@ -78,7 +77,6 @@ fn test_queue_depth_normal_load() {
     }
     
     // If we reach here, the system handled the load without saturation
-    assert!(true, "System must handle normal load without problems");
 }
 
 /// Test 4: Burst handling
@@ -156,5 +154,4 @@ fn test_thread_safety_concurrent_operations() {
     }
     
     // If we reach here without deadlock, the test passes
-    assert!(true, "Concurrent operations must be thread-safe");
 }

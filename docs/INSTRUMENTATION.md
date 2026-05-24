@@ -17,10 +17,10 @@ LibreRoaster provides comprehensive instrumentation for safety monitoring, watch
 
 ## STATUS Command Telemetry
 
-The `STATUS` command returns 19 CSV fields that provide a complete snapshot of the roaster's state:
+The `STATUS` command returns 20 CSV fields that provide a complete snapshot of the roaster's state:
 
 ```
-ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale
+ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale,FaultFlag
 ```
 
 ### Field Descriptions
@@ -46,6 +46,7 @@ ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeout
 | 17 | CommandLatency | u32 (µs) | Most recent command processing latency |
 | 18 | MaxCommandLatency | u32 (µs) | Maximum observed command latency |
 | 19 | TempScale | 0/1 | Temperature scale: 0=Celsius, 1=Fahrenheit |
+| 20 | FaultFlag | bool (0/1) | Emergency fault condition active |
 
 ---
 

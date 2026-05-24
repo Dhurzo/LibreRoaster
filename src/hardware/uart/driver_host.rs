@@ -1,6 +1,7 @@
-use core::cell::UnsafeCell;
 use core::fmt;
 use static_cell::StaticCell;
+
+use crate::hardware::static_sync::SyncCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
@@ -45,22 +46,8 @@ impl Default for UartDriver {
 
 static UART_DRIVER: StaticCell<Option<UartDriver>> = StaticCell::new();
 
-struct SyncPointer<T>(UnsafeCell<T>);
-
-unsafe impl<T> Sync for SyncPointer<T> {}
-
-impl<T> SyncPointer<T> {
-    const fn new(ptr: T) -> Self {
-        Self(UnsafeCell::new(ptr))
-    }
-
-    fn get(&self) -> *mut T {
-        self.0.get()
-    }
-}
-
-static UART_PTR: SyncPointer<core::ptr::NonNull<Option<UartDriver>>> =
-    SyncPointer::new(core::ptr::NonNull::dangling());
+static UART_PTR: SyncCell<core::ptr::NonNull<Option<UartDriver>>> =
+    SyncCell::new(core::ptr::NonNull::dangling());
 
 pub fn init_uart(_uart0: (), _rx: (), _tx: ()) -> Result<(), UartError> {
     let value = UART_DRIVER.init(Some(UartDriver::new()));

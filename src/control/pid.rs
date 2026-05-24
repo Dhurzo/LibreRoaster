@@ -25,7 +25,10 @@ impl PidFeedback {
 
     /// Indicates saturation or guard blocking so the integrator should hold.
     pub fn is_saturated(&self) -> bool {
-        self.guard_busy || (self.desired_output - self.applied_output) > SATURATION_EPSILON
+        self.guard_busy
+            || !self.desired_output.is_finite()
+            || !self.applied_output.is_finite()
+            || (self.desired_output - self.applied_output) > SATURATION_EPSILON
     }
 }
 
@@ -98,6 +101,9 @@ impl CoffeeRoasterPid {
     }
 
     pub fn set_target(&mut self, target: f32) -> Result<(), PidError> {
+        if !target.is_finite() {
+            return Err(PidError::ComputationError);
+        }
         self.target = target;
         Ok(())
     }

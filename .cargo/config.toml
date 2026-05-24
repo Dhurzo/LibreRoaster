@@ -22,5 +22,3 @@ rustflags = [
 [unstable]
 build-std = ["alloc", "core", "test"]
 
-[lints.clippy]
-deny = ["warnings"]

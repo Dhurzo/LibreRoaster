@@ -13,6 +13,8 @@ mod target_impl {
     use heapless::String;
     use log::{info, warn};
 
+    // SAFETY: fixture_catalog only contains max31856 test fixture data
+    // (register sequence constants included via include! macro) — no executable unsafe logic.
     #[allow(unsafe_code)]
     mod fixture_catalog {
         include!(concat!(

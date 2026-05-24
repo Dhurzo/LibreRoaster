@@ -113,7 +113,7 @@ debug-assertions = false
 incremental      = false
 lto              = 'fat'
 opt-level        = 's'
-overflow-checks  = false
+overflow-checks = true
 
 [lints.clippy]
 # Embedded Rust clippy configuration for LibreRoaster

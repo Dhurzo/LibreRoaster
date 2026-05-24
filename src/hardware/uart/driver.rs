@@ -6,6 +6,8 @@ use esp_hal::gpio::interconnect::{PeripheralInput, PeripheralOutput};
 use esp_hal::uart::{Config, Uart, UartRx, UartTx};
 use static_cell::StaticCell;
 
+use crate::hardware::static_sync::SyncCell;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
     TransmissionError,
@@ -53,7 +55,7 @@ impl UartDriver {
 }
 
 static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
-static mut UART_DRIVER_PTR: *mut UartDriver = ptr::null_mut();
+static UART_DRIVER_PTR: SyncCell<*mut UartDriver> = SyncCell::new(ptr::null_mut());
 
 pub fn init_uart(
     uart0: esp_hal::peripherals::UART0<'static>,
@@ -69,11 +71,11 @@ pub fn init_uart(
     let (rx_half, tx_half) = uart.split();
     let driver = UART_DRIVER.init(UartDriver::new(tx_half, rx_half));
     unsafe {
-        UART_DRIVER_PTR = driver as *mut UartDriver;
+        *UART_DRIVER_PTR.get() = driver as *mut UartDriver;
     }
     Ok(())
 }
 
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
-    unsafe { UART_DRIVER_PTR.as_mut() }
+    unsafe { (*UART_DRIVER_PTR.get()).as_mut() }
 }

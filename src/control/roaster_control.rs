@@ -55,23 +55,6 @@ impl RoasterControl {
         })
     }
 
-    #[cfg(target_arch = "riscv32")]
-    pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
-        match self.sensor.read_sensors(&mut self.status).await {
-            Err(RoasterError::TemperatureOutOfRange {
-                source: Some("overtemp_detected"),
-            }) => {
-                self.actuator
-                    .emergency_shutdown("Over-temperature detected", &mut self.status)?;
-                Err(RoasterError::TemperatureOutOfRange {
-                    source: Some("overtemp_detected"),
-                })
-            }
-            other => other,
-        }
-    }
-
-    #[cfg(not(target_arch = "riscv32"))]
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         match self.sensor.read_sensors(&mut self.status).await {
             Err(RoasterError::TemperatureOutOfRange {

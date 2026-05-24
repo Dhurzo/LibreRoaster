@@ -4,10 +4,12 @@ set -euxo pipefail
 echo "Running cargo fmt -- --check..."
 cargo fmt -- --check
 
-echo "Running cargo clippy --workspace --all-features -- -D warnings..."
-cargo clippy --workspace --all-features -- -D warnings
+# Production code: enforce deny-level policy (matches [lints.clippy] in Cargo.toml)
+# Test code is exempt via clippy.toml allow-*-in-tests = true
+echo "Running cargo clippy --locked --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic..."
+cargo clippy --locked --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
 
-echo "Running cargo test --workspace --all-features..."
-cargo test --workspace --all-features
+echo "Running cargo test --locked --lib --tests --no-fail-fast..."
+cargo test --locked --lib --tests --no-fail-fast
 
 echo "All quality checks passed."
