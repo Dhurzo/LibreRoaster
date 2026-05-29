@@ -505,7 +505,7 @@ fn handle_watchdog_failure(
         let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
         let _ = output_channel.try_send(safety);
     }
-    drop(status);
+    let _ = status;
     if needs_emergency {
         let _ = roaster.emergency_shutdown("Watchdog failure");
     }

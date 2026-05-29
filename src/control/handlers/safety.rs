@@ -6,7 +6,7 @@
 //
 // These commands manage emergency conditions and ensure safe system state.
 
-use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
+use crate::config::{RoasterCommand, SystemStatus};
 use crate::control::policies::{SafetyPolicy, SafetyPolicyOutcome};
 use crate::control::RoasterError;
 use log::warn;
@@ -123,6 +123,7 @@ impl SafetyPolicy for SafetyCommandHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SsrHardwareStatus;
 
     #[test]
     fn test_new() {

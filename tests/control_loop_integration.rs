@@ -319,8 +319,10 @@ fn multi_tick_roast_simulation() {
 
     let mut ticks_with_heat: usize = 0;
 
+    // Ramp BT slowly (0.1°C/tick) to stay well under the 0.5°C/s RoR limit
+    // even under coverage instrumentation which alters simulated timing.
     for tick in 0..30 {
-        let bt = 25.0 + (tick as f32 * 5.0);
+        let bt = 25.0 + (tick as f32 * 0.1);
         let et = bt + 15.0;
 
         control
