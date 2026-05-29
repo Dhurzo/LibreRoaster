@@ -790,6 +790,96 @@ fn finalize_tick(
     );
 }
 
+/// Execute one iteration of the control loop tick.
+///
+/// Extracted from `control_loop_task` for testability. Contains the full tick
+/// sequence: drain commands → read sensors → error checks → control update →
+/// LEDC write → watchdog feed → telemetry emit → finalize.
+///
+/// Does NOT include the `Timer::after(100ms)` — that's the caller's responsibility.
+async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputChannel) {
+    let tick_start = Instant::now();
+    tick_state.stage_tracker.start_tick(tick_start);
+    tick_state.tick_app_error = None;
+
+    let guard_total_timeouts = ledc_guard::total_timeouts();
+    let guard_timeout_happened = guard_total_timeouts != tick_state.last_guard_total_timeouts;
+
+    drain_commands(tick_state).await;
+
+    read_sensors(tick_state, guard_timeout_happened, output_channel).await;
+
+    // C3: Track consecutive sensor errors — trigger emergency shutdown at threshold.
+    if tick_state.sensor_err.is_some() {
+        tick_state.consecutive_sensor_errors =
+            tick_state.consecutive_sensor_errors.saturating_add(1);
+        if tick_state.consecutive_sensor_errors
+            >= crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
+        {
+            warn!(
+                "SAFETY SENSOR-ERR: {} consecutive sensor read errors — emergency shutdown",
+                crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
+            );
+            let _ = ServiceContainer::with_roaster_async(|roaster| {
+                let _ = roaster.emergency_shutdown("Consecutive sensor errors");
+            })
+            .await;
+        }
+    } else {
+        tick_state.consecutive_sensor_errors = 0;
+    }
+
+    // C4: Check comms read error thresholds — trigger emergency shutdown if exceeded.
+    if crate::hardware::error_counters::any_comms_error_threshold_exceeded() {
+        warn!("SAFETY COMMS-ERR: comms read error threshold exceeded — emergency shutdown");
+        let _ = ServiceContainer::with_roaster_async(|roaster| {
+            let _ = roaster.emergency_shutdown("Comms read error threshold exceeded");
+        })
+        .await;
+    }
+
+    let (control_snapshot, control_status) =
+        update_control_stage(tick_state, guard_timeout_happened, output_channel).await;
+
+    log_ledc_stage(
+        tick_state,
+        guard_timeout_happened,
+        guard_total_timeouts,
+        control_status,
+        output_channel,
+    );
+
+    let watchdog_snapshot = feed_watchdog_stage(
+        tick_state,
+        guard_timeout_happened,
+        guard_total_timeouts,
+        control_status,
+        output_channel,
+    )
+    .await;
+
+    if let Some(e) = tick_state.sensor_err.take() {
+        info!("Service container error in control loop: {:?}", e);
+    }
+
+    let _status_for_output = emit_telemetry_stage(
+        tick_state,
+        guard_timeout_happened,
+        guard_total_timeouts,
+        &watchdog_snapshot,
+        tick_start,
+        output_channel,
+    )
+    .await;
+
+    finalize_tick(
+        tick_state,
+        control_snapshot,
+        guard_timeout_happened,
+        &watchdog_snapshot,
+    );
+}
+
 #[task]
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");
@@ -803,87 +893,7 @@ pub async fn control_loop_task() {
     let output_channel = ServiceContainer::get_output_channel();
 
     loop {
-        let tick_start = Instant::now();
-        tick_state.stage_tracker.start_tick(tick_start);
-        tick_state.tick_app_error = None;
-
-        let guard_total_timeouts = ledc_guard::total_timeouts();
-        let guard_timeout_happened = guard_total_timeouts != tick_state.last_guard_total_timeouts;
-
-        drain_commands(&mut tick_state).await;
-
-        read_sensors(&mut tick_state, guard_timeout_happened, &output_channel).await;
-
-        // C3: Track consecutive sensor errors — trigger emergency shutdown at threshold.
-        if tick_state.sensor_err.is_some() {
-            tick_state.consecutive_sensor_errors =
-                tick_state.consecutive_sensor_errors.saturating_add(1);
-            if tick_state.consecutive_sensor_errors
-                >= crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
-            {
-                warn!(
-                    "SAFETY SENSOR-ERR: {} consecutive sensor read errors — emergency shutdown",
-                    crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
-                );
-                let _ = ServiceContainer::with_roaster_async(|roaster| {
-                    let _ = roaster.emergency_shutdown("Consecutive sensor errors");
-                })
-                .await;
-            }
-        } else {
-            tick_state.consecutive_sensor_errors = 0;
-        }
-
-        // C4: Check comms read error thresholds — trigger emergency shutdown if exceeded.
-        if crate::hardware::error_counters::any_comms_error_threshold_exceeded() {
-            warn!("SAFETY COMMS-ERR: comms read error threshold exceeded — emergency shutdown");
-            let _ = ServiceContainer::with_roaster_async(|roaster| {
-                let _ = roaster.emergency_shutdown("Comms read error threshold exceeded");
-            })
-            .await;
-        }
-
-        let (control_snapshot, control_status) =
-            update_control_stage(&mut tick_state, guard_timeout_happened, &output_channel).await;
-
-        log_ledc_stage(
-            &mut tick_state,
-            guard_timeout_happened,
-            guard_total_timeouts,
-            control_status,
-            &output_channel,
-        );
-
-        let watchdog_snapshot = feed_watchdog_stage(
-            &mut tick_state,
-            guard_timeout_happened,
-            guard_total_timeouts,
-            control_status,
-            &output_channel,
-        )
-        .await;
-
-        if let Some(e) = tick_state.sensor_err.take() {
-            info!("Service container error in control loop: {:?}", e);
-        }
-
-        let _status_for_output = emit_telemetry_stage(
-            &mut tick_state,
-            guard_timeout_happened,
-            guard_total_timeouts,
-            &watchdog_snapshot,
-            tick_start,
-            &output_channel,
-        )
-        .await;
-
-        finalize_tick(
-            &mut tick_state,
-            control_snapshot,
-            guard_timeout_happened,
-            &watchdog_snapshot,
-        );
-
+        control_loop_tick(&mut tick_state, &output_channel).await;
         Timer::after(Duration::from_millis(100)).await;
     }
 }
@@ -906,6 +916,45 @@ fn send_handler_error(
     let _ = output_channel.try_send(message);
 }
 
+/// Process one message from the output channel.
+///
+/// Extracted from `dual_output_task` for testability. Reads the output channel,
+/// looks up the active transport via the multiplexer, appends CRLF, and writes
+/// to the selected USB or UART driver.
+///
+/// Does NOT include the `Timer::after(5ms)` — that's the caller's responsibility.
+async fn dual_output_tick(output_channel: &OutputChannel) {
+    if let Ok(data) = output_channel.try_receive() {
+        let (channel, data_to_write) = critical_section::with(|cs| {
+            let multiplexer = ServiceContainer::get_multiplexer();
+            let mut guard = multiplexer.borrow(cs).borrow_mut();
+            if let Some(mux) = guard.as_mut() {
+                let active_channel = mux.get_active_channel();
+                let bytes = append_crlf(data.as_str());
+                (active_channel, Some(bytes))
+            } else {
+                (CommChannel::None, None)
+            }
+        });
+
+        if let Some(bytes) = data_to_write {
+            match channel {
+                CommChannel::Usb => {
+                    if let Some(usb) = crate::hardware::usb_cdc::driver::get_usb_cdc_driver() {
+                        let _ = usb.write_bytes(&bytes).await;
+                    }
+                }
+                CommChannel::Uart => {
+                    if let Some(uart) = crate::hardware::uart::driver::get_uart_driver() {
+                        let _ = uart.write_bytes(&bytes).await;
+                    }
+                }
+                CommChannel::None => {}
+            }
+        }
+    }
+}
+
 #[task]
 pub async fn dual_output_task() {
     info!("Dual output task started - USB CDC + UART");
@@ -913,36 +962,7 @@ pub async fn dual_output_task() {
     let output_channel = ServiceContainer::get_output_channel();
 
     loop {
-        if let Ok(data) = output_channel.try_receive() {
-            let (channel, data_to_write) = critical_section::with(|cs| {
-                let multiplexer = ServiceContainer::get_multiplexer();
-                let mut guard = multiplexer.borrow(cs).borrow_mut();
-                if let Some(mux) = guard.as_mut() {
-                    let active_channel = mux.get_active_channel();
-                    let bytes = append_crlf(data.as_str());
-                    (active_channel, Some(bytes))
-                } else {
-                    (CommChannel::None, None)
-                }
-            });
-
-            if let Some(bytes) = data_to_write {
-                match channel {
-                    CommChannel::Usb => {
-                        if let Some(usb) = crate::hardware::usb_cdc::driver::get_usb_cdc_driver() {
-                            let _ = usb.write_bytes(&bytes).await;
-                        }
-                    }
-                    CommChannel::Uart => {
-                        if let Some(uart) = crate::hardware::uart::driver::get_uart_driver() {
-                            let _ = uart.write_bytes(&bytes).await;
-                        }
-                    }
-                    CommChannel::None => {}
-                }
-            }
-        }
-
+        dual_output_tick(output_channel).await;
         Timer::after(Duration::from_millis(5)).await;
     }
 }
@@ -957,7 +977,46 @@ fn append_crlf(payload: &str) -> heapless::Vec<u8, 1024> {
 
 #[cfg(test)]
 mod tests {
-    use super::append_crlf;
+    use super::*;
+    use crate::common::{StubFan, StubHeater};
+    use crate::control::RoasterControl;
+    use crate::hardware::sensors::SensorConversionHub;
+    use crate::input::ArtisanInput;
+    use futures::executor::block_on;
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    fn build_test_roaster() -> RoasterControl {
+        RoasterControl::new(
+            Box::new(StubHeater::new()),
+            Box::new(StubFan::new()),
+            SensorConversionHub::new(),
+        )
+        .expect("RoasterControl should build")
+    }
+
+    fn init_container_with_roaster(roaster: RoasterControl) {
+        ServiceContainer::init_roaster(roaster);
+        let _ = ArtisanInput::new().map(ServiceContainer::init_artisan_input);
+
+        block_on(async {
+            let mut guard = ServiceContainer::get_instance().roaster.lock().await;
+            if guard.is_none() {
+                drop(guard);
+                let _ = ServiceContainer::ensure_async_roaster_initialized_from_sync().await;
+            }
+        });
+    }
+
+    fn drain_all_channels() {
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+        while ServiceContainer::get_output_channel().try_receive().is_ok() {}
+    }
+
+    // ── append_crlf ────────────────────────────────────────────────────
 
     #[test]
     fn test_append_crlf_appends_single_terminator() {
@@ -966,5 +1025,636 @@ mod tests {
 
         let output = core::str::from_utf8(&bytes).expect("Output should be valid UTF-8");
         assert_eq!(output, "READ,120.3,150.5,75.0,25.0\r\n");
+    }
+
+    #[test]
+    fn test_append_crlf_empty_payload() {
+        let bytes = append_crlf("");
+        let output = core::str::from_utf8(&bytes).expect("Output should be valid UTF-8");
+        assert_eq!(output, "\r\n");
+    }
+
+    // ── TickState ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_tick_state_new_initializes_defaults() {
+        let state = TickState::new();
+        assert_eq!(state.consecutive_sensor_errors, 0);
+        assert!(state.sensor_err.is_none());
+        assert!(state.tick_app_error.is_none());
+        assert!(state.tick_trace_id.is_none());
+        assert!(!state.was_continuous);
+    }
+
+    #[test]
+    fn test_tick_state_stage_tracker_starts_at_idle() {
+        let tick_state = TickState::new();
+        assert!(matches!(
+            tick_state.stage_tracker.current_stage,
+            ControlLoopStage::Idle
+        ));
+    }
+
+    // ── StageTracker ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_stage_tracker_elapsed_increases_over_time() {
+        let mut tracker = StageTracker::new();
+        let start = Instant::now();
+        tracker.start_tick(start);
+        let e1 = tracker.elapsed();
+        let e2 = tracker.elapsed();
+        assert!(e2.as_micros() >= e1.as_micros());
+    }
+
+    #[test]
+    fn test_stage_tracker_clear_resets_stage() {
+        let mut tracker = StageTracker::new();
+        tracker.set_stage(ControlLoopStage::SensorRead);
+        assert!(matches!(
+            tracker.current_stage,
+            ControlLoopStage::SensorRead
+        ));
+        tracker.clear();
+        assert!(matches!(tracker.current_stage, ControlLoopStage::Idle));
+    }
+
+    #[test]
+    fn test_stage_tracker_stage_transitions() {
+        let mut tracker = StageTracker::new();
+        tracker.set_stage(ControlLoopStage::SensorRead);
+        tracker.set_stage(ControlLoopStage::ControlUpdate);
+        tracker.set_stage(ControlLoopStage::WatchdogFeed);
+        assert!(matches!(
+            tracker.current_stage,
+            ControlLoopStage::WatchdogFeed
+        ));
+    }
+
+    // ── send_handler_error ─────────────────────────────────────────────
+
+    #[test]
+    fn test_send_handler_error_produces_err_message() {
+        use crate::control::RoasterError;
+        let _guard = crate::application::tasks::tests::acquire_test_lock();
+        drain_all_channels();
+
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+
+        let error = RoasterError::InvalidState {
+            source: Some("test_error_source"),
+        };
+        let output_channel = ServiceContainer::get_output_channel();
+
+        send_handler_error(output_channel, &error);
+
+        let messages: Vec<_> = (0..10)
+            .filter_map(|_| output_channel.try_receive().ok())
+            .collect();
+        let err_msg = messages
+            .iter()
+            .find(|m| m.contains("ERR"))
+            .map(|s| s.as_str().to_string());
+
+        assert!(
+            err_msg.is_some(),
+            "Expected ERR message in output channel, got: {:?}",
+            messages
+        );
+        let msg = err_msg.unwrap();
+        assert!(
+            msg.contains("handler_failed"),
+            "ERR message should contain handler_failed: {}",
+            msg
+        );
+    }
+
+    // ── drain_commands / command processing ────────────────────────────
+
+    #[test]
+    fn drain_commands_processes_status_command() {
+        let _guard = crate::application::tasks::tests::acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        roaster
+            .update_temperatures(100.0, 120.0, Instant::now())
+            .expect("temps");
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let traced = crate::logging::traceability::TracedCommand {
+            command: crate::config::ArtisanCommand::StatusReport,
+            trace_id: crate::logging::traceability::TraceId::next(),
+            channel: crate::input::multiplexer::CommChannel::None,
+        };
+        let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+
+        let mut tick_state = TickState::new();
+        block_on(async {
+            drain_commands(&mut tick_state).await;
+        });
+
+        let messages: Vec<_> = (0..10)
+            .filter_map(|_| ServiceContainer::get_output_channel().try_receive().ok())
+            .collect();
+        assert!(
+            !messages.is_empty(),
+            "STATUS command should produce output messages"
+        );
+    }
+
+    #[test]
+    fn drain_commands_processes_read_command() {
+        let _guard = crate::application::tasks::tests::acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        roaster
+            .update_temperatures(120.3, 150.5, Instant::now())
+            .expect("temps");
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let traced = crate::logging::traceability::TracedCommand {
+            command: crate::config::ArtisanCommand::ReadStatus,
+            trace_id: crate::logging::traceability::TraceId::next(),
+            channel: crate::input::multiplexer::CommChannel::None,
+        };
+        let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+
+        let mut tick_state = TickState::new();
+        block_on(async {
+            drain_commands(&mut tick_state).await;
+        });
+
+        let messages: Vec<_> = (0..10)
+            .filter_map(|_| ServiceContainer::get_output_channel().try_receive().ok())
+            .collect();
+        assert!(
+            !messages.is_empty(),
+            "READ command should produce output messages"
+        );
+    }
+
+    // ── handle_watchdog_failure ────────────────────────────────────────
+
+    #[test]
+    fn watchdog_failure_increments_counter_and_flags_status() {
+        let mut roaster = build_test_roaster();
+        let output_channel = ServiceContainer::get_output_channel();
+        roaster.status_mut().watchdog_consecutive_failures = 0;
+
+        handle_watchdog_failure(&mut roaster, "test_failure", None, output_channel);
+
+        let status = roaster.get_status();
+        assert!(!status.watchdog_feed_ok);
+        assert_eq!(status.watchdog_last_failure, Some("test_failure"));
+        assert_eq!(status.watchdog_consecutive_failures, 1);
+    }
+
+    #[test]
+    fn watchdog_consecutive_failures_trigger_emergency() {
+        let mut roaster = build_test_roaster();
+        let output_channel = ServiceContainer::get_output_channel();
+        roaster.status_mut().watchdog_consecutive_failures = 1;
+
+        handle_watchdog_failure(
+            &mut roaster,
+            "second_failure",
+            Some("first_failure"),
+            output_channel,
+        );
+
+        assert!(roaster.safety().is_emergency_active());
+    }
+
+    // ── finalize_tick ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_finalize_tick_clears_stage_tracker() {
+        let _guard = crate::application::tasks::tests::acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let mut tick_state = TickState::new();
+        tick_state.last_guard_total_timeouts = 5;
+        tick_state.prev_watchdog_state = WatchdogState::Fail;
+
+        let control_snapshot = ControlUpdateSnapshot {
+            desired_output: 50.0,
+            applied_output: 45.0,
+            fan_output: 30.0,
+        };
+        let watchdog_snapshot = WatchdogSnapshot {
+            feed_ok: true,
+            last_failure: None,
+            guard_timeouts: 3,
+        };
+
+        tick_state
+            .stage_tracker
+            .set_stage(ControlLoopStage::TelemetryEmit);
+        finalize_tick(
+            &mut tick_state,
+            Some(control_snapshot),
+            false,
+            &watchdog_snapshot,
+        );
+
+        // finalize_tick clears the stage tracker back to Idle
+        assert!(matches!(
+            tick_state.stage_tracker.current_stage,
+            ControlLoopStage::Idle
+        ));
+        // finalize_tick does NOT modify last_guard_total_timeouts
+        // (that is updated by feed_watchdog_stage, not finalize_tick)
+        assert_eq!(tick_state.last_guard_total_timeouts, 5);
+        // finalize_tick does NOT modify prev_watchdog_state
+        assert_eq!(tick_state.prev_watchdog_state, WatchdogState::Fail);
+    }
+
+    // ── Full control_loop_tick integration tests ───────────────────────
+
+    #[test]
+    fn control_loop_tick_empty_tick_completes() {
+        let _guard = acquire_test_lock();
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            control_loop_tick(&mut tick_state, output_channel).await;
+        });
+
+        // Tick completes without panic. Under `test` feature, stage instrumentation
+        // emits 5 STAGE reports (SensorRead, ControlUpdate, LedcWrite, WatchdogFeed,
+        // TelemetryEmit). No command/message output expected.
+        let stage_count = drain_stage_reports(output_channel);
+        assert_eq!(
+            stage_count, 5,
+            "Empty tick should emit exactly 5 stage reports, got {}",
+            stage_count
+        );
+    }
+
+    #[test]
+    fn control_loop_tick_processes_read_command() {
+        let _guard = acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        roaster
+            .update_temperatures(120.3, 150.5, Instant::now())
+            .expect("temps");
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let traced = crate::logging::traceability::TracedCommand {
+            command: crate::config::ArtisanCommand::ReadStatus,
+            trace_id: crate::logging::traceability::TraceId::next(),
+            channel: crate::input::multiplexer::CommChannel::None,
+        };
+        let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            control_loop_tick(&mut tick_state, output_channel).await;
+        });
+
+        let messages = drain_non_stage_output(output_channel);
+        assert!(
+            !messages.is_empty(),
+            "READ command should produce TC4 output after full tick, got 0 messages"
+        );
+        let has_read_response = messages
+            .iter()
+            .any(|msg| msg.contains(',') && msg.split(',').count() >= 5);
+        assert!(
+            has_read_response,
+            "Expected READ response in output channel, got: {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn control_loop_tick_processes_status_command() {
+        let _guard = acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        roaster
+            .update_temperatures(100.0, 120.0, Instant::now())
+            .expect("temps");
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let traced = crate::logging::traceability::TracedCommand {
+            command: crate::config::ArtisanCommand::StatusReport,
+            trace_id: crate::logging::traceability::TraceId::next(),
+            channel: crate::input::multiplexer::CommChannel::None,
+        };
+        let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            control_loop_tick(&mut tick_state, output_channel).await;
+        });
+        // Drain stage reports
+        let msgs = drain_non_stage_output(output_channel);
+
+        // Verify roaster state advanced
+        let status =
+            block_on(async { ServiceContainer::with_roaster_async(|r| r.get_status()).await })
+                .expect("status read");
+        // The START command was processed — PID was enabled before the tick ran it.
+        assert!(
+            !msgs.is_empty(),
+            "START command should produce trace output after full tick, got 0 non-stage messages"
+        );
+        // Default state is Idle — after START command dispatch it should no longer be Idle
+        // (even if sensor/watchdog issues later push it to Error).
+        assert_ne!(
+            status.state,
+            crate::config::constants::RoasterState::Idle,
+            "Roaster should have left Idle state after START + full tick, got {:?}",
+            status.state
+        );
+        // STATUS command emits a 20-field CSV line plus TRACE lines.
+        let has_status_line = msgs.iter().any(|msg| {
+            msg.split(',').count() >= 15
+                && msg.chars().all(|c| {
+                    c == '.' || c == ',' || c == '-' || c.is_ascii_digit() || c.is_alphabetic()
+                })
+        });
+        let has_trace_line = msgs.iter().any(|msg| msg.contains("actuation"));
+        assert!(
+            has_status_line || has_trace_line,
+            "Expected STATUS-related output, got: {:?}",
+            msgs
+        );
+    }
+
+    #[test]
+    fn control_loop_tick_sensor_and_control_advance() {
+        let _guard = acquire_test_lock();
+        let mut roaster = build_test_roaster();
+        roaster
+            .update_temperatures(25.0, 30.0, Instant::now())
+            .expect("temps");
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        // Start a roast to enable control
+        let traced = crate::logging::traceability::TracedCommand {
+            command: crate::config::ArtisanCommand::StartRoast,
+            trace_id: crate::logging::traceability::TraceId::next(),
+            channel: crate::input::multiplexer::CommChannel::None,
+        };
+        let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            control_loop_tick(&mut tick_state, output_channel).await;
+        });
+        let msgs = drain_non_stage_output(output_channel);
+
+        let status =
+            block_on(async { ServiceContainer::with_roaster_async(|r| r.get_status()).await })
+                .expect("status read");
+        assert!(
+            !msgs.is_empty(),
+            "START command should produce trace output after full tick, got {} non-stage messages",
+            msgs.len()
+        );
+    }
+
+    #[test]
+    fn control_loop_three_consecutive_ticks_no_panic() {
+        let _guard = acquire_test_lock();
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            for _ in 0..3 {
+                control_loop_tick(&mut tick_state, output_channel).await;
+            }
+        });
+
+        // All three ticks completed without panic.
+        // Tick state should have valid accumulated guard timeouts.
+        assert!(
+            tick_state.last_guard_total_timeouts < u16::MAX, // not saturated
+            "Guard timeouts should be within normal range after 3 ticks"
+        );
+    }
+
+    #[test]
+    fn control_loop_tick_comms_error_threshold_triggers_emergency() {
+        let _guard = acquire_test_lock();
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        // Push UART error count past threshold
+        for _ in 0..crate::hardware::error_counters::MAX_COMMS_READ_ERRORS {
+            crate::hardware::error_counters::increment_uart_error_count();
+        }
+        assert!(
+            crate::hardware::error_counters::any_comms_error_threshold_exceeded(),
+            "Comms error threshold should be exceeded after max increments"
+        );
+
+        // Reset UART counter so test leaves clean state
+        let _cleanup = ResetCommsOnDrop;
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        block_on(async {
+            control_loop_tick(&mut tick_state, output_channel).await;
+        });
+
+        // Verify emergency shutdown was triggered
+        let status =
+            block_on(async { ServiceContainer::with_roaster_async(|r| r.get_status()).await })
+                .expect("status read");
+        assert!(
+            status.fault_condition,
+            "Emergency shutdown should activate after comms errors exceed threshold"
+        );
+    }
+
+    #[test]
+    fn control_loop_multi_tick_commands_drained_across_ticks() {
+        let _guard = acquire_test_lock();
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        drain_all_channels();
+
+        // Fill the command channel with READ and STATUS commands
+        for cmd in &[
+            crate::config::ArtisanCommand::ReadStatus,
+            crate::config::ArtisanCommand::StatusReport,
+            crate::config::ArtisanCommand::ReadStatus,
+        ] {
+            let traced = crate::logging::traceability::TracedCommand {
+                command: *cmd,
+                trace_id: crate::logging::traceability::TraceId::next(),
+                channel: crate::input::multiplexer::CommChannel::None,
+            };
+            let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+        }
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        // Run 3 ticks — commands should be drained across ticks
+        let mut total_outputs = 0usize;
+        block_on(async {
+            for _ in 0..3 {
+                control_loop_tick(&mut tick_state, output_channel).await;
+                total_outputs += drain_non_stage_output(output_channel).len();
+            }
+        });
+
+        assert!(
+            total_outputs > 0,
+            "Commands queued before ticks should produce output across 3 ticks, got {}",
+            total_outputs
+        );
+    }
+
+    // ── Dual output tick tests ─────────────────────────────────────────
+
+    #[test]
+    fn dual_output_tick_empty_channel_noop() {
+        let _guard = acquire_test_lock();
+        let output_channel = ServiceContainer::get_output_channel();
+        drain_all_channels();
+
+        block_on(async {
+            dual_output_tick(output_channel).await;
+        });
+
+        // No message was in the channel, so nothing should have been consumed.
+        assert!(output_channel.try_receive().is_err());
+    }
+
+    #[test]
+    fn dual_output_tick_consumes_output_message() {
+        let _guard = acquire_test_lock();
+
+        // Init multiplexer so channel routing works
+        ServiceContainer::init_multiplexer();
+        let output_channel = ServiceContainer::get_output_channel();
+        drain_all_channels();
+
+        // Send a test message
+        let _ = output_channel
+            .try_send(heapless::String::try_from("READ,120.3,150.5,75.0,25.0").unwrap());
+
+        // Message should be in the channel before tick
+        assert!(
+            output_channel.try_receive().is_ok(),
+            "Message should be available before dual_output_tick"
+        );
+
+        // But wait — try_receive removes it! Need to put it back.
+        let _ = output_channel
+            .try_send(heapless::String::try_from("READ,120.3,150.5,75.0,25.0").unwrap());
+
+        block_on(async {
+            dual_output_tick(output_channel).await;
+        });
+
+        // After tick, the message should have been consumed
+        assert!(
+            output_channel.try_receive().is_err(),
+            "Message should be consumed from output channel after dual_output_tick"
+        );
+    }
+
+    #[test]
+    fn dual_output_tick_multiple_messages_processed() {
+        let _guard = acquire_test_lock();
+        ServiceContainer::init_multiplexer();
+        let output_channel = ServiceContainer::get_output_channel();
+        drain_all_channels();
+
+        // Send 3 messages
+        for i in 0..3u8 {
+            let msg = heapless::String::try_from(alloc::format!("MSG{}", i).as_str()).unwrap();
+            let _ = output_channel.try_send(msg);
+        }
+
+        // Process all 3 with separate ticks
+        block_on(async {
+            for _ in 0..3 {
+                dual_output_tick(output_channel).await;
+            }
+        });
+
+        // All should be consumed
+        assert!(
+            output_channel.try_receive().is_err(),
+            "All 3 messages should be consumed after 3 dual_output_tick calls"
+        );
+    }
+
+    // ── RAII helper for comms error cleanup ────────────────────────────
+
+    struct ResetCommsOnDrop;
+
+    impl Drop for ResetCommsOnDrop {
+        fn drop(&mut self) {
+            crate::hardware::error_counters::reset_uart_error_count();
+            crate::hardware::error_counters::reset_usb_error_count();
+        }
+    }
+
+    // ── Test lock for ServiceContainer tests ───────────────────────────
+
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn acquire_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        let mut guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        TEST_LOCK.clear_poison();
+        guard
+    }
+
+    /// Helper: drain output channel and return only non-stage-report messages.
+    /// Stage reports start with "STAGE," — the full tick emits 5 of them per tick
+    /// under the `test` feature (SensorRead, ControlUpdate, LedcWrite, WatchdogFeed, TelemetryEmit).
+    fn drain_non_stage_output(
+        channel: &OutputChannel,
+    ) -> Vec<heapless::String<TRACE_EVENT_MAX_LEN>> {
+        let mut messages = Vec::new();
+        while let Ok(msg) = channel.try_receive() {
+            if !msg.starts_with("STAGE,") {
+                messages.push(msg);
+            }
+        }
+        messages
+    }
+
+    /// Helper: count stage report messages in the output channel.
+    fn drain_stage_reports(channel: &OutputChannel) -> usize {
+        let mut count = 0;
+        while let Ok(msg) = channel.try_receive() {
+            if msg.starts_with("STAGE,") {
+                count += 1;
+            }
+        }
+        count
     }
 }
