@@ -1,0 +1,16 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 75%
+        threshold: 2%
+        base: auto
+    patch:
+      default:
+        target: 70%
+        informational: false
+  precision: 2
+
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default

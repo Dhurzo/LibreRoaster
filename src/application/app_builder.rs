@@ -4,13 +4,15 @@ use crate::control::RoasterControl;
 #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use crate::hardware::sensors::SensorConversionHub;
+#[cfg(target_arch = "riscv32")]
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
 use crate::output::artisan::ArtisanFormatter;
+#[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::peripherals::UART0;
 
-use crate::safety::regression;
 use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
 use alloc::boxed::Box;
 use log::info;
@@ -19,6 +21,7 @@ use log::info;
 use crate::hardware::sensors::SimulatedSensorSource;
 
 pub struct AppBuilder {
+    #[cfg(target_arch = "riscv32")]
     uart0: Option<UART0<'static>>,
     #[cfg(target_arch = "riscv32")]
     uart_rx: Option<esp_hal::peripherals::GPIO20<'static>>,
@@ -39,6 +42,7 @@ impl Default for AppBuilder {
 impl AppBuilder {
     pub fn new() -> Self {
         Self {
+            #[cfg(target_arch = "riscv32")]
             uart0: None,
             #[cfg(target_arch = "riscv32")]
             uart_rx: None,
@@ -51,6 +55,7 @@ impl AppBuilder {
         }
     }
 
+    #[cfg(target_arch = "riscv32")]
     pub fn with_uart(mut self, uart0: UART0<'static>) -> Self {
         self.uart0 = Some(uart0);
         self
@@ -116,11 +121,6 @@ impl AppBuilder {
             initialize_uart_system(uart0, rx, tx).map_err(BuildError::UartInit)?;
         }
 
-        #[cfg(not(target_arch = "riscv32"))]
-        if let Some(uart0) = self.uart0 {
-            initialize_uart_system(uart0).map_err(BuildError::UartInit)?;
-        }
-
         let fan: Box<dyn Fan + Send> = self
             .fan
             .ok_or(BuildError::MissingPeripheral("Fan Controller"))?;
@@ -180,6 +180,7 @@ impl Application {
         Ok(())
     }
 
+    #[cfg(target_arch = "riscv32")]
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
         use crate::hardware::uart::tasks::{queue_processor_task, uart_reader_task};
         use crate::hardware::usb_cdc::tasks::{usb_queue_processor_task, usb_reader_task};
@@ -194,7 +195,6 @@ impl Application {
             .spawn(usb_reader_task())
             .map_err(TaskError::SpawnFailed)?;
 
-        // Spawn queue processor tasks to consume commands from queues
         spawner
             .spawn(queue_processor_task())
             .map_err(TaskError::SpawnFailed)?;
@@ -210,12 +210,9 @@ impl Application {
             .spawn(super::control_loop_task())
             .map_err(TaskError::SpawnFailed)?;
 
-        #[cfg(target_arch = "riscv32")]
-        {
-            spawner
-                .spawn(regression::regression_task())
-                .map_err(TaskError::SpawnFailed)?;
-        }
+        spawner
+            .spawn(crate::safety::regression::regression_task())
+            .map_err(TaskError::SpawnFailed)?;
 
         info!("All application tasks started successfully");
         Ok(())
@@ -276,5 +273,122 @@ impl core::fmt::Display for TaskError {
             TaskError::VerificationFailed(e) => write!(f, "Verification failed: {:?}", e),
             TaskError::SpawnFailed(e) => write!(f, "Failed to spawn task: {:?}", e),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    // ── BuildError Display ──────────────────────
+
+    #[test]
+    fn build_error_uart_init_display() {
+        let err = BuildError::UartInit(crate::hardware::uart::UartError::InitError);
+        let msg = format!("{}", err);
+        assert!(msg.contains("UART"));
+        assert!(msg.contains("InitError"));
+    }
+
+    #[test]
+    fn build_error_roaster_init_display() {
+        let err = BuildError::RoasterInit(crate::control::RoasterError::SensorFault {
+            source: Some("test"),
+        });
+        let msg = format!("{}", err);
+        assert!(msg.contains("Roaster"));
+        assert!(msg.contains("SensorFault"));
+    }
+
+    #[test]
+    fn build_error_artisan_init_display() {
+        let err = BuildError::ArtisanInit(crate::input::InputError::ParseError);
+        let msg = format!("{}", err);
+        assert!(msg.contains("Artisan"));
+    }
+
+    #[test]
+    fn build_error_watchdog_init_display() {
+        let err = BuildError::WatchdogInit(WatchdogError::InitializationFailed);
+        let msg = format!("{}", err);
+        assert!(msg.contains("Watchdog"));
+    }
+
+    #[test]
+    fn build_error_container_init_display() {
+        let err = BuildError::ContainerInit("test component");
+        let msg = format!("{}", err);
+        assert!(msg.contains("container"));
+        assert!(msg.contains("test component"));
+    }
+
+    #[test]
+    fn build_error_missing_peripheral_display() {
+        let err = BuildError::MissingPeripheral("SSR Heater");
+        let msg = format!("{}", err);
+        assert!(msg.contains("Missing"));
+        assert!(msg.contains("SSR Heater"));
+    }
+
+    // ── BuildError PartialEq ────────────────────
+
+    #[test]
+    fn build_error_equality() {
+        let a = BuildError::MissingPeripheral("fan");
+        let b = BuildError::MissingPeripheral("fan");
+        let c = BuildError::MissingPeripheral("heater");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ── VerificationError Display ───────────────
+
+    #[test]
+    fn verification_error_not_built_display() {
+        let err = VerificationError::NotBuilt;
+        let msg = format!("{}", err);
+        assert!(msg.contains("not built"));
+    }
+
+    #[test]
+    fn verification_error_services_not_initialized_display() {
+        let err = VerificationError::ServicesNotInitialized;
+        let msg = format!("{}", err);
+        assert!(msg.contains("not initialized"));
+    }
+
+    #[test]
+    fn verification_error_equality() {
+        assert_eq!(VerificationError::NotBuilt, VerificationError::NotBuilt);
+        assert_ne!(
+            VerificationError::NotBuilt,
+            VerificationError::ServicesNotInitialized
+        );
+    }
+
+    // ── TaskError Display ───────────────────────
+
+    #[test]
+    fn task_error_verification_failed_display() {
+        let err = TaskError::VerificationFailed(VerificationError::NotBuilt);
+        let msg = format!("{}", err);
+        assert!(msg.contains("Verification"));
+    }
+
+    #[test]
+    fn task_error_spawn_failed_display() {
+        use embassy_executor::SpawnError;
+        let err = TaskError::SpawnFailed(SpawnError::Busy);
+        let msg = format!("{}", err);
+        assert!(msg.contains("spawn"));
+    }
+
+    #[test]
+    fn task_error_debug_output() {
+        use embassy_executor::SpawnError;
+        let err = TaskError::SpawnFailed(SpawnError::Busy);
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("SpawnFailed") || msg.contains("Busy"));
     }
 }

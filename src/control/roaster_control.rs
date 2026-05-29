@@ -999,3 +999,347 @@ impl RoasterControl {
         &mut self.dispatch
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::common::{StubFan, StubHeater};
+    use crate::config::{ArtisanCommand, RoasterCommand, RoasterState};
+    use crate::hardware::sensors::SensorConversionHub;
+    use alloc::boxed::Box;
+    use embassy_time::Instant;
+
+    fn make_control() -> RoasterControl {
+        let heater = Box::new(StubHeater::new());
+        let fan = Box::new(StubFan::new());
+        RoasterControl::new(heater, fan, SensorConversionHub::new())
+            .expect("test control should build")
+    }
+
+    fn make_control_with_stubs(heater: StubHeater, fan: StubFan) -> RoasterControl {
+        RoasterControl::new(Box::new(heater), Box::new(fan), SensorConversionHub::new())
+            .expect("test control should build")
+    }
+
+    // ── Construction and static methods ──────────
+
+    #[test]
+    fn construction_defaults_to_idle() {
+        let ctrl = make_control();
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+        assert_eq!(ctrl.get_status().state, RoasterState::Idle);
+        assert!(!ctrl.get_status().fault_condition);
+        assert_eq!(ctrl.get_fan_speed(), 0.0);
+    }
+
+    #[test]
+    fn is_temperature_valid_accepts_normal() {
+        assert!(RoasterControl::is_temperature_valid(25.0));
+        assert!(RoasterControl::is_temperature_valid(0.0));
+        assert!(RoasterControl::is_temperature_valid(200.0));
+    }
+
+    #[test]
+    fn is_temperature_valid_rejects_nan() {
+        assert!(!RoasterControl::is_temperature_valid(f32::NAN));
+    }
+
+    #[test]
+    fn is_temperature_valid_rejects_extreme() {
+        assert!(!RoasterControl::is_temperature_valid(9999.0));
+        assert!(!RoasterControl::is_temperature_valid(-9999.0));
+    }
+
+    // ── Getters ─────────────────────────────────
+
+    #[test]
+    fn get_fan_speed_returns_status_value() {
+        let ctrl = make_control();
+        assert_eq!(ctrl.get_fan_speed(), 0.0);
+    }
+
+    #[test]
+    fn status_mut_allows_modification() {
+        let mut ctrl = make_control();
+        let status = ctrl.status_mut();
+        status.bean_temp = 150.0;
+        status.env_temp = 200.0;
+        assert_eq!(ctrl.get_status().bean_temp, 150.0);
+        assert_eq!(ctrl.get_status().env_temp, 200.0);
+    }
+
+    // ── Emergency shutdown ──────────────────────
+
+    #[test]
+    fn emergency_shutdown_changes_state_and_returns_error() {
+        let mut ctrl = make_control();
+        let result = ctrl.emergency_shutdown("test shutdown");
+        assert!(matches!(
+            result,
+            Err(RoasterError::EmergencyShutdown { .. })
+        ));
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert!(ctrl.get_status().fault_condition);
+    }
+
+    #[test]
+    fn emergency_shutdown_fan_goes_to_100() {
+        let heater = StubHeater::new();
+        let fan = StubFan::new();
+        let mut ctrl = make_control_with_stubs(heater, fan);
+        let _ = ctrl.emergency_shutdown("test");
+        assert_eq!(ctrl.get_status().fan_output, 100.0);
+    }
+
+    // ── Overtemp regression ─────────────────────
+
+    #[test]
+    fn mark_overtemp_regression_active_sets_flag() {
+        let mut ctrl = make_control();
+        ctrl.mark_overtemp_regression_active(true);
+        assert!(ctrl.get_status().overtemp_regression_active);
+    }
+
+    #[test]
+    fn mark_overtemp_regression_active_clears_flag() {
+        let mut ctrl = make_control();
+        ctrl.mark_overtemp_regression_active(true);
+        ctrl.mark_overtemp_regression_active(false);
+        assert!(!ctrl.get_status().overtemp_regression_active);
+    }
+
+    // ── Update temperatures ─────────────────────
+
+    #[test]
+    fn update_temperatures_normal() {
+        let mut ctrl = make_control();
+        let now = Instant::from_millis(1000);
+        let result = ctrl.update_temperatures(150.0, 120.0, now);
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_status().bean_temp, 150.0);
+        assert_eq!(ctrl.get_status().env_temp, 120.0);
+    }
+
+    #[test]
+    fn update_temperatures_overtemp_triggers_emergency() {
+        let mut ctrl = make_control();
+        let now = Instant::from_millis(1000);
+        // OVERTEMP_THRESHOLD is 260°C, MAX_VALID_TEMP is 350°C
+        let result = ctrl.update_temperatures(300.0, 25.0, now);
+        assert!(result.is_err());
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert!(ctrl.get_status().fault_condition);
+    }
+
+    // ── Process command ─────────────────────────
+
+    #[test]
+    fn process_stop_roast_returns_to_idle() {
+        let mut ctrl = make_control();
+        let now = Instant::from_millis(1000);
+        let result = ctrl.process_command(RoasterCommand::StopRoast, now);
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+    }
+
+    #[test]
+    fn process_stop_roast_clears_fault() {
+        let heater = StubHeater::new();
+        let fan = StubFan::new();
+        let mut ctrl = make_control_with_stubs(heater, fan);
+        let _ = ctrl.emergency_shutdown("fault");
+        assert!(ctrl.get_status().fault_condition);
+        let now = Instant::from_millis(2000);
+        let result = ctrl.process_command(RoasterCommand::StopRoast, now);
+        assert!(result.is_ok());
+        assert!(!ctrl.get_status().fault_condition);
+    }
+
+    #[test]
+    fn process_emergency_stop_triggers_safety() {
+        let heater = StubHeater::new();
+        let fan = StubFan::new();
+        let mut ctrl = make_control_with_stubs(heater, fan);
+        let now = Instant::from_millis(1000);
+        let result = ctrl.process_command(RoasterCommand::EmergencyStop, now);
+        assert!(matches!(
+            result,
+            Err(RoasterError::TemperatureOutOfRange { .. })
+        ));
+        assert!(ctrl.get_status().fault_condition);
+    }
+
+    #[test]
+    fn process_set_heater_manual_triggers_manual_policy() {
+        let heater = StubHeater::new();
+        let fan = StubFan::new();
+        let mut ctrl = make_control_with_stubs(heater, fan);
+        let now = Instant::from_millis(1000);
+        let result = ctrl.process_command(RoasterCommand::SetHeaterManual(50), now);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn process_set_fan_manual_triggers_manual_policy() {
+        let heater = StubHeater::new();
+        let fan = StubFan::new();
+        let mut ctrl = make_control_with_stubs(heater, fan);
+        let now = Instant::from_millis(1000);
+        let result = ctrl.process_command(RoasterCommand::SetFanManual(75), now);
+        assert!(result.is_ok());
+    }
+
+    // ── Process Artisan command ─────────────────
+
+    #[test]
+    fn artisan_stop_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_emergency_stop_triggers_emergency() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_set_pid_gain_updates_gains() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetPidGain(1.0, 0.1, 0.05));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_set_target_temp_valid() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_status().target_temp, 200.0);
+    }
+
+    #[test]
+    fn artisan_set_target_temp_out_of_range_rejected() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(999.0));
+        assert!(matches!(
+            result,
+            Err(RoasterError::InvalidState {
+                source: Some("target_temp_out_of_range")
+            })
+        ));
+    }
+
+    #[test]
+    fn artisan_start_roast_starts_streaming() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_set_pid_channel_switches_channel() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetPidChannel(1));
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_status().pid_channel, 1);
+    }
+
+    #[test]
+    fn artisan_set_pid_cycle_time_updates() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetPidCycleTime(500));
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_status().pid_cycle_time_ms, 500);
+    }
+
+    #[test]
+    fn artisan_set_pid_output_limits_updates() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetPidOutputLimits(10.0, 90.0));
+        assert!(result.is_ok());
+        assert_eq!(ctrl.get_status().pid_output_min, 10.0);
+        assert_eq!(ctrl.get_status().pid_output_max, 90.0);
+    }
+
+    #[test]
+    fn artisan_chan_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::Chan(4));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_units_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::Units(true));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_filt_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::Filt(5));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_status_report_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::StatusReport);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_preheat_sets_target() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_set_profile_with_no_data_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetProfile);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_set_fan_profile_with_no_data_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::SetFanProfile);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn artisan_run_regression_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::RunRegression);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn accessor_methods_return_references() {
+        let mut ctrl = make_control();
+        let _s = ctrl.sensor();
+        let _a = ctrl.actuator();
+        let _sa = ctrl.safety();
+        let _d = ctrl.dispatch();
+        let _sm = ctrl.sensor_mut();
+        let _am = ctrl.actuator_mut();
+        let _sam = ctrl.safety_mut();
+        let _dm = ctrl.dispatch_mut();
+    }
+
+    // ── Read status (READ command) ──────────────
+
+    #[test]
+    fn artisan_read_status_returns_ok() {
+        let mut ctrl = make_control();
+        let result = ctrl.process_artisan_command(ArtisanCommand::ReadStatus);
+        assert!(result.is_ok());
+    }
+}

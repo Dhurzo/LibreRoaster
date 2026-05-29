@@ -332,6 +332,177 @@ mod tests {
             Some((MAX_PROFILE_SETPOINTS - 1) as u8 * 6)
         );
     }
+
+    // ── RoastProfile interpolation ──────────────
+
+    fn make_roast_profile(pairs: &[(u32, f32)]) -> RoastProfile {
+        let mut p = RoastProfile::new();
+        for &(t, temp) in pairs {
+            p.setpoints
+                .push(ProfileSetpoint {
+                    time_secs: t,
+                    temperature: temp,
+                })
+                .unwrap();
+        }
+        p
+    }
+
+    #[test]
+    fn roast_profile_empty_returns_none() {
+        let p = RoastProfile::new();
+        assert_eq!(p.target_at(0), None);
+        assert_eq!(p.target_at(100), None);
+    }
+
+    #[test]
+    fn roast_profile_before_first_returns_first() {
+        let p = make_roast_profile(&[(10, 150.0), (120, 200.0)]);
+        assert_eq!(p.target_at(0), Some(150.0));
+        assert_eq!(p.target_at(5), Some(150.0));
+    }
+
+    #[test]
+    fn roast_profile_exact_setpoint() {
+        let p = make_roast_profile(&[(0, 25.0), (120, 150.0), (300, 200.0)]);
+        assert_eq!(p.target_at(0), Some(25.0));
+        assert_eq!(p.target_at(120), Some(150.0));
+        assert_eq!(p.target_at(300), Some(200.0));
+    }
+
+    #[test]
+    fn roast_profile_interpolation_midpoint() {
+        // (0s, 0°C) → (120s, 120°C): at 60s → 60°C
+        let p = make_roast_profile(&[(0, 0.0), (120, 120.0)]);
+        assert_eq!(p.target_at(60), Some(60.0));
+    }
+
+    #[test]
+    fn roast_profile_interpolation_median() {
+        // (120s, 150°C) → (300s, 200°C): at 210s → 175°C
+        let p = make_roast_profile(&[(120, 150.0), (300, 200.0)]);
+        let expected = 150.0 + (200.0 - 150.0) * (210.0 - 120.0) / (300.0 - 120.0);
+        assert_eq!(p.target_at(210), Some(expected));
+    }
+
+    #[test]
+    fn roast_profile_after_last_holds() {
+        let p = make_roast_profile(&[(0, 20.0), (120, 200.0)]);
+        assert_eq!(p.target_at(200), Some(200.0));
+        assert_eq!(p.target_at(999), Some(200.0));
+    }
+
+    #[test]
+    fn roast_profile_single_setpoint() {
+        let p = make_roast_profile(&[(0, 200.0)]);
+        assert_eq!(p.target_at(0), Some(200.0));
+        assert_eq!(p.target_at(100), Some(200.0));
+    }
+
+    #[test]
+    fn roast_profile_zero_interval_skips_division() {
+        // Two setpoints at same time: interpolation skips division-by-zero
+        let p = make_roast_profile(&[(0, 0.0), (0, 100.0)]);
+        let result = p.target_at(0);
+        assert!(result.is_some());
+        // At exact first-setpoint time, returns first setpoint's temp
+        assert_eq!(result, Some(0.0));
+    }
+
+    // ── is_valid_target_temp ────────────────────
+
+    #[test]
+    fn valid_target_temp_returns_true() {
+        assert!(is_valid_target_temp(25.0));
+        assert!(is_valid_target_temp(0.0));
+        assert!(is_valid_target_temp(300.0));
+        assert!(is_valid_target_temp(200.0));
+    }
+
+    #[test]
+    fn valid_target_temp_out_of_range_returns_false() {
+        assert!(!is_valid_target_temp(-1.0));
+        assert!(!is_valid_target_temp(301.0));
+    }
+
+    #[test]
+    fn valid_target_temp_nan_returns_false() {
+        assert!(!is_valid_target_temp(f32::NAN));
+    }
+
+    #[test]
+    fn valid_target_temp_infinite_returns_false() {
+        assert!(!is_valid_target_temp(f32::INFINITY));
+        assert!(!is_valid_target_temp(f32::NEG_INFINITY));
+    }
+
+    // ── TemperatureSettings ─────────────────────
+
+    #[test]
+    fn temperature_settings_default_is_celsius() {
+        let ts = TemperatureSettings::new();
+        assert_eq!(ts.get_scale(), TemperatureScale::Celsius);
+        assert!(!ts.is_fahrenheit());
+    }
+
+    #[test]
+    fn temperature_settings_set_scale() {
+        let mut ts = TemperatureSettings::new();
+        ts.set_scale(TemperatureScale::Fahrenheit);
+        assert_eq!(ts.get_scale(), TemperatureScale::Fahrenheit);
+        assert!(ts.is_fahrenheit());
+    }
+
+    #[test]
+    fn temperature_settings_celsius_conversion() {
+        let ts = TemperatureSettings::new();
+        assert_eq!(ts.convert_to_display(100.0), 100.0);
+        assert_eq!(ts.convert_to_display(0.0), 0.0);
+        assert_eq!(ts.convert_to_display(-40.0), -40.0);
+    }
+
+    #[test]
+    fn temperature_settings_fahrenheit_conversion() {
+        let mut ts = TemperatureSettings::new();
+        ts.set_scale(TemperatureScale::Fahrenheit);
+        assert_eq!(ts.convert_to_display(0.0), 32.0);
+        assert_eq!(ts.convert_to_display(100.0), 212.0);
+        assert_eq!(ts.convert_to_display(-40.0), -40.0);
+    }
+
+    // ── SystemStatus default ────────────────────
+
+    #[test]
+    fn system_status_default_values() {
+        let s = SystemStatus::default();
+        assert_eq!(s.state, RoasterState::Idle);
+        assert_eq!(s.bean_temp, 0.0);
+        assert_eq!(s.env_temp, 0.0);
+        assert_eq!(s.target_temp, DEFAULT_TARGET_TEMP);
+        assert!(!s.pid_enabled);
+        assert!(!s.artisan_control);
+        assert!(!s.fault_condition);
+        assert_eq!(s.ssr_hardware_status, SsrHardwareStatus::NotDetected);
+        assert!(s.watchdog_feed_ok);
+        assert_eq!(s.pid_channel, 2);
+        assert_eq!(s.pid_cycle_time_ms, PID_SAMPLE_TIME_MS);
+        assert_eq!(s.pid_output_min, 0.0);
+        assert_eq!(s.pid_output_max, 100.0);
+    }
+
+    // ── Safety thresholds ───────────────────────
+
+    #[test]
+    fn safety_thresholds_are_sane() {
+        const _: () = {
+            assert!(MAX_SAFE_TEMP < OVERTEMP_THRESHOLD);
+            assert!(OVERTEMP_THRESHOLD <= MAX_TEMP);
+            assert!(MAX_TEMP > DEFAULT_TARGET_TEMP);
+            assert!(MAX_BT_RATE_OF_RISE > 0.0);
+            assert!(MAX_ROAST_TIME_SECS > 0);
+        };
+        assert!(WATCHDOG_FEED_INTERVAL_MS < HW_WATCHDOG_TIMEOUT_SECS as u64 * 1000);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

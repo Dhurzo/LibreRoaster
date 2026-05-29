@@ -241,3 +241,254 @@ pub trait SafetyPolicy: Send {
     /// Clear the emergency flag.
     fn clear_emergency(&mut self);
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::config::SystemStatus;
+    use crate::memory::POLICY_MSG_MAX_LEN;
+
+    // ── ManualPolicyOutcome ─────────────────────────────
+
+    #[test]
+    fn heater_constructs_with_clamped_value() {
+        let o = ManualPolicyOutcome::heater(75.0);
+        assert_eq!(o.heater_target, Some(75.0));
+        assert!(o.fan_target.is_none());
+        assert_eq!(o.pid_enabled, Some(false));
+        assert_eq!(o.artisan_control, Some(true));
+        assert!(!o.clear_manual);
+        assert!(o.success);
+        assert!(o.error_message.is_none());
+    }
+
+    #[test]
+    fn heater_clamps_above_100() {
+        let o = ManualPolicyOutcome::heater(150.0);
+        assert_eq!(o.heater_target, Some(100.0));
+    }
+
+    #[test]
+    fn heater_clamps_below_0() {
+        let o = ManualPolicyOutcome::heater(-10.0);
+        assert_eq!(o.heater_target, Some(0.0));
+    }
+
+    #[test]
+    fn fan_constructs_with_clamped_value() {
+        let o = ManualPolicyOutcome::fan(50.0);
+        assert!(o.heater_target.is_none());
+        assert_eq!(o.fan_target, Some(50.0));
+        assert_eq!(o.pid_enabled, Some(false));
+        assert_eq!(o.artisan_control, Some(true));
+        assert!(o.success);
+    }
+
+    #[test]
+    fn fan_clamps_above_100() {
+        let o = ManualPolicyOutcome::fan(200.0);
+        assert_eq!(o.fan_target, Some(100.0));
+    }
+
+    #[test]
+    fn fan_clamps_below_0() {
+        let o = ManualPolicyOutcome::fan(-5.0);
+        assert_eq!(o.fan_target, Some(0.0));
+    }
+
+    #[test]
+    fn heater_increment_adds_delta() {
+        let o = ManualPolicyOutcome::heater_increment(50.0, 10.0);
+        assert_eq!(o.heater_target, Some(60.0));
+    }
+
+    #[test]
+    fn heater_increment_clamps_at_100() {
+        let o = ManualPolicyOutcome::heater_increment(95.0, 20.0);
+        assert_eq!(o.heater_target, Some(100.0));
+    }
+
+    #[test]
+    fn heater_decrement_subtracts_delta() {
+        let o = ManualPolicyOutcome::heater_decrement(50.0, 10.0);
+        assert_eq!(o.heater_target, Some(40.0));
+    }
+
+    #[test]
+    fn heater_decrement_clamps_at_0() {
+        let o = ManualPolicyOutcome::heater_decrement(10.0, 20.0);
+        assert_eq!(o.heater_target, Some(0.0));
+    }
+
+    #[test]
+    fn stopped_clears_all_outputs() {
+        let o = ManualPolicyOutcome::stopped();
+        assert_eq!(o.heater_target, Some(0.0));
+        assert_eq!(o.fan_target, Some(0.0));
+        assert_eq!(o.pid_enabled, Some(false));
+        assert_eq!(o.artisan_control, Some(false));
+        assert!(o.clear_manual);
+        assert!(o.success);
+    }
+
+    #[test]
+    fn failed_returns_error_message() {
+        let msg = "test error";
+        let o = ManualPolicyOutcome::failed(msg);
+        assert!(!o.success);
+        assert!(o.heater_target.is_none());
+        assert!(o.fan_target.is_none());
+        assert_eq!(o.error_message.as_deref(), Some(msg));
+    }
+
+    #[test]
+    fn failed_message_exceeds_max_len_returns_none() {
+        // heapless::String::try_from returns Err when message exceeds capacity,
+        // and .ok() converts that to None — fail-closed behavior.
+        let long_msg = "x".repeat(POLICY_MSG_MAX_LEN + 50);
+        let o = ManualPolicyOutcome::failed(&long_msg);
+        assert!(!o.success);
+        assert!(o.error_message.is_none());
+    }
+
+    #[test]
+    fn failed_message_at_max_len_is_preserved() {
+        let exact_msg = "x".repeat(POLICY_MSG_MAX_LEN);
+        let o = ManualPolicyOutcome::failed(&exact_msg);
+        assert!(!o.success);
+        assert_eq!(o.error_message.as_deref(), Some(exact_msg.as_str()));
+    }
+
+    #[test]
+    fn apply_manual_heater_to_status() {
+        let mut status = SystemStatus::default();
+        let o = ManualPolicyOutcome::heater(80.0);
+        o.apply_to_status(&mut status);
+        assert_eq!(status.ssr_output, 80.0);
+        assert!(!status.pid_enabled);
+        assert!(status.artisan_control);
+    }
+
+    #[test]
+    fn apply_manual_fan_to_status() {
+        let mut status = SystemStatus::default();
+        let o = ManualPolicyOutcome::fan(60.0);
+        o.apply_to_status(&mut status);
+        assert_eq!(status.fan_output, 60.0);
+        assert!(!status.pid_enabled);
+        assert!(status.artisan_control);
+    }
+
+    #[test]
+    fn apply_manual_stopped_to_status() {
+        let mut status = SystemStatus {
+            ssr_output: 80.0,
+            fan_output: 60.0,
+            ..Default::default()
+        };
+        let o = ManualPolicyOutcome::stopped();
+        o.apply_to_status(&mut status);
+        assert_eq!(status.ssr_output, 0.0);
+        assert_eq!(status.fan_output, 0.0);
+        assert!(!status.pid_enabled);
+        assert!(!status.artisan_control);
+    }
+
+    #[test]
+    fn apply_manual_partial_ignores_none_fields() {
+        let mut status = SystemStatus {
+            pid_enabled: true,
+            ..Default::default()
+        };
+        let o = ManualPolicyOutcome::fan(50.0);
+        o.apply_to_status(&mut status);
+        assert_eq!(status.ssr_output, 0.0);
+        assert_eq!(status.fan_output, 50.0);
+    }
+
+    #[test]
+    fn manual_policy_default_is_success_false() {
+        let o = ManualPolicyOutcome::default();
+        assert!(!o.success);
+        assert!(o.heater_target.is_none());
+        assert!(o.fan_target.is_none());
+        assert!(o.error_message.is_none());
+    }
+
+    // ── SafetyPolicyOutcome ─────────────────────────────
+
+    #[test]
+    fn safety_normal_has_no_emergency() {
+        let o = SafetyPolicyOutcome::normal();
+        assert!(!o.emergency_active);
+        assert!(!o.fault_condition);
+        assert!(!o.zero_ssr);
+        assert!(!o.disable_pid);
+        assert!(o.ssr_hardware_status.is_none());
+        assert!(o.reason.is_none());
+    }
+
+    #[test]
+    fn safety_emergency_sets_all_flags() {
+        let o = SafetyPolicyOutcome::emergency("overheat");
+        assert!(o.emergency_active);
+        assert!(o.fault_condition);
+        assert!(o.zero_ssr);
+        assert!(o.disable_pid);
+        assert_eq!(o.ssr_hardware_status, Some(SsrHardwareStatus::Error));
+        assert_eq!(o.reason.as_deref(), Some("overheat"));
+    }
+
+    #[test]
+    fn safety_emergency_reason_exceeds_max_len_returns_none() {
+        let long_reason = "y".repeat(POLICY_MSG_MAX_LEN + 50);
+        let o = SafetyPolicyOutcome::emergency(&long_reason);
+        assert_eq!(o.reason.as_deref(), None);
+    }
+
+    #[test]
+    fn safety_emergency_reason_at_max_len_is_preserved() {
+        let exact_reason = "y".repeat(POLICY_MSG_MAX_LEN);
+        let o = SafetyPolicyOutcome::emergency(&exact_reason);
+        assert_eq!(o.reason.as_deref(), Some(exact_reason.as_str()));
+    }
+
+    #[test]
+    fn apply_safety_normal_does_not_mutate() {
+        let mut status = SystemStatus {
+            ssr_output: 50.0,
+            pid_enabled: true,
+            ..Default::default()
+        };
+        let o = SafetyPolicyOutcome::normal();
+        o.apply_to_status(&mut status);
+        assert_eq!(status.ssr_output, 50.0);
+        assert!(status.pid_enabled);
+        assert!(!status.fault_condition);
+    }
+
+    #[test]
+    fn apply_safety_emergency_zeroes_ssr() {
+        let mut status = SystemStatus {
+            ssr_output: 80.0,
+            pid_enabled: true,
+            ssr_hardware_status: SsrHardwareStatus::Available,
+            ..Default::default()
+        };
+        let o = SafetyPolicyOutcome::emergency("test");
+        o.apply_to_status(&mut status);
+        assert_eq!(status.ssr_output, 0.0);
+        assert!(!status.pid_enabled);
+        assert!(status.fault_condition);
+        assert_eq!(status.ssr_hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn safety_policy_default_has_no_emergency() {
+        let o = SafetyPolicyOutcome::default();
+        assert!(!o.emergency_active);
+        assert!(!o.fault_condition);
+        assert!(!o.zero_ssr);
+    }
+}
