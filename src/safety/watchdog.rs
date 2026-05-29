@@ -167,3 +167,84 @@ mod hw_watchdog {
 }
 
 pub use hw_watchdog::{feed as feed_hw_watchdog, init as init_hw_watchdog};
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_error_reason_initialization() {
+        assert_eq!(
+            WatchdogError::InitializationFailed.reason(),
+            "watchdog_init"
+        );
+    }
+
+    #[test]
+    fn watchdog_error_reason_not_initialized() {
+        assert_eq!(
+            WatchdogError::NotInitialized.reason(),
+            "watchdog_unavailable"
+        );
+    }
+
+    #[test]
+    fn watchdog_error_reason_feed_failed() {
+        assert_eq!(
+            WatchdogError::FeedFailed("watchdog_timeout").reason(),
+            "watchdog_timeout"
+        );
+    }
+
+    #[test]
+    fn watchdog_error_reason_custom() {
+        assert_eq!(
+            WatchdogError::FeedFailed("test_reason").reason(),
+            "test_reason"
+        );
+    }
+
+    #[test]
+    fn watchdog_feeder_initialize_returns_ok() {
+        let feeder = WatchdogFeeder::initialize();
+        assert!(feeder.is_ok());
+    }
+
+    #[test]
+    fn watchdog_feeder_is_alive_after_init() {
+        let feeder = WatchdogFeeder::initialize().unwrap();
+        assert!(feeder.is_alive());
+    }
+
+    #[test]
+    fn watchdog_feeder_no_failure_reason_after_init() {
+        let feeder = WatchdogFeeder::initialize().unwrap();
+        assert!(feeder.last_failure_reason().is_none());
+    }
+
+    #[test]
+    fn watchdog_error_debug_contains_variant() {
+        let err = WatchdogError::InitializationFailed;
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("InitializationFailed"));
+    }
+
+    #[test]
+    fn watchdog_error_clone_equality() {
+        let err = WatchdogError::FeedFailed("test");
+        assert_eq!(err, err.clone());
+    }
+
+    #[test]
+    fn watchdog_error_partial_eq() {
+        assert_eq!(
+            WatchdogError::InitializationFailed,
+            WatchdogError::InitializationFailed
+        );
+        assert_ne!(
+            WatchdogError::InitializationFailed,
+            WatchdogError::NotInitialized
+        );
+    }
+}

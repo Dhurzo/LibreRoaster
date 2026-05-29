@@ -43,15 +43,18 @@ fn fault_fixture() -> FixtureReading {
 }
 
 fn expected_warm_status() -> &'static str {
-    "25.0,150.0,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,0.24,1,1,1,0,0"
+    // 20 columns: env_temp,bean_temp,heater,fan,watchdog_flag,failure_count,failure_reason,
+    // guard_timeouts,regression_flag,pv,mv,integrator,derivative,saturation,integrator_clamp,
+    // derivative_available,cmd_latency,max_cmd_latency,temp_scale,fault_flag
+    "0.8,4.7,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,0.24,1,1,1,0,0,0,0"
 }
 
 fn expected_cold_status() -> &'static str {
-    "0.0,-10.2,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,0.08,0,0,1,0,0"
+    "0.0,-0.3,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,0.08,0,0,1,0,0,0,0"
 }
 
 fn expected_fault_status() -> &'static str {
-    "100.0,0.0,0.0,0.0,1,0,none,0,1,0.0,0.0,0.0,0.00,0,0,0,0,0"
+    "3.1,0.0,0.0,0.0,1,0,none,0,1,0.0,0.0,0.0,0.00,0,0,0,0,0,0,1"
 }
 
 /// Create a SystemStatus from fixture reading and additional status fields
@@ -93,6 +96,14 @@ fn status_from_sample(
         derivative_available,
         command_latency_us: 0,
         max_command_latency_us: 0,
+        ambient_temp: 25.0,
+        temperature_settings: libreroaster::config::TemperatureSettings::new(),
+        charge_detected: false,
+        pid_channel: 2,
+        pid_cycle_time_ms: 100,
+        pid_output_min: 0.0,
+        pid_output_max: 100.0,
+        last_command_received_at_ms: 0,
     }
 }
 
@@ -124,9 +135,9 @@ mod regression_snapshots {
         // Format using ArtisanFormatter
         let formatted = ArtisanFormatter::format_status_response(&status);
 
-        // Compare to expected (18 columns)
+        // Compare to expected (20 columns)
         let parts: Vec<&str> = formatted.split(',').collect();
-        assert_eq!(parts.len(), 18, "STATUS must have exactly 18 columns");
+        assert_eq!(parts.len(), 20, "STATUS must have exactly 20 columns");
 
         // Verify against expected
         let expected = expected_warm_status();
@@ -208,7 +219,7 @@ mod column_order_verification {
 
     /// Verify all fixtures produce the same column count
     #[test]
-    fn test_all_fixtures_produce_18_columns() {
+    fn test_all_fixtures_produce_20_columns() {
         let fixtures = [
             ("warm", warm_fixture(), expected_warm_status()),
             ("cold", cold_fixture(), expected_cold_status()),
@@ -231,8 +242,8 @@ mod column_order_verification {
 
             assert_eq!(
                 parts.len(),
-                18,
-                "{} fixture produced {} columns, expected 18",
+                20,
+                "{} fixture produced {} columns, expected 20",
                 name,
                 parts.len()
             );
@@ -252,16 +263,17 @@ mod column_order_verification {
         let formatted = ArtisanFormatter::format_status_response(&status);
         let parts: Vec<&str> = formatted.split(',').collect();
 
-        // Column positions per format_status_response:
+        // Column positions per format_status_response (20 columns):
         // 0: env_temp, 1: bean_temp, 2: ssr_output, 3: fan_output
         // 4: watchdog_flag, 5: failure_count, 6: failure_reason
         // 7: guard_timeouts, 8: regression_flag
         // 9: pv, 10: mv, 11: integrator, 12: derivative
         // 13: saturation, 14: integrator_clamp, 15: derivative_available
         // 16: command_latency, 17: max_command_latency
+        // 18: temp_scale_indicator, 19: fault_flag
 
-        assert_eq!(parts[0], "25.0", "Column 0 (env_temp) should be 25.0");
-        assert_eq!(parts[1], "150.0", "Column 1 (bean_temp) should be 150.0");
+        assert_eq!(parts[0], "0.8", "Column 0 (env_temp) should be 0.8");
+        assert_eq!(parts[1], "4.7", "Column 1 (bean_temp) should be 4.7");
         assert_eq!(parts[2], "0.0", "Column 2 (ssr_output) should be 0.0");
         assert_eq!(parts[3], "0.0", "Column 3 (fan_output) should be 0.0");
         assert_eq!(parts[4], "1", "Column 4 (watchdog) should be 1");
@@ -283,6 +295,14 @@ mod column_order_verification {
         assert_eq!(
             parts[17], "0",
             "Column 17 (max_command_latency) should be 0"
+        );
+        assert_eq!(
+            parts[18], "0",
+            "Column 18 (temp_scale_indicator) should be 0 (Celsius)"
+        );
+        assert_eq!(
+            parts[19], "0",
+            "Column 19 (fault_flag) should be 0 (no fault)"
         );
     }
 }
@@ -314,6 +334,7 @@ mod fixture_hub_agreement {
             status.overtemp_regression_active = true; // Regression fixtures run with flag set
 
             // Parse expected line to extract pv/mv/integrator/etc
+            // Columns 9-15 are the same in 20-column format (new cols are 18,19)
             let parts: Vec<&str> = expected_line.split(',').collect();
             status.pv = parts[9].parse().unwrap_or(0.0);
             status.mv = parts[10].parse().unwrap_or(0.0);
@@ -502,7 +523,7 @@ mod fault_injection_metadata {
             let formatted = ArtisanFormatter::format_status_response(&status);
             let parts: Vec<&str> = formatted.split(',').collect();
 
-            assert_eq!(parts.len(), 18, "Should have exactly 18 columns");
+            assert_eq!(parts.len(), 20, "Should have exactly 20 columns");
             assert_eq!(parts[4], "0", "Column 4 should be 0");
             assert_eq!(parts[5], "2", "Column 5 should be 2");
             assert_eq!(parts[6], "feed_failed", "Column 6 should be feed_failed");

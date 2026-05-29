@@ -188,11 +188,11 @@ impl ArtisanFormatter {
         buf
     }
 
-    /// Format STATUS response with 18 CSV fields.
+    /// Format STATUS response with 20 CSV fields.
     ///
     /// Buffer capacity: RESPONSE_BUFFER_SIZE=512 bytes.
-    /// The STATUS line consists of 18 fields (ET, BT, heater, fan, watchdog flags,
-    /// failure reason, PID state, and latency metrics). This must fit in 512 bytes.
+    /// The STATUS line consists of 20 fields (ET, BT, heater, fan, watchdog flags,
+    /// failure reason, PID state, latency metrics, temp scale, fault flag).
     pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
         let et = Self::normalize_read_value(
             status

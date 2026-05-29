@@ -310,7 +310,8 @@ mod tests {
         assert!(r1.is_ok());
         assert_eq!(ctrl.ror_exceeded_count, 1);
 
-        status.derivative_rate = 2.0;
+        // Reset to a rate below MAX_BT_RATE_OF_RISE (0.5°C/s)
+        status.derivative_rate = 0.3;
         let r2 = ctrl.check_rate_of_rise(&status);
         assert!(r2.is_ok());
         assert_eq!(ctrl.ror_exceeded_count, 0);

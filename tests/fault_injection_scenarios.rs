@@ -201,6 +201,14 @@ fn status_for_scenario(scenario: Scenario) -> SystemStatus {
         derivative_available: true,
         command_latency_us: 0,
         max_command_latency_us: 0,
+        ambient_temp: 25.0,
+        temperature_settings: libreroaster::config::TemperatureSettings::new(),
+        charge_detected: false,
+        pid_channel: 2,
+        pid_cycle_time_ms: 100,
+        pid_output_min: 0.0,
+        pid_output_max: 100.0,
+        last_command_received_at_ms: 0,
     }
 }
 
@@ -232,11 +240,11 @@ mod scenario_tests {
                 scenario.id
             );
 
-            // Must have expected column count (18 columns per SCENARIO_MATRIX.md)
+            // Must have expected column count (20 columns)
             assert_eq!(
                 parts.len(),
-                18,
-                "Scenario {} STATUS should have 18 columns, got {}",
+                20,
+                "Scenario {} STATUS should have 20 columns, got {}",
                 scenario.id,
                 parts.len()
             );

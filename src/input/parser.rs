@@ -421,6 +421,83 @@ pub fn fan_profile_take() -> Option<FanProfile> {
 mod tests {
     use super::*;
 
+    #[cfg(test)]
+    mod proptest_tests {
+        #![allow(clippy::unwrap_used)]
+
+        use crate::config::ArtisanCommand;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_never_panics(input: String) {
+                let _result = super::parse_artisan_command(&input);
+            }
+
+            #[test]
+            fn empty_and_whitespace_commands(
+                whitespace in prop::collection::vec(prop_oneof![
+                    Just(' '),
+                    Just('\t'),
+                    Just('\n'),
+                    Just('\r')
+                ], 0..20)
+            ) {
+                let input: String = whitespace.iter().collect();
+                let result = super::parse_artisan_command(&input);
+                assert!(matches!(result, Err(super::ParseError::EmptyCommand)));
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn known_commands_parse_correctly(index in 0u32..100) {
+                let command_table = vec![
+                    ("READ", ArtisanCommand::ReadStatus),
+                    ("STATUS", ArtisanCommand::StatusReport),
+                    ("STAT", ArtisanCommand::StatusReport),
+                    ("START", ArtisanCommand::StartRoast),
+                    ("STOP", ArtisanCommand::EmergencyStop),
+                    ("UP", ArtisanCommand::IncreaseHeater),
+                    ("DOWN", ArtisanCommand::DecreaseHeater),
+                    ("REG", ArtisanCommand::RunRegression),
+                    ("#DUMP", ArtisanCommand::DumpLog),
+                    ("OT1 0", ArtisanCommand::SetHeater(0)),
+                    ("OT1 50", ArtisanCommand::SetHeater(50)),
+                    ("OT1 100", ArtisanCommand::SetHeater(100)),
+                    ("IO3 0", ArtisanCommand::SetFan(0)),
+                    ("IO3 50", ArtisanCommand::SetFan(50)),
+                    ("IO3 100", ArtisanCommand::SetFan(100)),
+                    ("OT2 0", ArtisanCommand::SetFanSpeed(0, false)),
+                    ("OT2 50", ArtisanCommand::SetFanSpeed(50, false)),
+                    ("OT2 100", ArtisanCommand::SetFanSpeed(100, false)),
+                    ("OT2 150", ArtisanCommand::SetFanSpeed(100, true)),
+                    ("SETTARGET 150", ArtisanCommand::SetTargetTemp(150.0)),
+                    ("SETTARGET 210.5", ArtisanCommand::SetTargetTemp(210.5)),
+                    ("PREHEAT 100", ArtisanCommand::Preheat(100.0)),
+                    ("PREHEAT 200.5", ArtisanCommand::Preheat(200.5)),
+                    ("PIDGAIN 1.0 0.5 0.1", ArtisanCommand::SetPidGain(1.0, 0.5, 0.1)),
+                    ("CHAN;0", ArtisanCommand::Chan(0)),
+                    ("CHAN;999", ArtisanCommand::Chan(999)),
+                    ("UNITS;C", ArtisanCommand::Units(false)),
+                    ("UNITS;F", ArtisanCommand::Units(true)),
+                    ("FILT;5", ArtisanCommand::Filt(5)),
+                    ("FILT;70,70,70,70", ArtisanCommand::Filt(70)),
+                    ("PID;ON", ArtisanCommand::StartRoast),
+                    ("PID;OFF", ArtisanCommand::Stop),
+                    ("read", ArtisanCommand::ReadStatus),
+                    ("status", ArtisanCommand::StatusReport),
+                    ("ot1 75", ArtisanCommand::SetHeater(75)),
+                    ("Up", ArtisanCommand::IncreaseHeater),
+                ];
+
+                let (input, _expected_command) = command_table[index as usize % command_table.len()];
+                let result = super::parse_artisan_command(input);
+                assert!(matches!(result, Ok(_expected_command)));
+            }
+        }
+    }
+
     #[test]
     fn test_parse_read_command() {
         let result = parse_artisan_command("READ");

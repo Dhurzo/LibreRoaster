@@ -229,6 +229,112 @@ impl CoffeeRoasterPid {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        // a) PID output always clamped to [output_min, output_max]
+        #[test]
+        fn pid_output_always_clamped(
+            kp in 0.5f32..5.0,
+            ki in 0.1f32..0.5,
+            kd in 0.01f32..0.1,
+            target in 50.0f32..250.0,
+            temp in 20.0f32..250.0,
+            output_min in 0.0f32..50.0,
+            output_max in 50.0f32..100.0,
+            num_steps in 1u32..10
+        ) {
+            let mut pid = CoffeeRoasterPid::with_gains(kp, ki, kd);
+            pid.set_output_limits(output_min, output_max);
+            pid.enable();
+            pid.set_target(target).unwrap();
+
+            let mut current_temp = temp;
+            let mut timestamp = 0u32;
+
+            for _ in 0..num_steps {
+                let output = pid.compute_output(current_temp, timestamp);
+                assert!(output >= output_min && output <= output_max);
+
+                // Simulate temperature change
+                current_temp += (target - current_temp) * 0.1;
+                timestamp += PID_SAMPLE_TIME_MS;
+            }
+        }
+
+        // b) PID disabled always returns 0.0
+        #[test]
+        fn pid_disabled_returns_zero(
+            kp in 0.5f32..5.0,
+            ki in 0.1f32..0.5,
+            kd in 0.01f32..0.1,
+            target in 0.0f32..300.0,
+            temp in 0.0f32..300.0,
+            timestamp in 0u32..10000
+        ) {
+            let mut pid = CoffeeRoasterPid::with_gains(kp, ki, kd);
+            pid.disable();
+            pid.set_target(target).unwrap();
+
+            let output = pid.compute_output(temp, timestamp);
+            assert_eq!(output, 0.0);
+        }
+
+        // c) Integrator bounds test - integrator stays within reasonable bounds
+        #[test]
+        fn pid_integrator_bounds(
+            kp in 0.5f32..5.0,
+            ki in 0.1f32..0.5,
+            kd in 0.01f32..0.1,
+            target in 100.0f32..200.0,
+            output_min in 0.0f32..20.0,
+            output_max in 80.0f32..100.0
+        ) {
+            let mut pid = CoffeeRoasterPid::with_gains(kp, ki, kd);
+            pid.set_output_limits(output_min, output_max);
+            pid.enable();
+            pid.set_target(target).unwrap();
+
+            // Start with a large temperature difference to create sustained error
+            let current_temp = 20.0;
+            let mut timestamp = 0u32;
+
+            // Run for 10 steps with sustained error
+            for _i in 0..10 {
+                let output = pid.compute_output(current_temp, timestamp);
+                pid.update_feedback(PidFeedback::new(output, output, false));
+
+                // Check that integrator doesn't grow unbounded
+                let integrator = pid.integrator_value();
+                assert!(integrator.is_finite() && integrator.abs() < 1000.0);
+
+                // Temperature stays constant to maintain sustained error
+                timestamp += PID_SAMPLE_TIME_MS;
+            }
+        }
+
+        // d) NaN target is always rejected
+        #[test]
+        fn pid_nan_target_rejected(
+            kp in 0.5f32..5.0,
+            ki in 0.1f32..0.5,
+            kd in 0.01f32..0.1
+        ) {
+            let mut pid = CoffeeRoasterPid::with_gains(kp, ki, kd);
+
+            // Test NaN
+            assert!(pid.set_target(f32::NAN).is_err());
+
+            // Test infinity
+            assert!(pid.set_target(f32::INFINITY).is_err());
+            assert!(pid.set_target(f32::NEG_INFINITY).is_err());
+
+            // Test finite values work
+            assert!(pid.set_target(100.0).is_ok());
+            assert!(pid.set_target(0.0).is_ok());
+            assert!(pid.set_target(-50.0).is_ok());
+        }
+    }
 
     #[test]
     fn integrator_accumulates_when_actuator_accepts_energy() {
