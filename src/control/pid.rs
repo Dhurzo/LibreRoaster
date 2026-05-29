@@ -50,7 +50,7 @@ pub struct CoffeeRoasterPid {
     output_max: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PidError {
     InitializationError,
     ComputationError,
@@ -215,15 +215,18 @@ impl CoffeeRoasterPid {
                 .clamp(self.output_min, self.output_max);
             if mv > applied + SATURATION_EPSILON {
                 self.integrator_clamped = true;
-                return applied;
+                applied
+            } else {
+                mv
             }
+        } else {
+            mv
         }
-
-        mv
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -292,5 +295,67 @@ mod tests {
         assert!(pid.integrator_value() > during);
         assert!(!pid.is_integrator_clamped());
         assert!(!pid.is_saturation_active());
+    }
+
+    #[test]
+    fn nan_current_temp_produces_nan() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let output = pid.compute_output(f32::NAN, 100);
+        assert!(output.is_nan());
+    }
+
+    #[test]
+    fn nan_target_is_rejected() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        assert!(pid.set_target(f32::NAN).is_err());
+    }
+
+    #[test]
+    fn disabled_pid_always_returns_zero() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        pid.set_target(200.0).unwrap();
+        assert_eq!(pid.compute_output(30.0, 0), 0.0);
+    }
+
+    #[test]
+    fn output_limits_swap_when_min_greater_than_max() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        pid.set_output_limits(80.0, 20.0);
+        pid.enable();
+        pid.set_target(200.0).unwrap();
+        let output = pid.compute_output(30.0, 0);
+        assert!((20.0..=80.0).contains(&output));
+    }
+
+    #[test]
+    fn integrator_clamped_when_desired_exceeds_applied() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        pid.enable();
+        pid.set_target(200.0).unwrap();
+
+        let out1 = pid.compute_output(30.0, 0);
+        pid.update_feedback(PidFeedback::new(out1, out1, false));
+        let before = pid.integrator_value();
+
+        pid.update_feedback(PidFeedback::new(100.0, 0.0, true));
+        pid.compute_output(35.0, PID_SAMPLE_TIME_MS);
+
+        assert!(pid.is_integrator_clamped());
+        assert!((pid.integrator_value() - before).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn saturation_flagged_when_guard_busy() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.5, 0.1);
+        pid.enable();
+        pid.set_target(200.0).unwrap();
+
+        pid.compute_output(30.0, 0);
+        pid.update_feedback(PidFeedback::new(50.0, 50.0, true));
+        pid.compute_output(35.0, PID_SAMPLE_TIME_MS);
+
+        assert!(pid.is_saturation_active());
     }
 }

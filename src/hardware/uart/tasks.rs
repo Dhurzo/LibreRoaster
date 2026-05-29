@@ -61,11 +61,13 @@ pub async fn uart_reader_task() {
         if let Some(uart) = get_uart_driver() {
             match uart.read_bytes(&mut rbuf).await {
                 Ok(len) if len > 0 => {
-                    // Push received bytes to event queue instead of processing directly
-                    // This separates I/O from parsing concerns
                     push_to_event_queue(&rbuf[..len]);
                 }
-                _ => {}
+                Ok(0) => { /* no data — idle poll */ }
+                Ok(_) => { /* should not happen based on pattern match above */ }
+                Err(e) => {
+                    log::warn!("UART read error: {:?}", e);
+                }
             }
         }
 

@@ -172,3 +172,200 @@ impl SensorController {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::hardware::sensors::{SensorConversionHub, SensorFault};
+
+    fn make_status() -> SystemStatus {
+        SystemStatus::default()
+    }
+
+    #[test]
+    fn update_temperatures_valid_values() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let fault = SensorFault::default();
+        let now = embassy_time::Instant::now();
+
+        ctrl.update_temperatures(150.0, 120.0, fault, fault, now, &mut status)
+            .unwrap();
+
+        assert_eq!(status.bean_temp, 150.0 + BT_THERMOCOUPLE_OFFSET);
+        assert_eq!(status.env_temp, 120.0 + ET_THERMOCOUPLE_OFFSET);
+    }
+
+    #[test]
+    fn update_temperatures_bt_overtemp() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let fault = SensorFault::default();
+        let now = embassy_time::Instant::now();
+
+        let result =
+            ctrl.update_temperatures(OVERTEMP_THRESHOLD, 120.0, fault, fault, now, &mut status);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_temperatures_et_overtemp() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let fault = SensorFault::default();
+        let now = embassy_time::Instant::now();
+
+        let result =
+            ctrl.update_temperatures(150.0, OVERTEMP_THRESHOLD, fault, fault, now, &mut status);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_temperatures_nan_bt_no_fault() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let fault = SensorFault::default();
+        let now = embassy_time::Instant::now();
+
+        let result = ctrl.update_temperatures(f32::NAN, 120.0, fault, fault, now, &mut status);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_temperatures_faulted_bt_skips_overtemp() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let now = embassy_time::Instant::now();
+        let no_fault = SensorFault::default();
+        let bean_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+
+        let result = ctrl.update_temperatures(
+            OVERTEMP_THRESHOLD,
+            120.0,
+            bean_fault,
+            no_fault,
+            now,
+            &mut status,
+        );
+
+        assert!(result.is_ok());
+        assert!(status.bean_temp.is_nan());
+    }
+
+    #[test]
+    fn update_temperatures_faulted_et_is_nan() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let now = embassy_time::Instant::now();
+        let no_fault = SensorFault::default();
+        let env_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+
+        ctrl.update_temperatures(150.0, 120.0, no_fault, env_fault, now, &mut status)
+            .unwrap();
+
+        assert!(!status.bean_temp.is_nan());
+        assert!(status.env_temp.is_nan());
+    }
+
+    #[test]
+    fn check_rate_of_rise_below_threshold() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 2.0;
+        status.derivative_available = true;
+
+        let result = ctrl.check_rate_of_rise(&status);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_rate_of_rise_above_threshold_resets_on_ok() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 10.0;
+        status.derivative_available = true;
+
+        let r1 = ctrl.check_rate_of_rise(&status);
+        assert!(r1.is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 1);
+
+        status.derivative_rate = 2.0;
+        let r2 = ctrl.check_rate_of_rise(&status);
+        assert!(r2.is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 0);
+    }
+
+    #[test]
+    fn check_rate_of_rise_triggers_emergency_on_third() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 10.0;
+        status.derivative_available = true;
+
+        assert!(ctrl.check_rate_of_rise(&status).is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 1);
+        assert!(ctrl.check_rate_of_rise(&status).is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 2);
+        assert!(ctrl.check_rate_of_rise(&status).is_err());
+    }
+
+    #[test]
+    fn check_rate_of_rise_skipped_when_pid_disabled() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = false;
+        status.derivative_rate = 10.0;
+        status.derivative_available = true;
+
+        let result = ctrl.check_rate_of_rise(&status);
+
+        assert!(result.is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 0);
+    }
+
+    #[test]
+    fn is_temperature_valid_within_range() {
+        assert!(SensorController::is_temperature_valid(25.0));
+        assert!(SensorController::is_temperature_valid(MIN_VALID_TEMP));
+        assert!(SensorController::is_temperature_valid(MAX_VALID_TEMP));
+    }
+
+    #[test]
+    fn is_temperature_valid_nan() {
+        assert!(!SensorController::is_temperature_valid(f32::NAN));
+    }
+
+    #[test]
+    fn is_temperature_valid_out_of_range() {
+        assert!(!SensorController::is_temperature_valid(
+            MIN_VALID_TEMP - 1.0
+        ));
+        assert!(!SensorController::is_temperature_valid(
+            MAX_VALID_TEMP + 1.0
+        ));
+    }
+}

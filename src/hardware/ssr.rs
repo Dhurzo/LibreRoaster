@@ -608,7 +608,9 @@ where
     }
 
     fn periodic_health_check(&mut self, current_time_ms: u32) {
-        let _ = self.periodic_check(current_time_ms);
+        if let Err(e) = self.periodic_check(current_time_ms) {
+            log::warn!("SSR health check failed (SsrControlSimple): {:?}", e);
+        }
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {
@@ -709,7 +711,9 @@ where
     }
 
     fn periodic_health_check(&mut self, current_time_ms: u32) {
-        let _ = PeriodicCheck::periodic_check(self, current_time_ms);
+        if let Err(e) = PeriodicCheck::periodic_check(self, current_time_ms) {
+            log::warn!("SSR health check failed (SsrControl): {:?}", e);
+        }
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {

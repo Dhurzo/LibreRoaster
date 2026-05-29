@@ -212,4 +212,81 @@ mod tests {
         let handler = SafetyCommandHandler::default();
         assert!(!handler.is_emergency_active());
     }
+
+    #[test]
+    fn test_evaluate_emergency_stop() {
+        let mut handler = SafetyCommandHandler::new();
+        let mut status = SystemStatus::default();
+
+        let outcome = handler.evaluate(RoasterCommand::EmergencyStop, &mut status);
+
+        assert!(outcome.emergency_active);
+        assert!(outcome.fault_condition);
+        assert!(outcome.zero_ssr);
+        assert!(outcome.disable_pid);
+        assert!(status.fault_condition);
+        assert_eq!(status.ssr_output, 0.0);
+        assert!(!status.pid_enabled);
+        assert_eq!(status.ssr_hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn test_evaluate_artisan_emergency() {
+        let mut handler = SafetyCommandHandler::new();
+        let mut status = SystemStatus::default();
+
+        let outcome = handler.evaluate(RoasterCommand::ArtisanEmergencyStop, &mut status);
+
+        assert!(outcome.emergency_active);
+        assert!(outcome.fault_condition);
+        assert!(outcome.zero_ssr);
+        assert!(outcome.disable_pid);
+        assert!(status.fault_condition);
+        assert_eq!(status.ssr_output, 0.0);
+        assert!(!status.pid_enabled);
+        assert_eq!(status.ssr_hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn test_evaluate_unknown_command() {
+        let mut handler = SafetyCommandHandler::new();
+        let mut status = SystemStatus::default();
+
+        let outcome = handler.evaluate(RoasterCommand::Reset, &mut status);
+
+        assert!(!outcome.emergency_active);
+        assert!(!outcome.fault_condition);
+        assert!(!outcome.zero_ssr);
+        assert!(!outcome.disable_pid);
+    }
+
+    #[test]
+    fn test_clear_emergency_after_evaluate() {
+        let mut handler = SafetyCommandHandler::new();
+        let mut status = SystemStatus::default();
+
+        let _ = handler.evaluate(RoasterCommand::EmergencyStop, &mut status);
+        assert!(handler.is_emergency_active());
+
+        handler.clear_emergency();
+        assert!(!handler.is_emergency_active());
+    }
+
+    #[test]
+    fn test_can_handle_emergency() {
+        let handler = SafetyCommandHandler::new();
+
+        assert!(<SafetyCommandHandler as SafetyPolicy>::can_handle(
+            &handler,
+            RoasterCommand::EmergencyStop
+        ));
+        assert!(<SafetyCommandHandler as SafetyPolicy>::can_handle(
+            &handler,
+            RoasterCommand::ArtisanEmergencyStop
+        ));
+        assert!(!<SafetyCommandHandler as SafetyPolicy>::can_handle(
+            &handler,
+            RoasterCommand::Reset
+        ));
+    }
 }

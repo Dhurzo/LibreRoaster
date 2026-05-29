@@ -63,7 +63,10 @@ pub async fn usb_reader_task() {
                     log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
                     process_usb_command_data(&rbuf[..len]);
                 }
-                _ => {}
+                Ok(_) => { /* no data — idle poll */ }
+                Err(e) => {
+                    log::warn!("USB CDC read error: {:?}", e);
+                }
             }
         }
 
