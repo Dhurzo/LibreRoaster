@@ -13,13 +13,13 @@ Procedures for verifying PWM frequency and duty cycle using measurement equipmen
 
 ## SSR PWM Verification (GPIO10)
 
-The SSR PWM output operates at **1 Hz** (zero-cross compatible) with variable duty cycle (0-100%).
+The SSR PWM output operates at **5 Hz** (zero-cross compatible) with variable duty cycle (0-100%).
 
 ### Setup
 
 1. Connect probe to **GPIO10** (SSR PWM output on ESP32-C3)
 2. Set probe to 10x attenuation if available
-3. Set oscilloscope to **200 ms/div** timebase (to capture several 1 Hz cycles)
+3. Set oscilloscope to **100 ms/div** timebase (to capture several 5 Hz cycles)
 4. Set trigger to rising edge, 1.65V threshold (3.3V logic midpoint)
 5. Connect serial terminal to ESP32-C3: `cargo espflash monitor --speed 115200`
 
@@ -40,7 +40,7 @@ Capture the waveform and measure the period (T):
 
 | Measurement | Expected Value | Acceptable Range |
 |--------------|----------------|------------------|
-| **Frequency** | 1 Hz | 0.95 - 1.05 Hz (±5%) |
+| **Frequency** | 5 Hz | 4.75 - 5.25 Hz (±5%) |
 | **Period (T)** | 1000 ms | 950 - 1050 ms |
 
 #### Step 3: Measure Duty Cycle
@@ -193,7 +193,7 @@ Use this template to record your measurements:
 - Serial Terminal: `cargo espflash monitor`
 
 ## SSR PWM (GPIO10)
-- **Expected Frequency:** 1 Hz (zero-cross)
+- **Expected Frequency:** 5 Hz (zero-cross)
 - **Expected Voltage:** 3.3V logic
 
 | Command | Frequency (Hz) | Duty (%) | Rise (ns) | Fall (ns) | Vhigh (V) | Vlow (V) | Pass? |

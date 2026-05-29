@@ -114,7 +114,7 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     let mut timer0_ref = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     timer0_ref
         .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty8Bit,
+            duty: timer::config::Duty::Duty14Bit,
             clock_source: timer::LSClockSource::APBClk,
             frequency: Rate::from_hz(crate::config::constants::SSR_CONTROL_CYCLE_HZ as u32),
         })

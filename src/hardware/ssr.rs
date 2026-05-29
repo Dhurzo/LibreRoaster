@@ -23,12 +23,12 @@ pub trait LedcDutyReader {
     /// This is the correct method to call when you have already computed a raw
     /// duty value via [`percentage_to_ledc_duty`]. Calling [`ChannelIFace::set_duty`]
     /// with a raw value > 100 will fail because it expects a percentage (0-100).
-    fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError>;
+    fn set_duty_raw(&self, duty: u16) -> Result<(), DutyWriteError>;
 }
 
 fn monitor_ledc_after_set<'a, PWM>(
     pwm_channel: &mut PWM,
-    commanded: u8,
+    commanded: u16,
     retry_count: &mut u8,
     last_delta: &mut i16,
 ) -> Result<(), SsrError>
@@ -305,12 +305,12 @@ where
     _phantom: PhantomData<&'a ()>,
 }
 
-pub fn percentage_to_ledc_duty(percentage: f32) -> u8 {
+pub fn percentage_to_ledc_duty(percentage: f32) -> u16 {
     let clamped = percentage.clamp(0.0, 100.0);
     let max_duty = (1u32 << SSR_PWM_RESOLUTION) - 1;
     let scaled = ((clamped / 100.0) * max_duty as f32 + 0.5) as u32;
     let scaled = scaled.min(max_duty);
-    let scaled = scaled as u8;
+    let scaled = scaled as u16;
 
     // Enforce minimum SSR duty - if duty is too low, snap to 0
     if scaled > 0 && scaled < crate::config::constants::SSR_MIN_DUTY_TICKS {
@@ -751,8 +751,8 @@ mod tests {
         SSR_CYCLE_GUARD_MS, SSR_DUTY_TOLERANCE_TICKS, SSR_PWM_RESOLUTION,
     };
 
-    const fn max_duty() -> u8 {
-        ((1u32 << SSR_PWM_RESOLUTION) - 1) as u8
+    const fn max_duty() -> u16 {
+        ((1u32 << SSR_PWM_RESOLUTION) - 1) as u16
     }
 
     #[test]
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn percentage_to_ledc_duty_rounds_midpoints() {
         let max_duty = ((1u32 << SSR_PWM_RESOLUTION) - 1) as f32;
-        let expected = (max_duty * 0.5).round() as u8;
+        let expected = (max_duty * 0.5).round() as u16;
         assert_eq!(percentage_to_ledc_duty(50.0), expected);
     }
 

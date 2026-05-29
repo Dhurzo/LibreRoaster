@@ -24,11 +24,11 @@ Complete pin-to-pin wiring of all subsystems on one page. Pin mapping enforced b
 | 7 | SPI MOSI | → MAX31856 SDI |
 | 8 | Status LED | Strapping (JTAG), push-pull output |
 | 9 | Fan PWM | LEDC Ch0 @ 25 kHz, ⚠ strapping pull-up required |
-| 10 | SSR control | LEDC Ch1 @ 1 Hz (zero-cross compatible) |
+| 10 | SSR control | LEDC Ch1 @ 5 Hz (zero-cross compatible) |
 | 20 | UART RX | ← USB-UART adapter TX, 3.3 V max |
 | 21 | UART TX | → USB-UART adapter RX |
 
-**SSR:** `SSR_CONTROL_CYCLE_HZ = 1` (zero-cross, configurable: 1/2/5/10 Hz)
+**SSR:** `SSR_CONTROL_CYCLE_HZ = 5` (zero-cross, configurable: 5/10 Hz)
 **Fan:** `FAN_PWM_FREQUENCY_HZ = 25000` (25 kHz, silent operation)
 
 ---
@@ -66,7 +66,7 @@ Assemble and verify one subsystem at a time. Each diagram isolates a single subs
 
 **File:** `libreroaster_sub_ssr_calentador_en.svg`
 
-- GPIO10 → LEDC Ch1 / Timer0 @ 1 Hz (zero-cross time-proportioning)
+- GPIO10 → LEDC Ch1 / Timer0 @ 5 Hz (zero-cross time-proportioning)
 - Compatible with zero-cross SSRs (SSR-25DA, etc.)
 - GPIO1 ← external current-sense circuit (open-collector)
 - ⚠ AC mains zone: physically isolate, disconnect to wire
@@ -98,4 +98,4 @@ Assemble and verify one subsystem at a time. Each diagram isolates a single subs
 
 ---
 
-*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=1`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-05-29.*
+*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=5`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-05-29.*

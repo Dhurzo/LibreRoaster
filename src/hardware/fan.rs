@@ -1,8 +1,11 @@
+use crate::config::constants::FAN_PWM_RESOLUTION;
 use crate::control::traits::Fan;
 use crate::control::RoasterError;
 use crate::hardware::ledc_bus::LedcChannelHandle;
 use libm::floorf;
 use log::{debug, info};
+
+const FAN_MAX_DUTY: u32 = (1u32 << FAN_PWM_RESOLUTION) - 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanError {
@@ -49,14 +52,12 @@ impl<'a> FanController<'a> {
 
     fn percentage_to_duty(percentage: f32) -> u8 {
         let clamped = percentage.clamp(0.0, 100.0);
-        let scaled = clamped * 255.0 / 100.0;
-        let rounded = floorf(scaled + 0.5).min(255.0);
+        let scaled = clamped * FAN_MAX_DUTY as f32 / 100.0;
+        let rounded = floorf(scaled + 0.5).min(FAN_MAX_DUTY as f32);
         rounded as u8
     }
 
-    /// fade_duration: 4ms per duty step + 80ms LEDC engine overhead.
-    /// Max 1100ms for full 0→255 transition (255*4 + 80).
-    fn fade_duration(delta: u8) -> u16 {
+    fn fade_duration(delta: u16) -> u16 {
         let base = delta as u16 * 4;
         base + 80
     }
@@ -67,9 +68,11 @@ impl<'a> FanController<'a> {
     pub fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), FanError> {
         let duty = Self::percentage_to_duty(percentage);
         if let Some(handle) = &self.ledc_handle {
-            handle.set_duty_raw(duty).map_err(|_| FanError::PwmError {
-                source: "emergency_set_duty_failed",
-            })?;
+            handle
+                .set_duty_raw(duty as u16)
+                .map_err(|_| FanError::PwmError {
+                    source: "emergency_set_duty_failed",
+                })?;
         }
         self.current_speed = percentage;
         Ok(())
@@ -81,13 +84,15 @@ impl<'a> FanController<'a> {
 
         if let Some(handle) = self.ledc_handle {
             let current_duty = handle.applied_duty();
-            let duty_delta = target_duty.abs_diff(current_duty);
+            let duty_delta = (target_duty as u16).abs_diff(current_duty);
 
-            if duty_delta > FADE_THRESHOLD_DUTY {
+            if duty_delta > FADE_THRESHOLD_DUTY as u16 {
                 let duration = Self::fade_duration(duty_delta);
                 // start_duty_fade expects percentage (0-100), convert raw duty
-                let current_pct = ((current_duty as u32 * 100 + 127) / 255) as u8;
-                let target_pct = ((target_duty as u32 * 100 + 127) / 255) as u8;
+                let current_pct =
+                    ((current_duty as u32 * 100 + FAN_MAX_DUTY / 2) / FAN_MAX_DUTY) as u8;
+                let target_pct =
+                    ((target_duty as u32 * 100 + FAN_MAX_DUTY / 2) / FAN_MAX_DUTY) as u8;
                 debug!(
                     "Fan fade {}→{} duty ({}%→{}%), {}ms",
                     current_duty, target_duty, current_pct, target_pct, duration
@@ -100,7 +105,7 @@ impl<'a> FanController<'a> {
             } else {
                 debug!("Fan set duty {} (delta {})", target_duty, duty_delta);
                 handle
-                    .set_duty_raw(target_duty)
+                    .set_duty_raw(target_duty as u16)
                     .map_err(|_| FanError::PwmError {
                         source: "set_duty_failed",
                     })?;

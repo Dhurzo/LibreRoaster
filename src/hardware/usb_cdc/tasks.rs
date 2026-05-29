@@ -13,12 +13,23 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_time::Duration;
 use embassy_time::Timer;
-use heapless::{String, Vec};
+use heapless::{Deque, String, Vec};
 use log::debug;
 
 use super::driver::get_usb_cdc_driver;
 
 pub const USB_COMMAND_PIPE_SIZE: usize = 256;
+
+/// Size of the USB event queue for buffering incoming bytes.
+pub const USB_EVENT_QUEUE_SIZE: usize = 256;
+
+/// Byte buffer for accumulating raw USB bytes across multiple read_bytes() calls.
+/// This is the USB equivalent of UART's EVENT_QUEUE — without it, commands
+/// split across USB reads are silently lost.
+static USB_EVENT_QUEUE: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<Deque<u8, USB_EVENT_QUEUE_SIZE>>>,
+> = BlockingMutex::new(RefCell::new(None));
 
 /// Command queue for USB FIFO processing - reject-on-full behavior
 static USB_COMMAND_QUEUE: BlockingMutex<
@@ -52,6 +63,7 @@ pub async fn usb_reader_task() {
     let mut rbuf: [u8; 64] = [0u8; 64];
 
     USB_COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
+    USB_EVENT_QUEUE.lock(|cell| *cell.borrow_mut() = Some(Deque::new()));
 
     Timer::after(Duration::from_millis(100)).await;
 
@@ -62,7 +74,7 @@ pub async fn usb_reader_task() {
                     crate::hardware::error_counters::reset_usb_error_count();
                     let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
                     log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
-                    process_usb_command_data(&rbuf[..len]);
+                    push_to_usb_event_queue(&rbuf[..len]);
                 }
                 Ok(_) => { /* no data — idle poll */ }
                 Err(e) => {
@@ -72,7 +84,59 @@ pub async fn usb_reader_task() {
             }
         }
 
+        process_usb_event_queue();
+
         Timer::after(Duration::from_millis(10)).await;
+    }
+}
+
+/// Push received bytes to the persistent USB event queue.
+fn push_to_usb_event_queue(data: &[u8]) {
+    USB_EVENT_QUEUE.lock(|cell| {
+        if let Some(queue) = cell.borrow_mut().as_mut() {
+            for &byte in data {
+                if queue.len() >= USB_EVENT_QUEUE_SIZE {
+                    let _ = queue.pop_front();
+                }
+                let _ = queue.push_back(byte);
+            }
+        }
+    });
+}
+
+/// Process one complete command (CR/LF terminated) from the USB event queue.
+///
+/// Pops bytes from the front of the queue until a terminator (0x0D or 0x0A)
+/// is found, then dispatches the accumulated bytes to the command handler.
+/// Bytes after the terminator remain in the queue for the next poll cycle.
+fn process_usb_event_queue() {
+    let has_terminator = USB_EVENT_QUEUE.lock(|cell| {
+        if let Some(queue) = cell.borrow().as_ref() {
+            queue.iter().any(|&b| b == 0x0D || b == 0x0A)
+        } else {
+            false
+        }
+    });
+
+    if has_terminator {
+        let mut command_data: Vec<u8, 64> = Vec::new();
+        let mut extracted = false;
+
+        USB_EVENT_QUEUE.lock(|cell| {
+            if let Some(queue) = cell.borrow_mut().as_mut() {
+                while let Some(byte) = queue.pop_front() {
+                    if byte == 0x0D || byte == 0x0A {
+                        break;
+                    }
+                    let _ = command_data.push(byte);
+                }
+                extracted = true;
+            }
+        });
+
+        if extracted && !command_data.is_empty() {
+            handle_complete_usb_command(&command_data);
+        }
     }
 }
 

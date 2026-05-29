@@ -10,7 +10,7 @@ struct ChannelEntry<'a> {
     channel: RefCell<channel::Channel<'a, LowSpeed>>,
     number: channel::Number,
     name: &'static str,
-    duty: Cell<u8>,
+    duty: Cell<u16>,
 }
 
 impl<'a> ChannelEntry<'a> {
@@ -81,7 +81,7 @@ impl<'a> LedcBus<'a> {
         (raw >> 4) as u16
     }
 
-    fn store_duty(&self, entry: &ChannelEntry<'a>, duty: u8) {
+    fn store_duty(&self, entry: &ChannelEntry<'a>, duty: u16) {
         entry.duty.set(duty);
     }
 }
@@ -119,7 +119,7 @@ impl<'a> LedcChannelHandle<'a> {
             .with_channel_mut(entry, |channel| channel.set_duty(duty))
         {
             Ok(Ok(())) => {
-                self.bus.store_duty(entry, duty);
+                self.bus.store_duty(entry, duty as u16);
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
@@ -130,10 +130,10 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
-    /// Set duty as a raw 8-bit value (0-255 for 8-bit resolution), bypassing
-    /// [`ChannelIFace::set_duty`]'s percentage conversion. Use this when you
-    /// have already computed a raw duty value via [`percentage_to_ledc_duty`].
-    pub fn set_duty_raw(&self, duty: u8) -> Result<(), channel::Error> {
+    /// Set duty as a raw value, bypassing [`ChannelIFace::set_duty`]'s
+    /// percentage conversion. Use this when you have already computed a raw
+    /// duty value via [`percentage_to_ledc_duty`].
+    pub fn set_duty_raw(&self, duty: u16) -> Result<(), channel::Error> {
         let entry = self.entry();
         match self.bus.with_channel_mut(entry, |channel| {
             ChannelHW::set_duty_hw(channel, duty as u32);
@@ -160,7 +160,7 @@ impl<'a> LedcChannelHandle<'a> {
             channel.start_duty_fade(start_duty, end_duty, duration_ms)
         }) {
             Ok(Ok(())) => {
-                self.bus.store_duty(entry, end_duty);
+                self.bus.store_duty(entry, end_duty as u16);
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
@@ -171,12 +171,13 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
-    pub fn applied_duty(&self) -> u8 {
+    pub fn applied_duty(&self) -> u16 {
         self.entry().duty.get()
     }
 
     pub fn applied_percent(&self) -> f32 {
-        (self.applied_duty() as f32) * 100.0 / 255.0
+        (self.applied_duty() as f32) * 100.0
+            / ((1u32 << crate::config::constants::SSR_PWM_RESOLUTION) - 1) as f32
     }
 }
 
@@ -185,7 +186,7 @@ impl<'a> LedcDutyReader for LedcChannelHandle<'a> {
         self.bus.read_register(self.entry())
     }
 
-    fn set_duty_raw(&self, duty: u8) -> Result<(), DutyWriteError> {
+    fn set_duty_raw(&self, duty: u16) -> Result<(), DutyWriteError> {
         LedcChannelHandle::set_duty_raw(self, duty).map_err(|_| DutyWriteError)
     }
 }

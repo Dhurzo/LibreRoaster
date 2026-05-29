@@ -71,7 +71,7 @@ Because GPIO9 is a strapping pin, the external fan stage must be designed so it 
 
 The hardware init code configures two low-speed LEDC timers:
 
-- one timer for the SSR at **1 Hz** (zero-cross compatible),
+- one timer for the SSR at **5 Hz** (zero-cross compatible),
 - one timer for the fan at **25 kHz**.
 
 ## 7. Timing values that matter physically

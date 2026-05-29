@@ -23,20 +23,27 @@ pub const UART_RX_PIN: u8 = 20;
 
 pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
 /// SSR control cycle frequency in Hz.
-/// 1 Hz = 1-second period (100 AC half-cycles at 50 Hz mains).
-/// Compatible with zero-cross SSRs (SSR-25DA, etc.).
-/// Configurable: 1, 2, 5, 10 Hz for faster response if needed.
-pub const SSR_CONTROL_CYCLE_HZ: u32 = 1;
+///
+/// 5 Hz = 200 ms period (20 AC half-cycles at 50 Hz mains). Compatible with
+/// zero-cross SSRs (SSR-25DA, etc.). Minimum achievable on ESP32-C3 at 14-bit
+/// resolution (APBClk 80 MHz, max LEDC divider 262 143, no REF_TICK available).
+pub const SSR_CONTROL_CYCLE_HZ: u32 = 5;
 pub const FAN_LEDC_CHANNEL: u8 = 0;
 pub const SSR_LEDC_CHANNEL: u8 = 1;
-pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (1 Hz zero-cross control)
-pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25 kHz silent operation)
-pub const SSR_PWM_RESOLUTION: u8 = 8; // 256 steps → ~3.9ms per step at 1 Hz
-/// Minimum interval between SSR duty updates (rate-limiting).
+pub const SSR_LEDC_TIMER: u8 = 0;
+pub const FAN_LEDC_TIMER: u8 = 1;
+/// SSR LEDC duty resolution in bits (14-bit → 16 384 steps).
+pub const SSR_PWM_RESOLUTION: u8 = 14;
+/// Fan LEDC duty resolution in bits (8-bit → 256 steps).
+pub const FAN_PWM_RESOLUTION: u8 = 8;
+/// Minimum interval between SSR duty updates in ms.
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
-pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
-/// Minimum non-zero duty (3/256 × 1000ms ≈ 11.7ms ≈ 1 AC half-cycle at 50 Hz).
-pub const SSR_MIN_DUTY_TICKS: u8 = 3;
+/// Maximum allowed drift between commanded and actual LEDC duty (raw ticks).
+/// At 14-bit, 128 ticks ≈ 0.78 % of full scale.
+pub const SSR_DUTY_TOLERANCE_TICKS: u16 = 128;
+/// Minimum non-zero duty in raw ticks. At 14-bit / 5 Hz: 193 ticks ≈ 2.4 ms
+/// on-time, enough for one AC half-cycle at 50 Hz mains.
+pub const SSR_MIN_DUTY_TICKS: u16 = 193;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 pub const MAX_SAFE_TEMP: f32 = 250.0;

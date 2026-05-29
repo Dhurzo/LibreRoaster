@@ -18,7 +18,7 @@ Three-tier testing approach:
 |------|--------|-----------|-----------|
 | **1** | Serial commands to main firmware via USB CDC | Full stack: command → control → hardware → telemetry | ESP32-C3 + USB cable |
 | **2** | Dedicated test firmware binaries flashed via `espflash` | Raw peripheral: SPI registers, LEDC duty readback, GPIO state | ESP32-C3 + USB cable |
-| **3** | Manual procedures with oscilloscope/logic analyzer | PWM frequency (1 Hz SSR (zero-cross), 25 kHz Fan), signal integrity | Oscilloscope or logic analyzer |
+| **3** | Manual procedures with oscilloscope/logic analyzer | PWM frequency (5 Hz SSR (zero-cross), 25 kHz Fan), signal integrity | Oscilloscope or logic analyzer |
 
 ---
 

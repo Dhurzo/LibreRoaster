@@ -20,7 +20,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 | **Runtime** | `no_std` embedded, Embassy async executor |
 | **HAL** | esp-hal, embedded-hal 1.0 |
 | **Sensors** | 2× MAX31856 thermocouples (SPI, shared bus) |
-| **Actuators** | SSR heater (1 Hz zero-cross LEDC, GPIO10), PWM fan (LEDC PWM GPIO9) |
+| **Actuators** | SSR heater (5 Hz zero-cross LEDC, GPIO10), PWM fan (LEDC PWM GPIO9) |
 | **Comms** | USB CDC (ttyACM0), UART0 (GPIO20/21) |
 | **Safety** | RTC watchdog, over-temperature cutoff, stale-temperature guard, heat-source detection |
 | **Language** | Rust 2021 edition, stable toolchain |
@@ -54,7 +54,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 
 **v0.1 released** (2026-04-30):
 - ✅ Firmware compiles and flashes to ESP32-C3
-- ✅ All hardware inits: SPI, MAX31856×2, SSR (1 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
+- ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop cycles at ~160 ms
 - ✅ 243/244 host tests pass (1 pre-existing failure in `ssr_scheduler`)

@@ -56,7 +56,7 @@ The guide is **currently in progress** and will be published once validated. If 
 - **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
 - **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-compatible command set (20+ commands). UART via GPIO20/21 is also supported.
 - **Sensors:** two MAX31856 thermocouple channels (Type K), mapped to ET and BT, shared SPI bus at 1 MHz. EMA-filtered readings with boot self-test.
-- **Actuators:** SSR-controlled heater (1 Hz zero-cross LEDC, GPIO10) + PWM fan (25 kHz LEDC PWM, GPIO9) with slew-rate limiting and heat-source cross-check
+- **Actuators:** SSR-controlled heater (5 Hz zero-cross LEDC, GPIO10) + PWM fan (25 kHz LEDC PWM, GPIO9) with slew-rate limiting and heat-source cross-check
 - **Safety layers:** 8 independent layers — dual watchdog (software + hardware RWDT), over-temperature cutoff (260°C), rate-of-rise protection (30°C/min), stale-temperature guard (1s), heat-source detection (GPIO1), SSR stuck-on detection, max roast time (30 min), fault-command rejection
 - **Control:** full PID with anti-windup, configurable channel (ET/BT), profile interpolation, preheat behavior
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
