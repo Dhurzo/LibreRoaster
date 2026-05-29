@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1000" viewBox="0 0 1320 1000" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#333"/>
+    </marker>
+    <style>
+      .box{stroke:#333;stroke-width:1.5;rx:6;}
+      .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+      .lbl{fill:#111;font-size:12px;}
+      .lblw{fill:#fff;font-size:12px;}
+      .pin{fill:#111;font-size:11px;}
+      .pinw{fill:#fff;font-size:11px;}
+      .title{fill:#111;font-size:15px;font-weight:bold;}
+      .titlew{fill:#fff;font-size:14px;font-weight:bold;}
+      .net{fill:#444;font-size:10.5px;}
+      .warn{fill:#b00;font-size:11px;font-weight:bold;}
+      .wire{stroke-width:2.4;fill:none;}
+      .danger{fill:#fde8e8;stroke:#c0392b;stroke-width:2.5;stroke-dasharray:6 4;}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1320" height="1000" fill="#f7f7f9"/>
+  <text x="660" y="28" text-anchor="middle" class="title" font-size="20">LibreRoaster — Wiring diagram (ESP32-C3) — VERIFIED against the code</text>
+  <text x="660" y="48" text-anchor="middle" class="net" font-size="12">Mapping derived from src/config/constants.rs + src/hardware/init.rs (enforced by assert_eq! at boot). SCLK=GPIO6 · MOSI=GPIO7 · MISO=GPIO5 · SSR=1 Hz (zero-cross)</text>
+
+  <!-- ===================== ESP32-C3 (center) ===================== -->
+  <rect x="520" y="300" width="280" height="380" rx="8" class="chip"/>
+  <text x="660" y="326" text-anchor="middle" class="titlew">ESP32-C3</text>
+  <text x="660" y="343" text-anchor="middle" class="pinw" font-size="10">RISC-V · single-core · 3.3 V logic</text>
+
+  <!-- left pins (SPI / sensors) -->
+  <g>
+    <circle cx="520" cy="372" r="4" fill="#FF9800"/><text x="532" y="376" class="pinw">GPIO5 · MISO</text>
+    <circle cx="520" cy="398" r="4" fill="#2196F3"/><text x="532" y="402" class="pinw">GPIO6 · SCLK</text>
+    <circle cx="520" cy="424" r="4" fill="#4CAF50"/><text x="532" y="428" class="pinw">GPIO7 · MOSI</text>
+    <circle cx="520" cy="450" r="4" fill="#9C27B0"/><text x="532" y="454" class="pinw">GPIO4 · CS_BT</text>
+    <circle cx="520" cy="476" r="4" fill="#9C27B0"/><text x="532" y="480" class="pinw">GPIO3 · CS_ET</text>
+    <circle cx="520" cy="540" r="4" fill="#E53935"/><text x="532" y="544" class="pinw">3V3</text>
+    <circle cx="520" cy="640" r="4" fill="#bbb"/><text x="532" y="644" class="pinw">GND</text>
+  </g>
+  <!-- right pins (actuators / comms) -->
+  <g text-anchor="end">
+    <circle cx="800" cy="372" r="4" fill="#D32F2F"/><text x="788" y="376" class="pinw">SSR PWM · GPIO10</text>
+    <circle cx="800" cy="402" r="4" fill="#795548"/><text x="788" y="406" class="pinw">HEAT DET · GPIO1</text>
+    <circle cx="800" cy="446" r="4" fill="#FF5722"/><text x="788" y="450" class="pinw">FAN PWM · GPIO9 ⚠</text>
+    <circle cx="800" cy="492" r="4" fill="#607D8B"/><text x="788" y="496" class="pinw">LED · GPIO8 ⚠</text>
+    <circle cx="800" cy="560" r="4" fill="#00897B"/><text x="788" y="564" class="pinw">UART TX · GPIO21</text>
+    <circle cx="800" cy="588" r="4" fill="#00ACC1"/><text x="788" y="592" class="pinw">UART RX · GPIO20</text>
+    <circle cx="800" cy="640" r="4" fill="#3949AB"/><text x="788" y="644" class="pinw">USB-C (native CDC)</text>
+  </g>
+  <text x="660" y="668" text-anchor="middle" class="pinw" font-size="9.5">GPIO2 = strapping VDD_SPI · UNUSED (there is no microphone)</text>
+
+  <!-- ===================== MAX31856 BT (top-left) ===================== -->
+  <rect x="60" y="80" width="230" height="130" rx="6" fill="#e8f0ff" class="box"/>
+  <text x="175" y="100" text-anchor="middle" class="title" font-size="13">MAX31856 #1 — BT (beans)</text>
+  <g text-anchor="start">
+    <text x="72" y="122" class="pin">SCK ← GPIO6</text>
+    <text x="72" y="140" class="pin">SDI ← GPIO7 (MOSI)</text>
+    <text x="72" y="158" class="pin">SDO → GPIO5 (MISO)</text>
+    <text x="72" y="176" class="pin">CS  ← GPIO4</text>
+    <text x="72" y="194" class="pin">VCC=3V3 · GND · (FAULT/DRDY n/c)</text>
+  </g>
+  <!-- thermocouple BT -->
+  <rect x="60" y="222" width="230" height="40" rx="6" fill="#fff7e6" class="box"/>
+  <text x="175" y="240" text-anchor="middle" class="pin">Type-K thermocouple (BT): T+ yellow / T− red</text>
+  <text x="175" y="255" text-anchor="middle" class="net">inside the drum, in contact with the beans</text>
+  <line x1="175" y1="210" x2="175" y2="222" stroke="#a67c00" stroke-width="2"/>
+
+  <!-- ===================== MAX31856 ET (mid-left) ===================== -->
+  <rect x="60" y="300" width="230" height="130" rx="6" fill="#e8f0ff" class="box"/>
+  <text x="175" y="320" text-anchor="middle" class="title" font-size="13">MAX31856 #2 — ET (exhaust)</text>
+  <g text-anchor="start">
+    <text x="72" y="342" class="pin">SCK ← GPIO6</text>
+    <text x="72" y="360" class="pin">SDI ← GPIO7 (MOSI)</text>
+    <text x="72" y="378" class="pin">SDO → GPIO5 (MISO)</text>
+    <text x="72" y="396" class="pin">CS  ← GPIO3</text>
+    <text x="72" y="414" class="pin">VCC=3V3 · GND · (FAULT/DRDY n/c)</text>
+  </g>
+  <rect x="60" y="442" width="230" height="40" rx="6" fill="#fff7e6" class="box"/>
+  <text x="175" y="460" text-anchor="middle" class="pin">Type-K thermocouple (ET): T+ / T−</text>
+  <text x="175" y="475" text-anchor="middle" class="net">in the airflow / exhaust</text>
+  <line x1="175" y1="430" x2="175" y2="442" stroke="#a67c00" stroke-width="2"/>
+
+  <!-- SPI bus wires from ESP left pins to both MAX -->
+  <!-- MISO GPIO5 (orange) -->
+  <polyline class="wire" stroke="#FF9800" points="520,372 420,372 420,158 290,158"/>
+  <polyline class="wire" stroke="#FF9800" points="420,372 420,378 290,378"/>
+  <!-- SCLK GPIO6 (blue) -->
+  <polyline class="wire" stroke="#2196F3" points="520,398 405,398 405,122 290,122"/>
+  <polyline class="wire" stroke="#2196F3" points="405,398 405,342 290,342"/>
+  <!-- MOSI GPIO7 (green) -->
+  <polyline class="wire" stroke="#4CAF50" points="520,424 390,424 390,140 290,140"/>
+  <polyline class="wire" stroke="#4CAF50" points="390,424 390,360 290,360"/>
+  <!-- CS_BT GPIO4 (purple) -->
+  <polyline class="wire" stroke="#9C27B0" points="520,450 375,450 375,176 290,176"/>
+  <!-- CS_ET GPIO3 (purple) -->
+  <polyline class="wire" stroke="#9C27B0" points="520,476 360,476 360,396 290,396"/>
+  <text x="430" y="350" class="net" transform="rotate(-90 430 350)">SPI 1 MHz · Mode 1 · shared bus (software CS)</text>
+
+  <!-- ===================== DANGER AC ZONE (top-right) ===================== -->
+  <rect x="900" y="64" width="390" height="226" rx="8" class="danger"/>
+  <text x="1095" y="84" text-anchor="middle" class="warn" font-size="13">⚠ HAZARDOUS AC ZONE — 110–240 V — ISOLATE</text>
+
+  <!-- SSR -->
+  <rect x="918" y="100" width="160" height="100" rx="6" fill="#fff" class="box"/>
+  <text x="998" y="120" text-anchor="middle" class="title" font-size="12">SSR (zero-cross)</text>
+  <text x="998" y="137" text-anchor="middle" class="net">DC+ ← GPIO10 (1 Hz)</text>
+  <text x="998" y="152" text-anchor="middle" class="net">DC− ← GND</text>
+  <text x="998" y="170" text-anchor="middle" class="net">AC-IN ← L (fuse)</text>
+  <text x="998" y="185" text-anchor="middle" class="net">AC-OUT → heater</text>
+
+  <!-- Heater -->
+  <rect x="1110" y="100" width="160" height="100" rx="6" fill="#fff" class="box"/>
+  <text x="1190" y="120" text-anchor="middle" class="title" font-size="12">AC heating element</text>
+  <text x="1190" y="138" text-anchor="middle" class="net">800–2000 W</text>
+  <text x="1190" y="156" text-anchor="middle" class="net">L ← SSR AC-OUT</text>
+  <text x="1190" y="172" text-anchor="middle" class="net">N ← Neutral</text>
+  <text x="1190" y="188" text-anchor="middle" class="net">PE → chassis ⚠</text>
+
+  <text x="1095" y="222" text-anchor="middle" class="warn" font-size="10">✅ 1 Hz zero-cross control — compatible with any zero-cross SSR</text>
+  <text x="1095" y="258" text-anchor="middle" class="warn" font-size="10">Recommended: independent HW thermal cutoff in series, not CPU-dependent</text>
+  <text x="1095" y="274" text-anchor="middle" class="warn" font-size="10">(see audit THERM-1/THERM-2)</text>
+
+  <!-- SSR PWM wire GPIO10 -->
+  <polyline class="wire" stroke="#D32F2F" points="800,372 860,372 860,134 918,134"/>
+  <text x="864" y="366" class="net">GPIO10 → DC+</text>
+  <!-- AC L/N to heater -->
+  <line x1="1078" y1="150" x2="1110" y2="150" stroke="#c0392b" stroke-width="3"/>
+
+  <!-- ===================== Heat detect sense (right, below danger) ===================== -->
+  <rect x="900" y="312" width="200" height="86" rx="6" fill="#efe7e1" class="box"/>
+  <text x="1000" y="332" text-anchor="middle" class="title" font-size="12">Current sensing</text>
+  <text x="1000" y="349" text-anchor="middle" class="net">CT / opto on the AC load</text>
+  <text x="1000" y="364" text-anchor="middle" class="net">open-collector output → GPIO1</text>
+  <text x="1000" y="381" text-anchor="middle" class="warn" font-size="9.5">⚠ NOT an SSR pin · GPIO1 never to AC</text>
+  <polyline class="wire" stroke="#795548" points="800,402 850,402 850,355 900,355"/>
+  <text x="806" y="396" class="net">GPIO1 (internal pull-up, LOW=ON)</text>
+
+  <!-- ===================== Fan MOSFET + 12V (right mid) ===================== -->
+  <rect x="900" y="420" width="200" height="120" rx="6" fill="#fff" class="box"/>
+  <text x="1000" y="440" text-anchor="middle" class="title" font-size="12">Fan driver</text>
+  <text x="1000" y="458" text-anchor="middle" class="net">logic-level MOSFET (IRLZ44N)</text>
+  <text x="1000" y="474" text-anchor="middle" class="net">Gate ← GPIO9 via 100 Ω–1 kΩ</text>
+  <text x="1000" y="490" text-anchor="middle" class="net">Drain → Fan(−) · Source→GND</text>
+  <text x="1000" y="508" text-anchor="middle" class="warn" font-size="9.5">⚠ 10 kΩ pull-up GPIO9→3V3 (boot)</text>
+  <text x="1000" y="523" text-anchor="middle" class="warn" font-size="9.5">10 kΩ pull-down gate→GND · flyback on motor</text>
+
+  <rect x="1130" y="420" width="150" height="60" rx="6" fill="#fff3e0" class="box"/>
+  <text x="1205" y="442" text-anchor="middle" class="title" font-size="12">DC fan</text>
+  <text x="1205" y="460" text-anchor="middle" class="net">12 V · PWM 25 kHz</text>
+  <text x="1205" y="474" text-anchor="middle" class="net">(+)←12 V · (−)→Drain</text>
+
+  <rect x="1130" y="494" width="150" height="46" rx="6" fill="#fbe9e7" class="box"/>
+  <text x="1205" y="514" text-anchor="middle" class="title" font-size="12">12 V supply</text>
+  <text x="1205" y="530" text-anchor="middle" class="net">≥5 A · GND→common</text>
+
+  <polyline class="wire" stroke="#FF5722" points="800,446 870,446 870,468 900,468"/>
+  <text x="806" y="440" class="net">GPIO9</text>
+  <line x1="1100" y1="468" x2="1130" y2="455" stroke="#FF5722" stroke-width="2.4"/>
+  <line x1="1205" y1="480" x2="1205" y2="494" stroke="#FF5722" stroke-width="2.4"/>
+
+  <!-- ===================== Status LED ===================== -->
+  <rect x="900" y="560" width="200" height="50" rx="6" fill="#fff" class="box"/>
+  <text x="1000" y="580" text-anchor="middle" class="title" font-size="12">Status LED</text>
+  <text x="1000" y="598" text-anchor="middle" class="net">GPIO8 → 330 Ω R → LED → GND</text>
+  <polyline class="wire" stroke="#607D8B" points="800,492 870,492 870,585 900,585"/>
+
+  <!-- ===================== USB-UART adapter (bottom right) ===================== -->
+  <rect x="900" y="632" width="200" height="96" rx="6" fill="#e8f5e9" class="box"/>
+  <text x="1000" y="652" text-anchor="middle" class="title" font-size="12">USB-UART adapter</text>
+  <text x="1000" y="670" text-anchor="middle" class="net">RX ← GPIO21 (TX)</text>
+  <text x="1000" y="685" text-anchor="middle" class="net">TX → GPIO20 (RX) · 1 kΩ series</text>
+  <text x="1000" y="700" text-anchor="middle" class="net">common GND · VCC=3.3 V</text>
+  <text x="1000" y="718" text-anchor="middle" class="warn" font-size="9.5">⚠ 3.3 V (not 5 V) · do not power the rail</text>
+
+  <polyline class="wire" stroke="#00897B" points="800,560 860,560 860,664 900,664"/>
+  <polyline class="wire" stroke="#00ACC1" points="800,588 845,588 845,682 900,682"/>
+
+  <rect x="1130" y="632" width="150" height="60" rx="6" fill="#e3f2fd" class="box"/>
+  <text x="1205" y="656" text-anchor="middle" class="title" font-size="12">Artisan+ PC</text>
+  <text x="1205" y="674" text-anchor="middle" class="net">USB-UART  or  USB-C</text>
+  <text x="1205" y="688" text-anchor="middle" class="net">(native CDC)</text>
+  <line x1="1100" y1="664" x2="1130" y2="662" stroke="#00897B" stroke-width="2.4"/>
+  <polyline class="wire" stroke="#3949AB" points="800,640 825,640 825,760 1205,760 1205,692"/>
+  <text x="1000" y="775" text-anchor="middle" class="net">native USB-C (CDC) — alternative to UART (not both at once)</text>
+
+  <!-- ===================== Power rails (bottom left) ===================== -->
+  <rect x="60" y="540" width="430" height="120" rx="6" fill="#f3f3f3" class="box"/>
+  <text x="275" y="560" text-anchor="middle" class="title" font-size="13">Power and grounds</text>
+  <text x="74" y="582" class="net">• 3.3 V (AMS1117 LDO from 5 V USB, or from the devkit) → ESP, MAX×2, sense</text>
+  <text x="74" y="600" class="net">• 12 V (≥5 A) → fan · GND → common star point</text>
+  <text x="74" y="618" class="net">• Decoupling: 100 µF + 10 µF + 0.1 µF/IC near the ESP32-C3</text>
+  <text x="74" y="636" class="net">• ALL grounds to a single point. AC fully isolated.</text>
+  <!-- 3V3 + GND wires to MAX (indicative) -->
+  <polyline class="wire" stroke="#E53935" points="520,540 500,540 500,196 290,196"/>
+  <polyline class="wire" stroke="#E53935" points="500,540 500,414 290,414" opacity="0.85"/>
+  <polyline class="wire" stroke="#777" points="520,640 480,640 480,205 295,205" opacity="0.7"/>
+  <text x="505" y="250" class="net" transform="rotate(-90 505 250)">3V3 / GND to both MAX</text>
+
+  <!-- ===================== Legend ===================== -->
+  <rect x="60" y="690" width="800" height="120" rx="6" fill="#ffffff" class="box"/>
+  <text x="74" y="710" class="title" font-size="13">Net legend</text>
+  <g font-size="11">
+    <line x1="74" y1="728" x2="104" y2="728" stroke="#2196F3" stroke-width="3"/><text x="110" y="732" class="lbl">SCLK (GPIO6)</text>
+    <line x1="240" y1="728" x2="270" y2="728" stroke="#4CAF50" stroke-width="3"/><text x="276" y="732" class="lbl">MOSI (GPIO7)</text>
+    <line x1="410" y1="728" x2="440" y2="728" stroke="#FF9800" stroke-width="3"/><text x="446" y="732" class="lbl">MISO (GPIO5)</text>
+    <line x1="580" y1="728" x2="610" y2="728" stroke="#9C27B0" stroke-width="3"/><text x="616" y="732" class="lbl">CS (GPIO3/4)</text>
+    <line x1="74" y1="750" x2="104" y2="750" stroke="#D32F2F" stroke-width="3"/><text x="110" y="754" class="lbl">SSR ctrl (GPIO10)</text>
+    <line x1="240" y1="750" x2="270" y2="750" stroke="#FF5722" stroke-width="3"/><text x="276" y="754" class="lbl">Fan PWM (GPIO9)</text>
+    <line x1="410" y1="750" x2="440" y2="750" stroke="#795548" stroke-width="3"/><text x="446" y="754" class="lbl">Heat detect (GPIO1)</text>
+    <line x1="580" y1="750" x2="610" y2="750" stroke="#00897B" stroke-width="3"/><text x="616" y="754" class="lbl">UART (GPIO20/21)</text>
+    <line x1="74" y1="772" x2="104" y2="772" stroke="#E53935" stroke-width="3"/><text x="110" y="776" class="lbl">3.3 V</text>
+    <line x1="240" y1="772" x2="270" y2="772" stroke="#777" stroke-width="3"/><text x="276" y="776" class="lbl">GND</text>
+    <line x1="410" y1="772" x2="440" y2="772" stroke="#3949AB" stroke-width="3"/><text x="446" y="776" class="lbl">USB-C (CDC)</text>
+    <line x1="580" y1="772" x2="610" y2="772" stroke="#c0392b" stroke-width="3"/><text x="616" y="776" class="lbl">AC mains ⚠</text>
+  </g>
+  <text x="74" y="798" class="warn" font-size="10.5">⚠ The repo's SVG (docs/libreroaster_wiring.svg) has SPI permuted and a non-existent microphone — use this diagram instead.</text>
+
+  <text x="660" y="980" text-anchor="middle" class="net" font-size="10">Claude Opus 4.8 · 2026-05-29 · Full netlist and BOM in wiring-verified-opus-4-8_en.md · Audit in resume-opus-4-8.md</text>
+</svg>

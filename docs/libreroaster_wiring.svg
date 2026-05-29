@@ -132,11 +132,10 @@
     <line x1="10" y1="400" x2="170" y2="400" stroke="#e2e8f0"/>
 
     <!-- Optional peripherals -->
-    <rect x="10" y="405" width="160" height="16" rx="3" fill="#fefce8"/>
+    <rect x="10" y="405" width="160" height="16" rx="3" fill="#f1f5f9"/>
     <text x="15" y="417" class="pin">GPIO2</text>
-    <text x="60" y="417" class="pin-func">MIC ADC (acoustic crack detect)</text>
-    <text x="15" y="429" class="pin-warn">⚠️ STRAPPING — high-Z input only</text>
-    <text x="15" y="441" class="pin-func">(optional, Welford RMS algorithm)</text>
+    <text x="60" y="417" class="pin-func">UNUSED (VDD_SPI strapping)</text>
+    <text x="15" y="429" class="pin-warn">⚠️ Do NOT connect — no microphone in firmware</text>
 
     <rect x="10" y="448" width="160" height="16" rx="3" fill="#fefce8"/>
     <text x="15" y="460" class="pin">GPIO8</text>
@@ -172,13 +171,13 @@
     <text x="15" y="61" class="pin">CS → GPIO4</text>
 
     <rect x="10" y="68" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="81" class="pin">MOSI → GPIO5</text>
+    <text x="15" y="81" class="pin">MOSI → GPIO7</text>
 
     <rect x="10" y="88" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="101" class="pin">MISO → GPIO6</text>
+    <text x="15" y="101" class="pin">MISO → GPIO5</text>
 
     <rect x="10" y="108" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="121" class="pin">SCLK → GPIO7</text>
+    <text x="15" y="121" class="pin">SCLK → GPIO6</text>
 
     <rect x="10" y="130" width="150" height="16" rx="3" fill="#fee2e2"/>
     <text x="15" y="143" class="pin">VCC → 3.3V</text>
@@ -205,13 +204,13 @@
     <text x="15" y="61" class="pin">CS → GPIO3</text>
 
     <rect x="10" y="68" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="81" class="pin">MOSI → GPIO5</text>
+    <text x="15" y="81" class="pin">MOSI → GPIO7</text>
 
     <rect x="10" y="88" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="101" class="pin">MISO → GPIO6</text>
+    <text x="15" y="101" class="pin">MISO → GPIO5</text>
 
     <rect x="10" y="108" width="150" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="121" class="pin">SCLK → GPIO7</text>
+    <text x="15" y="121" class="pin">SCLK → GPIO6</text>
 
     <rect x="10" y="130" width="150" height="16" rx="3" fill="#fee2e2"/>
     <text x="15" y="143" class="pin">VCC → 3.3V</text>
@@ -223,25 +222,6 @@
     <rect x="10" y="180" width="150" height="30" rx="3" fill="#fff7ed"/>
     <text x="15" y="195" class="pin-func">T+ ← Type-K (yellow) → Exhaust</text>
     <text x="15" y="207" class="pin-func">T- ← Type-K (red)</text>
-  </g>
-
-  <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
-  <!-- OPTIONAL: ACOUSTIC MICROPHONE (Bottom-Left) -->
-  <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
-  <g transform="translate(30, 580)">
-    <rect x="0" y="0" width="170" height="110" class="box-optional"/>
-    <text x="85" y="18" text-anchor="middle" class="box-label">Microphone (optional)</text>
-    <text x="85" y="30" text-anchor="middle" class="box-sublabel">MAX4466 Electret + Amplifier</text>
-    <line x1="10" y1="38" x2="160" y2="38" stroke="#e2e8f0"/>
-
-    <rect x="10" y="44" width="150" height="16" rx="3" fill="#fefce8"/>
-    <text x="15" y="57" class="pin">OUT → GPIO2 (ADC)</text>
-
-    <rect x="10" y="64" width="150" height="16" rx="3" fill="#fee2e2"/>
-    <text x="15" y="77" class="pin">VCC → 3.3V</text>
-
-    <rect x="10" y="84" width="150" height="16" rx="3" fill="#e5e7eb"/>
-    <text x="15" y="97" class="pin">GND</text>
   </g>
 
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
@@ -443,10 +423,6 @@
   <!-- === MOSFET to FAN === -->
   <line class="w-pwm" x1="660" y1="440" x2="700" y2="449"/>
   <text x="665" y="430" class="wire-label">DRAIN → Fan –</text>
-
-  <!-- === OPTIONAL MIC === -->
-  <line class="w-opt" x1="200" y1="641" x2="230" y2="486"/>
-  <text x="210" y="655" class="wire-label">GPIO2 Mic ADC (optional)</text>
 
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
   <!-- SAFETY ANNOTATIONS -->

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="660" viewBox="0 0 980 660" font-family="Helvetica,Arial,sans-serif">
+  <defs><style>
+    .box{stroke:#333;stroke-width:1.5;}
+    .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+    .t{fill:#111;font-size:14px;font-weight:bold;} .tw{fill:#fff;font-size:14px;font-weight:bold;}
+    .p{fill:#111;font-size:12px;} .pw{fill:#fff;font-size:12px;}
+    .n{fill:#444;font-size:11px;} .w{fill:#b00;font-size:11px;font-weight:bold;}
+    .wire{stroke-width:2.6;fill:none;}
+  </style></defs>
+  <rect width="980" height="660" fill="#f7f7f9"/>
+  <text x="490" y="30" text-anchor="middle" class="t" font-size="18">Subsystem 2 — FAN / MOTOR (MOSFET PWM, low-side)</text>
+  <text x="490" y="50" text-anchor="middle" class="n">GPIO9 · LEDC Ch0 / Timer1 · 25 kHz · ⚠ GPIO9 is a STRAPPING PIN (boot)</text>
+
+  <!-- ESP -->
+  <rect x="40" y="120" width="170" height="120" rx="8" class="chip"/>
+  <text x="125" y="146" text-anchor="middle" class="tw">ESP32-C3</text>
+  <circle cx="210" cy="180" r="4" fill="#FF5722"/><text x="150" y="184" text-anchor="end" class="pw">GPIO9</text>
+  <circle cx="210" cy="216" r="4" fill="#bbb"/><text x="150" y="220" text-anchor="end" class="pw">GND</text>
+  <circle cx="40" cy="150" r="4" fill="#E53935"/><text x="50" y="154" class="pw">3V3</text>
+
+  <!-- Series R -->
+  <rect x="300" y="168" width="70" height="24" rx="3" fill="#fff" class="box"/>
+  <text x="335" y="185" text-anchor="middle" class="n">1 kΩ</text>
+  <line x1="210" y1="180" x2="300" y2="180" class="wire" stroke="#FF5722"/>
+
+  <!-- Pull-up 10k to 3V3 on GPIO9 line -->
+  <line x1="255" y1="180" x2="255" y2="110" class="wire" stroke="#E53935"/>
+  <rect x="240" y="84" width="30" height="22" rx="3" fill="#fff" class="box"/><text x="255" y="100" text-anchor="middle" class="n">10k</text>
+  <line x1="255" y1="84" x2="255" y2="64" class="wire" stroke="#E53935"/>
+  <line x1="120" y1="64" x2="600" y2="64" class="wire" stroke="#E53935"/>
+  <text x="610" y="68" class="p">3.3 V</text>
+  <line x1="125" y1="150" x2="120" y2="150" stroke="#E53935" stroke-width="2"/>
+  <line x1="120" y1="64" x2="120" y2="150" class="wire" stroke="#E53935"/>
+  <text x="300" y="58" class="w">⚠ 10k pull-up GPIO9→3V3 = CRITICAL TO BOOT</text>
+
+  <!-- MOSFET -->
+  <rect x="420" y="150" width="150" height="150" rx="6" fill="#fff" class="box"/>
+  <text x="495" y="172" text-anchor="middle" class="t" font-size="13">Logic-level MOSFET</text>
+  <text x="495" y="189" text-anchor="middle" class="n">IRLZ44N (low Vgs(th))</text>
+  <text x="430" y="214" class="p">G (gate) ← 1kΩ</text>
+  <text x="430" y="238" class="p">D (drain) → Fan(−)</text>
+  <text x="430" y="262" class="p">S (source) → GND</text>
+  <text x="430" y="288" class="n">opt. Zener 12V G–S</text>
+  <line x1="370" y1="180" x2="420" y2="206" class="wire" stroke="#FF5722"/>
+
+  <!-- gate pulldown 100k -->
+  <line x1="408" y1="206" x2="408" y2="340" class="wire" stroke="#999"/>
+  <rect x="393" y="250" width="30" height="22" rx="3" fill="#fff" class="box"/><text x="408" y="266" text-anchor="middle" class="n">100k</text>
+  <text x="300" y="332" class="n">weak gate pull-down (does not load the strapping)</text>
+
+  <!-- Fan -->
+  <rect x="660" y="150" width="150" height="90" rx="6" fill="#fff3e0" class="box"/>
+  <text x="735" y="174" text-anchor="middle" class="t" font-size="13">DC fan</text>
+  <text x="735" y="194" text-anchor="middle" class="n">12 V (or 24 V) · PWM 25 kHz</text>
+  <text x="735" y="212" text-anchor="middle" class="p">(+) ← 12 V</text>
+  <text x="735" y="230" text-anchor="middle" class="p">(−) → MOSFET Drain</text>
+  <line x1="570" y1="226" x2="660" y2="226" class="wire" stroke="#333"/><text x="585" y="220" class="n">Fan(−)→D</text>
+
+  <!-- flyback diode across motor -->
+  <rect x="660" y="252" width="150" height="34" rx="4" fill="#eef" class="box"/>
+  <text x="735" y="274" text-anchor="middle" class="w">Flyback 1N4007/Schottky (MANDATORY)</text>
+  <text x="735" y="300" text-anchor="middle" class="n">cathode→(+12V), anode→(Drain)</text>
+
+  <!-- 12V supply -->
+  <rect x="660" y="330" width="150" height="56" rx="6" fill="#fbe9e7" class="box"/>
+  <text x="735" y="352" text-anchor="middle" class="t" font-size="13">12 V supply</text>
+  <text x="735" y="370" text-anchor="middle" class="n">≥ 5 A · (+)→Fan · GND→star</text>
+  <line x1="735" y1="240" x2="735" y2="252" stroke="#FF5722" stroke-width="2"/>
+  <line x1="660" y1="358" x2="640" y2="358" class="wire" stroke="#FF5722"/>
+  <text x="560" y="362" class="n">+12V → Fan(+)</text>
+  <polyline class="wire" stroke="#FF5722" points="640,358 640,210 660,210"/>
+
+  <!-- GND star -->
+  <line x1="210" y1="216" x2="408" y2="216" class="wire" stroke="#999"/>
+  <polyline class="wire" stroke="#999" points="408,340 880,340 880,372 810,372"/>
+  <line x1="495" y1="300" x2="495" y2="340" class="wire" stroke="#999"/>
+  <text x="700" y="334" class="n">common GND (star): ESP · MOSFET source · 12 V supply</text>
+
+  <!-- notes -->
+  <rect x="40" y="430" width="900" height="180" rx="6" fill="#fff" class="box"/>
+  <text x="54" y="452" class="t" font-size="13">Assembly and boot notes</text>
+  <text x="54" y="474" class="n">• Low-side switching: the MOSFET breaks the fan's negative; the (+) is always tied to 12 V.</text>
+  <text x="54" y="492" class="n">• ⚠ GPIO9 is a strapping pin (ULW). It MUST be HIGH at reset or the ESP32-C3 enters download mode and will NOT boot.</text>
+  <text x="54" y="510" class="n">  10 kΩ pull-up to 3.3 V on GPIO9 = mandatory. The gate pull-down uses 100 kΩ (weak) so it does not pull GPIO9 low at reset.</text>
+  <text x="54" y="528" class="n">• Acceptable consequence: the fan may spin briefly at boot (harmless; what matters is that the heater does NOT).</text>
+  <text x="54" y="546" class="n">• Always a flyback diode on the motor (inductive load): without it the reverse spike can destroy the GPIO via latch-up.</text>
+  <text x="54" y="564" class="n">• Logic-level MOSFET (IRLZ44N): saturates with 3.3 V on the gate. An IRF520 will NOT work (Vgs(th) too high).</text>
+  <text x="54" y="582" class="n">• Common ground with the ESP and the 12 V supply at a single star point.</text>
+  <text x="54" y="602" class="w">Verify with: cargo run --release --example hil_fan   (sweeps duty 0→25→50→75→100→0 with register readback)</text>
+
+  <text x="490" y="648" text-anchor="middle" class="n">LibreRoaster · fan subsystem · GPIO9 / LEDC Ch0·Timer1 · 25 kHz (FAN_PWM_PIN=9, FAN_PWM_FREQUENCY_HZ=25000)</text>
+</svg>

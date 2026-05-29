@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="700" viewBox="0 0 980 700" font-family="Helvetica,Arial,sans-serif">
+  <defs><style>
+    .box{stroke:#333;stroke-width:1.5;}
+    .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+    .t{fill:#111;font-size:14px;font-weight:bold;}
+    .tw{fill:#fff;font-size:14px;font-weight:bold;}
+    .p{fill:#111;font-size:12px;} .pw{fill:#fff;font-size:12px;}
+    .n{fill:#444;font-size:11px;} .w{fill:#b00;font-size:11px;font-weight:bold;}
+    .wire{stroke-width:2.6;fill:none;}
+  </style></defs>
+  <rect width="980" height="700" fill="#f7f7f9"/>
+  <text x="490" y="30" text-anchor="middle" class="t" font-size="18">Subsystem 1 — THERMOCOUPLES (2× MAX31856 on a shared SPI bus)</text>
+  <text x="490" y="50" text-anchor="middle" class="n">SPI2 · 1 MHz · Mode 1 (CPOL=0,CPHA=1) · software CS (defaults HIGH) · verified in init.rs</text>
+
+  <!-- ESP SPI block -->
+  <rect x="380" y="90" width="220" height="300" rx="8" class="chip"/>
+  <text x="490" y="114" text-anchor="middle" class="tw">ESP32-C3 (SPI2)</text>
+  <g text-anchor="start">
+    <circle cx="380" cy="150" r="4" fill="#2196F3"/><text x="392" y="154" class="pw">GPIO6 · SCLK</text>
+    <circle cx="380" cy="184" r="4" fill="#4CAF50"/><text x="392" y="188" class="pw">GPIO7 · MOSI</text>
+    <circle cx="380" cy="218" r="4" fill="#FF9800"/><text x="392" y="222" class="pw">GPIO5 · MISO</text>
+    <circle cx="380" cy="252" r="4" fill="#9C27B0"/><text x="392" y="256" class="pw">GPIO4 · CS_BT</text>
+    <circle cx="380" cy="286" r="4" fill="#7B1FA2"/><text x="392" y="290" class="pw">GPIO3 · CS_ET</text>
+    <circle cx="380" cy="330" r="4" fill="#E53935"/><text x="392" y="334" class="pw">3V3</text>
+    <circle cx="380" cy="364" r="4" fill="#bbb"/><text x="392" y="368" class="pw">GND</text>
+  </g>
+
+  <!-- MAX31856 BT (top right) -->
+  <rect x="690" y="80" width="230" height="240" rx="6" fill="#e8f0ff" class="box"/>
+  <text x="805" y="100" text-anchor="middle" class="t" font-size="13">MAX31856 #1 — BT</text>
+  <g text-anchor="start">
+    <circle cx="690" cy="130" r="4" fill="#2196F3"/><text x="700" y="134" class="p">SCK  ← GPIO6</text>
+    <circle cx="690" cy="154" r="4" fill="#4CAF50"/><text x="700" y="158" class="p">SDI  ← GPIO7 (MOSI)</text>
+    <circle cx="690" cy="178" r="4" fill="#FF9800"/><text x="700" y="182" class="p">SDO  → GPIO5 (MISO)</text>
+    <circle cx="690" cy="202" r="4" fill="#9C27B0"/><text x="700" y="206" class="p">CS   ← GPIO4</text>
+    <circle cx="690" cy="226" r="4" fill="#E53935"/><text x="700" y="230" class="p">VIN/VCC = 3V3</text>
+    <circle cx="690" cy="250" r="4" fill="#bbb"/><text x="700" y="254" class="p">GND</text>
+    <text x="700" y="278" class="n">FAULT, DRDY → NOT CONNECTED</text>
+    <text x="700" y="296" class="n">+0.1µF between VIN and GND</text>
+    <text x="700" y="313" class="p">T+ (yellow) / T− (red)</text>
+  </g>
+  <!-- TC BT -->
+  <rect x="690" y="330" width="230" height="40" rx="6" fill="#fff7e6" class="box"/>
+  <text x="805" y="348" text-anchor="middle" class="p">Type-K thermocouple — BT</text>
+  <text x="805" y="363" text-anchor="middle" class="n">inside the drum, in contact with the beans</text>
+  <line x1="805" y1="320" x2="805" y2="330" stroke="#a67c00" stroke-width="2"/>
+
+  <!-- MAX31856 ET (bottom right) -->
+  <rect x="690" y="400" width="230" height="220" rx="6" fill="#e8f0ff" class="box"/>
+  <text x="805" y="420" text-anchor="middle" class="t" font-size="13">MAX31856 #2 — ET</text>
+  <g text-anchor="start">
+    <circle cx="690" cy="448" r="4" fill="#2196F3"/><text x="700" y="452" class="p">SCK  ← GPIO6</text>
+    <circle cx="690" cy="470" r="4" fill="#4CAF50"/><text x="700" y="474" class="p">SDI  ← GPIO7 (MOSI)</text>
+    <circle cx="690" cy="492" r="4" fill="#FF9800"/><text x="700" y="496" class="p">SDO  → GPIO5 (MISO)</text>
+    <circle cx="690" cy="514" r="4" fill="#7B1FA2"/><text x="700" y="518" class="p">CS   ← GPIO3</text>
+    <circle cx="690" cy="536" r="4" fill="#E53935"/><text x="700" y="540" class="p">VIN/VCC = 3V3</text>
+    <circle cx="690" cy="558" r="4" fill="#bbb"/><text x="700" y="562" class="p">GND</text>
+    <text x="700" y="584" class="n">FAULT/DRDY n/c · +0.1µF</text>
+    <text x="700" y="601" class="p">T+ / T−</text>
+  </g>
+  <rect x="690" y="612" width="230" height="6" fill="#fff7e6"/>
+  <text x="805" y="636" text-anchor="middle" class="n">Type-K thermocouple — ET (exhaust airflow)</text>
+
+  <!-- shared bus wires -->
+  <polyline class="wire" stroke="#2196F3" points="380,150 650,150 650,130 690,130"/>
+  <polyline class="wire" stroke="#2196F3" points="650,150 650,448 690,448"/>
+  <polyline class="wire" stroke="#4CAF50" points="380,184 636,184 636,154 690,154"/>
+  <polyline class="wire" stroke="#4CAF50" points="636,184 636,470 690,470"/>
+  <polyline class="wire" stroke="#FF9800" points="380,218 622,218 622,178 690,178"/>
+  <polyline class="wire" stroke="#FF9800" points="622,218 622,492 690,492"/>
+  <polyline class="wire" stroke="#9C27B0" points="380,252 660,252 660,202 690,202"/>
+  <polyline class="wire" stroke="#7B1FA2" points="380,286 645,286 645,514 690,514"/>
+  <polyline class="wire" stroke="#E53935" points="380,330 608,330 608,226 690,226"/>
+  <polyline class="wire" stroke="#E53935" points="608,330 608,536 690,536"/>
+  <polyline class="wire" stroke="#999" points="380,364 596,364 596,250 690,250"/>
+  <polyline class="wire" stroke="#999" points="596,364 596,558 690,558"/>
+  <text x="640" y="400" class="n" transform="rotate(-90 640 400)">shared SPI bus (SCLK/MOSI/MISO/3V3/GND)</text>
+
+  <!-- Notes box -->
+  <rect x="40" y="430" width="320" height="200" rx="6" fill="#fff" class="box"/>
+  <text x="54" y="452" class="t" font-size="13">Assembly notes</text>
+  <text x="54" y="474" class="n">• SCLK/MOSI/MISO/3V3/GND go to BOTH modules.</text>
+  <text x="54" y="492" class="n">• Individual CS: GPIO4=BT, GPIO3=ET.</text>
+  <text x="54" y="510" class="n">• ESP MOSI→SDI ; ESP MISO←SDO (do not cross).</text>
+  <text x="54" y="528" class="n">• Firmware does NOT use FAULT/DRDY (polls over SPI,</text>
+  <text x="54" y="544" class="n">  fixed 160 ms wait). Leave them unconnected.</text>
+  <text x="54" y="562" class="n">• Type K: yellow=+, red=−. Polarity matters.</text>
+  <text x="54" y="580" class="n">• Do not swap BT↔ET probes (electrically valid,</text>
+  <text x="54" y="596" class="n">  but control misbehaves — see HARDWARE.md).</text>
+  <text x="54" y="618" class="w">Verify with: cargo run --release --example hil_tc</text>
+
+  <text x="490" y="685" text-anchor="middle" class="n">LibreRoaster · thermocouple subsystem · mapping verified against src/hardware/init.rs (.with_sck(6).with_mosi(7).with_miso(5))</text>
+</svg>
