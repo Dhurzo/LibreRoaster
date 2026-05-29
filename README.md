@@ -25,7 +25,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| ~244 host-side unit & integration tests | ✅ 243/244 pass (1 pre-existing failure) |
+| 259 host-side unit + ~139 integration tests | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
 | PID control, profiles, safety interlocks | ✅ Implemented |
@@ -195,7 +195,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). ~244 tests run on x86_64:
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **259 unit tests + ~139 integration tests** run on x86_64:
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test
@@ -277,7 +277,12 @@ The main technical documents are:
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
 - **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
+- **`docs/decisions/`** — Architecture Decision Records (ADRs) for key design choices
 - **`docs/pinout.md`** — pin mapping reference
+- **`CHANGELOG.md`** — release history and notable changes per version
+- **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy
+- **`.github/dependabot.yml`** — automated dependency updates (Cargo weekly, Actions monthly)
+- **`.github/workflows/release.yml`** — release build and GitHub Release automation (tag `v*`)
 
 ---
 

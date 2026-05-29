@@ -1,0 +1,51 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - cargo
+    groups:
+      embassy:
+        patterns:
+          - "embassy-*"
+          - "embassy-executor"
+        update-types:
+          - minor
+          - patch
+      esp-hal:
+        patterns:
+          - "esp-hal"
+          - "esp-*"
+        update-types:
+          - minor
+          - patch
+      embedded-hal:
+        patterns:
+          - "embedded-hal*"
+          - "embedded-io*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "esp-hal"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "esp-rtos"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions

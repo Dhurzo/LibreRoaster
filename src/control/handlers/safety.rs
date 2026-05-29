@@ -8,7 +8,7 @@
 
 use crate::config::{RoasterCommand, SsrHardwareStatus, SystemStatus};
 use crate::control::policies::{SafetyPolicy, SafetyPolicyOutcome};
-use crate::control::{RoasterCommandHandler, RoasterError};
+use crate::control::RoasterError;
 use log::warn;
 
 /// Safety command handler
@@ -61,67 +61,6 @@ impl SafetyCommandHandler {
 impl Default for SafetyCommandHandler {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl RoasterCommandHandler for SafetyCommandHandler {
-    /// Handle safety-related roaster commands
-    ///
-    /// # Commands Handled
-    ///
-    /// - `EmergencyStop` - Emergency shutdown
-    /// - `ArtisanEmergencyStop` - Artisan-initiated emergency stop
-    ///
-    /// Both commands:
-    /// 1. Set fault_condition = true
-    /// 2. Cut heater output (ssr_output = 0)
-    /// 3. Disable PID control (pid_enabled = false)
-    /// 4. Mark SSR hardware status as Error
-    ///
-    /// # Arguments
-    ///
-    /// * `command` - Roaster command to handle
-    /// * `_current_time` - Current timestamp (unused for safety commands)
-    /// * `status` - Mutable system status
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) if command handled, Err if invalid command
-    fn handle_command(
-        &mut self,
-        command: RoasterCommand,
-        _current_time: embassy_time::Instant,
-        status: &mut SystemStatus,
-    ) -> Result<(), RoasterError> {
-        match command {
-            RoasterCommand::EmergencyStop => {
-                status.fault_condition = true;
-                status.ssr_output = 0.0;
-                status.pid_enabled = false;
-                status.ssr_hardware_status = SsrHardwareStatus::Error;
-                self.trigger_emergency("Manual emergency stop")
-            }
-
-            RoasterCommand::ArtisanEmergencyStop => {
-                status.fault_condition = true;
-                status.ssr_output = 0.0;
-                status.pid_enabled = false;
-                status.ssr_hardware_status = SsrHardwareStatus::Error;
-                self.trigger_emergency("Artisan emergency stop")
-            }
-
-            _ => Err(RoasterError::InvalidState {
-                source: Some("invalid_command_for_mode"),
-            }),
-        }
-    }
-
-    /// Check if this handler can process the given command
-    fn can_handle(&self, command: RoasterCommand) -> bool {
-        matches!(
-            command,
-            RoasterCommand::EmergencyStop | RoasterCommand::ArtisanEmergencyStop
-        )
     }
 }
 

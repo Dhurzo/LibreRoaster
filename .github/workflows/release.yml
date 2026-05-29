@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.2.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build Firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Build firmware
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+      - name: List build output
+        run: ls -la target/riscv32imc-unknown-none-elf/release/libreroaster
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libreroaster-firmware
+          path: target/riscv32imc-unknown-none-elf/release/libreroaster
+          retention-days: 90
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: libreroaster-firmware
+          path: ./firmware
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            echo "notes_file=CHANGELOG.md" >> $GITHUB_OUTPUT
+          else
+            echo "notes_file=" >> $GITHUB_OUTPUT
+          fi
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: LibreRoaster ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.notes_file }}
+          files: |
+            ./firmware/libreroaster
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -107,20 +107,18 @@
 //!
 //! ### For HOT PATH Operations
 //!
-//! ```ignore
-//! // Example: using heapless fixed-size buffers for hot paths
-//! use heapless::String;
-//!
-//! fn read_temperature(buffer: &mut [u8; 3]) -> Result<f32, ()> {
-//!     let mut error_msg: String<32> = String::new();
-//!     // Fixed-size buffer operations without allocation
-//!     Ok(0.0)
-//! }
+//! ```rust
+//! # use heapless::String;
+//! #
+//! # fn example() {
+//! let mut error_msg: String<32> = String::new();
+//! // Fixed-size buffer operations without allocation
+//! # }
 //! ```
 //!
 //! ### For INITIALIZATION Operations
 //!
-//! ```ignore
+//! ```text
 //! // Example: heap allocations allowed during initialization
 //! // let heater: Box<dyn Heater> = Box::new(HeaterImpl::new()?);
 //! // let config: String = load_configuration()?;
@@ -129,7 +127,7 @@
 //!
 //! ### For MIXED Operations
 //!
-//! ```ignore
+//! ```text
 //! // Example: mixed operations use heapless for runtime, alloc for init
 //! // pub enum AppError {
 //! //     Temperature {
@@ -147,7 +145,7 @@
 //!
 //! ### Memory Tests
 //!
-//! ```ignore
+//! ```text
 //! // Example: test verifying no allocations in hot path
 //! // let mut system = create_test_system();
 //! // for _ in 0..1000 {
