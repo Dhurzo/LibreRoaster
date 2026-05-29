@@ -125,7 +125,7 @@ Total count of LEDC guard timeout events. This counter increments whenever the `
 - **Value `0`**: No LEDC timeouts have occurred
 - **Value `1-65535`**: Total number of timeout events observed
 
-**Implementation:** The `LedcGuard::try_acquire()` method attempts to acquire the LEDC lock. If the lock cannot be acquired within `LEDC_GUARD_TIMEOUT_MS` (40ms), the guard records a timeout via the `TIMEOUT_COUNTER` atomic counter.
+**Implementation:** The `LedcGuard::try_acquire()` method attempts to acquire the LEDC lock. If the lock cannot be acquired within `LEDC_GUARD_TIMEOUT_MS` (10ms), the guard records a timeout via the `TIMEOUT_COUNTER` atomic counter.
 
 **Code Reference:** `src/hardware/ledc_guard.rs` (record_timeout function)
 

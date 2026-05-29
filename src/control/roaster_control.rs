@@ -282,6 +282,22 @@ impl RoasterControl {
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
+        // C5: Comms idle timeout — no command from Artisan for > COMMS_IDLE_TIMEOUT_MS.
+        // Applies only during active roast states (Heating/Stable).
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            let idle_ms = current_time
+                .as_millis()
+                .saturating_sub(self.status.last_command_received_at_ms);
+            if idle_ms > crate::config::constants::COMMS_IDLE_TIMEOUT_MS {
+                warn!(
+                    "SAFETY COMMS-IDLE: no command for {}ms (>{COMMS_IDLE_TIMEOUT_MS}ms) — emergency shutdown",
+                    idle_ms
+                );
+                self.emergency_shutdown("Comms idle timeout")?;
+                return Ok(0.0);
+            }
+        }
+
         // Maximum roast time safety backstop
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
             if let Some(start) = self.profile_start_time {
@@ -476,6 +492,9 @@ impl RoasterControl {
         &mut self,
         command: crate::config::ArtisanCommand,
     ) -> Result<(), RoasterError> {
+        // C5: Record wall-clock (millis-since-boot) of last command for idle timeout.
+        self.status.last_command_received_at_ms = embassy_time::Instant::now().as_millis();
+
         // Bug #6 fix: Reject all commands when a fault condition is active.
         // Prevents heater ramp commands from worsening an over-temp situation
         // that was detected between sensor reads.

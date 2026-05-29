@@ -59,12 +59,14 @@ pub async fn usb_reader_task() {
         if let Some(usb) = get_usb_cdc_driver() {
             match usb.read_bytes(&mut rbuf).await {
                 Ok(len) if len > 0 => {
+                    crate::hardware::error_counters::reset_usb_error_count();
                     let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
                     log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
                     process_usb_command_data(&rbuf[..len]);
                 }
                 Ok(_) => { /* no data — idle poll */ }
                 Err(e) => {
+                    crate::hardware::error_counters::increment_usb_error_count();
                     log::warn!("USB CDC read error: {:?}", e);
                 }
             }

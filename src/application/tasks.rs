@@ -93,6 +93,7 @@ struct TickState {
     prev_watchdog_state: WatchdogState,
     tick_app_error: Option<AppError>,
     sensor_err: Option<ContainerError>,
+    consecutive_sensor_errors: u8,
 }
 
 impl TickState {
@@ -107,6 +108,7 @@ impl TickState {
             prev_watchdog_state: WatchdogState::None,
             tick_app_error: None,
             sensor_err: None,
+            consecutive_sensor_errors: 0,
         }
     }
 }
@@ -484,6 +486,31 @@ fn log_ledc_stage(
     );
 }
 
+/// Handle a single watchdog failure, updating roaster status and triggering
+/// emergency shutdown if consecutive failures reach the threshold (2).
+fn handle_watchdog_failure(
+    roaster: &mut crate::control::roaster_control::RoasterControl,
+    reason: &'static str,
+    previous_watchdog_failure: Option<&'static str>,
+    output_channel: &OutputChannel,
+) {
+    warn!("SAFETY WATCHDOGFEED fail: {}", reason);
+    let status = roaster.status_mut();
+    status.watchdog_feed_ok = false;
+    status.watchdog_last_failure = Some(reason);
+    status.watchdog_consecutive_failures = status.watchdog_consecutive_failures.saturating_add(1);
+    let needs_emergency = status.watchdog_consecutive_failures >= 2;
+    if previous_watchdog_failure != Some(reason) {
+        let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
+        let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
+        let _ = output_channel.try_send(safety);
+    }
+    drop(status);
+    if needs_emergency {
+        let _ = roaster.emergency_shutdown("Watchdog failure");
+    }
+}
+
 async fn feed_watchdog_stage(
     tick_state: &mut TickState,
     guard_timeout_happened: bool,
@@ -496,43 +523,51 @@ async fn feed_watchdog_stage(
         .set_stage(ControlLoopStage::WatchdogFeed);
     let watchdog_snapshot = match ServiceContainer::with_roaster_async(
         |roaster: &mut crate::control::roaster_control::RoasterControl| {
-            let status = roaster.status_mut();
-            let previous_watchdog_failure = status.watchdog_last_failure;
-            let mut report_watchdog_failure = |reason: &'static str| {
-                warn!("SAFETY WATCHDOGFEED fail: {}", reason);
-                status.watchdog_feed_ok = false;
-                status.watchdog_last_failure = Some(reason);
-                status.watchdog_consecutive_failures =
-                    status.watchdog_consecutive_failures.saturating_add(1);
-                if status.watchdog_consecutive_failures >= 2 {
-                    status.fault_condition = true;
-                }
-                if previous_watchdog_failure != Some(reason) {
-                    let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
-                    let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
-                    let _ = output_channel.try_send(safety);
-                }
+            // Read previous state with a short borrow to avoid borrowing conflicts
+            let previous_watchdog_failure = {
+                let status = roaster.status_mut();
+                status.watchdog_last_failure
+            };
+
+            // Read bean_temp needed for the feed call
+            let bean_temp = {
+                let status = roaster.status_mut();
+                status.bean_temp
             };
 
             match ServiceContainer::get_instance()
-                .with_watchdog(|watchdog| watchdog.feed_async(status.bean_temp))
+                .with_watchdog(|watchdog| watchdog.feed_async(bean_temp))
             {
                 Ok(_) => {
+                    let status = roaster.status_mut();
                     status.watchdog_feed_ok = true;
                     status.watchdog_last_failure = None;
                     status.watchdog_consecutive_failures = 0;
                 }
                 Err(ContainerError::Watchdog(err)) => {
-                    report_watchdog_failure(err.reason());
+                    handle_watchdog_failure(
+                        roaster,
+                        err.reason(),
+                        previous_watchdog_failure,
+                        output_channel,
+                    );
                 }
                 Err(ContainerError::WatchdogUninitialized) => {
-                    report_watchdog_failure(WatchdogError::NotInitialized.reason());
+                    handle_watchdog_failure(
+                        roaster,
+                        WatchdogError::NotInitialized.reason(),
+                        previous_watchdog_failure,
+                        output_channel,
+                    );
                 }
                 Err(err) => {
                     warn!("Watchdog container error: {:?}", err);
                 }
             }
 
+            // Re-borrow status for the remaining code after match arms that
+            // may have dropped the borrow to call emergency_shutdown.
+            let status = roaster.status_mut();
             status.ledc_guard_timeouts = guard_total_timeouts;
             if guard_timeout_happened {
                 let mut guard_msg = String::<TRACE_EVENT_MAX_LEN>::new();
@@ -778,6 +813,35 @@ pub async fn control_loop_task() {
         drain_commands(&mut tick_state).await;
 
         read_sensors(&mut tick_state, guard_timeout_happened, &output_channel).await;
+
+        // C3: Track consecutive sensor errors — trigger emergency shutdown at threshold.
+        if tick_state.sensor_err.is_some() {
+            tick_state.consecutive_sensor_errors =
+                tick_state.consecutive_sensor_errors.saturating_add(1);
+            if tick_state.consecutive_sensor_errors
+                >= crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
+            {
+                warn!(
+                    "SAFETY SENSOR-ERR: {} consecutive sensor read errors — emergency shutdown",
+                    crate::config::constants::MAX_CONSECUTIVE_SENSOR_ERRORS
+                );
+                let _ = ServiceContainer::with_roaster_async(|roaster| {
+                    let _ = roaster.emergency_shutdown("Consecutive sensor errors");
+                })
+                .await;
+            }
+        } else {
+            tick_state.consecutive_sensor_errors = 0;
+        }
+
+        // C4: Check comms read error thresholds — trigger emergency shutdown if exceeded.
+        if crate::hardware::error_counters::any_comms_error_threshold_exceeded() {
+            warn!("SAFETY COMMS-ERR: comms read error threshold exceeded — emergency shutdown");
+            let _ = ServiceContainer::with_roaster_async(|roaster| {
+                let _ = roaster.emergency_shutdown("Comms read error threshold exceeded");
+            })
+            .await;
+        }
 
         let (control_snapshot, control_status) =
             update_control_stage(&mut tick_state, guard_timeout_happened, &output_channel).await;

@@ -58,7 +58,7 @@ pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 /// Maximum safe bean temperature rate of rise in °C/s.
 /// 0.5°C/s = 30°C/min — above this rate during active heating indicates
 /// a possible runaway heater, stuck SSR, or thermocouple failure.
-pub const MAX_BT_RATE_OF_RISE: f32 = 5.0;
+pub const MAX_BT_RATE_OF_RISE: f32 = 0.5;
 /// Consecutive RoR exceedances required before emergency shutdown.
 /// Prevents false triggers from single-spike sensor glitches.
 pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
@@ -71,11 +71,16 @@ pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
 pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
 
 pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
+pub const MAX_CONSECUTIVE_SENSOR_ERRORS: u8 = 5;
 
 /// Control loop is expected to feed the Task Watchdog at this cadence.
 pub const WATCHDOG_FEED_INTERVAL_MS: u64 = 100;
 pub const HW_WATCHDOG_TIMEOUT_SECS: u32 = 2;
 pub const LEDC_GUARD_TIMEOUT_MS: u64 = 10;
+/// Maximum idle time (ms) without any Artisan command before emergency shutdown.
+/// During active roasting, Artisan sends periodic STATUS queries (~1s interval),
+/// so 15s without any command indicates Artisan has crashed or disconnected.
+pub const COMMS_IDLE_TIMEOUT_MS: u64 = 15000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {
@@ -430,6 +435,9 @@ pub struct SystemStatus {
     pub pid_cycle_time_ms: u32, // default=100 (PID_SAMPLE_TIME_MS)
     pub pid_output_min: f32,    // default=0.0
     pub pid_output_max: f32,    // default=100.0
+    /// Millis-since-boot timestamp of the last received Artisan command.
+    /// Used by the comms idle timeout safety check. 0 = no command yet.
+    pub last_command_received_at_ms: u64,
 }
 
 impl Default for SystemStatus {
@@ -469,6 +477,7 @@ impl Default for SystemStatus {
             pid_cycle_time_ms: PID_SAMPLE_TIME_MS,
             pid_output_min: 0.0,
             pid_output_max: 100.0,
+            last_command_received_at_ms: 0,
         }
     }
 }

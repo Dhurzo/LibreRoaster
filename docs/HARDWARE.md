@@ -82,7 +82,7 @@ The firmware currently relies on these operational assumptions:
 - thermocouple read duration around **160 ms**,
 - watchdog feed interval **100 ms**,
 - hardware watchdog timeout **2 s**,
-- LEDC guard timeout **40 ms**,
+- LEDC guard timeout **10 ms**,
 - temperature validity timeout **1000 ms**.
 
 These values shape both roast behavior and failure behavior. If you change them, you are changing more than performance.

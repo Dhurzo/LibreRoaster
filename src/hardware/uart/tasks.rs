@@ -61,11 +61,13 @@ pub async fn uart_reader_task() {
         if let Some(uart) = get_uart_driver() {
             match uart.read_bytes(&mut rbuf).await {
                 Ok(len) if len > 0 => {
+                    crate::hardware::error_counters::reset_uart_error_count();
                     push_to_event_queue(&rbuf[..len]);
                 }
                 Ok(0) => { /* no data — idle poll */ }
                 Ok(_) => { /* should not happen based on pattern match above */ }
                 Err(e) => {
+                    crate::hardware::error_counters::increment_uart_error_count();
                     log::warn!("UART read error: {:?}", e);
                 }
             }
