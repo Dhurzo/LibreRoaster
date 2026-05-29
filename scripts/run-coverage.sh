@@ -18,6 +18,7 @@ COV="cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --no-fail-
 case "${1:-}" in
   --ci)
     echo "=== Generating lcov coverage report for CI ==="
+    mkdir -p target/coverage
     $COV --lcov --output-path target/coverage/lcov.info
     echo "=== Report saved to target/coverage/lcov.info ==="
     ;;
