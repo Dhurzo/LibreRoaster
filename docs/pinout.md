@@ -17,7 +17,7 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 | 7     | SPI MOSI              | Output    | SPI (FSPID)         | Master Out Slave In — shared between both MAX31856 chips. |
 | 8     | Status LED            | Output    | Onboard indicator   | **Strapping pin.** Boot fails if pulled LOW. Use push-pull output, never open-drain. |
 | 9     | **Fan PWM**           | Output    | LEDC (25 kHz)       | **⚠️ CRITICAL STRAPPING PIN (ULW).** See warning below. |
-| 10    | SSR PWM               | Output    | LEDC (310 Hz)        | Heater control via Solid State Relay. |
+| 10    | SSR PWM               | Output    | LEDC (1 Hz zero-cross) | Heater control via Solid State Relay. |
 | 20    | UART RX               | Input     | UART0               | Receives Artisan commands. Connect to CH341 TX. |
 | 21    | UART TX               | Output    | UART0               | Sends Artisan telemetry. Connect to CH341 RX. |
 | —     | USB D+ / D−           | Bidir     | USB Serial/JTAG     | Internal to ESP32-C3. Native USB CDC for Artisan (alternative to UART). No external pins. |
@@ -210,7 +210,7 @@ SPI Bus (MAX31856 thermocouples)
 
 PWM Outputs (LEDC)
   GPIO9  ── Fan PWM  (25 kHz)  ⚠️ STRAPPING PIN
-  GPIO10 ── SSR PWM  (310 Hz)
+  GPIO10 ── SSR 1 Hz (zero-cross)
 
 Feedback / Detection
   GPIO1  ── SSR heat detection (input, pull-up)

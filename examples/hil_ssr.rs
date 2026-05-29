@@ -52,7 +52,7 @@ fn main() -> ! {
     match timer0.configure(timer::config::Config {
         duty: timer::config::Duty::Duty8Bit,
         clock_source: timer::LSClockSource::APBClk,
-        frequency: Rate::from_hz(310),
+        frequency: Rate::from_hz(1),
     }) {
         Ok(_) => {}
         Err(_) => {

@@ -177,9 +177,9 @@ Validates LEDC PWM peripheral configuration for heater control. **Heater is NEVE
 
 | Test | Description | Expected Result |
 |------|-------------|-----------------|
-| 1 | LEDC channel init (GPIO10, 310 Hz) | Channel configured |
+| 1 | LEDC channel init (GPIO10, 1 Hz zero-cross) | Channel configured |
 | 2 | Duty cycle set to 0%, readback | Duty = 0 |
-| 3 | LEDC timer config verification | 310 Hz frequency confirmed |
+| 3 | LEDC timer config verification | 1 Hz frequency confirmed |
 | 4 | Multiple init calls (idempotency) | No error, consistent state |
 
 #### `hil_fan` — Fan LEDC Duty Sweep and Readback (7 tests)

@@ -63,7 +63,7 @@ Verify wiring matches the **firmware pinout** (not any other document):
 
 | Signal | GPIO | Frequency |
 |--------|------|-----------|
-| SSR (heater) | **GPIO 10** | 310 Hz |
+| SSR (heater) | **GPIO 10** | 1 Hz (zero-cross) |
 | Fan (MOSFET) | **GPIO 9** | 25 kHz |
 | Status LED | **GPIO 8** | — |
 

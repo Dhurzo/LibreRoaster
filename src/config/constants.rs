@@ -22,15 +22,21 @@ pub const UART_TX_PIN: u8 = 21;
 pub const UART_RX_PIN: u8 = 20;
 
 pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
-pub const SSR_PWM_FREQUENCY_HZ: u32 = 310;
+/// SSR control cycle frequency in Hz.
+/// 1 Hz = 1-second period (100 AC half-cycles at 50 Hz mains).
+/// Compatible with zero-cross SSRs (SSR-25DA, etc.).
+/// Configurable: 1, 2, 5, 10 Hz for faster response if needed.
+pub const SSR_CONTROL_CYCLE_HZ: u32 = 1;
 pub const FAN_LEDC_CHANNEL: u8 = 0;
 pub const SSR_LEDC_CHANNEL: u8 = 1;
-pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (310 Hz PWM)
-pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25kHz silent operation)
-pub const SSR_PWM_RESOLUTION: u8 = 8;
+pub const SSR_LEDC_TIMER: u8 = 0; // Timer0 for SSR (1 Hz zero-cross control)
+pub const FAN_LEDC_TIMER: u8 = 1; // Timer1 for Fan (25 kHz silent operation)
+pub const SSR_PWM_RESOLUTION: u8 = 8; // 256 steps → ~3.9ms per step at 1 Hz
+/// Minimum interval between SSR duty updates (rate-limiting).
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 pub const SSR_DUTY_TOLERANCE_TICKS: u8 = 2;
-pub const SSR_MIN_DUTY_TICKS: u8 = 3; // ~38µs at 310Hz PWM (3/256 × 1/310s)
+/// Minimum non-zero duty (3/256 × 1000ms ≈ 11.7ms ≈ 1 AC half-cycle at 50 Hz).
+pub const SSR_MIN_DUTY_TICKS: u8 = 3;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 pub const MAX_SAFE_TEMP: f32 = 250.0;
