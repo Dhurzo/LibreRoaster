@@ -37,7 +37,7 @@ mod software_watchdog {
 
     /// Timestamp of last successful feed in milliseconds
     static LAST_FEED_MS: AtomicU64 = AtomicU64::new(0);
-    const WATCHDOG_TIMEOUT_MS: u64 = 300; // 3 missed ticks = 300ms at 100ms interval
+    const WATCHDOG_TIMEOUT_MS: u64 = 500; // 3 missed ticks = 500ms at ~160ms loop cadence
 
     pub struct WatchdogFeeder {
         last_failure: Option<&'static str>,

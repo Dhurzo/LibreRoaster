@@ -57,7 +57,7 @@ impl ActuatorController {
 
         match self.ssr_guard.next_cycle_allowed(now) {
             Ok(_) => {
-                let actual_output = if self.slewing_output < 1.0 && clamped > 0.0 {
+                let actual_output = if clamped > 0.0 {
                     let mut actual_output = self.slewing_output;
 
                     if let Some(last_update) = self.last_slew_update {

@@ -6,15 +6,8 @@ pub mod parser;
 pub use multiplexer::{CommChannel, CommandMultiplexer};
 pub use parser::parse_artisan_command;
 
-use crate::config::ArtisanCommand;
 #[cfg(target_arch = "riscv32")]
-use crate::hardware::uart::{send_response, uart_reader_task, COMMAND_PIPE_SIZE};
-#[cfg(not(target_arch = "riscv32"))]
-use crate::hardware::uart::{send_response, COMMAND_PIPE_SIZE};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pipe::Pipe;
-use embassy_time::Duration;
-use embassy_time::Timer;
+use crate::hardware::uart::{send_response, uart_reader_task};
 use heapless::Deque;
 
 /// Default size for command queue - handles bursts of commands
@@ -79,8 +72,6 @@ impl<T, const N: usize> Default for CommandQueue<T, N> {
     }
 }
 
-static mut COMMAND_PIPE: Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> = None;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputError {
     UartError,
@@ -88,6 +79,8 @@ pub enum InputError {
     BufferFull,
 }
 
+/// Placeholder for Artisan input. Command parsing happens in the UART/USB queue
+/// processor tasks; this struct exists for ServiceContainer DI compatibility.
 pub struct ArtisanInput;
 
 impl ArtisanInput {
@@ -95,42 +88,7 @@ impl ArtisanInput {
         Ok(Self)
     }
 
-    pub async fn read_command(&mut self) -> Result<Option<ArtisanCommand>, InputError> {
-        let mut cmd_buf: [u8; 64] = [0u8; 64];
-
-        #[allow(static_mut_refs)]
-        if let Some(pipe) = unsafe { COMMAND_PIPE.as_ref() } {
-            pipe.read(&mut cmd_buf).await;
-        }
-
-        if cmd_buf[0] == 0 {
-            Timer::after(Duration::from_millis(10)).await;
-            return Ok(None);
-        }
-
-        let len = cmd_buf.iter().take_while(|&&b| b != 0).count();
-        if len == 0 {
-            return Ok(None);
-        }
-
-        let command_str =
-            core::str::from_utf8(&cmd_buf[..len]).map_err(|_| InputError::ParseError)?;
-
-        match parse_artisan_command(command_str) {
-            Ok(cmd) => Ok(Some(cmd)),
-            Err(_) => Ok(None),
-        }
-    }
-
-    pub fn try_read_command(&mut self) -> Result<Option<ArtisanCommand>, InputError> {
-        let _cmd_buf: [u8; 64] = [0u8; 64];
-
-        #[allow(static_mut_refs)]
-        if let Some(_pipe) = unsafe { COMMAND_PIPE.as_ref() } {}
-
-        Ok(None)
-    }
-
+    #[cfg(target_arch = "riscv32")]
     pub async fn send_response(&mut self, response: &str) -> Result<(), InputError> {
         send_response(response).await
     }

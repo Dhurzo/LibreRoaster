@@ -3,7 +3,7 @@ use crate::config::PID_SAMPLE_TIME_MS;
 const DEFAULT_KP: f32 = 2.0;
 const DEFAULT_KI: f32 = 0.25;
 const DEFAULT_KD: f32 = 0.05;
-const SATURATION_EPSILON: f32 = 0.01;
+const SATURATION_EPSILON: f32 = 1.0;
 
 /// Provides the latest actuator status so the PID can obey actual outputs and guard resets.
 #[derive(Debug, Clone, Copy, PartialEq)]

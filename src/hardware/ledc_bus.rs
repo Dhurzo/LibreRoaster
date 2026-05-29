@@ -63,6 +63,12 @@ impl<'a> LedcBus<'a> {
         }
     }
 
+    /// # Panics
+    ///
+    /// The closure `f` must NOT call back into `LedcBus` (e.g., via
+    /// `LedcChannelHandle::set_duty`). Doing so would trigger a `BorrowMutError`
+    /// panic from the `RefCell`. On single-core Embassy this is safe as long
+    /// as the closure does not `.await`.
     fn with_channel_mut<R, F>(&self, entry: &ChannelEntry<'a>, f: F) -> Result<R, LedcGuardError>
     where
         F: FnOnce(&mut channel::Channel<'a, LowSpeed>) -> R,

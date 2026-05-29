@@ -146,7 +146,7 @@ impl SensorController {
     }
 
     pub fn check_rate_of_rise(&mut self, status: &SystemStatus) -> Result<(), RoasterError> {
-        if !status.derivative_available || !status.pid_enabled {
+        if !status.derivative_available {
             self.ror_exceeded_count = 0;
             return Ok(());
         }
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn check_rate_of_rise_skipped_when_pid_disabled() {
+    fn check_rate_of_rise_runs_even_when_pid_disabled() {
         let hub = SensorConversionHub::new();
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
@@ -342,10 +342,8 @@ mod tests {
         status.derivative_rate = 10.0;
         status.derivative_available = true;
 
-        let result = ctrl.check_rate_of_rise(&status);
-
-        assert!(result.is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 0);
+        assert!(ctrl.check_rate_of_rise(&status).is_ok());
+        assert_eq!(ctrl.ror_exceeded_count, 1);
     }
 
     #[test]
