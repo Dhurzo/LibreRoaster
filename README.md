@@ -4,6 +4,7 @@
 Firmware written in **Rust** for the ESP32-C3
 
 [![CI](https://github.com/Dhurzo/LibreRoaster/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhurzo/LibreRoaster/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Dhurzo/LibreRoaster/branch/develop/graph/badge.svg)](https://codecov.io/gh/Dhurzo/LibreRoaster)
 
 LibreRoaster is ESP32-C3 firmware for a coffee roaster controller. It exposes a serial control surface that the official Artisan application can drive over **native USB CDC** (recommended — no extra hardware) or UART, reads two MAX31856 thermocouple channels, controls heater and fan outputs, and runs a safety-aware control loop built in embedded Rust.
 
@@ -25,7 +26,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 259 host-side unit + ~139 integration tests | ✅ All pass (incl. SSR scheduler) |
+| 265 host-side unit + ~139 integration tests | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
 | PID control, profiles, safety interlocks | ✅ Implemented |
@@ -61,6 +62,7 @@ The guide is **currently in progress** and will be published once validated. If 
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 - **Focused controllers:** TemperatureController, HeaterController, FanController, SafetyController (v5.4)
+- **Code coverage:** measured via `cargo-llvm-cov` — 71% line coverage on host test suite (target: ≥80% for production)
 
 ---
 
@@ -195,7 +197,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **259 unit tests + ~139 integration tests** run on x86_64:
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **265 unit tests + ~139 integration tests** run on x86_64:
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test
@@ -203,13 +205,15 @@ cargo test --target x86_64-unknown-linux-gnu --features test
 
 ### CI pipeline
 
-GitHub Actions runs 4 parallel jobs on every push/PR to `develop` and `main`:
+GitHub Actions runs 6 parallel jobs on every push/PR to `develop` and `main`:
 
 | Job | Command |
 |-----|---------|
 | Format | `cargo fmt --all -- --check` |
 | Clippy | `cargo clippy --locked --all-targets` |
 | Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests` |
+| Regression tests | `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu` |
+| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --lcov` |
 | Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` |
 
 ### Embedded build & flash

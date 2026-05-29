@@ -29,7 +29,7 @@ impl WatchdogError {
 
 // ── Software watchdog (telemetry, runs on all targets) ──────────────
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "test"))]
 mod software_watchdog {
     use super::WatchdogError;
     use core::sync::atomic::Ordering;
@@ -74,7 +74,7 @@ mod software_watchdog {
     }
 }
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(any(target_arch = "riscv32", feature = "test")))]
 mod stub {
     use super::WatchdogError;
 
@@ -96,10 +96,10 @@ mod stub {
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "test"))]
 pub use software_watchdog::WatchdogFeeder;
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(any(target_arch = "riscv32", feature = "test")))]
 pub use stub::WatchdogFeeder;
 
 // ── Hardware RTC Watchdog (ESP32-C3 only, true CPU reset on hang) ───
@@ -173,6 +173,8 @@ pub use hw_watchdog::{feed as feed_hw_watchdog, init as init_hw_watchdog};
 mod tests {
     use super::*;
 
+    // ── WatchdogError type tests ──────────────────────────────────────
+
     #[test]
     fn watchdog_error_reason_initialization() {
         assert_eq!(
@@ -206,24 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn watchdog_feeder_initialize_returns_ok() {
-        let feeder = WatchdogFeeder::initialize();
-        assert!(feeder.is_ok());
-    }
-
-    #[test]
-    fn watchdog_feeder_is_alive_after_init() {
-        let feeder = WatchdogFeeder::initialize().unwrap();
-        assert!(feeder.is_alive());
-    }
-
-    #[test]
-    fn watchdog_feeder_no_failure_reason_after_init() {
-        let feeder = WatchdogFeeder::initialize().unwrap();
-        assert!(feeder.last_failure_reason().is_none());
-    }
-
-    #[test]
     fn watchdog_error_debug_contains_variant() {
         let err = WatchdogError::InitializationFailed;
         let debug = format!("{:?}", err);
@@ -246,5 +230,108 @@ mod tests {
             WatchdogError::InitializationFailed,
             WatchdogError::NotInitialized
         );
+    }
+
+    // ── Watchdog feed logic tests ─────────────────────────────────────
+    // These test the actual software_watchdog implementation on host
+    // (when built with --features test), or the stub otherwise.
+    // On host+test, embassy_time provides a real clock via HostTimeDriver
+    // so feed timing and state transitions are validated end-to-end.
+
+    #[test]
+    fn watchdog_initialize_resets_feeder() {
+        let feeder = WatchdogFeeder::initialize().unwrap();
+        assert!(feeder.is_alive());
+        assert!(feeder.last_failure_reason().is_none());
+    }
+
+    #[test]
+    fn watchdog_first_feed_after_init_succeeds() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        let result = feeder.feed_async(0.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn watchdog_consecutive_feeds_all_succeed() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        for i in 0..10 {
+            let result = feeder.feed_async(i as f32 * 10.0);
+            assert!(result.is_ok(), "Feed #{} should succeed", i);
+        }
+    }
+
+    #[test]
+    fn watchdog_is_alive_after_successful_feed() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        feeder.feed_async(0.0).unwrap();
+        assert!(feeder.is_alive());
+    }
+
+    #[test]
+    fn watchdog_last_failure_cleared_after_successful_feed() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        feeder.feed_async(0.0).unwrap();
+        assert!(feeder.last_failure_reason().is_none());
+    }
+
+    #[test]
+    fn watchdog_is_alive_returns_true_when_recently_fed() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        // Feed multiple times to ensure the timestamp stays current
+        for i in 0..5 {
+            feeder.feed_async(i as f32 * 5.0).unwrap();
+            assert!(
+                feeder.is_alive(),
+                "Should be alive immediately after feed #{}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn watchdog_initialize_resets_state_after_previous_activity() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        feeder.feed_async(0.0).unwrap(); // establish a feed timestamp
+        assert!(feeder.is_alive());
+
+        // Re-initialize to reset the state
+        let feeder = WatchdogFeeder::initialize().unwrap();
+        assert!(feeder.is_alive());
+        assert!(feeder.last_failure_reason().is_none());
+    }
+
+    #[test]
+    fn watchdog_feed_accepts_varying_temperatures() {
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+        // The bean_temp parameter is for future use but should not cause
+        // failures even with edge-case values
+        assert!(feeder.feed_async(-1.0).is_ok());
+        assert!(feeder.feed_async(0.0).is_ok());
+        assert!(feeder.feed_async(100.0).is_ok());
+        assert!(feeder.feed_async(300.0).is_ok()); // above cutoff
+    }
+
+    #[test]
+    fn watchdog_feeder_lifecycle() {
+        // Full lifecycle: init → feed → verify alive → no failure → consistent
+        let mut feeder = WatchdogFeeder::initialize().unwrap();
+
+        // Initial state
+        assert!(feeder.is_alive());
+        assert!(feeder.last_failure_reason().is_none());
+
+        // Feed cycle
+        feeder.feed_async(25.0).unwrap();
+        assert!(feeder.is_alive());
+        assert!(feeder.last_failure_reason().is_none());
+
+        // Second feed cycle
+        feeder.feed_async(50.0).unwrap();
+        assert!(feeder.is_alive());
+
+        // Third feed cycle
+        feeder.feed_async(75.0).unwrap();
+        assert!(feeder.last_failure_reason().is_none());
     }
 }
