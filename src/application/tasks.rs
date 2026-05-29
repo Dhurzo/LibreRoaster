@@ -940,14 +940,10 @@ async fn dual_output_tick(output_channel: &OutputChannel) {
         if let Some(bytes) = data_to_write {
             match channel {
                 CommChannel::Usb => {
-                    if let Some(usb) = crate::hardware::usb_cdc::driver::get_usb_cdc_driver() {
-                        let _ = usb.write_bytes(&bytes).await;
-                    }
+                    let _ = crate::hardware::usb_cdc::driver::usb_cdc_write_bytes(&bytes).await;
                 }
                 CommChannel::Uart => {
-                    if let Some(uart) = crate::hardware::uart::driver::get_uart_driver() {
-                        let _ = uart.write_bytes(&bytes).await;
-                    }
+                    let _ = crate::hardware::uart::driver::uart_write_bytes(&bytes).await;
                 }
                 CommChannel::None => {}
             }

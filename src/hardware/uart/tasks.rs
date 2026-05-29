@@ -17,7 +17,7 @@ use heapless::{String, Vec};
 use log::debug;
 
 use super::buffer::CircularBuffer;
-use super::driver::get_uart_driver;
+use super::driver;
 
 pub const COMMAND_PIPE_SIZE: usize = 256;
 
@@ -58,18 +58,16 @@ pub async fn uart_reader_task() {
 
     loop {
         // Read from UART into buffer (async, non-blocking)
-        if let Some(uart) = get_uart_driver() {
-            match uart.read_bytes(&mut rbuf).await {
-                Ok(len) if len > 0 => {
-                    crate::hardware::error_counters::reset_uart_error_count();
-                    push_to_event_queue(&rbuf[..len]);
-                }
-                Ok(0) => { /* no data — idle poll */ }
-                Ok(_) => { /* should not happen based on pattern match above */ }
-                Err(e) => {
-                    crate::hardware::error_counters::increment_uart_error_count();
-                    log::warn!("UART read error: {:?}", e);
-                }
+        match driver::uart_read_bytes(&mut rbuf).await {
+            Ok(len) if len > 0 => {
+                crate::hardware::error_counters::reset_uart_error_count();
+                push_to_event_queue(&rbuf[..len]);
+            }
+            Ok(0) => { /* no data — idle poll */ }
+            Ok(_) => { /* should not happen based on pattern match above */ }
+            Err(e) => {
+                crate::hardware::error_counters::increment_uart_error_count();
+                log::warn!("UART read error: {:?}", e);
             }
         }
 
@@ -229,11 +227,9 @@ pub async fn uart_writer_task() {
     loop {
         pipe.read(&mut wbuf).await;
 
-        if let Some(uart) = get_uart_driver() {
-            let len = wbuf.iter().take_while(|&&b| b != 0).count();
-            if len > 0 {
-                let _ = uart.write_bytes(&wbuf[..len]).await;
-            }
+        let len = wbuf.iter().take_while(|&&b| b != 0).count();
+        if len > 0 {
+            let _ = driver::uart_write_bytes(&wbuf[..len]).await;
         }
     }
 }

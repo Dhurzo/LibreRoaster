@@ -7,7 +7,7 @@ pub mod driver;
 pub mod tasks;
 
 pub use buffer::CircularBuffer;
-pub use driver::{get_uart_driver, init_uart, UartDriver, UartError};
+pub use driver::{init_uart, uart_read_bytes, uart_write_bytes, UartDriver, UartError};
 pub use tasks::{
     process_command_data, send_response, send_stream, uart_reader_task, uart_writer_task,
     COMMAND_PIPE_SIZE,

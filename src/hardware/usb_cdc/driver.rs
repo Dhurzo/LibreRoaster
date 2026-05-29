@@ -1,6 +1,10 @@
 use core::fmt;
 
 #[cfg(target_arch = "riscv32")]
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(target_arch = "riscv32")]
+use embassy_sync::mutex::Mutex;
+#[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
 #[cfg(target_arch = "riscv32")]
@@ -86,6 +90,10 @@ static USB_CDC_DRIVER: StaticCell<UsbCdcDriver> = StaticCell::new();
 #[cfg(target_arch = "riscv32")]
 static USB_CDC_DRIVER_PTR: SyncCell<*mut UsbCdcDriver> = SyncCell::new(core::ptr::null_mut());
 
+/// Async mutex that guards USB CDC driver access across tasks.
+#[cfg(target_arch = "riscv32")]
+static USB_CDC_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
     let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb.into_async()));
@@ -100,11 +108,39 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
     Ok(())
 }
 
+/// Write bytes to USB CDC. Acquires the async mutex to ensure exclusive access.
+#[cfg(target_arch = "riscv32")]
+pub async fn usb_cdc_write_bytes(data: &[u8]) -> Result<(), UsbCdcError> {
+    let _guard = USB_CDC_MUTEX.lock().await;
+    let driver = unsafe { &mut *(*USB_CDC_DRIVER_PTR.get()) };
+    driver.write_bytes(data).await
+}
+
+/// Read bytes from USB CDC. Acquires the async mutex to ensure exclusive access.
+#[cfg(target_arch = "riscv32")]
+pub async fn usb_cdc_read_bytes(buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
+    let _guard = USB_CDC_MUTEX.lock().await;
+    let driver = unsafe { &mut *(*USB_CDC_DRIVER_PTR.get()) };
+    driver.read_bytes(buffer).await
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+pub async fn usb_cdc_write_bytes(_data: &[u8]) -> Result<(), UsbCdcError> {
+    Ok(())
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+pub async fn usb_cdc_read_bytes(_buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
+    Ok(0)
+}
+
+#[cfg(test)]
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
     unsafe { (*USB_CDC_DRIVER_PTR.get()).as_mut() }
 }
 
+#[cfg(test)]
 #[cfg(not(target_arch = "riscv32"))]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
     None

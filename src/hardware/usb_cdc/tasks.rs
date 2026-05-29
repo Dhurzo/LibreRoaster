@@ -16,7 +16,7 @@ use embassy_time::Timer;
 use heapless::{Deque, String, Vec};
 use log::debug;
 
-use super::driver::get_usb_cdc_driver;
+use super::driver;
 
 pub const USB_COMMAND_PIPE_SIZE: usize = 256;
 
@@ -68,19 +68,17 @@ pub async fn usb_reader_task() {
     Timer::after(Duration::from_millis(100)).await;
 
     loop {
-        if let Some(usb) = get_usb_cdc_driver() {
-            match usb.read_bytes(&mut rbuf).await {
-                Ok(len) if len > 0 => {
-                    crate::hardware::error_counters::reset_usb_error_count();
-                    let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
-                    log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
-                    push_to_usb_event_queue(&rbuf[..len]);
-                }
-                Ok(_) => { /* no data — idle poll */ }
-                Err(e) => {
-                    crate::hardware::error_counters::increment_usb_error_count();
-                    log::warn!("USB CDC read error: {:?}", e);
-                }
+        match driver::usb_cdc_read_bytes(&mut rbuf).await {
+            Ok(len) if len > 0 => {
+                crate::hardware::error_counters::reset_usb_error_count();
+                let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
+                log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
+                push_to_usb_event_queue(&rbuf[..len]);
+            }
+            Ok(_) => { /* no data — idle poll */ }
+            Err(e) => {
+                crate::hardware::error_counters::increment_usb_error_count();
+                log::warn!("USB CDC read error: {:?}", e);
             }
         }
 

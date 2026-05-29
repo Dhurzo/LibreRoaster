@@ -1,5 +1,7 @@
 use core::fmt;
 use core::ptr;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
 use embedded_io_async::Read;
 use embedded_io_async::Write;
 use esp_hal::gpio::interconnect::{PeripheralInput, PeripheralOutput};
@@ -57,6 +59,10 @@ impl UartDriver {
 static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
 static UART_DRIVER_PTR: SyncCell<*mut UartDriver> = SyncCell::new(ptr::null_mut());
 
+/// Async mutex that guards UART driver access across tasks.
+/// Prevents multiple tasks from simultaneously holding `&mut UartDriver`.
+static UART_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+
 pub fn init_uart(
     uart0: esp_hal::peripherals::UART0<'static>,
     rx: impl PeripheralInput<'static>,
@@ -76,6 +82,33 @@ pub fn init_uart(
     Ok(())
 }
 
+/// Write bytes to UART. Acquires the async mutex to ensure exclusive access.
+///
+/// SAFETY: The `&mut UartDriver` is only constructed inside the mutex-locked
+/// scope and does not exist across any `.await` boundary outside the locked
+/// section. The raw pointer is guaranteed valid because `init_uart()` runs
+/// before any tasks start.
+pub async fn uart_write_bytes(data: &[u8]) -> Result<(), UartError> {
+    let _guard = UART_MUTEX.lock().await;
+    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell.
+    // init_uart() is called in AppBuilder::build() before any tasks start.
+    let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
+    driver.write_bytes(data).await
+}
+
+/// Read bytes from UART. Acquires the async mutex to ensure exclusive access.
+///
+/// SAFETY: Same as `uart_write_bytes` — the mutable reference is only alive
+/// inside the mutex-locked scope.
+pub async fn uart_read_bytes(buffer: &mut [u8]) -> Result<usize, UartError> {
+    let _guard = UART_MUTEX.lock().await;
+    // SAFETY: Same as uart_write_bytes — init runs before tasks.
+    let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
+    driver.read_bytes(buffer).await
+}
+
+#[cfg(test)]
+/// Internal accessor for tests that need to interact with the UART driver directly.
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
     unsafe { (*UART_DRIVER_PTR.get()).as_mut() }
 }

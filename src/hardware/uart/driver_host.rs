@@ -55,6 +55,18 @@ pub fn init_uart(_uart0: (), _rx: (), _tx: ()) -> Result<(), UartError> {
     Ok(())
 }
 
+/// Write bytes to UART (host stub — always returns TransmissionError).
+pub async fn uart_write_bytes(_data: &[u8]) -> Result<(), UartError> {
+    Err(UartError::TransmissionError)
+}
+
+/// Read bytes from UART (host stub — always returns ReceptionError).
+pub async fn uart_read_bytes(_buffer: &mut [u8]) -> Result<usize, UartError> {
+    Err(UartError::ReceptionError)
+}
+
+#[cfg(test)]
+/// Internal accessor for tests that need to interact with the UART driver directly.
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
     unsafe {
         let opt_ptr = &mut *UART_PTR.get();
