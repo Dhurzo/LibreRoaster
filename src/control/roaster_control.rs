@@ -59,9 +59,11 @@ impl RoasterControl {
         match self.sensor.read_sensors(&mut self.status).await {
             Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
+            })
+            | Err(RoasterError::TemperatureOutOfRange {
+                source: Some("temperature_out_of_valid_range"),
             }) => {
-                self.actuator
-                    .emergency_shutdown("Over-temperature detected", &mut self.status)?;
+                self.emergency_shutdown("Temperature exceeds valid range")?;
                 Err(RoasterError::TemperatureOutOfRange {
                     source: Some("overtemp_detected"),
                 })
@@ -235,9 +237,10 @@ impl RoasterControl {
         self.state = crate::config::constants::RoasterState::Idle;
         self.status.state = self.state;
 
-        if !self.safety.is_emergency_active() {
-            self.status.fault_condition = false;
-        }
+        // RECOV-1: StopRoast is the explicit user recovery path — clear latched
+        // emergency and fault condition so the roaster can resume operation.
+        self.safety.clear_emergency();
+        self.status.fault_condition = false;
 
         self.actuator.capture_ssr_monitor_metrics(&mut self.status);
         self.actuator.set_heater_power(0.0)?;
@@ -255,6 +258,10 @@ impl RoasterControl {
     }
 
     pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
+        // THERM-1: Latch the emergency so internal traps (overtemp, sensor timeout,
+        // RoR, max-roast-time) prevent re-energizing on the next tick.
+        self.safety.activate_emergency();
+        self.status.fault_condition = true;
         self.state = RoasterState::Error;
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
@@ -329,12 +336,13 @@ impl RoasterControl {
         };
         self.status.pv = current_pv;
 
-        // Reject NaN / infinite PV (faulted sensor) — force heater off
-        if !current_pv.is_finite() && self.status.pid_enabled {
-            warn!("PID input NaN/infinite (sensor fault) — forcing heater to 0%");
-            self.actuator.set_heater_power(0.0)?;
-            self.status.ssr_output = 0.0;
-            self.status.pid_enabled = false;
+        // Reject NaN / infinite PV (faulted sensor) — force heater off.
+        // Must cover ALL modes (manual, PID, profile), not just PID.
+        // THERM-2: Without this, a broken thermocouple in manual mode leaves
+        // the heater stuck at the last commanded power with zero supervision.
+        if !current_pv.is_finite() {
+            warn!("Sensor input NaN/infinite (fault) — emergency shutdown");
+            self.emergency_shutdown("Sensor fault (NaN/infinite temperature)")?;
             return Ok(0.0);
         }
         self.sensor
@@ -395,19 +403,19 @@ impl RoasterControl {
 
         self.actuator.set_last_desired_output(desired_output);
         let pid_integrator_value = self.dispatch.pid_integrator_value();
+        // CTRL-1: Check guard state BEFORE apply_guarded_heater so guard_busy
+        // reflects whether this write will be accepted or rejected, not the
+        // post-mark_cycle() result (which is always busy by construction).
+        let guard_busy = self
+            .actuator
+            .ssr_guard_next_cycle_allowed(current_time)
+            .is_err();
         let applied_output = self.actuator.apply_guarded_heater(
             desired_output,
             current_time,
             false,
             &mut self.status,
         )?;
-        // Compute guard_busy AFTER apply_guarded_heater so the PID feedback
-        // reflects the post-mark_cycle() guard state, not a stale pre-apply
-        // snapshot. This keeps anti-windup in sync with the actual hardware.
-        let guard_busy = self
-            .actuator
-            .ssr_guard_next_cycle_allowed(current_time)
-            .is_err();
         let feedback = PidFeedback::new(desired_output, applied_output, guard_busy);
         self.dispatch.set_pid_feedback(feedback);
 

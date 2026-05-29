@@ -37,6 +37,10 @@ impl SafetyController {
     pub fn activate_emergency(&mut self) {
         self.handler.activate_emergency();
     }
+
+    pub fn clear_emergency(&mut self) {
+        self.handler.clear_emergency();
+    }
 }
 
 impl Default for SafetyController {

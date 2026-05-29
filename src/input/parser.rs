@@ -272,6 +272,10 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
+            // PROTO-1: Reject NaN/Inf which would cause PID compute_output to panic
+            if !min.is_finite() || !max.is_finite() {
+                return Err(ParseError::InvalidValue);
+            }
             Ok(ArtisanCommand::SetPidOutputLimits(min, max))
         }
         _ => Err(ParseError::UnknownCommand),
