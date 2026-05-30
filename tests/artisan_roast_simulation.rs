@@ -483,11 +483,24 @@ fn test_stop_during_roast_reflected_in_read() {
 
     let mut sim = SimulationContext::new();
 
-    // Artisan typically controls via manual (OT1) heater
-    // START enables the roast state machine
-    sim.send(ArtisanCommand::SetHeater(80));
+    // Artisan typically controls via manual (OT1) heater.
+    // START first, then SetHeater — matches real Artisan workflow and
+    // keeps the system in manual mode (artisan_control=true).
     sim.send(ArtisanCommand::StartRoast);
-    sim.run_roast_curve(10);
+    sim.send(ArtisanCommand::SetHeater(80));
+
+    // Run a few control ticks with deterministic timestamps and constant
+    // temperature.  Constant BT/ET means zero temperature delta between
+    // ticks, so the rate-of-rise safety check sees 0.0°C/s — well under
+    // the 0.5°C/s threshold.  This avoids spurious emergency shutdowns
+    // that would otherwise occur when consecutive Instant::now() calls
+    // differ by only microseconds on CI.
+    let base = embassy_time::Instant::now();
+    for i in 0..10 {
+        let t = base + embassy_time::Duration::from_millis(1000 + i as u64 * 1000);
+        let _ = sim.roaster.update_temperatures(150.0, 165.0, t);
+        let _ = sim.roaster.update_control(t);
+    }
 
     // Verify heater is active (through manual control)
     let s = sim.status();

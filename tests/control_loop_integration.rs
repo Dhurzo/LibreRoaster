@@ -21,7 +21,7 @@ use libreroaster::logging::traceability::{TraceId, TracedCommand, TRACE_EVENT_MA
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
-    let mut guard = TEST_MUTEX
+    let guard = TEST_MUTEX
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     // Recover from poisoned state from prior panics within the same test binary.
@@ -313,20 +313,25 @@ fn multi_tick_roast_simulation() {
     let _guard = acquire_lock();
     let mut control = build_control();
 
+    // START first, then set manual heater — matches real Artisan workflow
+    // and keeps the system in manual mode (artisan_control=true), so heater
+    // output comes from the manual set-point (80%) and is not PID-dependent.
     control
         .process_artisan_command(ArtisanCommand::StartRoast)
         .expect("start");
+    control
+        .process_artisan_command(ArtisanCommand::SetHeater(80))
+        .expect("heater");
 
     let mut ticks_with_heat: usize = 0;
 
-    // Ramp BT slowly (0.1°C/tick) to stay well under the 0.5°C/s RoR limit
-    // even under coverage instrumentation which alters simulated timing.
-    for tick in 0..30 {
-        let bt = 25.0 + (tick as f32 * 0.1);
-        let et = bt + 15.0;
-
+    for _tick in 0..30 {
+        // Constant temperatures → zero temperature delta → ROR always 0.0°C/s.
+        // This prevents spurious emergency shutdowns on CI where consecutive
+        // Instant::now() calls can differ by only microseconds, making even a
+        // 0.1°C change appear as a 100,000°C/s rate of rise.
         control
-            .update_temperatures(bt, et, Instant::now())
+            .update_temperatures(25.0, 40.0, Instant::now())
             .expect("temps");
 
         let output = control.update_control(Instant::now()).expect("update");
@@ -336,15 +341,14 @@ fn multi_tick_roast_simulation() {
         }
     }
 
+    // With SetHeater(80), heater output should be 80% on every tick
     assert!(
         ticks_with_heat > 0,
         "Should have heater output on at least some ticks"
     );
-
-    let status = control.get_status();
-    assert!(
-        status.bean_temp > 25.0,
-        "Bean temp should have risen from ambient"
+    assert_eq!(
+        ticks_with_heat, 30,
+        "Manual heater (80%) should be active on ALL 30 ticks"
     );
 
     control

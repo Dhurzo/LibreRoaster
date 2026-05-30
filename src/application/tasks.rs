@@ -996,7 +996,7 @@ mod tests {
         let _ = ArtisanInput::new().map(ServiceContainer::init_artisan_input);
 
         block_on(async {
-            let mut guard = ServiceContainer::get_instance().roaster.lock().await;
+            let guard = ServiceContainer::get_instance().roaster.lock().await;
             if guard.is_none() {
                 drop(guard);
                 let _ = ServiceContainer::ensure_async_roaster_initialized_from_sync().await;
@@ -1227,7 +1227,7 @@ mod tests {
     #[test]
     fn test_finalize_tick_clears_stage_tracker() {
         let _guard = crate::application::tasks::tests::acquire_test_lock();
-        let mut roaster = build_test_roaster();
+        let roaster = build_test_roaster();
         init_container_with_roaster(roaster);
         drain_all_channels();
 
@@ -1418,7 +1418,7 @@ mod tests {
         });
         let msgs = drain_non_stage_output(output_channel);
 
-        let status =
+        let _status =
             block_on(async { ServiceContainer::with_roaster_async(|r| r.get_status()).await })
                 .expect("status read");
         assert!(
@@ -1621,7 +1621,7 @@ mod tests {
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn acquire_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        let mut guard = TEST_LOCK
+        let guard = TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         TEST_LOCK.clear_poison();
