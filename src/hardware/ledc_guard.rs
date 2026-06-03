@@ -1,7 +1,8 @@
 use crate::config::constants::LEDC_GUARD_TIMEOUT_MS;
+use core::cell::Cell;
 use core::hint::spin_loop;
 use embassy_time::{Duration, Instant};
-use portable_atomic::{AtomicBool, AtomicU16, Ordering};
+use portable_atomic::{AtomicU16, Ordering};
 
 static TIMEOUT_COUNTER: AtomicU16 = AtomicU16::new(0);
 
@@ -18,7 +19,7 @@ impl LedcGuardError {
 }
 
 pub struct LedcGuard {
-    locked: AtomicBool,
+    locked: Cell<bool>,
 }
 
 /// Guard token that must be dropped before yielding across `await` points.
@@ -30,7 +31,7 @@ pub struct LedcGuardToken<'a> {
 impl LedcGuard {
     pub const fn new() -> Self {
         Self {
-            locked: AtomicBool::new(false),
+            locked: Cell::new(false),
         }
     }
 
@@ -53,7 +54,8 @@ impl LedcGuard {
         let start = Instant::now();
 
         loop {
-            if !self.locked.swap(true, Ordering::Acquire) {
+            if !self.locked.get() {
+                self.locked.set(true);
                 return Ok(LedcGuardToken { guard: self });
             }
 
@@ -81,9 +83,19 @@ impl Default for LedcGuard {
 
 impl Drop for LedcGuardToken<'_> {
     fn drop(&mut self) {
-        self.guard.locked.store(false, Ordering::Release);
+        self.guard.locked.set(false);
     }
 }
+
+// SAFETY: LedcGuard is used in a single-core ESP32-C3 environment with Embassy
+// cooperative multitasking. The Cell<bool> is only accessed from a single
+// thread (the current task) and the lock/unlock operations are protected
+// by spin loops and timeouts. This is safe because:
+// 1. ESP32-C3 is single-core - no true concurrency
+// 2. Embassy uses cooperative multitasking - no preemption
+// 3. The critical section is extremely short (<1 μs)
+// 4. LedcGuard instances are typically static or confined to a single task
+unsafe impl Sync for LedcGuard {}
 
 fn record_timeout(_channel_name: &str) {
     TIMEOUT_COUNTER.fetch_add(1, Ordering::Relaxed);

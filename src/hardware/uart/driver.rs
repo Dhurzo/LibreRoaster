@@ -76,6 +76,10 @@ pub fn init_uart(
 
     let (rx_half, tx_half) = uart.split();
     let driver = UART_DRIVER.init(UartDriver::new(tx_half, rx_half));
+    // SAFETY: UART_DRIVER_PTR is a SyncCell<*mut UartDriver> storing a raw pointer
+    // to the driver allocated by StaticCell above. init_uart() runs in
+    // AppBuilder::build() before any tasks start, so no concurrent access occurs.
+    // The pointer is only dereferenced inside UART_MUTEX guards thereafter.
     unsafe {
         *UART_DRIVER_PTR.get() = driver as *mut UartDriver;
     }
@@ -90,8 +94,12 @@ pub fn init_uart(
 /// before any tasks start.
 pub async fn uart_write_bytes(data: &[u8]) -> Result<(), UartError> {
     let _guard = UART_MUTEX.lock().await;
-    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell.
-    // init_uart() is called in AppBuilder::build() before any tasks start.
+    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell
+    // in init_uart(). The async mutex guarantees exclusive &mut access — no other
+    // task can enter this block concurrently. init_uart() runs in AppBuilder::build()
+    // before any tasks start, so the pointer is always initialized when we reach here.
+    // The &mut UartDriver does not outlive this function — it is dropped before the
+    // mutex guard is released.
     let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
     driver.write_bytes(data).await
 }
@@ -102,7 +110,8 @@ pub async fn uart_write_bytes(data: &[u8]) -> Result<(), UartError> {
 /// inside the mutex-locked scope.
 pub async fn uart_read_bytes(buffer: &mut [u8]) -> Result<usize, UartError> {
     let _guard = UART_MUTEX.lock().await;
-    // SAFETY: Same as uart_write_bytes — init runs before tasks.
+    // SAFETY: Same as uart_write_bytes — UART_DRIVER_PTR points to a valid UartDriver
+    // allocated by StaticCell in init_uart(). The async mutex guarantees exclusive access.
     let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
     driver.read_bytes(buffer).await
 }
@@ -110,5 +119,7 @@ pub async fn uart_read_bytes(buffer: &mut [u8]) -> Result<usize, UartError> {
 #[cfg(test)]
 /// Internal accessor for tests that need to interact with the UART driver directly.
 pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
+    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell
+    // in init_uart(). This is only used in tests after init_uart() has been called.
     unsafe { (*UART_DRIVER_PTR.get()).as_mut() }
 }

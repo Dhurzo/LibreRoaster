@@ -97,6 +97,9 @@ static USB_CDC_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 #[cfg(target_arch = "riscv32")]
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
     let driver = USB_CDC_DRIVER.init(UsbCdcDriver::new(usb.into_async()));
+    // SAFETY: USB_CDC_DRIVER_PTR points to a valid UsbCdcDriver allocated by StaticCell.
+    // init_usb_cdc() runs in AppBuilder::build() before any tasks start, so the pointer
+    // is safe to use in async functions later.
     unsafe {
         *USB_CDC_DRIVER_PTR.get() = driver as *mut UsbCdcDriver;
     }
@@ -112,6 +115,12 @@ pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
 #[cfg(target_arch = "riscv32")]
 pub async fn usb_cdc_write_bytes(data: &[u8]) -> Result<(), UsbCdcError> {
     let _guard = USB_CDC_MUTEX.lock().await;
+    // SAFETY: USB_CDC_DRIVER_PTR points to a valid UsbCdcDriver allocated by StaticCell
+    // in init_usb_cdc(). The async mutex guarantees exclusive &mut access — no other
+    // task can enter this block concurrently. init_usb_cdc() runs in AppBuilder::build()
+    // before any tasks start, so the pointer is always initialized when we reach here.
+    // The &mut UsbCdcDriver does not outlive this function — it is dropped before the
+    // mutex guard is released.
     let driver = unsafe { &mut *(*USB_CDC_DRIVER_PTR.get()) };
     driver.write_bytes(data).await
 }
@@ -120,6 +129,12 @@ pub async fn usb_cdc_write_bytes(data: &[u8]) -> Result<(), UsbCdcError> {
 #[cfg(target_arch = "riscv32")]
 pub async fn usb_cdc_read_bytes(buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
     let _guard = USB_CDC_MUTEX.lock().await;
+    // SAFETY: USB_CDC_DRIVER_PTR points to a valid UsbCdcDriver allocated by StaticCell
+    // in init_usb_cdc(). The async mutex guarantees exclusive &mut access — no other
+    // task can enter this block concurrently. init_usb_cdc() runs in AppBuilder::build()
+    // before any tasks start, so the pointer is always initialized when we reach here.
+    // The &mut UsbCdcDriver does not outlive this function — it is dropped before the
+    // mutex guard is released.
     let driver = unsafe { &mut *(*USB_CDC_DRIVER_PTR.get()) };
     driver.read_bytes(buffer).await
 }
@@ -137,6 +152,8 @@ pub async fn usb_cdc_read_bytes(_buffer: &mut [u8]) -> Result<usize, UsbCdcError
 #[cfg(test)]
 #[cfg(target_arch = "riscv32")]
 pub fn get_usb_cdc_driver() -> Option<&'static mut UsbCdcDriver> {
+    // SAFETY: USB_CDC_DRIVER_PTR points to a valid UsbCdcDriver allocated by StaticCell
+    // in init_usb_cdc(). This is only used in tests after init_usb_cdc() has been called.
     unsafe { (*USB_CDC_DRIVER_PTR.get()).as_mut() }
 }
 

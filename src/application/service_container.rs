@@ -128,8 +128,9 @@ impl ServiceContainer {
     }
 
     pub fn get_instance() -> &'static ServiceContainer {
-        // Using a static mutable reference with unsafe code for singleton pattern
-        // This is safe because it's only called once during initialization
+        // Using a compile-time initialized static for the singleton pattern
+        // This is safe because the static is initialized at compile time
+        // and the ServiceContainer contains only thread-safe types
         static SERVICE: ServiceContainer = ServiceContainer {
             roaster: EmbassyMutex::new(None),
             roaster_sync: Mutex::new(RefCell::new(None)),

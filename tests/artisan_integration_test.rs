@@ -218,7 +218,7 @@ fn test_full_command_pipeline() {
 
     // After parsing, test that formatter can create output
     let status = create_test_status();
-    let formatter = ArtisanFormatter::new();
+    let mut formatter = ArtisanFormatter::new();
 
     let csv_result = formatter.format(&status);
     assert!(csv_result.is_ok(), "Formatter should work after parsing");
@@ -414,7 +414,7 @@ fn test_artisan_csv_format() {
     println!("TEST-INT-07: Artisan CSV format validation");
 
     let status = create_test_status();
-    let formatter = ArtisanFormatter::new();
+    let mut formatter = ArtisanFormatter::new();
 
     let result = formatter.format(&status);
     assert!(result.is_ok(), "Format should succeed");

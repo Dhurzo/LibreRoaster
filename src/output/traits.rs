@@ -12,7 +12,7 @@ pub enum OutputError {
 
 pub trait OutputFormatter {
     fn format(
-        &self,
+        &mut self,
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError>;
 }

@@ -7,15 +7,20 @@ use core::cell::UnsafeCell;
 /// maintaining API compatibility with existing code using `*cell.get() = value` pattern.
 pub struct SyncCell<T>(UnsafeCell<T>);
 
-// SAFETY: SyncCell is only used for static singletons accessed from a single
-// Embassy executor on the single-core ESP32-C3. All writes go through raw
-// pointer operations (`*cell.get() = value`) performed inside critical
-// sections or during one-time init before tasks start.
-// NOTE: A `T: Send` bound would be more principled but is incompatible with
-// the current usage pattern (raw pointers stored inside SyncCell for driver
-// singletons). If porting to a multi-core ESP32 variant, this impl MUST be
-// revisited — consider wrapping inner types in Mutex or using channel-based
-// access instead.
+// SAFETY: SyncCell is only used for static singletons on the single-core
+// ESP32-C3. The stored types are raw pointers (`*mut T`) to driver
+// singletons initialized once before tasks start. Access to the pointed-to
+// data is serialized by an async Mutex (UART_MUTEX, USB_CDC_MUTEX) that
+// guarantees exclusive &mut access at runtime. On single-core Embassy, only
+// one task executes at a time, so no concurrent access occurs.
+//
+// Why no `T: Send` bound: The stored type is `*mut DriverType`, which is
+// `!Send`. We cannot add `T: Send` without replacing the raw-pointer pattern.
+// The safety of this impl depends on the INVARIANT that all dereferencing of
+// the pointer inside SyncCell happens within an async Mutex guard scope.
+//
+// PORTING WARNING: If porting to multi-core (e.g., ESP32-S3), this impl is
+// UNSOUND. Replace with channel-based driver access or a proper Mutex wrapper.
 unsafe impl<T> Sync for SyncCell<T> {}
 
 impl<T> SyncCell<T> {

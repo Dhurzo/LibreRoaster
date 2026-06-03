@@ -33,7 +33,6 @@ use crate::memory::{
 };
 use crate::output::formatters::{CsvFormatter, RorCalculator, TimeFormatter};
 use crate::output::traits::{OutputError, OutputFormatter};
-use core::cell::RefCell;
 use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
@@ -41,17 +40,14 @@ use heapless::{Deque, String as HeaplessString};
 #[derive(Clone)]
 pub struct ArtisanFormatter {
     start_time: Instant,
-    // RefCell is safe here because ArtisanFormatter is only accessed from the
-    // control_loop_task under EmbassyMutex, which guarantees single-threaded
-    // access. No re-entrant borrow is possible in the Embassy cooperative model.
-    ror_calculator: RefCell<RorCalculator>,
+    ror_calculator: RorCalculator,
 }
 
 impl Default for ArtisanFormatter {
     fn default() -> Self {
         Self {
             start_time: Instant::now(),
-            ror_calculator: RefCell::new(RorCalculator::new()),
+            ror_calculator: RorCalculator::new(),
         }
     }
 }
@@ -63,7 +59,7 @@ impl ArtisanFormatter {
 
     pub fn reset(&mut self) {
         self.start_time = Instant::now();
-        self.ror_calculator.borrow_mut().reset();
+        self.ror_calculator.reset();
     }
 
     fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
@@ -103,7 +99,7 @@ impl ArtisanFormatter {
 
 impl OutputFormatter for ArtisanFormatter {
     fn format(
-        &self,
+        &mut self,
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
         let elapsed_secs = self.start_time.elapsed().as_secs();
@@ -111,9 +107,9 @@ impl OutputFormatter for ArtisanFormatter {
 
         let et = status.env_temp;
         let bt = status.bean_temp;
-        let gas = status.ssr_output; // SSR output as gas control
+        let gas = status.ssr_output;
 
-        let ror = self.ror_calculator.borrow_mut().calculate_ror(bt);
+        let ror = self.ror_calculator.calculate_ror(bt);
         let time_str = TimeFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = CsvFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
@@ -674,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_format_csv_output() {
-        let formatter = ArtisanFormatter::new();
+        let mut formatter = ArtisanFormatter::new();
         let status = create_test_status();
 
         let result = formatter.format(&status);
