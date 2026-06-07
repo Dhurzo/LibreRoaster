@@ -242,6 +242,12 @@ impl RoasterControl {
         self.safety.clear_emergency();
         self.status.fault_condition = false;
 
+        // Reset charge detection state so the next roast can detect bean drop.
+        self.charge_detected = false;
+        self.charge_time = None;
+        self.status.charge_detected = false;
+        self.bt_charge_history.clear();
+
         self.actuator.capture_ssr_monitor_metrics(&mut self.status);
         self.actuator.set_heater_power(0.0)?;
         // Bug #13: Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
