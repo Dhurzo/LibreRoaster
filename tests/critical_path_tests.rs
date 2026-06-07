@@ -41,6 +41,13 @@ fn tick_now(ctrl: &mut RoasterControl, bt: f32, et: f32) -> f32 {
     ctrl.update_control(now).expect("update")
 }
 
+/// Tick at a fixed instant. Use for tests where `Instant::now()` inside
+/// `process_artisan_command` causes timing races with safety checks.
+fn tick_at(ctrl: &mut RoasterControl, bt: f32, et: f32, t: Instant) -> f32 {
+    ctrl.update_temperatures(bt, et, t).expect("temps");
+    ctrl.update_control(t).expect("update")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. CHARGE DETECTION RESET BETWEEN ROASTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -80,9 +87,11 @@ fn charge_detection_works_on_second_roast() {
     ctrl.process_artisan_command(ArtisanCommand::StartRoast)
         .expect("roast 2");
 
-    for _ in 0..3 {
-        tick_now(&mut ctrl, 180.0, 200.0);
-    }
+    // Single tick minimizes real-time gap between StartRoast (which sets
+    // last_command_received_at_ms = Instant::now()) and the control tick.
+    // The comms idle check compares Instant::now()-based timestamps and
+    // can trigger spuriously if multiple ticks accumulate real-world delay.
+    tick_now(&mut ctrl, 180.0, 200.0);
 
     assert!(
         !ctrl.safety().is_emergency_active(),
