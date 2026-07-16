@@ -113,7 +113,17 @@ impl OutputFormatter for ArtisanFormatter {
         let time_str = TimeFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = CsvFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
 
-        Ok(line)
+        // Bug #7: prefix the spontaneous continuous-telemetry line with '#'
+        // so a line-oriented client can distinguish it from a `READ` response.
+        // The `READ` handler emits via `format_read_response_full`, which has
+        // a different field layout (8 fields starting with AMB) and starts
+        // with a digit; this `#` prefix on continuous telemetry lets the
+        // peer multiplex both sources on the same byte stream. Empirically
+        // Artisan tolerates a leading '#' on telemetry lines.
+        let mut prefixed = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = prefixed.push('#');
+        let _ = prefixed.push_str(&line);
+        Ok(prefixed)
     }
 }
 
@@ -213,18 +223,23 @@ impl ArtisanFormatter {
         };
         let pv =
             Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
-        let mv =
-            Self::normalize_read_value(status.temperature_settings.convert_to_display(status.mv));
-        let integrator_value = Self::normalize_read_value(
-            status
-                .temperature_settings
-                .convert_to_display(status.integrator_value),
-        );
-        let derivative_value = Self::normalize_read_value(
-            status
-                .temperature_settings
-                .convert_to_display(status.derivative_rate),
-        );
+        // Bug #5: PV is a temperature, but `mv` (manipulated variable) and
+        // `integrator_value` are dimensionless percentages — they must NOT go
+        // through the °C→°F temperature conversion, otherwise a heater at
+        // 75% would be reported as ~167°"F" to Artisan. The previous code
+        // wrapped them in `convert_to_display`, and a test blessed the bug.
+        let mv = Self::normalize_read_value(status.mv);
+        let integrator_value = Self::normalize_read_value(status.integrator_value);
+        // `derivative_rate` is in °C/s internally. When Artisan is in °F
+        // mode it expects rate in °F/min (not °F as if it were a temperature).
+        // °F/min = °C/s × (9/5) × 60. The previous code applied the
+        // temperature formula `(C*9/5)+32`, producing nonsense values like
+        // 31.24 for a -0.42 °C/s RoR.
+        let derivative_value = if status.temperature_settings.is_fahrenheit() {
+            Self::normalize_read_value(status.derivative_rate * (9.0 / 5.0) * 60.0)
+        } else {
+            Self::normalize_read_value(status.derivative_rate)
+        };
         let saturation_flag = if status.saturation_active { 1 } else { 0 };
         let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
         let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
@@ -377,7 +392,15 @@ impl MutableArtisanFormatter {
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror, gas);
 
-        Ok(line)
+        // Bug #7: prefix the spontaneous continuous-telemetry line with '#' so
+        // a line-oriented client can distinguish it from a synchronous `READ`
+        // response (which the READ handler emits via `format_read_response_full`,
+        // starting with a digit and using a different field count). Artisan
+        // tolerates a leading '#' on continuous telemetry.
+        let mut prefixed = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = prefixed.push('#');
+        let _ = prefixed.push_str(&line);
+        Ok(prefixed)
     }
 
     fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
@@ -687,7 +710,14 @@ mod tests {
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 5);
 
-        assert!(parts[0].starts_with(|c: char| c.is_ascii_digit()));
+        // Bug #7 regression: continuous-telemetry lines are prefixed with '#'
+        // so they can be distinguished from a synchronous `READ` response on
+        // the same wire. The time field carries that prefix.
+        assert!(
+            parts[0].starts_with('#'),
+            "telemetry line must start with '#' prefix, got: {}",
+            parts[0]
+        );
         assert_eq!(parts[1], "120.3");
         assert_eq!(parts[2], "150.5");
         assert_eq!(parts[3], "0.00");
@@ -998,20 +1028,30 @@ mod tests {
         let parts: Vec<&str> = response.split(',').collect();
         assert_eq!(parts.len(), 20);
 
-        // 120.3°C = 248.5°F, 150.5°C = 302.9°F
+        // Temperatures in CSV convert to °F: 120.3°C → 248.5°F, 150.5°C → 302.9°F
         assert_eq!(parts[0], "248.5", "ET converted to Fahrenheit");
         assert_eq!(parts[1], "302.9", "BT converted to Fahrenheit");
-        assert_eq!(parts[2], "88.0", "Heater unchanged");
-        assert_eq!(parts[3], "42.0", "Fan unchanged");
+        // Heater and fan are percentages — NOT temperatures, NOT converted.
+        assert_eq!(parts[2], "88.0", "Heater % must not be converted");
+        assert_eq!(parts[3], "42.0", "Fan % must not be converted");
         assert_eq!(parts[9], "302.9", "PV converted to Fahrenheit");
-        assert_eq!(parts[10], "191.3", "MV converted to Fahrenheit (88.5°C)");
+        // Bug #5 regression: `mv` and `integrator_value` are percentages
+        // (PID output terms), not temperatures. The previous formatter ran
+        // them through `convert_to_display`, producing nonsense like 191.3
+        // for a 75% heater, and a test here blessed that. They must be
+        // emitted unchanged in both scales.
+        assert_eq!(parts[10], "88.5", "MV must NOT be converted (it is a %)");
         assert_eq!(
-            parts[11], "98.8",
-            "Integrator converted to Fahrenheit (37.1°C)"
+            parts[11], "37.1",
+            "Integrator must NOT be converted (it is a %)"
         );
+        // Bug #5 regression: `derivative_rate` is in °C/s internally. Artisan
+        // in °F mode expects a rate in °F/min, not "°F as if it were a
+        // temperature". So we multiply by 9/5×60, NOT apply °C→°F.
+        // −0.42 °C/s × 1.8 × 60 = −45.36 °F/min.
         assert_eq!(
-            parts[12], "31.24",
-            "Derivative converted to Fahrenheit (-0.42°C)"
+            parts[12], "-45.36",
+            "Derivative must be °F/min (rate), not °F (temperature)"
         );
     }
 }

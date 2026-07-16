@@ -94,6 +94,13 @@ struct TickState {
     tick_app_error: Option<AppError>,
     sensor_err: Option<ContainerError>,
     consecutive_sensor_errors: u8,
+    /// Counter for throttling telemetry emission to DEFAULT_OUTPUT_INTERVAL_MS.
+    /// The control loop runs at 100 ms (10 Hz); we only emit telemetry every
+    /// `telemetry_emit_every` ticks to respect the documented 1 Hz rate.
+    telemetry_tick_counter: u8,
+    /// How many control-loop ticks between telemetry emissions.
+    /// 1000 ms / 100 ms = 10.
+    telemetry_emit_every: u8,
 }
 
 impl TickState {
@@ -109,6 +116,9 @@ impl TickState {
             tick_app_error: None,
             sensor_err: None,
             consecutive_sensor_errors: 0,
+            telemetry_tick_counter: 0,
+            telemetry_emit_every: (crate::config::constants::DEFAULT_OUTPUT_INTERVAL_MS / 100)
+                as u8,
         }
     }
 }
@@ -681,21 +691,17 @@ async fn emit_telemetry_stage(
         tick_state.was_continuous = is_continuous_now;
     }
 
+    // Bug #7 fix: respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for telemetry.
+    // The control loop runs at 100 ms; we only emit every N ticks where
+    // N = DEFAULT_OUTPUT_INTERVAL_MS / 100 = 10 (i.e., 1 Hz instead of 10 Hz).
+    tick_state.telemetry_tick_counter = tick_state.telemetry_tick_counter.saturating_add(1);
+    let should_emit = tick_state.telemetry_tick_counter >= tick_state.telemetry_emit_every;
+    if should_emit {
+        tick_state.telemetry_tick_counter = 0;
+    }
+
+    // Feed ring-buffer roast logger (runs every tick, independent of telemetry rate)
     if let Some(status) = status_for_output {
-        let line = tick_state.formatter.format(&status);
-
-        match line {
-            Ok(formatted_line) => {
-                if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str()) {
-                    let _ = output_channel.try_send(s);
-                }
-            }
-            Err(e) => {
-                debug!("Formatter error: {:?}", e);
-            }
-        }
-
-        // Feed ring-buffer roast logger
         crate::logging::roast_logger::log_sample(crate::logging::roast_logger::LogSampleData {
             elapsed_secs: tick_start.elapsed().as_secs() as u32,
             bt: status.bean_temp,
@@ -705,6 +711,24 @@ async fn emit_telemetry_stage(
             target: status.target_temp,
             ror: status.derivative_rate,
         });
+    }
+
+    if should_emit {
+        if let Some(status) = status_for_output {
+            let line = tick_state.formatter.format(&status);
+
+            match line {
+                Ok(formatted_line) => {
+                    if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str())
+                    {
+                        let _ = output_channel.try_send(s);
+                    }
+                }
+                Err(e) => {
+                    debug!("Formatter error: {:?}", e);
+                }
+            }
+        }
     }
 
     let telemetry_elapsed_ms = tick_state.stage_tracker.elapsed().as_millis();
@@ -893,7 +917,7 @@ pub async fn control_loop_task() {
     let output_channel = ServiceContainer::get_output_channel();
 
     loop {
-        control_loop_tick(&mut tick_state, &output_channel).await;
+        control_loop_tick(&mut tick_state, output_channel).await;
         Timer::after(Duration::from_millis(100)).await;
     }
 }

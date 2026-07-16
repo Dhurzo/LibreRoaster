@@ -209,19 +209,29 @@ impl CoffeeRoasterPid {
     }
 
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
+        // Only clamp to the configured output range. Anti-windup is already
+        // applied in `should_integrate()` by checking `feedback.is_saturated()`,
+        // so we must NOT re-clamp the output to the actuator's previously
+        // applied value here — that would pin the output to the first slew
+        // step (~5%) for the whole roast (the bug closed by this change). The
+        // actuator's own slew-rate limiter (`SSR_SLEW_RATE_PER_SEC = 50.0`,
+        // ~5%/tick) physically bounds how fast the heater can ramp up. The PID
+        // now always returns its MV clamped to [output_min, output_max]; the
+        // actuator decides how much to apply. The PID rises, but does not wind
+        // up, because the integrator stops accumulating while the actuator is
+        // saturated (see `should_integrate`).
+        let clamped = mv.clamp(self.output_min, self.output_max);
+
         if let Some(feedback) = self.last_feedback {
             let applied = feedback
                 .applied_output
                 .clamp(self.output_min, self.output_max);
-            if mv > applied + SATURATION_EPSILON {
+            if clamped > applied + SATURATION_EPSILON {
                 self.integrator_clamped = true;
-                applied
-            } else {
-                mv
             }
-        } else {
-            mv
         }
+
+        clamped
     }
 }
 

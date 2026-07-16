@@ -430,9 +430,12 @@ fn test_artisan_csv_format() {
 
     // Verify field structure
     assert!(!parts[0].is_empty(), "Time field should not be empty");
+    // Bug #7 regression: continuous-telemetry lines now start with '#' so
+    // they can be distinguished from a synchronous `READ` response.
     assert!(
-        parts[0].starts_with(|c: char| c.is_ascii_digit()),
-        "Time should start with digit"
+        parts[0].starts_with('#'),
+        "Telemetry time field should start with '#' prefix, got: {}",
+        parts[0]
     );
 
     // ET field (index 1)

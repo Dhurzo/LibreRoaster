@@ -126,9 +126,11 @@ where
             );
         }
 
-        // 3. Check fault register for open circuit (informational only)
+        // 3. Check fault register for open circuit (informational only).
+        // Per the MAX31856 datasheet, Open Circuit is bit 0 (value 0x01) —
+        // the previous code checked 0x40 (which is actually TC Range, bit 6).
         let fault = self.read_register(0x0F).unwrap_or(0xFF);
-        if fault & 0x40 != 0 {
+        if fault & 0x01 != 0 {
             log::warn!(
                 "MAX31856 self-test: Open circuit detected (fault=0x{:02X})",
                 fault
@@ -200,7 +202,16 @@ where
             ((rx_buffer[0] as u32) << 16) | ((rx_buffer[1] as u32) << 8) | (rx_buffer[2] as u32);
         let fault = rx_buffer[3];
 
-        log::info!(
+        // Bug #6 mitigation: this line is HIT on EVERY sensor read (~6/s at the
+        // default control cadence, plus once per sensor per tick). An `info!`
+        // dump here floods the same physical UART/USB-Serial-JTAG channel that
+        // carries the Artisan protocol — corrupting READ responses and
+        // continuous telemetry in real sessions. Demoted to `debug!` so it
+        // only appears under the `instrumentation` feature (which raises the
+        // log level filter to Debug). A future, HW-validated fix installs a
+        // dedicated log sink (see plan-informe F4 / LibreRoaster_11_Fixes_Criticos
+        // fix #6).
+        log::debug!(
             "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] fault=0x{:02X} raw_temp={:#010x}",
             rx_buffer[0],
             rx_buffer[1],
@@ -259,8 +270,11 @@ where
     #[allow(deprecated)]
     pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature()?;
-        // Check fault bits: CJ Range(0x01), CJ High(0x02), CJ Low(0x04), TC High(0x08), TC Low(0x10), OV/UV(0x20), Open Circuit(0x40)
-        if reading.fault & 0x7F != 0 {
+        // MAX31856 Fault Register (0x0F): Open(0x01), OVUV(0x02), TC Low(0x04),
+        // TC High(0x08), CJ Low(0x10), CJ High(0x20), TC Range(0x40), CJ Range(0x80).
+        // Any bit set is a fault — the previous `& 0x7F` mask dropped CJ Range
+        // (0x80), which is a legitimate cold-junction out-of-range fault.
+        if reading.fault != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });
@@ -281,8 +295,10 @@ where
     /// This prevents blocking the async executor during the 160ms conversion delay.
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature_async().await?;
-        // Fault bits: CJ Range(0x01), CJ High(0x02), CJ Low(0x04), TC High(0x08), TC Low(0x10), OV/UV(0x20), Open Circuit(0x40)
-        if reading.fault & 0x7F != 0 {
+        // MAX31856 Fault Register (0x0F): Open(0x01), OVUV(0x02), TC Low(0x04),
+        // TC High(0x08), CJ Low(0x10), CJ High(0x20), TC Range(0x40), CJ Range(0x80).
+        // Any bit set is a fault — previously masked with 0x7F, dropping CJ Range.
+        if reading.fault != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
             });

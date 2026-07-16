@@ -121,7 +121,13 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         if matches!(command, RoasterCommand::StopRoast) {
-            return self.stop_streaming();
+            // Bug #3: `StopRoast` is the *single* explicit recovery path
+            // (operator presses stop-and-recover). It stops streaming AND
+            // un-latches a held emergency / fault, so the roaster can resume.
+            // No other command path is permitted to clear the latch.
+            self.stop_streaming()?;
+            self.clear_emergency_explicit();
+            return Ok(());
         }
 
         if self.safety.can_handle(command) {
@@ -237,10 +243,16 @@ impl RoasterControl {
         self.state = crate::config::constants::RoasterState::Idle;
         self.status.state = self.state;
 
-        // RECOV-1: StopRoast is the explicit user recovery path — clear latched
-        // emergency and fault condition so the roaster can resume operation.
-        self.safety.clear_emergency();
-        self.status.fault_condition = false;
+        // Bug #3: this function used to call `self.safety.clear_emergency()`
+        // and reset `fault_condition = false` here, which had the effect of
+        // un-latching an armed emergency *as a side effect of stopping the
+        // stream*. That meant `handle_emergency_stop()` → `stop_streaming()`
+        // cleared the very emergency it had just armed, and Artisan `STOP`
+        // also un-latched it — nothing prevented immediate re-energizing. We
+        // now split those concerns: `stop_streaming` only stops the stream
+        // and resets charge detection; the safety latch is cleared *only* by
+        // the explicit recovery path `clear_emergency_explicit()` (called
+        // from `RoasterCommand::StopRoast`).
 
         // Reset charge detection state so the next roast can detect bean drop.
         self.charge_detected = false;
@@ -257,6 +269,22 @@ impl RoasterControl {
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
         Ok(())
+    }
+
+    /// Explicitly un-latch a previously armed emergency and clear the fault
+    /// flag, returning the roaster to a recoverable `Idle` state.
+    ///
+    /// This is the **only** sanctioned recovery path. It is invoked from
+    /// `RoasterCommand::StopRoast` (the operator's explicit stop-and-recover
+    /// action). Artisan's plain `STOP` and `EmergencyStop`, plus any internal
+    /// `stop_streaming()` call site, must NOT clear the latch — otherwise the
+    /// emergency we just armed is un-latched a single tick later, which is
+    /// bug #3, and nothing prevents immediate re-energizing.
+    pub fn clear_emergency_explicit(&mut self) {
+        self.safety.clear_emergency();
+        self.status.fault_condition = false;
+        self.state = crate::config::constants::RoasterState::Idle;
+        self.status.state = self.state;
     }
 
     pub fn is_temperature_valid(temp: f32) -> bool {
@@ -446,13 +474,20 @@ impl RoasterControl {
         self.status.saturation_active = self.dispatch.pid_saturation_active();
         self.status.integrator_clamped = self.dispatch.pid_integrator_clamped();
 
-        let fan_output =
-            if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
-                let elapsed = current_time.duration_since(start).as_secs() as u32;
-                fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
-            } else {
-                self.dispatch.artisan_manual_fan()
-            };
+        // Emergency cooldown priority: while the safety latch is active, force
+        // the fan to 100% to cool the hot bean mass. This must NOT be overridden
+        // by the fan profile, the manual Artisan setting, or any other source
+        // — the previous code re-wrote the fan speed every ~100ms, annihilating
+        // the emergency cooldown a single tick after it was set. The recovery
+        // path (explicit stop / clear_emergency) drops the latch.
+        let fan_output = if self.safety.is_emergency_active() {
+            100.0
+        } else if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
+            let elapsed = current_time.duration_since(start).as_secs() as u32;
+            fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
+        } else {
+            self.dispatch.artisan_manual_fan()
+        };
         self.actuator
             .set_fan_speed(fan_output, &mut self.status)
             .map_err(|_| RoasterError::HardwareError {
@@ -670,11 +705,29 @@ impl RoasterControl {
     }
 
     fn handle_emergency_stop(&mut self) -> Result<(), RoasterError> {
+        // Bug #3: latch the emergency and DO NOT un-latch it as a side
+        // effect. The previous implementation called `stop_streaming()`,
+        // which cleared the latch via `clear_emergency()`, leaving the
+        // emergency inert; Artisan (or any client) could immediately
+        // re-energize the heater. Recovery is reserved for the explicit
+        // `RoasterCommand::StopRoast` path → `clear_emergency_explicit()`.
         self.safety.activate_emergency();
         self.status.fault_condition = true;
-        self.stop_streaming()?;
+        self.state = RoasterState::Error;
+        self.status.state = RoasterState::Error;
+
+        // Cut the heater directly and force the fan to 100% to cool the
+        // hot bean mass. Fan persistence during the cooldown is enforced
+        // in `update_control` (see fix #2), so this 100% is sticky.
+        self.actuator.set_heater_power(0.0)?;
+        self.actuator.set_fan_raw(100.0)?;
+        self.status.fan_output = 100.0;
+
+        // Stop streaming the protocol output without touching the latch.
+        self.dispatch.stop_streaming(&mut self.status);
         crate::logging::roast_logger::stop_roast();
-        info!("Artisan+ stop requested - streaming disabled and outputs cleared");
+
+        info!("Artisan+ emergency stop - latched, heater off, fan 100% (recovery via StopRoast)");
         Ok(())
     }
 
@@ -770,9 +823,20 @@ impl RoasterControl {
     }
 
     fn handle_set_target_temp(&mut self, target: f32) -> Result<(), RoasterError> {
-        if !crate::config::constants::is_valid_target_temp(target) {
+        // Bug #5: Artisan reports setpoints in its own display units. When the
+        // host app is in °F mode, `PID;SV;250` means 250 °F (~121 °C), not
+        // 250 °C. The previous code stored the raw value as °C and the PID
+        // chased a dangerously high target. Convert input → °C *before* we
+        // validate and store.
+        let target_celsius = self
+            .status
+            .temperature_settings
+            .convert_from_display(target);
+
+        if !crate::config::constants::is_valid_target_temp(target_celsius) {
             warn!(
-                "SetTargetTemp rejected: {:.1}°C outside valid range ({:.0}–{:.0}°C)",
+                "SetTargetTemp rejected: {:.1}°C (raw input {:.1}) outside valid range ({:.0}–{:.0}°C)",
+                target_celsius,
                 target,
                 crate::config::constants::MIN_TEMP,
                 crate::config::constants::MAX_TEMP
@@ -781,9 +845,12 @@ impl RoasterControl {
                 source: Some("target_temp_out_of_range"),
             });
         }
-        self.status.target_temp = target;
-        self.enable_pid_control(target)?;
-        info!("Target temperature set to {:.1}°C", target);
+        self.status.target_temp = target_celsius;
+        self.enable_pid_control(target_celsius)?;
+        info!(
+            "Target temperature set to {:.1}°C (raw input: {:.1})",
+            target_celsius, target
+        );
         Ok(())
     }
 
@@ -828,14 +895,39 @@ impl RoasterControl {
     }
 
     fn handle_preheat(&mut self, target: f32) -> Result<(), RoasterError> {
-        self.preheat_target = Some(target);
+        // Bug #5 (units) + plan-informe F4.7 (unbounded value): convert the
+        // incoming target from the host's display units to °C, then validate
+        // against the same range as SetTargetTemp. Artisan in °F mode reports
+        // the preheat target in °F; storing 250 °F as 250 °C is a safety bug.
+        let target_celsius = self
+            .status
+            .temperature_settings
+            .convert_from_display(target);
+
+        if !crate::config::constants::is_valid_target_temp(target_celsius) {
+            warn!(
+                "Preheat rejected: {:.1}°C (raw input {:.1}) outside valid range ({:.0}–{:.0}°C)",
+                target_celsius,
+                target,
+                crate::config::constants::MIN_TEMP,
+                crate::config::constants::MAX_TEMP
+            );
+            return Err(RoasterError::InvalidState {
+                source: Some("preheat_target_out_of_range"),
+            });
+        }
+
+        self.preheat_target = Some(target_celsius);
         self.state = RoasterState::Preheating;
         self.status.state = RoasterState::Preheating;
-        self.enable_pid_control(target)?;
+        self.enable_pid_control(target_celsius)?;
         self.dispatch
             .get_output_manager_mut()
             .disable_continuous_output();
-        info!("Preheat started — target {:.1}°C", target);
+        info!(
+            "Preheat started — target {:.1}°C (raw input: {:.1})",
+            target_celsius, target
+        );
         Ok(())
     }
 

@@ -197,13 +197,27 @@ fn start_ot1_io3_stop_sequence_updates_state() {
     process_command_data(b"STOP\r");
     drain_and_process_commands();
 
+    // Bug #3 regression: the protocol string `STOP` maps to
+    // `ArtisanCommand::EmergencyStop` (that mapping is intentional and tested
+    // by the proptest table in `parser.rs`), so it now LATCHES the emergency
+    // (state = Error) rather than silently returning to Idle. Heaters are
+    // still cut and the fan still goes to 100% for cooling; what changed is
+    // that the latch no longer auto-clears. An operator must issue an
+    // explicit recovery command (`StopRoast`) to return to `Idle`.
     let stopped = current_status();
     assert!(!continuous_output_enabled());
     assert_eq!(stopped.ssr_output, 0.0);
     assert_eq!(stopped.fan_output, 100.0);
     assert!(!stopped.pid_enabled);
-    assert!(!stopped.artisan_control);
-    assert_eq!(stopped.state, RoasterState::Idle);
+    assert!(
+        !stopped.artisan_control,
+        "Streaming disabled — no longer artisan-control during latch"
+    );
+    assert_eq!(
+        stopped.state,
+        RoasterState::Error,
+        "STOP now latches the emergency (state = Error)"
+    );
     assert!(
         collect_output().is_empty(),
         "STOP should not emit ERR output"

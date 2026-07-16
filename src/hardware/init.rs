@@ -116,7 +116,7 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
         .configure(timer::config::Config {
             duty: timer::config::Duty::Duty14Bit,
             clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_hz(crate::config::constants::SSR_CONTROL_CYCLE_HZ as u32),
+            frequency: Rate::from_hz(crate::config::constants::SSR_CONTROL_CYCLE_HZ),
         })
         .map_err(|e| InitError::HardwareInit {
             what: "Timer 0",

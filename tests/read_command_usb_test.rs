@@ -369,22 +369,26 @@ fn test_read_without_cr_is_held() {
     let mut mock = MockUsbCdcDriver::new();
 
     mock.push_rx_data("READ");
-    // No \r\n — parser should not see a complete command
+    // No \r\n — the buffer should still contain the partial command, but the
+    // task-level dispatcher (which only forwards complete CR-terminated lines)
+    // must not process it. Here we verify two invariants:
+    //   (1) the raw bytes are recoverable from the buffer (i.e. it is held)
+    //   (2) no CR/LF terminator is present (so it is not yet "complete")
     let mut buffer = [0u8; 64];
-    // Read all available bytes (no CR yet)
     let bytes = mock.read_bytes(&mut buffer).unwrap();
     let chunk = core::str::from_utf8(&buffer[..bytes]).unwrap();
-    let trimmed = chunk.trim_end_matches(['\r', '\n']);
 
-    if trimmed == "READ" {
-        // Without CR, the USB task wouldn't dispatch this — it's just buffered.
-        // The parser would see it as unknown (no CR = incomplete command).
-        println!("   ✅ DATA held (no CR terminator) — would wait for completion");
-    } else {
-        println!("   No complete command available");
-    }
+    assert_eq!(chunk, "READ", "held bytes should be exactly \"READ\"");
+    assert!(
+        !chunk.contains('\r') && !chunk.contains('\n'),
+        "no terminator must be present yet"
+    );
+    assert_eq!(
+        bytes, 4,
+        "exactly 4 bytes should have been delivered from the mock"
+    );
 
-    println!("   ✅ READ without CR correctly held");
+    println!("   ✅ DATA held (no CR terminator) — would wait for completion");
 }
 
 /// TEST-READ-USB-11: READ response has no CR/LF terminators.

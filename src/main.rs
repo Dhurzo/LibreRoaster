@@ -125,10 +125,27 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    // Initialize the esp-println logger before any info!() calls
-    esp_println::logger::init_logger(log::LevelFilter::Info);
+    // Initialize the esp-println logger before any info!() calls.
+    //
+    // Bug #6 mitigation (partial): esp_println writes to the same physical
+    // channel as the Artisan protocol (USB-Serial-JTAG on the C3 by default,
+    // or UART0). In production we set the level filter to Warn so that the
+    // per-tick info!/debug! chatter (a ~6/s MAX31856 read dump, plus control
+    // loop telemetry) does NOT corrupt READ responses or continuous telemetry
+    // on the wire. The `instrumentation` feature on a debug build raises the
+    // filter to Debug — disable it for production flashes.
+    //
+    // The complete fix (plan-informe F4 / LibreRoaster_11_Fixes_Criticos #6)
+    // is to install a custom `log::Log` that writes to a *separate* UART1 on
+    // GPIO2, so logs and protocol never share a wire. That change requires HW
+    // validation on the bench and is left for Fase 6, after the board is
+    // physically wired; reducing the level here is the safe interim.
+    #[cfg(not(feature = "instrumentation"))]
+    esp_println::logger::init_logger(log::LevelFilter::Warn);
+    #[cfg(feature = "instrumentation")]
+    esp_println::logger::init_logger(log::LevelFilter::Debug);
 
-    info!("LibreRoaster v5.1 starting...");
+    info!("LibreRoaster v0.1 starting...");
     info!("Hardware initialized");
 
     let init_peripherals = InitPeripherals {

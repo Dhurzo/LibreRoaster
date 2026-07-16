@@ -19,7 +19,9 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** 218 unit tests + 133 integration tests (351 host-side) pass. 3 pre-existing doctest failures in `src/memory/strategy.rs` (documentation examples out of date with recent refactors). Embedded build compiles clean. An additional 35+ tests require the `regression` feature flag (fault injection, MAX31856 fixture replay) and ~32 are embedded-only (`target_arch = "riscv32"`).
+**Current status:** host-side test suite is fully green. The exact unit vs integration split shifts as tests are added; run `cargo test --features test --target x86_64-unknown-linux-gnu` for the live count, or see the CI badge at the top of `README.md`. There are **no pre-existing doctest failures** (earlier docs that claimed otherwise were stale). The embedded build compiles clean. An additional set of tests requires the `regression` feature flag (fault injection, MAX31856 fixture replay) and a subset are embedded-only (`target_arch = "riscv32"`).
+
+> Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
 ---
 

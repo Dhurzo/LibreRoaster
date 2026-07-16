@@ -51,10 +51,38 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         return Err(ParseError::EmptyCommand);
     }
 
-    // Try semicolon delimiter first (Artisan standard for init commands)
-    // If the command isn't CHAN/UNITS/FILT, fall through to space parsing
-    // to handle typos like "OT1;75" → "OT1 75"
-    if let Some((cmd, args)) = trimmed.split_once(';') {
+    // Artisan/TC4 uses ';' as the delimiter for init/handshake commands
+    // (CHAN;1200, UNITS;C, FILT;70, PID;SV;250, PROFILE;...) and a space for
+    // operational commands (OT1 75, READ, STATUS). Some Artisan configurations
+    // also send the operational form with a semicolon: `OT1;75`, `OT2;60`,
+    // `IO3;50`. The previous code only handled the ';' delimiter for a fixed
+    // whitelist (CHAN/UNITS/FILT/PROFILE/FANPROFILE/PID) and fell through to
+    // `split_whitespace()` on the *unmodified* string for anything else — but
+    // `split_whitespace` does not treat `;` as a delimiter, so `OT1;75`
+    // produced a single token `["OT1;75"]` and was rejected as
+    // `unknown_command`, even though the preceding comment claimed a
+    // fall-through. Cero tests covered it.
+    //
+    // Fix: normalise the delimiter to a space BEFORE the init-command
+    // dispatch. init commands still match (`"CHAN 1200"` parses identically to
+    // `"CHAN;1200"` once we look for `split_once(' ')`), and `OT1;75` becomes
+    // `OT1 75`, hitting the existing operational parser.
+    let normalized: heapless::String<128> = {
+        let mut s = heapless::String::new();
+        for ch in trimmed.chars() {
+            // Ignore overflow — a >128-byte command is garbage and will be
+            // rejected by the operational parser anyway. We must not `panic!`
+            // or `unwrap` here (crate denies both).
+            let _ = if ch == ';' { s.push(' ') } else { s.push(ch) };
+        }
+        s
+    };
+    let trimmed = normalized.as_str();
+    debug_assert!(!trimmed.is_empty() || command.trim().is_empty());
+
+    // Init commands with the normalised delimiter. We split on the first
+    // space; CHAN/UNITS/FILT/etc. consume the remainder as their argument.
+    if let Some((cmd, args)) = trimmed.split_once(' ') {
         let init_result: Option<Result<ArtisanCommand, ParseError>> =
             match cmd.to_ascii_uppercase().as_str() {
                 "CHAN" => Some(
@@ -69,9 +97,10 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     _ => Err(ParseError::InvalidValue),
                 }),
                 "FILT" => {
-                    // Artisan sends comma-separated filter values (e.g., "FILT;70,70,70,70")
-                    // or a single value (e.g., "FILT;5"). The value is acknowledged but
-                    // not used by the firmware — just extract the first token.
+                    // Artisan sends comma-separated filter values
+                    // (e.g., "FILT;70,70,70,70") or a single value
+                    // (e.g., "FILT;5"). The value is acknowledged but not
+                    // used by the firmware — just extract the first token.
                     let val = args
                         .trim()
                         .split(',')
@@ -85,7 +114,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
-                // Unknown init command → fall through to space parsing
+                // Unknown init command → fall through to operational parsing
+                // on the normalised string (e.g. "OT1 75", "READ").
                 _ => None,
             };
 
@@ -94,8 +124,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         }
     }
 
-    // Fall back to space delimiter for operational commands
-    // Use take(4) to prevent heapless::Vec overflow on garbage input (>4 tokens)
+    // Operational commands: parse the normalised command by spaces. take(4)
+    // prevents heapless::Vec overflow on garbage input (>4 tokens).
     let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().take(4).collect();
 
     if parts.is_empty() {
@@ -192,7 +222,10 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
 }
 
 fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
-    let parts: heapless::Vec<&str, 8> = args.split(';').take(8).collect();
+    // Accept both ';' and ' ' as segment delimiters: the caller pre-normalises
+    // ';' to ' ' for some paths, so we split on either to stay robust under
+    // both `PID;SV;250` and `PID SV 250` style inputs.
+    let parts: heapless::Vec<&str, 8> = args.split([';', ' ']).take(8).collect();
     if parts.is_empty() {
         return Err(ParseError::InvalidValue);
     }
@@ -331,7 +364,9 @@ fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
 
 fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     let mut profile = RoastProfile::new();
-    for segment in args.split(';') {
+    // Accept both ';' and ' ' as segment delimiters (the caller may pre-
+    // normalise ';' to ' '). Inner point format is `time,temp` (comma).
+    for segment in args.split([';', ' ']) {
         let segment = segment.trim();
         if segment.is_empty() {
             continue;
@@ -373,7 +408,7 @@ fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
 fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     use crate::config::FanSetpoint;
     let mut profile = FanProfile::new();
-    for segment in args.split(';') {
+    for segment in args.split([';', ' ']) {
         let segment = segment.trim();
         if segment.is_empty() {
             continue;
@@ -1216,5 +1251,62 @@ mod tests {
             parse_artisan_command("PID,OFF"),
             Ok(ArtisanCommand::Stop)
         ));
+    }
+
+    /// Bug #4 regression: Artisan's default slider syntax uses a semicolon,
+    /// not a space, for the operational commands `OT1`, `OT2`, `IO3`. The
+    /// previous parser rejected them with `ERR unknown_command` because it
+    /// only let `;` through for the init-command whitelist (CHAN/UNITS/FILT/
+    /// PROFILE/FANPROFILE/PID) and then `split_whitespace` left "OT1;75" as
+    /// a single token. These tests pin the fix that normalises `;`→` ` first.
+    #[test]
+    fn test_ot1_semicolon_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1;75"),
+            Ok(ArtisanCommand::SetHeater(75))
+        );
+    }
+
+    #[test]
+    fn test_ot2_semicolon_parses_as_set_fan_speed() {
+        assert_eq!(
+            parse_artisan_command("OT2;60"),
+            Ok(ArtisanCommand::SetFanSpeed(60, false))
+        );
+    }
+
+    #[test]
+    fn test_io3_semicolon_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3;50"),
+            Ok(ArtisanCommand::SetFan(50))
+        );
+    }
+
+    /// Bug #4 regression: PID sub-commands must still parse after the `;`
+    /// normalisation — `PID;SV;250` becomes `PID SV 250`, so the pid
+    /// sub-parser must split on either delimiter.
+    #[test]
+    fn test_pid_sv_semicolon_parses_as_set_target() {
+        assert_eq!(
+            parse_artisan_command("PID;SV;250"),
+            Ok(ArtisanCommand::SetTargetTemp(250.0))
+        );
+    }
+
+    #[test]
+    fn test_chan_semicolon_still_works() {
+        assert_eq!(
+            parse_artisan_command("CHAN;1200"),
+            Ok(ArtisanCommand::Chan(1200))
+        );
+    }
+
+    #[test]
+    fn test_units_semicolon_still_works() {
+        assert_eq!(
+            parse_artisan_command("UNITS;F"),
+            Ok(ArtisanCommand::Units(true))
+        );
     }
 }

@@ -140,13 +140,13 @@ Field map:
 
 ## 6. Manual actuator commands
 
-### `OT1 <0-100>`
+### `OT1 <0-100>` / `OT1;<0-100>`
 
-Sets heater power percentage.
+Sets heater power percentage. Accepts both space and semicolon delimiter (Artisan default).
 
-### `OT2 <0-100>`
+### `OT2 <0-100>` / `OT2;<0-100>`
 
-Sets fan speed with decimal input support.
+Sets fan speed with decimal input support. Accepts both delimiters.
 
 Implementation behavior:
 
@@ -157,9 +157,9 @@ Implementation behavior:
 
 If clamping occurs, the control layer treats that as a safety event and cuts the heater.
 
-### `IO3 <0-100>`
+### `IO3 <0-100>` / `IO3;<0-100>`
 
-Sets fan speed as an integer-oriented command path.
+Sets fan speed as an integer-oriented command path. Accepts both delimiters.
 
 ### `UP` / `DOWN`
 

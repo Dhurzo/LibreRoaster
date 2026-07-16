@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use embassy_time::{Duration, Instant};
 
 use libreroaster::common::{StubFan, StubHeater};
+use libreroaster::config::constants::RoasterCommand;
 use libreroaster::config::constants::{RoasterState, COMMS_IDLE_TIMEOUT_MS, MAX_ROAST_TIME_SECS};
 use libreroaster::config::{ArtisanCommand, ProfileSetpoint, RoastProfile, SystemStatus};
 use libreroaster::control::roaster_control::RoasterControl;
@@ -210,9 +211,30 @@ fn full_emergency_recovery_cycle() {
     assert!(ctrl.get_status().fault_condition);
     assert!(ctrl.safety().is_emergency_active());
 
+    // Bug #3 regression: Artisan's `ArtisanCommand::Stop` (which is the
+    // "stop streaming" path, mapped from `PID;OFF` over the protocol) must
+    // NOT un-latch a held emergency — only the explicit recovery command
+    // (StopRoast) clears it. The previous test asserted the opposite here,
+    // blessing the bug. Stop may drop us back to Idle for streaming
+    // bookkeeping, but the latch stays armed until recovery.
     ctrl.process_artisan_command(ArtisanCommand::Stop)
-        .expect("stop clears emergency");
+        .expect("artisan stop does not un-latch emergency");
 
+    // The streaming task is idle, but the safety latch is still armed and
+    // the fault flag is still asserted.
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "STOP must not release the emergency latch"
+    );
+    assert!(
+        ctrl.get_status().fault_condition,
+        "STOP must not clear the fault flag (only StopRoast does)"
+    );
+
+    // The operator's explicit recovery path releases the latch.
+    let recover_now = Instant::from_millis(2000);
+    ctrl.process_command(RoasterCommand::StopRoast, recover_now)
+        .expect("StopRoast clears emergency");
     assert_eq!(ctrl.get_state(), RoasterState::Idle);
     assert!(!ctrl.get_status().fault_condition);
     assert!(!ctrl.safety().is_emergency_active());

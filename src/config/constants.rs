@@ -570,6 +570,23 @@ impl TemperatureSettings {
             TemperatureScale::Celsius => temp_c,
         }
     }
+
+    /// Convert temperature from display units to Celsius (project-internal SI).
+    /// If scale is Fahrenheit: °C = (°F − 32) × 5/9
+    /// If scale is Celsius: return temp unchanged
+    ///
+    /// Used when receiving a setpoint over the serial protocol from Artisan:
+    /// Artisan reports the setpoint in its own display units, so when it is in
+    /// °F mode the firmware must convert the value to °C *before* validating
+    /// and storing it as `target_temp`. Storing the raw Fahrenheit value as
+    /// Celsius (the previous behaviour: `PID;SV;250` with units = °F was read
+    /// as 250 °C and the PID chased a 250 °C target) is a critical-safety bug.
+    pub fn convert_from_display(&self, temp: f32) -> f32 {
+        match self.scale {
+            TemperatureScale::Fahrenheit => (temp - 32.0) * 5.0 / 9.0,
+            TemperatureScale::Celsius => temp,
+        }
+    }
 }
 
 /// Current roast state and instrumentation telemetry.

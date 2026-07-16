@@ -5,7 +5,7 @@ rust-version = "1.88"
 version      = "0.1.0"
 description  = "OpenSource Coffee Bean Roaster compatible with Artisan+"
 authors      = ["Juan Ángel López"]
-license      = "APACHE-2"
+license      = "Apache-2.0"
 
 [[example]]
 name = "hil_tc"

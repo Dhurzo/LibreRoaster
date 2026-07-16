@@ -187,7 +187,13 @@ mod hub_integration {
 
     #[test]
     fn test_hub_from_fixture_env_fault() {
-        // env_fault=0x04 (short to GND), bean=150°C (19199<<5), env=100°C (12800<<5)
+        // env_fault=0x04 = TC Low (bit 2 of the MAX31856 fault register 0x0F),
+        // bean=150°C (19199<<5), env=100°C (12800<<5).
+        //
+        // Per the MAX31856 datasheet, 0x04 is NOT a "short to GND" fault (the
+        // MAX31856 has no such bit — that name came from the older MAX6675).
+        // The previous test asserted `short_to_gnd` here, blessing the bug in
+        // conversion.rs. We now assert the correctly-mapped `tc_low`.
         let fixture = make_fixture([0x09, 0x60, 0x00], 0x00, [0x06, 0x40, 0x00], 0x04);
 
         let mut hub = SensorConversionHub::new();
@@ -196,14 +202,19 @@ mod hub_integration {
         // Bean should work
         assert!(!sample.bean_fault.has_fault());
 
-        // Env fault should be detected
-        assert!(sample.env_fault.short_to_gnd);
+        // Env fault should be detected via the correctly-mapped bit
+        assert!(sample.env_fault.tc_low);
+        assert!(
+            !sample.env_fault.short_to_gnd,
+            "MAX31856 has no short_to_gnd bit"
+        );
         assert!(sample.env_fault.has_fault());
     }
 
     #[test]
     fn test_hub_from_fixture_both_faults() {
-        // Both sensors have faults: bean_fault=0x01 (open), env_fault=0x04 (short to GND)
+        // Both sensors have faults: bean_fault=0x01 (Open), env_fault=0x04
+        // (TC Low), mapped strictly to the datasheet bit layout.
         let fixture = make_fixture([0x00, 0x00, 0x00], 0x01, [0x06, 0x40, 0x00], 0x04);
 
         let mut hub = SensorConversionHub::new();
@@ -211,7 +222,7 @@ mod hub_integration {
 
         // Both should have faults
         assert!(sample.bean_fault.open_circuit);
-        assert!(sample.env_fault.short_to_gnd);
+        assert!(sample.env_fault.tc_low);
         assert!(sample.bean_fault.has_fault());
         assert!(sample.env_fault.has_fault());
     }

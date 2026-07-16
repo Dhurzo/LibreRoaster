@@ -1,6 +1,23 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-02-04
+> ⚠️ **STALE — DO NOT TRUST** (as of 2026-07-16)
+>
+> This file was authored on 2026-02-04 and references files and structures that
+> **no longer exist** in the repository (e.g. `src/control/roaster_refactored.rs`,
+> `src/control/handlers.rs` with `with_ssr`, `SsrControl` vs `SsrControlSimple`).
+> The "Known Bugs" section below documents issues that have largely been resolved
+> by the v5.4 controller decomposition (Temperature/Heater/Fan/Safety controllers).
+>
+> It is kept only as a historical artefact of the GSD `.planning/` workspace and is
+> excluded from the public `main` branch via the `gsd-pr-branch` workflow.
+>
+> For the **current** list of known bugs and safety considerations, see:
+> - `LibreRoaster_11_Fixes_Criticos.md` (the 11 critical defects, with fixes)
+> - `informe-libreroaster-Jun-2026.md` (the audit that produced them)
+> - `plan-informe.md` (phased remediation plan)
+> - `SECURITY.md` (supported versions, disclosure policy)
+
+**Analysis Date:** 2026-02-04  ·  **Marked stale:** 2026-07-16
 
 ## Tech Debt
 

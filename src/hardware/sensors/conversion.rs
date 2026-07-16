@@ -39,28 +39,69 @@ pub fn convert_raw_temp(raw_temp: u32) -> f32 {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SensorFault {
+    /// bit 0 (0x01) — Open / Thermocouple open-circuit fault.
     pub open_circuit: bool,
+    /// bit 1 (0x02) — OVUV (Over/Under Voltage input fault). Kept under the
+    /// legacy name `short_to_vcc` for backwards compatibility.
     pub short_to_vcc: bool,
-    pub short_to_gnd: bool,
-    pub cold_junction_high: bool,
+    /// bit 2 (0x04) — TC Low (thermocouple below the user fault threshold).
+    pub tc_low: bool,
+    /// bit 3 (0x08) — TC High (thermocouple above the user fault threshold).
+    /// Also exposed as `tc_high`.
+    pub tc_high: bool,
+    /// bit 4 (0x10) — CJ Low (cold-junction below threshold).
     pub cold_junction_low: bool,
+    /// bit 5 (0x20) — CJ High (cold-junction above threshold).
+    pub cold_junction_high: bool,
+    /// bit 6 (0x40) — TC Range (linearized TC temperature out of range).
+    pub tc_range_fault: bool,
+    /// bit 7 (0x80) — CJ Range (cold-junction temperature out of range).
+    pub cj_range_fault: bool,
     pub communication_error: bool,
     pub invalid_temperature: bool,
+    /// Aggregated flag: any bit in the fault register is set, *including*
+    /// CJ High / TC Range / CJ Range (0x20 / 0x40 / 0x80) which the previous
+    /// `has_fault = fault & 0x1F` masked out — a real cold-junction
+    /// overtemperature next to a roaster would have been silently swallowed.
     pub fault_detected: bool,
+    /// Back-compat alias. The MAX31856 has no dedicated "short to GND" bit
+    /// (that name comes from the older MAX6675). Kept as a NoOp so historical
+    /// field accesses keep compiling while callers migrate to the
+    /// correctly-named `tc_low` / `cj_range_fault` etc.
+    #[deprecated(note = "MAX31856 has no short-to-GND bit; use tc_low or cj_range_fault")]
+    pub short_to_gnd: bool,
 }
 
 impl SensorFault {
-    #[allow(dead_code)]
+    #[allow(dead_code, deprecated)]
     fn from_register(fault: u8) -> Self {
-        let has_fault = fault & 0x1F != 0;
+        // MAX31856 Fault Status Register (0x0F) bit map (datasheet, MSB=bit7):
+        //   0x01 (bit 0) = Open   — Thermocouple open-circuit fault
+        //   0x02 (bit 1) = OVUV  — Over/Under Voltage input fault
+        //   0x04 (bit 2) = TC Low  — TC below user low threshold
+        //   0x08 (bit 3) = TC High — TC above user high threshold
+        //   0x10 (bit 4) = CJ Low  — Cold-junction below threshold
+        //   0x20 (bit 5) = CJ High — Cold-junction above threshold
+        //   0x40 (bit 6) = TC Range — Linearized TC out of range
+        //   0x80 (bit 7) = CJ Range — Cold-junction out of range
+        //
+        // The previous implementation masked with 0x1F, dropping bits 5/6/7
+        // (CJ High / TC Range / CJ Range), and mislabeled bits 2/3 as
+        // "short_to_gnd"/"cold_junction_high". Both bugs are fixed here.
         Self {
             open_circuit: fault & 0x01 != 0,
             short_to_vcc: fault & 0x02 != 0,
-            short_to_gnd: fault & 0x04 != 0,
-            cold_junction_high: fault & 0x08 != 0,
+            tc_low: fault & 0x04 != 0,
+            tc_high: fault & 0x08 != 0,
             cold_junction_low: fault & 0x10 != 0,
-            fault_detected: has_fault,
-            ..Default::default()
+            cold_junction_high: fault & 0x20 != 0,
+            tc_range_fault: fault & 0x40 != 0,
+            cj_range_fault: fault & 0x80 != 0,
+            // Any bit set is a fault — do NOT mask with 0x1F.
+            fault_detected: fault != 0,
+            short_to_gnd: false,
+            invalid_temperature: (fault & 0x04 != 0) || (fault & 0x08 != 0),
+            communication_error: false,
         }
     }
 
@@ -85,9 +126,12 @@ impl SensorFault {
     pub fn has_fault(&self) -> bool {
         self.open_circuit
             || self.short_to_vcc
-            || self.short_to_gnd
-            || self.cold_junction_high
+            || self.tc_low
+            || self.tc_high
             || self.cold_junction_low
+            || self.cold_junction_high
+            || self.tc_range_fault
+            || self.cj_range_fault
             || self.communication_error
             || self.invalid_temperature
             || self.fault_detected
@@ -205,7 +249,13 @@ impl SensorConversionHub {
 
     #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
+    #[allow(clippy::panic, clippy::empty_loop)]
     fn new_uninit() -> Self {
+        // Unreachable on this target: `from_fixture` is gated on
+        // `feature = "regression"`, and the regression setup is never built
+        // for riscv32 without simulated-sensors. Panicking here is correct:
+        // if we ever reach this we have a configuration bug that should crash
+        // loudly rather than return a fabricated hub.
         panic!("from_fixture requires simulated-sensors feature or host target");
     }
 

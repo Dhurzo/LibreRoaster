@@ -93,7 +93,7 @@ Assemble and verify one subsystem at a time. Each diagram isolates a single subs
 2. Thermocouples → verify readings with `hil_tc`
 3. Fan / Motor → verify PWM sweep with `hil_fan`
 4. SSR + Heater → verify control with `hil_ssr` (safe mode, duty 0%)
-5. Full wiring → verify with `preflight-check.sh`
+5. Full wiring → verify with `cargo test --features test` and a `--dry-run` of the HIL scripts under `tests/hardware/` (no `preflight-check.sh` is shipped; pin-assignment validation is part of the regular test suite)
 6. ⚠ AC mains last, with extinguisher nearby
 
 ---

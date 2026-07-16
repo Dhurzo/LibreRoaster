@@ -38,6 +38,27 @@ jobs:
             -W clippy::expect_used \
             -W clippy::panic
 
+  embedded-clippy:
+    name: Clippy (ESP32-C3 / riscv32imc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy on embedded target
+        # Block the build if the embedded target regresses (e.g. deny(panic)
+        # fires, dead-code stubs that don't compile, etc). This previously
+        # slipped through CI because clippy was only run on the host target.
+        run: |
+          cargo clippy --release --locked --target riscv32imc-unknown-none-elf \
+            --features embedded -- \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic
+
   test:
     name: Tests
     runs-on: ubuntu-latest

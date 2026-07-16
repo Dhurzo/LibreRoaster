@@ -50,7 +50,7 @@ mod software_watchdog {
         }
 
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
-            let now = embassy_time::Instant::now().as_millis() as u64;
+            let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.swap(now, Ordering::SeqCst);
             if last > 0 && now - last > WATCHDOG_TIMEOUT_MS {
                 self.last_failure = Some("watchdog_timeout");
@@ -67,7 +67,7 @@ mod software_watchdog {
         }
 
         pub fn is_alive(&self) -> bool {
-            let now = embassy_time::Instant::now().as_millis() as u64;
+            let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
             last == 0 || now - last <= WATCHDOG_TIMEOUT_MS
         }

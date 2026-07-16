@@ -58,7 +58,7 @@ impl<'a> FanController<'a> {
     }
 
     fn fade_duration(delta: u16) -> u16 {
-        let base = delta as u16 * 4;
+        let base = delta * 4;
         base + 80
     }
 

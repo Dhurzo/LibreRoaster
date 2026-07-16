@@ -132,9 +132,24 @@ fn stop_during_idle_does_not_crash() {
     let hub = SensorConversionHub::new();
     let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
-    // STOP before START
+    // Bug #3 regression: EmergencyStop from Idle now LATCHES the emergency
+    // (state = Error) rather than no-op'ing back to Idle, and recovery is
+    // reserved for the explicit `StopRoast` command. The previous test
+    // expected `Idle` here, which was the un-latching bug: pressing STOP
+    // when nothing was running should *not* allow the heater to re-energize
+    // unattended if a fault had latched.
     let result = rc.process_artisan_command(ArtisanCommand::EmergencyStop);
     assert!(result.is_ok());
+    assert_eq!(
+        rc.get_state(),
+        RoasterState::Error,
+        "EmergencyStop must latch even from Idle"
+    );
+
+    // Only the explicit recovery path un-latches back to Idle.
+    let now = embassy_time::Instant::now();
+    rc.process_command(RoasterCommand::StopRoast, now)
+        .expect("recovery");
     assert_eq!(rc.get_state(), RoasterState::Idle);
 }
 
@@ -210,11 +225,23 @@ fn charge_detection_reset_on_stop() {
     rc.status_mut().charge_detected = true;
     rc.status_mut().state = RoasterState::Heating;
     rc.process_artisan_command(ArtisanCommand::EmergencyStop)
-        .expect("stop should work");
+        .expect("emergency stop should work");
 
+    // Bug #3 regression: EmergencyStop LATCHES (state = Error) and does not
+    // clear `charge_detected` itself (charge reset happens on the next START
+    // via the recovery path). Recovering requires an explicit `StopRoast`.
+    assert_eq!(
+        rc.get_state(),
+        RoasterState::Error,
+        "EmergencyStop must latch the Error state"
+    );
+
+    let now = embassy_time::Instant::now();
+    rc.process_command(RoasterCommand::StopRoast, now)
+        .expect("recovery");
     assert_eq!(rc.get_state(), RoasterState::Idle);
-    // charge_detected persists (it's in status) — it's a roast-level flag
-    // that resets on next START in the real flow
+    // charge_detected was reset by stop_streaming's charge_reset on recovery.
+    assert!(!rc.status_mut().charge_detected);
 }
 
 #[test]

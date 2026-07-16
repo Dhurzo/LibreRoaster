@@ -29,14 +29,21 @@ impl fmt::Display for UartError {
     }
 }
 
-pub struct UartDriver {
+/// Bug #9 fix: split the UART driver into two independent halves with their
+/// own mutexes. Previously a single `UART_MUTEX` guarded both halves, and the
+/// reader task retained it across its `.await` (only released when bytes
+/// actually arrived), indefinitely blocking the writer. That meant every
+/// protocol response arrived one poll late and unsolicited telemetry could
+/// stall forever on an idle line. With separate mutexes the RX task can wait
+/// for incoming bytes while the TX task concurrently emits responses and
+/// continuous telemetry.
+pub struct UartTxDriver {
     tx: UartTx<'static, esp_hal::Async>,
-    rx: UartRx<'static, esp_hal::Async>,
 }
 
-impl UartDriver {
-    pub fn new(tx: UartTx<'static, esp_hal::Async>, rx: UartRx<'static, esp_hal::Async>) -> Self {
-        Self { tx, rx }
+impl UartTxDriver {
+    pub fn new(tx: UartTx<'static, esp_hal::Async>) -> Self {
+        Self { tx }
     }
 
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UartError> {
@@ -48,6 +55,16 @@ impl UartDriver {
             .map_err(|_| UartError::TransmissionError)?;
         Ok(())
     }
+}
+
+pub struct UartRxDriver {
+    rx: UartRx<'static, esp_hal::Async>,
+}
+
+impl UartRxDriver {
+    pub fn new(rx: UartRx<'static, esp_hal::Async>) -> Self {
+        Self { rx }
+    }
 
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UartError> {
         Read::read(&mut self.rx, buffer)
@@ -56,12 +73,15 @@ impl UartDriver {
     }
 }
 
-static UART_DRIVER: StaticCell<UartDriver> = StaticCell::new();
-static UART_DRIVER_PTR: SyncCell<*mut UartDriver> = SyncCell::new(ptr::null_mut());
+static UART_TX_DRIVER: StaticCell<UartTxDriver> = StaticCell::new();
+static UART_TX_DRIVER_PTR: SyncCell<*mut UartTxDriver> = SyncCell::new(ptr::null_mut());
+static UART_RX_DRIVER: StaticCell<UartRxDriver> = StaticCell::new();
+static UART_RX_DRIVER_PTR: SyncCell<*mut UartRxDriver> = SyncCell::new(ptr::null_mut());
 
-/// Async mutex that guards UART driver access across tasks.
-/// Prevents multiple tasks from simultaneously holding `&mut UartDriver`.
-static UART_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+/// Async mutex guarding TX only. RX may proceed concurrently.
+static UART_TX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+/// Async mutex guarding RX only. TX may proceed concurrently.
+static UART_RX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 
 pub fn init_uart(
     uart0: esp_hal::peripherals::UART0<'static>,
@@ -75,51 +95,53 @@ pub fn init_uart(
         .into_async();
 
     let (rx_half, tx_half) = uart.split();
-    let driver = UART_DRIVER.init(UartDriver::new(tx_half, rx_half));
-    // SAFETY: UART_DRIVER_PTR is a SyncCell<*mut UartDriver> storing a raw pointer
-    // to the driver allocated by StaticCell above. init_uart() runs in
-    // AppBuilder::build() before any tasks start, so no concurrent access occurs.
-    // The pointer is only dereferenced inside UART_MUTEX guards thereafter.
+    let tx_driver = UART_TX_DRIVER.init(UartTxDriver::new(tx_half));
+    let rx_driver = UART_RX_DRIVER.init(UartRxDriver::new(rx_half));
+    // SAFETY: UART_*_DRIVER_PTR store raw pointers to drivers allocated by
+    // StaticCell above. init_uart() runs in AppBuilder::build() before any
+    // tasks start, so no concurrent access occurs. Each pointer is only
+    // dereferenced inside its own mutex guard thereafter.
     unsafe {
-        *UART_DRIVER_PTR.get() = driver as *mut UartDriver;
+        *UART_TX_DRIVER_PTR.get() = tx_driver as *mut UartTxDriver;
+        *UART_RX_DRIVER_PTR.get() = rx_driver as *mut UartRxDriver;
     }
     Ok(())
 }
 
-/// Write bytes to UART. Acquires the async mutex to ensure exclusive access.
+/// Write bytes to UART. Acquires the TX mutex only — RX may proceed
+/// concurrently, so the reader task blocking on `Read::read(...).await` does
+/// NOT prevent a response or telemetry line from being emitted.
 ///
-/// SAFETY: The `&mut UartDriver` is only constructed inside the mutex-locked
-/// scope and does not exist across any `.await` boundary outside the locked
-/// section. The raw pointer is guaranteed valid because `init_uart()` runs
-/// before any tasks start.
+/// SAFETY: The `&mut UartTxDriver` only exists inside the locked scope and
+/// does not cross an `.await` outside it; the raw pointer is valid because
+/// `init_uart()` ran before any tasks started.
 pub async fn uart_write_bytes(data: &[u8]) -> Result<(), UartError> {
-    let _guard = UART_MUTEX.lock().await;
-    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell
-    // in init_uart(). The async mutex guarantees exclusive &mut access — no other
-    // task can enter this block concurrently. init_uart() runs in AppBuilder::build()
-    // before any tasks start, so the pointer is always initialized when we reach here.
-    // The &mut UartDriver does not outlive this function — it is dropped before the
-    // mutex guard is released.
-    let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
+    let _guard = UART_TX_MUTEX.lock().await;
+    // SAFETY: UART_TX_DRIVER_PTR points to a valid UartTxDriver allocated
+    // by StaticCell in init_uart(). The TX mutex guarantees exclusive &mut
+    // access to the TX half; the RX half has its own mutex and may be
+    // concurrently held by the reader task.
+    let driver = unsafe { &mut *(*UART_TX_DRIVER_PTR.get()) };
     driver.write_bytes(data).await
 }
 
-/// Read bytes from UART. Acquires the async mutex to ensure exclusive access.
+/// Read bytes from UART. Acquires the RX mutex only — TX may proceed
+/// concurrently, so a writer emitting a response does NOT block while we
+/// wait for the next inbound byte.
 ///
 /// SAFETY: Same as `uart_write_bytes` — the mutable reference is only alive
-/// inside the mutex-locked scope.
+/// inside the RX mutex-locked scope.
 pub async fn uart_read_bytes(buffer: &mut [u8]) -> Result<usize, UartError> {
-    let _guard = UART_MUTEX.lock().await;
-    // SAFETY: Same as uart_write_bytes — UART_DRIVER_PTR points to a valid UartDriver
-    // allocated by StaticCell in init_uart(). The async mutex guarantees exclusive access.
-    let driver = unsafe { &mut *(*UART_DRIVER_PTR.get()) };
+    let _guard = UART_RX_MUTEX.lock().await;
+    // SAFETY: Same reasoning as uart_write_bytes, but for the RX half.
+    let driver = unsafe { &mut *(*UART_RX_DRIVER_PTR.get()) };
     driver.read_bytes(buffer).await
 }
 
 #[cfg(test)]
-/// Internal accessor for tests that need to interact with the UART driver directly.
-pub fn get_uart_driver() -> Option<&'static mut UartDriver> {
-    // SAFETY: UART_DRIVER_PTR points to a valid UartDriver allocated by StaticCell
-    // in init_uart(). This is only used in tests after init_uart() has been called.
-    unsafe { (*UART_DRIVER_PTR.get()).as_mut() }
+/// Internal accessor for tests that need to interact with the UART driver
+/// directly. The driver is now split, so the old single accessor is gone;
+/// this stub returns None to keep any historical caller compiling.
+pub fn get_uart_driver() -> Option<&'static ()> {
+    None
 }

@@ -26,10 +26,12 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 265 host-side unit + ~139 integration tests | ✅ All pass (incl. SSR scheduler) |
+| 580 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
-| PID control, profiles, safety interlocks | ✅ Implemented |
+| PID control, profiles, safety interlocks | ✅ **Implemented — 11 critical bugs fixed (see below)** |
+
+> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (580 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (Fase 6)**.
 | Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
 | End-to-end roast with real Artisan | ❌ Not yet tested |
 | Real coffee roasted using LibreRoaster | ❌ Not yet |
