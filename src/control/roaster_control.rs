@@ -849,11 +849,8 @@ impl RoasterControl {
 
         if !crate::config::constants::is_valid_target_temp(target_celsius) {
             warn!(
-                "SetTargetTemp rejected: {:.1}°C (raw input {:.1}) outside valid range ({:.0}–{:.0}°C)",
-                target_celsius,
-                target,
-                crate::config::constants::MIN_TEMP,
-                crate::config::constants::MAX_TEMP
+                "SetTargetTemp rejected: {:.1}°C (raw input {:.1}) outside valid range (50–300°C)",
+                target_celsius, target,
             );
             return Err(RoasterError::InvalidState {
                 source: Some("target_temp_out_of_range"),
@@ -874,9 +871,8 @@ impl RoasterControl {
             for sp in &profile.setpoints {
                 if !crate::config::constants::is_valid_target_temp(sp.temperature) {
                     warn!(
-                        "Profile rejected: setpoint {:.1}°C at {}s outside valid range ({:.0}–{:.0}°C)",
+                        "Profile rejected: setpoint {:.1}°C at {}s outside valid range (50–300°C)",
                         sp.temperature, sp.time_secs,
-                        crate::config::constants::MIN_TEMP, crate::config::constants::MAX_TEMP
                     );
                     return Err(RoasterError::InvalidState {
                         source: Some("profile_temp_out_of_range"),
@@ -920,11 +916,8 @@ impl RoasterControl {
 
         if !crate::config::constants::is_valid_target_temp(target_celsius) {
             warn!(
-                "Preheat rejected: {:.1}°C (raw input {:.1}) outside valid range ({:.0}–{:.0}°C)",
-                target_celsius,
-                target,
-                crate::config::constants::MIN_TEMP,
-                crate::config::constants::MAX_TEMP
+                "Preheat rejected: {:.1}°C (raw input {:.1}) outside valid range (50–300°C)",
+                target_celsius, target,
             );
             return Err(RoasterError::InvalidState {
                 source: Some("preheat_target_out_of_range"),
