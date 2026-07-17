@@ -7,7 +7,16 @@ use core::fmt::Write;
 use heapless::String;
 use portable_atomic::{AtomicU32, Ordering};
 
-pub const TRACE_EVENT_MAX_LEN: usize = 192;
+/// F5.5 (Gap #2): Maximum length of a single trace/telemetry event routed
+/// through the shared output channel. Previously 192, which left the STATUS
+/// line (`format_status_response`) and `#DUMP` data rows too close to their
+/// formatted sizes — a slightly longer STATUS or dump row would trip the
+/// `ERR status_too_long` path when a small bump in field width would have
+/// sufficed. 256 gives ~25% headroom over the 20-field STATUS line and
+/// keeps a single dump row (sample ~24 chars) comfortably below the cap.
+/// Embedded cost: +64 bytes static per channel buffer (≈30 callsites); well
+/// within the riscv32imc RAM budget.
+pub const TRACE_EVENT_MAX_LEN: usize = 256;
 
 static TRACE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
