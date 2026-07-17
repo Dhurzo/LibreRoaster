@@ -68,12 +68,11 @@ The embedded system is built around a fixed task graph.
 
 ### Input side
 
-- **USB reader task**: gathers bytes from native USB CDC
-- **UART reader task**: gathers bytes from UART0
-- **USB queue processor task**: parses USB-side bytes into commands
-- **UART queue processor task**: parses UART-side bytes into commands
+The input path was simplified in F5.3: reader tasks now own both byte collection and command parsing directly — the separate queue-processor tasks were removed.
 
-The reader tasks own transport-specific framing concerns. The queue processors convert framed command strings into `ArtisanCommand` values and push them into the shared command channel.
+- **USB reader task**: gathers bytes from native USB CDC and parses commands
+- **UART reader task**: gathers bytes from UART0 and parses commands
+- **control loop task**: drains commands, updates control, emits telemetry
 
 ### Core runtime
 

@@ -146,4 +146,3 @@ The hardware layer is stable enough to run, but these are the main points engine
 - `ARCHITECTURE.md` for how hardware feeds the runtime model
 - `PROTOCOL.md` for how hardware state appears over serial
 - `ARTISAN_CONNECTION.md` for the host-side connection workflow
-- `BUGS.md` for current technical risks and hardware/protocol mismatches

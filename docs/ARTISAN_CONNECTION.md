@@ -131,7 +131,7 @@ Expected behaviors:
 - `CHAN` returns `#1200`
 - `UNITS` returns `OK`
 - `READ` returns temperature-oriented CSV
-- `STATUS` returns the 19-field deep telemetry line
+- `STATUS` returns the 20-field deep telemetry line
 
 At that point you know:
 

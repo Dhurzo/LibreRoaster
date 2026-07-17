@@ -141,12 +141,13 @@ pub const MAX_ROAST_TIME_SECS: u32 = 1800;
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
 /// Returns true if the given temperature is a valid control target.
-/// Uses MIN_TEMP..=MAX_TEMP as the operational range.
+/// Uses 50..=300°C as the operational range to match parser constraints
+/// (PROFILE, SETTARGET, PREHEAT all require 50-300°C).
 /// Note: This does NOT clamp to MAX_SAFE_TEMP — the safety layer
 /// (OVERTEMP_THRESHOLD) handles emergency cutoff above 260°C.
 /// Artisan users may intentionally target above 250°C for dark roasts.
 pub fn is_valid_target_temp(temp: f32) -> bool {
-    temp.is_finite() && (MIN_TEMP..=MAX_TEMP).contains(&temp)
+    temp.is_finite() && (50.0..=300.0).contains(&temp)
 }
 
 /// A single setpoint in a roast profile: at time_secs → target temperature °C.
