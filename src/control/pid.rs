@@ -125,6 +125,15 @@ impl CoffeeRoasterPid {
         }
     }
 
+    /// Returns the (post-clamp, post-swap) output limits currently applied by
+    /// the PID. Callers that echo `set_output_limits` inputs into telemetry
+    /// should report these values, not the raw inputs, so observers see the
+    /// limits the PID is actually enforcing (clamped to [0,100] and swapped
+    /// to satisfy `min <= max`).
+    pub fn output_limits(&self) -> (f32, f32) {
+        (self.output_min, self.output_max)
+    }
+
     /// Reports the accumulated integrator term for telemetry consumers.
     pub fn integrator_value(&self) -> f32 {
         self.integrator

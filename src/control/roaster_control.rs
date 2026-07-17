@@ -476,7 +476,15 @@ impl RoasterControl {
         self.dispatch.set_pid_feedback(feedback);
 
         self.status.integrator_value = pid_integrator_value;
-        self.status.mv = applied_output;
+        // Bug fix: STATUS field "MV" (INSTRUMENTATION.md #11) is documented as
+        // the PID's manipulated variable *before* the actuator clamps/slew-limits
+        // it. `applied_output` is the slew-rate-limited, guard-busy-aware value
+        // the SSR physically received (already exposed via `status.ssr_output`).
+        // Storing `applied_output` here made MV a duplicate of the applied
+        // heater %, hiding the raw PID intent from tuning/audit telemetry.
+        // Use `desired_output` (the value the control logic selected before the
+        // actuator's slew/guard stage) so MV reflects the controller's intent.
+        self.status.mv = desired_output;
         self.status.saturation_active = self.dispatch.pid_saturation_active();
         self.status.integrator_clamped = self.dispatch.pid_integrator_clamped();
 
@@ -974,9 +982,16 @@ impl RoasterControl {
 
     fn handle_set_pid_output_limits(&mut self, min: f32, max: f32) -> Result<(), RoasterError> {
         self.dispatch.set_pid_output_limits(min, max);
-        self.status.pid_output_min = min;
-        self.status.pid_output_max = max;
-        info!("PID output limits set to {:.1}% – {:.1}%", min, max);
+        // Bug fix: echo the PID's post-clamp/swap limits, not the raw inputs.
+        // Raw inputs like PID;LIMIT;-50;200 or PID;LIMIT;80;20 would mislead
+        // telemetry; the PID uses [0,100] and [20,80] respectively.
+        let (actual_min, actual_max) = self.dispatch.pid_output_limits();
+        self.status.pid_output_min = actual_min;
+        self.status.pid_output_max = actual_max;
+        info!(
+            "PID output limits set to {:.1}% – {:.1}%",
+            actual_min, actual_max
+        );
         Ok(())
     }
 
