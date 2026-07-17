@@ -10,6 +10,11 @@ const LOG_CAPACITY: usize = 256;
 const SAMPLE_CAPACITY: usize = 128;
 /// Header written at the start of a dump.
 const CSV_HEADER: &str = "time_s,bt,et,heater,fan,target,ror";
+// F3.6 (Gap #1): aggregate dump buffer. Was 4096 (truncated long roasts);
+// bumped to 8192 so a full 256-sample ring (~32 KB worst case) is unlikely to
+// fit, but typical 10-15 min roasts at 1 Hz fit comfortably with headroom.
+// Per-row truncation still happens in `handle_dump_log` via `TRACE_EVENT_MAX_LEN`.
+pub const DUMP_BUFFER_SIZE: usize = 8192;
 
 /// Data for a single log sample.
 #[derive(Debug, Clone, Copy)]
@@ -51,7 +56,7 @@ pub fn log_sample(data: LogSampleData) {
 }
 
 /// Dump the buffered roast data.
-pub fn dump() -> HeaplessString<4096> {
+pub fn dump() -> HeaplessString<DUMP_BUFFER_SIZE> {
     critical_section::with(|cs| ROAST_LOGGER.borrow(cs).borrow().dump())
 }
 
@@ -121,8 +126,8 @@ impl RoastLogger {
 
     /// Dump all buffered samples as a CSV string with header row.
     /// Returns a string prefixed with `#DUMP` followed by header and data rows.
-    pub fn dump(&self) -> HeaplessString<4096> {
-        let mut out = HeaplessString::<4096>::new();
+    pub fn dump(&self) -> HeaplessString<DUMP_BUFFER_SIZE> {
+        let mut out = HeaplessString::<DUMP_BUFFER_SIZE>::new();
         let _ = out.push_str("#DUMP ");
         let _ = out.push_str(CSV_HEADER);
         let _ = out.push('\n');
