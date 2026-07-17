@@ -6,6 +6,18 @@ use log::warn;
 
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
+/// F4.11 (Gap #3): Number of consecutive faulty sensor reads required before
+/// latching `status.fault_condition = true`. A single transient SPI glitch
+/// (the most common false trigger) must NOT permanently latch a fault, which
+/// would force manual recovery. The fault is only latched once it persists
+/// across N consecutive samples — confirming a real wiring/open-thermocouple
+/// condition rather than a momentary bus error.
+///
+/// Note: this debouncer gates only the *sensor-read* path of `fault_condition`.
+/// Other paths (overtemp in `update_temperatures`, manual emergency, RWDT) set
+/// `fault_condition = true` independently and are not affected.
+pub const SENSOR_FAULT_DEBOUNCE: u8 = 5;
+
 pub struct SensorController {
     sensor_hub: SensorConversionHub,
     last_temp_read: Option<Instant>,
@@ -13,6 +25,7 @@ pub struct SensorController {
     last_pv_sample_time: Option<Instant>,
     last_filtered_derivative: f32,
     ror_exceeded_count: u8,
+    consecutive_fault_count: u8,
 }
 
 impl SensorController {
@@ -24,15 +37,15 @@ impl SensorController {
             last_pv_sample_time: None,
             last_filtered_derivative: 0.0,
             ror_exceeded_count: 0,
+            consecutive_fault_count: 0,
         }
     }
 
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
         let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
-        if has_fault {
-            status.fault_condition = true;
-        }
+        // F4.11 (Gap #3): debounce before latching.
+        self.apply_fault_debounce(has_fault, status);
         self.update_temperatures(
             sample.bean_temp,
             sample.env_temp,
@@ -41,6 +54,25 @@ impl SensorController {
             sample.timestamp,
             status,
         )
+    }
+
+    /// F4.11 (Gap #3): Debounce sensor fault reads. A single faulty sample
+    /// increments the counter but does NOT latch the fault — a transient SPI
+    /// glitch therefore self-clears on the next clean read. Only after
+    /// `SENSOR_FAULT_DEBOUNCE` consecutive faulty samples do we set
+    /// `fault_condition = true`, protecting against a real wiring or
+    /// open-thermocouple fault while avoiding spurious lockouts from a
+    /// one-off bus error. Other paths that set `fault_condition` (overtemp in
+    /// `update_temperatures`, manual emergency, RWDT) are not affected.
+    pub fn apply_fault_debounce(&mut self, has_fault: bool, status: &mut SystemStatus) {
+        if has_fault {
+            self.consecutive_fault_count = self.consecutive_fault_count.saturating_add(1);
+            if self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
+                status.fault_condition = true;
+            }
+        } else {
+            self.consecutive_fault_count = 0;
+        }
     }
 
     pub fn update_temperatures(
@@ -366,5 +398,97 @@ mod tests {
         assert!(!SensorController::is_temperature_valid(
             MAX_VALID_TEMP + 1.0
         ));
+    }
+
+    // ── F4.11 (Gap #3): fault_condition debounce ─────────────────────────
+
+    #[test]
+    fn fault_debounce_single_transient_does_not_latch() {
+        // A single transient faulty read must NOT latch fault_condition —
+        // the most common false trigger is a one-off SPI glitch.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        ctrl.apply_fault_debounce(true, &mut status);
+        assert_eq!(ctrl.consecutive_fault_count, 1);
+        assert!(
+            !status.fault_condition,
+            "Single faulty read must not latch fault_condition"
+        );
+    }
+
+    #[test]
+    fn fault_debounce_resets_on_clean_read_after_glitches() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        // 3 faulty reads (still below threshold of 5)
+        for _ in 0..3 {
+            ctrl.apply_fault_debounce(true, &mut status);
+        }
+        assert_eq!(ctrl.consecutive_fault_count, 3);
+        assert!(!status.fault_condition);
+
+        // A single clean read resets the counter entirely
+        ctrl.apply_fault_debounce(false, &mut status);
+        assert_eq!(ctrl.consecutive_fault_count, 0);
+        assert!(!status.fault_condition);
+    }
+
+    #[test]
+    fn fault_debounce_latches_after_threshold_consecutive_faults() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        // Below threshold: no latch
+        for _ in 0..(SENSOR_FAULT_DEBOUNCE - 1) {
+            ctrl.apply_fault_debounce(true, &mut status);
+        }
+        assert_eq!(ctrl.consecutive_fault_count, SENSOR_FAULT_DEBOUNCE - 1);
+        assert!(!status.fault_condition);
+
+        // Nth consecutive fault: latch
+        ctrl.apply_fault_debounce(true, &mut status);
+        assert_eq!(ctrl.consecutive_fault_count, SENSOR_FAULT_DEBOUNCE);
+        assert!(
+            status.fault_condition,
+            "After {} consecutive faults, fault_condition must be latched",
+            SENSOR_FAULT_DEBOUNCE
+        );
+    }
+
+    #[test]
+    fn fault_debounce_persists_above_threshold() {
+        // Counter uses saturating_add so it never overflows u8. Once latched,
+        // repeated faults keep fault_condition true. 205 iterations = count 205.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        for _ in 0..(SENSOR_FAULT_DEBOUNCE + 200) {
+            ctrl.apply_fault_debounce(true, &mut status);
+        }
+        assert_eq!(ctrl.consecutive_fault_count, 205);
+        assert!(status.fault_condition);
+    }
+
+    #[test]
+    fn fault_debounce_alternating_faults_never_latches() {
+        // A condition that's intermittent (every other read faulty) should
+        // never accumulate past the threshold and never latch.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        for i in 0..20 {
+            ctrl.apply_fault_debounce(i % 2 == 0, &mut status);
+        }
+        assert!(
+            !status.fault_condition,
+            "Intermittent fault must not latch fault_condition"
+        );
     }
 }
