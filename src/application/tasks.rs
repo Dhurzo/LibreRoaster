@@ -1372,8 +1372,9 @@ mod tests {
         init_container_with_roaster(roaster);
         drain_all_channels();
 
+        // Send START command to transition out of Idle state.
         let traced = crate::logging::traceability::TracedCommand {
-            command: crate::config::ArtisanCommand::StatusReport,
+            command: crate::config::ArtisanCommand::StartRoast,
             trace_id: crate::logging::traceability::TraceId::next(),
             channel: crate::input::multiplexer::CommChannel::None,
         };
