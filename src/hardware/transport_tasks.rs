@@ -160,8 +160,8 @@ pub(crate) fn extract_line_from_event_queue(
         CriticalSectionRawMutex,
         RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
     >,
-) -> Option<Vec<u8, 64>> {
-    let mut command_data = Vec::new();
+) -> Option<Vec<u8, 256>> {
+    let mut command_data = Vec::<u8, 256>::new();
     let mut extracted = false;
 
     event_queue.lock(|cell| {
@@ -257,6 +257,14 @@ pub(crate) async fn process_event_queue(
 ) {
     if event_queue_has_terminator(event_queue) {
         if let Some(command_data) = extract_line_from_event_queue(event_queue) {
+            // If the command buffer is at capacity (256 bytes), the command
+            // was truncated — emit an explicit error rather than parse the
+            // truncated junk.
+            if command_data.len() >= 256 {
+                send_parse_error(ParseError::CommandTooLong, channel, config).await;
+                return;
+            }
+
             let parse_result = if command_data.is_empty() {
                 Err(ParseError::EmptyCommand)
             } else {

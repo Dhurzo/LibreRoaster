@@ -226,6 +226,12 @@ async fn drain_commands(tick_state: &mut TickState) {
                 "Command rate limit exceeded — {} commands this tick, skipping remaining",
                 cmds_this_tick
             );
+            // Emit ERR so Artisan sees an explicit error rather than silent drop.
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut msg =
+                heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::new();
+            let _ = msg.push_str("ERR rate_limited excess commands this tick");
+            let _ = output_channel.try_send(msg);
             continue;
         }
         if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
@@ -272,6 +278,12 @@ async fn drain_commands(tick_state: &mut TickState) {
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
                             {
                                 let _ = output_channel.try_send(line);
+                            } else {
+                                // Emit ERR so Artisan sees explicit error rather than
+                                // a silent truncation.
+                                let mut msg = heapless::String::<TRACE_EVENT_MAX_LEN>::new();
+                                let _ = msg.push_str("ERR status_too_long");
+                                let _ = output_channel.try_send(msg);
                             }
                         } else if let crate::config::ArtisanCommand::ReadStatus =
                             traced_command.command
@@ -283,6 +295,10 @@ async fn drain_commands(tick_state: &mut TickState) {
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
                             {
                                 let _ = output_channel.try_send(line);
+                            } else {
+                                let mut msg = heapless::String::<TRACE_EVENT_MAX_LEN>::new();
+                                let _ = msg.push_str("ERR status_too_long");
+                                let _ = output_channel.try_send(msg);
                             }
                         }
                     }

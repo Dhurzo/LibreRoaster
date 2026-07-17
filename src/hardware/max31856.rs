@@ -1,7 +1,7 @@
 use crate::control::traits::Thermometer;
 use crate::control::RoasterError;
 use crate::hardware::sensors::conversion::convert_raw_temp;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::spi::SpiDevice;
 
 /// Type aliases for concrete SPI device types used in this application
@@ -82,8 +82,9 @@ where
 
         // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator mode), CJ=0000
         max31856.write_register(0x80, 0x10)?;
-        // CR1 (0x81): Type K thermocouple, 60 Hz notch filter
-        max31856.write_register(0x81, 0x03)?;
+        // CR1 (0x81): Type K thermocouple, 50 Hz notch filter (bit3=1).
+        // For 50 Hz: D3=1 → 0x03 | 0x08 = 0x0B. Conversion time ~185 ms.
+        max31856.write_register(0x81, 0x0B)?;
         // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
         max31856.write_register(0x82, 0x00)?;
 
@@ -144,11 +145,16 @@ where
 
         // 4. Perform one-shot conversion and verify temperature
         self.trigger_conversion()?;
-        log::info!("MAX31856 self-test: Conversion triggered, waiting 160ms...");
+        log::info!(
+            "MAX31856 self-test: Conversion triggered, waiting 185ms (50Hz conversion time)..."
+        );
 
-        // Use blocking delay for self-test (not in async context)
-        const DELAY_MS: u64 = 160;
-        for _ in 0..(DELAY_MS * 10000) {
+        // Spec F2.2: use Instant::elapsed() instead of fixed-iteration spin_loop.
+        // 50 Hz conversion time is ~185 ms per datasheet. Busy-wait using wall-clock
+        // time — this is more accurate than the fixed-iteration spin_loop.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(185) {
+            // spin_loop hint yields to the scheduler on a pre-emptive RTOS
             core::hint::spin_loop();
         }
 
@@ -177,7 +183,8 @@ where
     }
 
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
-        self.write_register(0x81, 0x03)?;
+        // 50 Hz notch filter: bit3=1 → 0x03 | 0x08 = 0x0B
+        self.write_register(0x81, 0x0B)?;
         Ok(())
     }
 

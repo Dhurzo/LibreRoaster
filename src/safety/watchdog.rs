@@ -149,7 +149,7 @@ mod hw_watchdog {
             w.wdt_en()
                 .set_bit()
                 .wdt_stg0()
-                .bits(2) // 2 = reset CPU on stage-0 timeout
+                .bits(1) // 1 = SYS reset on stage-0 timeout (peripherals return to reset state)
                 .wdt_flashboot_mod_en()
                 .set_bit()
         });

@@ -256,7 +256,8 @@ impl SensorConversionHub {
         // for riscv32 without simulated-sensors. Panicking here is correct:
         // if we ever reach this we have a configuration bug that should crash
         // loudly rather than return a fabricated hub.
-        panic!("from_fixture requires simulated-sensors feature or host target");
+        // Spec F1.1: replaced with `unimplemented!()` per spec request.
+        unimplemented!("from_fixture requires simulated-sensors feature or host target");
     }
 
     #[cfg(feature = "simulated-sensors")]

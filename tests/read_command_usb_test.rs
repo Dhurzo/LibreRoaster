@@ -97,6 +97,7 @@ fn send_usb_and_parse(
             libreroaster::input::parser::ParseError::InvalidValue => "invalid_value",
             libreroaster::input::parser::ParseError::OutOfRange => "out_of_range",
             libreroaster::input::parser::ParseError::EmptyCommand => "empty_command",
+            libreroaster::input::parser::ParseError::CommandTooLong => "command_too_long",
         })
     })
 }

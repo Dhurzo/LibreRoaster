@@ -32,6 +32,9 @@ informe-libreroaster-Jun-2026.md
 plan-informe.md
 plan-tareas-pendientes-bugs.md
 
+# Planning docs directory (not project deliverables)
+.planning/
+
 # Local configuration (contains secrets)
 config.json
 

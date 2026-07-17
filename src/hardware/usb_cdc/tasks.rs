@@ -49,7 +49,8 @@ pub async fn usb_reader_task() {
 
 /// Process USB command data directly (legacy compatibility, mainly for tests).
 pub fn process_usb_command_data(data: &[u8]) {
-    let mut command = Vec::<u8, 64>::new();
+    const COMMAND_BUFFER_SIZE: usize = 256;
+    let mut command = Vec::<u8, COMMAND_BUFFER_SIZE>::new();
 
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
@@ -58,7 +59,7 @@ pub fn process_usb_command_data(data: &[u8]) {
         }
 
         if command.push(byte).is_err() {
-            send_usb_parse_error(ParseError::InvalidValue);
+            send_usb_parse_error(ParseError::CommandTooLong);
             return;
         }
     }

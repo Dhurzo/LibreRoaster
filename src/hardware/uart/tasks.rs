@@ -81,14 +81,15 @@ pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
 /// Process command data directly (legacy compatibility, mainly for tests).
 pub fn process_command_data(data: &[u8]) {
     // For test compatibility, we process directly without the event queue
-    let mut command = Vec::<u8, 64>::new();
+    const COMMAND_BUFFER_SIZE: usize = 256;
+    let mut command = Vec::<u8, COMMAND_BUFFER_SIZE>::new();
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
             handle_command_data_internal(&command);
             return;
         }
         if command.push(byte).is_err() {
-            send_parse_error_internal(ParseError::InvalidValue);
+            send_parse_error_internal(ParseError::CommandTooLong);
             return;
         }
     }

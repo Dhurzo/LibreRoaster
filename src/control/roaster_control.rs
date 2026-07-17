@@ -317,8 +317,11 @@ impl RoasterControl {
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
         // C5: Comms idle timeout — no command from Artisan for > COMMS_IDLE_TIMEOUT_MS.
-        // Applies only during active roast states (Heating/Stable).
-        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+        // Applies during active roast states (Preheating/Heating/Stable), not Idle.
+        if matches!(
+            self.state,
+            RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
+        ) {
             let idle_ms = current_time
                 .as_millis()
                 .saturating_sub(self.status.last_command_received_at_ms);
@@ -333,7 +336,10 @@ impl RoasterControl {
         }
 
         // Maximum roast time safety backstop
-        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+        if matches!(
+            self.state,
+            RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
+        ) {
             if let Some(start) = self.profile_start_time {
                 let elapsed_secs = current_time.duration_since(start).as_secs() as u32;
                 if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
@@ -677,18 +683,18 @@ impl RoasterControl {
         was_clamped: bool,
         current_time: Instant,
     ) -> Result<(), RoasterError> {
+        // Spec F4.8: OT2 is a fan-override command. It must NOT change the heater
+        // state or affect PID status. Just forward the fan command and notify.
         self.forward_artisan_manual_command(
             crate::config::RoasterCommand::SetFanManual(value),
             current_time,
         )?;
 
         if was_clamped {
-            let _ = self.actuator.set_heater_power(0.0);
-            self.actuator.capture_ssr_monitor_metrics(&mut self.status);
-            // Bug #2: Send notification to Artisan via output channel
+            // Notify Artisan that fan was clamped but heater/PID remain unaffected.
             self.send_ot2_clamped_notification(value);
             info!(
-                "Artisan+ OT2 out of range - heater stopped, fan set to {}%",
+                "Artisan+ OT2 fan clamped to {}% (heater/PID unchanged)",
                 value
             );
         } else {
