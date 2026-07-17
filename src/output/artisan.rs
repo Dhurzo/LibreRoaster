@@ -297,25 +297,6 @@ impl ArtisanFormatter {
 
     // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
 
-    pub fn calculate_weighted_ror(history: &[f32]) -> f32 {
-        if history.len() < ROR_MIN_SAMPLES {
-            return 0.0;
-        }
-
-        let mut weighted_sum = 0.0;
-        let mut weight_sum = 0.0;
-
-        // Linear weighting: recent samples count more
-        for (i, &temp) in history.iter().enumerate() {
-            let weight = (i + 1) as f32; // Linear progression: 1, 2, 3, ..., n
-            weighted_sum += temp * weight;
-            weight_sum += weight;
-        }
-
-        let weighted_temp = weighted_sum / weight_sum;
-        (weighted_temp - history[0]) / (history.len() - 1) as f32
-    }
-
     pub fn apply_iir_filter(instantaneous_ror: f32, last_filtered: f32, alpha: f32) -> f32 {
         // IIR filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
         alpha * instantaneous_ror + (1.0 - alpha) * last_filtered

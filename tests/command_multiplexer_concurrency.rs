@@ -6,14 +6,10 @@ extern crate std;
 use futures::executor::{block_on, ThreadPool};
 use futures::future::join_all;
 use futures::task::SpawnExt;
-use libreroaster::application::queue_metrics::{
-    queue_processor_backlog_threshold, queue_processor_metrics_snapshot,
-    reset_queue_processor_metrics,
-};
 use libreroaster::application::service_container::ServiceContainer;
 use libreroaster::control::RoasterControl;
-use libreroaster::hardware::uart::tasks::{process_command_data, queue_processor_task};
-use libreroaster::hardware::usb_cdc::tasks::{process_usb_command_data, usb_queue_processor_task};
+use libreroaster::hardware::uart::tasks::process_command_data;
+use libreroaster::hardware::usb_cdc::tasks::process_usb_command_data;
 use libreroaster::input::ArtisanInput;
 use std::thread;
 use std::time::Duration as StdDuration;
@@ -26,28 +22,10 @@ fn build_control() -> RoasterControl {
 }
 
 fn init_service_container() {
-    let roaster_sync = build_control();
-    let roaster_async = build_control();
+    let roaster = build_control();
     let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
-
-    critical_section::with(|cs| {
-        let container = ServiceContainer::get_instance();
-        container
-            .roaster_sync
-            .borrow(cs)
-            .borrow_mut()
-            .replace(roaster_sync);
-        container
-            .artisan_input
-            .borrow(cs)
-            .borrow_mut()
-            .replace(artisan_input);
-    });
-
-    block_on(async {
-        let mut guard = ServiceContainer::get_instance().roaster.lock().await;
-        *guard = Some(roaster_async);
-    });
+    ServiceContainer::init_roaster(roaster);
+    ServiceContainer::init_artisan_input(artisan_input);
 }
 
 fn reset_channels() {
@@ -62,11 +40,8 @@ fn reset_channels() {
 fn command_multiplexer_concurrency_test() {
     init_service_container();
     reset_channels();
-    reset_queue_processor_metrics();
 
     let pool = ThreadPool::new().expect("Failed to start executor");
-    pool.spawn_ok(queue_processor_task());
-    pool.spawn_ok(usb_queue_processor_task());
 
     let sensor_handles = (0..5)
         .map(|_| {
@@ -108,26 +83,18 @@ fn command_multiplexer_concurrency_test() {
 
     block_on(join_all(command_handles));
 
+    // Drain all commands from artisan channel
+    let artisan_channel = ServiceContainer::get_artisan_channel();
     for _ in 0..25 {
         thread::sleep(StdDuration::from_millis(5));
-        if ServiceContainer::get_artisan_channel()
-            .try_receive()
-            .is_err()
-        {
+        if artisan_channel.try_receive().is_err() {
             break;
         }
     }
 
-    let metrics = queue_processor_metrics_snapshot();
-    assert_eq!(
-        metrics.backlog_events, 0,
-        "Backlog event recorded: {:?}",
-        metrics
-    );
+    // Verify artisan channel is drained (no backlog in direct-push model)
     assert!(
-        metrics.max_depth < queue_processor_backlog_threshold(),
-        "Queue depth {} breached threshold {}",
-        metrics.max_depth,
-        queue_processor_backlog_threshold()
+        artisan_channel.try_receive().is_err(),
+        "Artisan channel should be empty after drain"
     );
 }

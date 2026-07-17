@@ -1,22 +1,17 @@
-//! Application service container with dual sync/async ownership.
+//! Application service container with single async ownership.
 //!
-//! `RoasterControl` is stored in **two** slots to bridge the sync↔async gap:
+//! `RoasterControl` is stored in a single `EmbassyMutex<CriticalSectionRawMutex,
+//! Option<RoasterControl>>` slot. This removes the previous dual-slot design
+//! (a sync `Mutex<RefCell<Option<_>>>` mirror plus an async embassy mutex) and
+//! the 3-retry init race that masked a synchronization bug (F5.2).
 //!
-//! | Slot | Type | Context | Init | Lifecycle |
-//! |------|------|---------|------|-----------|
-//! | `roaster_sync` | `Mutex<RefCell<Option<…>>>` | ISR / critical-section | `AppBuilder::build()` | Deprecated; lazily drained to async |
-//! | `roaster` | `EmbassyMutex<…>` | Async tasks | Lazy move from `roaster_sync` | Primary path during operation |
-//!
-//! **Why two slots?** `AppBuilder::build()` runs outside an async context and
-//! cannot lock an `EmbassyMutex`. It therefore places the instance into the
-//! sync slot first. The first async task that needs the instance calls
-//! `ensure_async_roaster_initialized_from_sync()`, which atomically moves it
-//! from `roaster_sync` into `roaster`. After this move, `roaster_sync` is
-//! drained and all subsequent access goes through the async mutex.
-//!
-//! The sync path (`with_roaster()`) is `#[deprecated]` and exists only for
-//! legacy ISR code that cannot await. New code must use
-//! `with_roaster_async()`.
+//! Initialization is single-threaded: `AppBuilder::build()` runs before the
+//! async executor starts, so `init_roaster` stores the instance into the
+//! async mutex via its non-async `try_lock()` (guaranteed uncontended at that
+//! point). All runtime access — sync (`with_roaster`, deprecated ISR shim)
+//! and async (`with_roaster_async`) — goes through the same mutex. Concurrent
+//! `.lock().await` callers queue instead of failing, which is what the
+//! `concurrent_sensor_reads_verify_async_mutex` test exercises.
 
 use crate::control::RoasterControl;
 use crate::input::multiplexer::CommandMultiplexer;
@@ -31,10 +26,11 @@ use embassy_sync::mutex::Mutex as EmbassyMutex;
 use heapless::String;
 
 pub struct ServiceContainer {
-    /// Async-safe mutex for use in async task contexts (primary path after lazy init)
+    /// Single async-mutex ownership slot for RoasterControl, shared by sync
+    /// and async paths. Sync init uses `try_lock()` (single-threaded, no
+    /// contention); async runtime uses `.lock().await` (concurrent callers
+    /// queue rather than fail).
     pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
-    /// Sync-safe mutex for ISR/critical-section contexts (deprecated; drained during startup)
-    pub roaster_sync: Mutex<RefCell<Option<RoasterControl>>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
     pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
@@ -87,15 +83,27 @@ impl ServiceContainer {
         });
     }
 
-    /// Inject a RoasterControl instance into the sync storage slot
+    /// Inject a `RoasterControl` instance into the single async-mutex slot.
+    ///
+    /// Called exactly once from `AppBuilder::build()`, which runs single-
+    /// threaded before the executor spawns any tasks. We use the embassy
+    /// mutex's non-async `try_lock()` instead of `.lock().await` because the
+    /// builder is not an async context — and because no task can contend at
+    /// this point, `try_lock()` cannot fail.
     pub fn init_roaster(roaster: RoasterControl) {
-        critical_section::with(|cs| {
-            Self::get_instance()
-                .roaster_sync
-                .borrow(cs)
-                .borrow_mut()
-                .replace(roaster);
-        });
+        match Self::get_instance().roaster.try_lock() {
+            Ok(mut guard) => {
+                *guard = Some(roaster);
+            }
+            Err(_) => {
+                // `try_lock` can only fail if the async mutex is currently held
+                // by an executor task. `AppBuilder::build()` runs before the
+                // executor starts, so this branch is a programmer error rather
+                // than a runtime hazard. We log and drop the new instance
+                // rather than panic (the clippy config denies panic/expect).
+                log::error!("init_roaster called while async mutex held — instance dropped");
+            }
+        }
     }
 
     /// Inject an ArtisanInput instance
@@ -128,12 +136,10 @@ impl ServiceContainer {
     }
 
     pub fn get_instance() -> &'static ServiceContainer {
-        // Using a compile-time initialized static for the singleton pattern
-        // This is safe because the static is initialized at compile time
-        // and the ServiceContainer contains only thread-safe types
+        // Compile-time initialized singleton. The EmbassyMutex starts empty
+        // (None); `init_roaster` fills it before the executor runs.
         static SERVICE: ServiceContainer = ServiceContainer {
             roaster: EmbassyMutex::new(None),
-            roaster_sync: Mutex::new(RefCell::new(None)),
             artisan_input: Mutex::new(RefCell::new(None)),
             multiplexer: Mutex::new(RefCell::new(None)),
             watchdog_feeder: Mutex::new(RefCell::new(None)),
@@ -142,30 +148,52 @@ impl ServiceContainer {
     }
 
     pub fn is_initialized() -> bool {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            container.roaster_sync.borrow(cs).borrow().is_some()
-                && container.artisan_input.borrow(cs).borrow().is_some()
-        })
+        // Use try_lock for a non-async snapshot. Returns NotInitialized-style
+        // false if the slot is empty or (transiently) contended; callers use
+        // this only for diagnostics, not for synchronization.
+        match Self::get_instance().roaster.try_lock() {
+            Ok(guard) => {
+                let roaster_set = guard.is_some();
+                let artisan_set = critical_section::with(|cs| {
+                    Self::get_instance()
+                        .artisan_input
+                        .borrow(cs)
+                        .borrow()
+                        .is_some()
+                });
+                roaster_set && artisan_set
+            }
+            Err(_) => false,
+        }
     }
 
-    /// Sync access to RoasterControl for ISR and critical section contexts
-    /// This is the deprecated API kept for backward compatibility with ISR code
+    /// Sync access to RoasterControl for ISR and critical section contexts.
+    ///
+    /// Deprecated: prefer `with_roaster_async()` in any context that can
+    /// await. This shim uses `try_lock()`, so it fails (rather than waits)
+    /// if the mutex is currently held by an async caller — exactly the right
+    /// behaviour for an ISR that must never block.
     #[deprecated(note = "Use with_roaster_async() in async contexts")]
     pub fn with_roaster<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut RoasterControl) -> R,
     {
-        critical_section::with(|cs| {
-            let container = Self::get_instance();
-            match container.roaster_sync.borrow(cs).borrow_mut().as_mut() {
-                Some(roaster) => Ok(f(roaster)),
-                None => Err(ContainerError::NotInitialized),
-            }
-        })
+        let mut guard = Self::get_instance()
+            .roaster
+            .try_lock()
+            .map_err(|_| ContainerError::NotInitialized)?;
+        match guard.as_mut() {
+            Some(roaster) => Ok(f(roaster)),
+            None => Err(ContainerError::NotInitialized),
+        }
     }
 
-    /// Async access to RoasterControl - use this in async task contexts
+    /// Async access to RoasterControl - use this in async task contexts.
+    ///
+    /// Concurrent `.lock().await` callers queue on the embassy mutex: only
+    /// one holds the guard at a time, the rest wait, all eventually succeed.
+    /// The closure must not itself `.await` (it is sync); for the long sensor
+    /// read use `roaster_async_sensor_read()`.
     pub async fn with_roaster_async<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut RoasterControl) -> R,
@@ -185,98 +213,46 @@ impl ServiceContainer {
         Self::with_roaster_async(|roaster| roaster.get_status().env_temp).await
     }
 
-    // This holds the async mutex for the entire sensor read duration (~160ms),
-    // potentially delaying command processing. Mitigated by:
-    // - Priority-drain in tasks.rs: STOP/EmergencyStop commands process regardless of rate limit
-    // - Future optimization: split into trigger→unlock→wait→lock→read phases
+    /// Read sensors async.
+    ///
+    /// Holds the async mutex for the full sensor read duration (~160 ms on
+    /// embedded). This is the documented trade-off: concurrent callers
+    /// `.lock().await` and queue rather than fail (which is what
+    /// `concurrent_sensor_reads_verify_async_mutex` verifies). Mitigations:
+    /// - Priority-drain in tasks.rs: STOP/EmergencyStop commands process
+    ///   regardless of rate limit.
+    /// - Future optimization: split into trigger→unlock→wait→lock→read
+    ///   phases if 160 ms latency becomes a problem.
     pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {
         #[cfg(any(test, feature = "async-lock-depth-metrics"))]
         let _async_lock_depth_guard = async_lock_depth::AsyncLockDepthGuard::enter();
 
-        // Retry up to 3 times if the async roaster storage is empty.
-        // Handles the init race between control_loop_task and queue_processor_task:
-        // both call ensure_async_roaster_initialized_from_sync() but one may
-        // arrive at the None branch while the other is mid-move.
-        for _ in 0..3 {
-            let mut guard = Self::get_instance().roaster.lock().await;
+        let mut guard = Self::get_instance().roaster.lock().await;
+        let roaster = guard.as_mut().ok_or(ContainerError::NotInitialized)?;
 
-            let roaster = match guard.as_mut() {
-                Some(r) => r,
-                None => {
-                    // Async mutex empty – try to move from sync storage
-                    drop(guard);
-                    Self::ensure_async_roaster_initialized_from_sync().await?;
-                    continue;
+        // Call async sensor reading method. Preserve the actual error
+        // instead of masking it as NotInitialized.
+        roaster.read_sensors().await.map_err(|e| {
+            let reason = match e {
+                crate::control::RoasterError::TemperatureOutOfRange { source } => {
+                    source.unwrap_or("temperature_out_of_range")
+                }
+                crate::control::RoasterError::SensorFault { source } => {
+                    source.unwrap_or("sensor_fault")
+                }
+                crate::control::RoasterError::InvalidState { source } => {
+                    source.unwrap_or("invalid_state")
+                }
+                crate::control::RoasterError::PidError { source } => source.unwrap_or("pid_error"),
+                crate::control::RoasterError::HardwareError { source } => {
+                    source.unwrap_or("hardware_error")
+                }
+                crate::control::RoasterError::EmergencyShutdown { source } => {
+                    source.unwrap_or("emergency_shutdown")
                 }
             };
-
-            // Call async sensor reading method. Preserve the actual error
-            // instead of masking it as NotInitialized.
-            return roaster.read_sensors().await.map_err(|e| {
-                let reason = match e {
-                    crate::control::RoasterError::TemperatureOutOfRange { source } => {
-                        source.unwrap_or("temperature_out_of_range")
-                    }
-                    crate::control::RoasterError::SensorFault { source } => {
-                        source.unwrap_or("sensor_fault")
-                    }
-                    crate::control::RoasterError::InvalidState { source } => {
-                        source.unwrap_or("invalid_state")
-                    }
-                    crate::control::RoasterError::PidError { source } => {
-                        source.unwrap_or("pid_error")
-                    }
-                    crate::control::RoasterError::HardwareError { source } => {
-                        source.unwrap_or("hardware_error")
-                    }
-                    crate::control::RoasterError::EmergencyShutdown { source } => {
-                        source.unwrap_or("emergency_shutdown")
-                    }
-                };
-                ContainerError::SensorError { reason }
-            });
-        }
-
-        Err(ContainerError::NotInitialized)
-    }
-
-    /// Ensure async roaster storage is initialized.
-    ///
-    /// On embedded startup the builder initializes `roaster_sync` first.
-    /// The control loop uses async access, so we move the instance lazily
-    /// into the async mutex the first time tasks run.
-    pub async fn ensure_async_roaster_initialized_from_sync() -> Result<(), ContainerError> {
-        let async_empty = {
-            let guard = Self::get_instance().roaster.lock().await;
-            guard.is_none()
-        };
-
-        if !async_empty {
-            return Ok(());
-        }
-
-        let moved = critical_section::with(|cs| {
-            let container = Self::get_instance();
-            container.roaster_sync.borrow(cs).borrow_mut().take()
-        });
-
-        match moved {
-            Some(roaster) => {
-                let mut guard = Self::get_instance().roaster.lock().await;
-                if guard.is_none() {
-                    *guard = Some(roaster);
-                }
-                Ok(())
-            }
-            None => {
-                let guard = Self::get_instance().roaster.lock().await;
-                if guard.is_some() {
-                    Ok(())
-                } else {
-                    Err(ContainerError::NotInitialized)
-                }
-            }
-        }
+            ContainerError::SensorError { reason }
+        })
     }
 
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
@@ -377,24 +353,19 @@ pub use async_lock_depth::{async_lock_depth_max_for_tests, reset_async_lock_metr
 
 #[cfg(test)]
 impl ServiceContainer {
-    /// Full state reset for test isolation
+    /// Full state reset for test isolation.
+    ///
+    /// Uses `try_lock()` to drain the async slot. If the lock is currently
+    /// held (e.g. by a previously panicked test), the slot is left untouched
+    /// rather than blocking test teardown.
     pub fn reset_for_test() {
+        if let Ok(mut guard) = Self::get_instance().roaster.try_lock() {
+            *guard = None;
+        }
         critical_section::with(|cs| {
-            let _ = Self::get_instance()
-                .roaster_sync
-                .borrow(cs)
-                .borrow_mut()
-                .take();
-            let _ = Self::get_instance()
-                .artisan_input
-                .borrow(cs)
-                .borrow_mut()
-                .take();
-            let _ = Self::get_instance()
-                .watchdog_feeder
-                .borrow(cs)
-                .borrow_mut()
-                .take();
+            let container = Self::get_instance();
+            let _ = container.artisan_input.borrow(cs).borrow_mut().take();
+            let _ = container.watchdog_feeder.borrow(cs).borrow_mut().take();
         });
         while Self::get_artisan_channel().try_receive().is_ok() {}
         while Self::get_output_channel().try_receive().is_ok() {}

@@ -50,14 +50,8 @@ fn build_control() -> RoasterControl {
 }
 
 fn init_service_container() {
-    let async_roaster = build_control();
-    block_on(async {
-        let mut guard = ServiceContainer::get_instance().roaster.lock().await;
-        guard.replace(async_roaster);
-    });
-
-    let sync_roaster = build_control();
-    ServiceContainer::init_roaster(sync_roaster);
+    let roaster = build_control();
+    ServiceContainer::init_roaster(roaster);
 }
 
 #[test]

@@ -182,8 +182,8 @@ impl Application {
 
     #[cfg(target_arch = "riscv32")]
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
-        use crate::hardware::uart::tasks::{queue_processor_task, uart_reader_task};
-        use crate::hardware::usb_cdc::tasks::{usb_queue_processor_task, usb_reader_task};
+        use crate::hardware::uart::tasks::uart_reader_task;
+        use crate::hardware::usb_cdc::tasks::usb_reader_task;
 
         self.verify_initialization()
             .map_err(TaskError::VerificationFailed)?;
@@ -193,13 +193,6 @@ impl Application {
             .map_err(TaskError::SpawnFailed)?;
         spawner
             .spawn(usb_reader_task())
-            .map_err(TaskError::SpawnFailed)?;
-
-        spawner
-            .spawn(queue_processor_task())
-            .map_err(TaskError::SpawnFailed)?;
-        spawner
-            .spawn(usb_queue_processor_task())
             .map_err(TaskError::SpawnFailed)?;
 
         spawner

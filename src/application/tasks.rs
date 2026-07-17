@@ -908,10 +908,6 @@ async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputCh
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");
 
-    if let Err(err) = ServiceContainer::ensure_async_roaster_initialized_from_sync().await {
-        warn!("Failed to initialize async roaster storage: {:?}", err);
-    }
-
     let mut tick_state = TickState::new();
     let _start_time = Instant::now();
     let output_channel = ServiceContainer::get_output_channel();
@@ -1018,14 +1014,6 @@ mod tests {
     fn init_container_with_roaster(roaster: RoasterControl) {
         ServiceContainer::init_roaster(roaster);
         let _ = ArtisanInput::new().map(ServiceContainer::init_artisan_input);
-
-        block_on(async {
-            let guard = ServiceContainer::get_instance().roaster.lock().await;
-            if guard.is_none() {
-                drop(guard);
-                let _ = ServiceContainer::ensure_async_roaster_initialized_from_sync().await;
-            }
-        });
     }
 
     fn drain_all_channels() {

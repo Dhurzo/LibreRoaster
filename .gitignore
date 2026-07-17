@@ -26,6 +26,12 @@ target
 # Added by cargo
 /target
 
+# Session reference docs (not project deliverables)
+LibreRoaster_11_Fixes_Criticos.md
+informe-libreroaster-Jun-2026.md
+plan-informe.md
+plan-tareas-pendientes-bugs.md
+
 # Local configuration (contains secrets)
 config.json
 

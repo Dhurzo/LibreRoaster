@@ -68,3 +68,23 @@ pub fn any_comms_error_threshold_exceeded() -> bool {
         counters.uart >= MAX_COMMS_READ_ERRORS || counters.usb >= MAX_COMMS_READ_ERRORS
     })
 }
+
+/// Generic increment for transport-specific error counter by name.
+/// Used by generic transport tasks.
+pub fn increment_error_count(name: &str) {
+    match name {
+        "UART" => increment_uart_error_count(),
+        "USB" => increment_usb_error_count(),
+        _ => {}
+    }
+}
+
+/// Generic reset for transport-specific error counter by name.
+/// Used by generic transport tasks.
+pub fn reset_error_count(name: &str) {
+    match name {
+        "UART" => reset_uart_error_count(),
+        "USB" => reset_usb_error_count(),
+        _ => {}
+    }
+}

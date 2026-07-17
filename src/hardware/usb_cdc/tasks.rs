@@ -1,143 +1,53 @@
-use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
+use crate::hardware::transport_tasks::{
+    run_reader_task, RxSource, TransportConfig, TransportRxState, COMMAND_PIPE_SIZE,
+    EVENT_QUEUE_SIZE,
+};
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
-use crate::input::{CommandQueue, QueueError, COMMAND_QUEUE_SIZE};
-use crate::log_channel;
-use crate::logging::channel::Channel;
-use crate::logging::traceability::{
-    trace_command_enqueue, trace_queue_dequeue, TracedCommand, TRACE_EVENT_MAX_LEN,
-};
-use core::cell::RefCell;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_time::Duration;
-use embassy_time::Timer;
-use heapless::{Deque, String, Vec};
+use crate::logging::traceability::{trace_command_enqueue, TracedCommand, TRACE_EVENT_MAX_LEN};
+use heapless::{String, Vec};
 use log::debug;
 
 use super::driver;
 
-pub const USB_COMMAND_PIPE_SIZE: usize = 256;
+// USB CDC-specific constants (re-exported for compatibility)
+pub const USB_COMMAND_PIPE_SIZE: usize = COMMAND_PIPE_SIZE;
+pub const USB_EVENT_QUEUE_SIZE: usize = EVENT_QUEUE_SIZE;
 
-/// Size of the USB event queue for buffering incoming bytes.
-pub const USB_EVENT_QUEUE_SIZE: usize = 256;
+/// USB CDC-specific RxSource implementation.
+pub struct UsbCdcRx;
 
-/// Byte buffer for accumulating raw USB bytes across multiple read_bytes() calls.
-/// This is the USB equivalent of UART's EVENT_QUEUE — without it, commands
-/// split across USB reads are silently lost.
-static USB_EVENT_QUEUE: BlockingMutex<
-    CriticalSectionRawMutex,
-    RefCell<Option<Deque<u8, USB_EVENT_QUEUE_SIZE>>>,
-> = BlockingMutex::new(RefCell::new(None));
+impl RxSource for UsbCdcRx {
+    type Error = crate::hardware::usb_cdc::driver::UsbCdcError;
 
-/// Command queue for USB FIFO processing - reject-on-full behavior
-static USB_COMMAND_QUEUE: BlockingMutex<
-    CriticalSectionRawMutex,
-    RefCell<Option<CommandQueue<TracedCommand, COMMAND_QUEUE_SIZE>>>,
-> = BlockingMutex::new(RefCell::new(None));
-
-#[cfg(all(test, target_arch = "riscv32"))]
-pub fn init_usb_command_queue_for_test() {
-    USB_COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
+    async fn read_bytes(buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        driver::usb_cdc_read_bytes(buffer).await
+    }
 }
 
-#[cfg(all(test, target_arch = "riscv32"))]
-pub fn drain_usb_command_queue_for_test() -> Vec<TracedCommand, USB_COMMAND_PIPE_SIZE> {
-    let mut drained: Vec<TracedCommand, USB_COMMAND_PIPE_SIZE> = Vec::new();
+/// USB CDC transport configuration.
+static USB_CONFIG: TransportConfig = TransportConfig {
+    name: "USB",
+    channel: CommChannel::Usb,
+    event_queue_size: USB_EVENT_QUEUE_SIZE,
+    command_pipe_size: USB_COMMAND_PIPE_SIZE,
+    reader_start_delay_ms: 100, // USB CDC needs more time to enumerate
+    writer_start_delay_ms: 20,
+    reader_poll_interval_ms: 10,
+};
 
-    USB_COMMAND_QUEUE.lock(|cell| {
-        if let Some(queue) = cell.borrow_mut().as_mut() {
-            while let Some(cmd) = queue.pop() {
-                let _ = ServiceContainer::get_artisan_channel().try_send(cmd);
-                let _ = drained.push(cmd);
-            }
-        }
-    });
+static USB_STATE: TransportRxState = TransportRxState::new();
 
-    drained
-}
-
+/// USB CDC reader task - thin wrapper around generic implementation.
+///
+/// Includes USB-specific logging of received commands.
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_reader_task() {
-    let mut rbuf: [u8; 64] = [0u8; 64];
-
-    USB_COMMAND_QUEUE.lock(|cell| *cell.borrow_mut() = Some(CommandQueue::new()));
-    USB_EVENT_QUEUE.lock(|cell| *cell.borrow_mut() = Some(Deque::new()));
-
-    Timer::after(Duration::from_millis(100)).await;
-
-    loop {
-        match driver::usb_cdc_read_bytes(&mut rbuf).await {
-            Ok(len) if len > 0 => {
-                crate::hardware::error_counters::reset_usb_error_count();
-                let raw_cmd = core::str::from_utf8(&rbuf[..len]).unwrap_or("[binary]");
-                log_channel!(Channel::Usb, "RX: {}", raw_cmd.trim_end());
-                push_to_usb_event_queue(&rbuf[..len]);
-            }
-            Ok(_) => { /* no data — idle poll */ }
-            Err(e) => {
-                crate::hardware::error_counters::increment_usb_error_count();
-                log::warn!("USB CDC read error: {:?}", e);
-            }
-        }
-
-        process_usb_event_queue();
-
-        Timer::after(Duration::from_millis(10)).await;
-    }
+    run_reader_task(UsbCdcRx, &USB_STATE, &USB_CONFIG).await;
 }
 
-/// Push received bytes to the persistent USB event queue.
-fn push_to_usb_event_queue(data: &[u8]) {
-    USB_EVENT_QUEUE.lock(|cell| {
-        if let Some(queue) = cell.borrow_mut().as_mut() {
-            for &byte in data {
-                if queue.len() >= USB_EVENT_QUEUE_SIZE {
-                    let _ = queue.pop_front();
-                }
-                let _ = queue.push_back(byte);
-            }
-        }
-    });
-}
-
-/// Process one complete command (CR/LF terminated) from the USB event queue.
-///
-/// Pops bytes from the front of the queue until a terminator (0x0D or 0x0A)
-/// is found, then dispatches the accumulated bytes to the command handler.
-/// Bytes after the terminator remain in the queue for the next poll cycle.
-fn process_usb_event_queue() {
-    let has_terminator = USB_EVENT_QUEUE.lock(|cell| {
-        if let Some(queue) = cell.borrow().as_ref() {
-            queue.iter().any(|&b| b == 0x0D || b == 0x0A)
-        } else {
-            false
-        }
-    });
-
-    if has_terminator {
-        let mut command_data: Vec<u8, 64> = Vec::new();
-        let mut extracted = false;
-
-        USB_EVENT_QUEUE.lock(|cell| {
-            if let Some(queue) = cell.borrow_mut().as_mut() {
-                while let Some(byte) = queue.pop_front() {
-                    if byte == 0x0D || byte == 0x0A {
-                        break;
-                    }
-                    let _ = command_data.push(byte);
-                }
-                extracted = true;
-            }
-        });
-
-        if extracted && !command_data.is_empty() {
-            handle_complete_usb_command(&command_data);
-        }
-    }
-}
-
+/// Process USB command data directly (legacy compatibility, mainly for tests).
 pub fn process_usb_command_data(data: &[u8]) {
     let mut command = Vec::<u8, 64>::new();
 
@@ -154,13 +64,13 @@ pub fn process_usb_command_data(data: &[u8]) {
     }
 }
 
-/// Test-only version of process_usb_command_data for integration tests
-/// Made pub so integration tests can call it
+/// Test-only version of process_usb_command_data for integration tests.
 #[cfg(feature = "test")]
 pub fn process_usb_command_data_test(data: &[u8]) {
     process_usb_command_data(data);
 }
 
+/// Internal handler for complete USB command (legacy compatibility path).
 fn handle_complete_usb_command(command: &[u8]) {
     let parse_result = if command.is_empty() {
         Err(ParseError::EmptyCommand)
@@ -173,10 +83,8 @@ fn handle_complete_usb_command(command: &[u8]) {
     match parse_result {
         Ok(cmd) => {
             let traced = TracedCommand::new(cmd, CommChannel::Usb);
-            let mut depth = 0;
             let mut should_process = true;
-            let mut use_channel = false;
-            let mut queued = false;
+            let mut sent = false;
 
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
@@ -186,34 +94,24 @@ fn handle_complete_usb_command(command: &[u8]) {
                 }
 
                 if should_process {
-                    USB_COMMAND_QUEUE.lock(|cell| {
-                        if let Some(queue) = cell.borrow_mut().as_mut() {
-                            match queue.try_push(traced) {
-                                Ok(()) => {
-                                    depth = queue.len();
-                                    queued = true;
-                                }
-                                Err(QueueError::Full) => {
-                                    debug!("USB command queue full, rejecting command");
-                                    use_channel = true;
-                                }
-                            }
-                        } else {
-                            use_channel = true;
+                    let artisan_channel = ServiceContainer::get_artisan_channel();
+                    match artisan_channel.try_send(traced) {
+                        Ok(()) => {
+                            trace_command_enqueue(&traced, artisan_channel.len(), false);
+                            sent = true;
                         }
-                    });
+                        Err(_) => {
+                            debug!("USB artisan channel full, command dropped");
+                        }
+                    }
                 }
             });
 
-            if should_process {
-                if queued {
-                    trace_command_enqueue(&traced, depth, false);
-                } else if use_channel {
-                    trace_command_enqueue(&traced, depth, true);
-                    let _ = ServiceContainer::get_artisan_channel().try_send(traced);
-                }
+            if sent {
+                crate::application::queue_metrics::record_queue_depth(
+                    ServiceContainer::get_artisan_channel().len(),
+                );
             }
-            record_queue_depth(depth);
         }
         Err(error) => {
             send_usb_parse_error(error);
@@ -221,6 +119,7 @@ fn handle_complete_usb_command(command: &[u8]) {
     }
 }
 
+/// Send parse error via USB CDC (legacy compatibility).
 fn send_usb_parse_error(error: ParseError) {
     let mut should_write = true;
 
@@ -244,33 +143,4 @@ fn send_usb_parse_error(error: ParseError) {
             let _ = output_channel.try_send(message);
         }
     });
-}
-
-/// USB Queue processor task - consumes commands from USB_COMMAND_QUEUE and sends to artisan_channel
-/// This task bridges the command queue to the control loop, ensuring USB commands are processed
-#[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
-pub async fn usb_queue_processor_task() {
-    Timer::after(Duration::from_millis(50)).await;
-
-    loop {
-        let (cmd_opt, queue_depth) = USB_COMMAND_QUEUE.lock(|cell| {
-            if let Some(queue) = cell.borrow_mut().as_mut() {
-                let cmd = queue.pop();
-                let depth = queue.len();
-                (cmd, depth)
-            } else {
-                (None, 0)
-            }
-        });
-        record_queue_depth(queue_depth);
-
-        if let Some(cmd) = cmd_opt {
-            trace_queue_dequeue(&cmd, queue_depth);
-            let channel = ServiceContainer::get_artisan_channel();
-            channel.send(cmd).await;
-        }
-
-        // Small delay to yield to other tasks and prevent tight looping
-        Timer::after(Duration::from_millis(5)).await;
-    }
 }

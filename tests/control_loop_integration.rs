@@ -41,13 +41,8 @@ fn build_control() -> RoasterControl {
 }
 
 fn init_service_container() {
-    let roaster_sync = build_control();
-    let roaster_async = build_control();
-    ServiceContainer::init_roaster(roaster_sync);
-    block_on(async {
-        let mut guard = ServiceContainer::get_instance().roaster.lock().await;
-        *guard = Some(roaster_async);
-    });
+    let roaster = build_control();
+    ServiceContainer::init_roaster(roaster);
 }
 
 fn drain_channels() {

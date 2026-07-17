@@ -17,8 +17,9 @@ pub use driver::UartDriver;
 pub use driver::{UartRxDriver, UartTxDriver};
 pub use tasks::{
     process_command_data, send_response, send_stream, uart_reader_task, uart_writer_task,
-    COMMAND_PIPE_SIZE,
 };
+
+pub use crate::hardware::transport_tasks::{COMMAND_PIPE_SIZE, EVENT_QUEUE_SIZE};
 
 pub const UART_BAUD_RATE: u32 = 115200;
 

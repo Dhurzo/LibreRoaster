@@ -29,6 +29,7 @@ pub mod ssr;
 pub mod error_counters;
 pub mod static_sync;
 pub mod test_mocks;
+pub mod transport_tasks;
 pub mod uart;
 #[cfg(target_arch = "riscv32")]
 #[path = "usb_cdc/mod.rs"]
