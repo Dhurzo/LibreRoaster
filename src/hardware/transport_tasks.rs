@@ -346,9 +346,7 @@ pub async fn run_writer_task<TX: TxSink>(
     Timer::after(writer_start_delay).await;
 
     loop {
-        pipe.read(&mut wbuf).await;
-
-        let len = wbuf.iter().take_while(|&&b| b != 0).count();
+        let len = pipe.read(&mut wbuf).await;
         if len > 0 {
             if let Err(e) = TX::write_bytes(&wbuf[..len]).await {
                 log::warn!("{} write error: {:?}", config.name, e);
