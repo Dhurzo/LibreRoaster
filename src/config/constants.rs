@@ -414,16 +414,16 @@ mod tests {
 
     #[test]
     fn valid_target_temp_returns_true() {
-        assert!(is_valid_target_temp(25.0));
-        assert!(is_valid_target_temp(0.0));
-        assert!(is_valid_target_temp(300.0));
+        // Range is 50-300°C to match parser constraints
+        assert!(is_valid_target_temp(50.0));
         assert!(is_valid_target_temp(200.0));
+        assert!(is_valid_target_temp(300.0));
     }
 
     #[test]
     fn valid_target_temp_out_of_range_returns_false() {
-        assert!(!is_valid_target_temp(-1.0));
-        assert!(!is_valid_target_temp(301.0));
+        assert!(!is_valid_target_temp(49.9));
+        assert!(!is_valid_target_temp(300.1));
     }
 
     #[test]
