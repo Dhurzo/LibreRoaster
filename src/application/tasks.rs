@@ -899,7 +899,11 @@ async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputCh
     .await;
 
     if let Some(e) = tick_state.sensor_err.take() {
-        info!("Service container error in control loop: {:?}", e);
+        // Bug #11: this error originates from `roaster_async_sensor_read`
+        // (set into `tick_state.sensor_err` earlier in the tick), not from
+        // a ServiceContainer access. The previous message pointed at the
+        // wrong subsystem during debugging.
+        info!("Sensor read error in control loop: {:?}", e);
     }
 
     let _status_for_output = emit_telemetry_stage(

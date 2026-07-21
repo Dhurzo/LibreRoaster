@@ -326,6 +326,11 @@ impl ArtisanFormatter {
 pub struct MutableArtisanFormatter {
     start_time: Instant,
     last_bt: f32,
+    /// Bug #6: `last_bt == 0.0` was previously used as the "first sample"
+    /// sentinel, but a legitimate BT reading of 0 °C (cold ambient, sensor
+    /// fallback) would falsely re-initialise the ROR state and discard the
+    /// real history. We now track initialisation explicitly with this flag.
+    is_initialised: bool,
     bt_history: Deque<f32, BT_HISTORY_SIZE>,
     timestamp_history: Deque<Instant, BT_HISTORY_SIZE>,
     last_filtered_ror: f32,
@@ -336,6 +341,7 @@ impl Default for MutableArtisanFormatter {
         Self {
             start_time: Instant::now(),
             last_bt: 0.0,
+            is_initialised: false,
             bt_history: Deque::<f32, BT_HISTORY_SIZE>::new(),
             timestamp_history: Deque::<Instant, BT_HISTORY_SIZE>::new(),
             last_filtered_ror: 0.0,
@@ -385,8 +391,13 @@ impl MutableArtisanFormatter {
     }
 
     fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
-        if self.last_bt == 0.0 {
+        // Bug #6: use an explicit initialisation flag instead of treating
+        // `last_bt == 0.0` as the "first sample" sentinel. A legitimate BT
+        // of 0 °C (cold ambient, MAX31856 fallback) no longer corrupts ROR
+        // state by re-seeding the history.
+        if !self.is_initialised {
             self.last_bt = current_bt;
+            self.is_initialised = true;
             Self::update_bt_history_with_timestamp(
                 &mut self.bt_history,
                 &mut self.timestamp_history,
@@ -397,7 +408,18 @@ impl MutableArtisanFormatter {
         }
 
         if current_bt == self.last_bt {
+            // Bug #7: still record the sample in history so the time base
+            // advances. Returning 0.0 without updating the history left a
+            // gap in the timestamp series, so subsequent ROR computations
+            // used stale time spans and produced a static ROR even when
+            // earlier samples indicated a trend.
             self.last_bt = current_bt;
+            Self::update_bt_history_with_timestamp(
+                &mut self.bt_history,
+                &mut self.timestamp_history,
+                current_bt,
+                now,
+            );
             return 0.0;
         }
 

@@ -24,6 +24,9 @@ pub enum ParseError {
     EmptyCommand,
     /// Command exceeded maximum buffer size (256 bytes).
     CommandTooLong,
+    /// Event queue overflowed while a partial command was in flight; the
+    /// buffered bytes were flushed to prevent silent corruption.
+    BufferOverflow,
 }
 
 impl ParseError {
@@ -34,6 +37,7 @@ impl ParseError {
             ParseError::OutOfRange => "out_of_range",
             ParseError::EmptyCommand => "invalid_value",
             ParseError::CommandTooLong => "command_too_long",
+            ParseError::BufferOverflow => "buffer_overflow",
         }
     }
 
@@ -44,6 +48,7 @@ impl ParseError {
             ParseError::OutOfRange => "out_of_range",
             ParseError::EmptyCommand => "empty_command",
             ParseError::CommandTooLong => "command_too_long",
+            ParseError::BufferOverflow => "buffer_overflow",
         }
     }
 }

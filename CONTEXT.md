@@ -28,15 +28,15 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 7 long-lived Embassy tasks:
+The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy tasks:
 
-1. **USB reader** — consumes raw USB CDC bytes
-2. **UART reader** — consumes raw UART bytes
-3. **USB queue processor** — parses USB commands into shared command channel
-4. **UART queue processor** — parses UART commands into shared command channel
-5. **Control loop** — drains commands, reads sensors, updates control, feeds watchdog, emits telemetry (~100 ms cadence)
-6. **Dual output** — routes formatted output to active transport
-7. **Regression** — handles over-temperature regression runs on embedded targets
+1. **USB reader** — gathers bytes from native USB CDC and parses commands
+2. **UART reader** — gathers bytes from UART0 and parses commands
+3. **Control loop** — drains commands, reads sensors, updates control, feeds watchdog, emits telemetry (~100 ms cadence)
+4. **Dual output** — routes formatted output to active transport
+5. **Regression** — handles over-temperature regression runs on embedded targets
+
+> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is a single command channel per transport, no intermediate queue-processor stage.
 
 The system is wired through a `ServiceContainer` singleton that owns `RoasterControl` (async mutex), command/output channels, the command multiplexer, and watchdog feeder.
 

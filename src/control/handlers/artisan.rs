@@ -11,7 +11,6 @@
 
 use crate::config::{RoasterCommand, SystemStatus, TemperatureScale, TemperatureSettings};
 use crate::control::policies::{ManualCommandPolicy, ManualPolicyOutcome};
-use crate::control::{RoasterCommandHandler, RoasterError};
 use log::{info, warn};
 
 /// Artisan command handler
@@ -80,125 +79,6 @@ impl Default for ArtisanCommandHandler {
     }
 }
 
-impl RoasterCommandHandler for ArtisanCommandHandler {
-    /// Handle Artisan+ manual commands
-    ///
-    /// # Commands Handled
-    ///
-    /// - `SetHeaterManual(value)` - Direct heater control
-    /// - `SetFanManual(value)` - Direct fan control
-    /// - `IncreaseHeater` - Increase heater by 5%
-    /// - `DecreaseHeater` - Decrease heater by 5%
-    /// - `SetUnits(is_fahrenheit)` - Set temperature scale
-    ///
-    /// # Arguments
-    ///
-    /// * `command` - Roaster command to handle
-    /// * `_current_time` - Current timestamp (unused for manual commands)
-    /// * `status` - Mutable system status
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) if command handled, Err if invalid command or value
-    fn handle_command(
-        &mut self,
-        command: RoasterCommand,
-        _current_time: embassy_time::Instant,
-        status: &mut SystemStatus,
-    ) -> Result<(), RoasterError> {
-        match command {
-            RoasterCommand::SetHeaterManual(value) => {
-                if value > 100 {
-                    warn!("Ignoring manual heater value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState {
-                        source: Some("heater_value_exceeds_100"),
-                    });
-                }
-
-                status.artisan_control = true;
-                self.manual_heater = value as f32;
-                status.pid_enabled = false;
-                status.ssr_output = self.manual_heater;
-
-                info!("Artisan+ manual heater set to: {}%", value);
-                Ok(())
-            }
-
-            RoasterCommand::SetFanManual(value) => {
-                if value > 100 {
-                    warn!("Ignoring manual fan value above 100%: {}", value);
-                    return Err(RoasterError::InvalidState {
-                        source: Some("fan_value_exceeds_100"),
-                    });
-                }
-
-                status.artisan_control = true;
-                self.manual_fan = value as f32;
-                status.fan_output = value as f32;
-
-                info!("Artisan+ manual fan set to: {}%", value);
-                Ok(())
-            }
-
-            RoasterCommand::IncreaseHeater => {
-                status.artisan_control = true;
-                status.pid_enabled = false;
-
-                let current = status.ssr_output;
-                let new_value = Self::apply_heater_delta(current, 1);
-                status.ssr_output = new_value;
-                self.manual_heater = new_value;
-
-                info!("Artisan+ UP: heater increased to {:.0}%", new_value);
-                Ok(())
-            }
-
-            RoasterCommand::DecreaseHeater => {
-                status.artisan_control = true;
-                status.pid_enabled = false;
-
-                let current = status.ssr_output;
-                let new_value = Self::apply_heater_delta(current, -1);
-                status.ssr_output = new_value;
-                self.manual_heater = new_value;
-
-                info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
-                Ok(())
-            }
-
-            RoasterCommand::SetUnits(is_fahrenheit) => {
-                let scale = if is_fahrenheit {
-                    TemperatureScale::Fahrenheit
-                } else {
-                    TemperatureScale::Celsius
-                };
-                self.temp_settings.set_scale(scale);
-                status.temperature_settings.set_scale(scale);
-                info!("Artisan+ units set to: {:?}", scale);
-
-                // Return success without changing status
-                Ok(())
-            }
-
-            _ => Err(RoasterError::InvalidState {
-                source: Some("command_not_supported"),
-            }),
-        }
-    }
-
-    /// Check if this handler can process the given command
-    fn can_handle(&self, command: RoasterCommand) -> bool {
-        matches!(
-            command,
-            RoasterCommand::SetHeaterManual(_)
-                | RoasterCommand::SetFanManual(_)
-                | RoasterCommand::IncreaseHeater
-                | RoasterCommand::DecreaseHeater
-                | RoasterCommand::SetUnits(_)
-        )
-    }
-}
-
 impl ManualCommandPolicy for ArtisanCommandHandler {
     /// Evaluate manual command policy
     ///
@@ -245,7 +125,8 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
             }
 
             RoasterCommand::IncreaseHeater => {
-                let current = status.ssr_output;
+                // Bug #8: baseline on `self.manual_heater`, not `status.ssr_output`.
+                let current = self.manual_heater;
                 let new_value = Self::apply_heater_delta(current, 1);
                 self.manual_heater = new_value;
 
@@ -257,7 +138,7 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
             }
 
             RoasterCommand::DecreaseHeater => {
-                let current = status.ssr_output;
+                let current = self.manual_heater;
                 let new_value = Self::apply_heater_delta(current, -1);
                 self.manual_heater = new_value;
 

@@ -54,7 +54,13 @@ mod target_impl {
         pub async fn run_once(&mut self) {
             info!("Over-temp regression requested");
 
-            let _ = ServiceContainer::with_roaster_async(|roaster| {
+            // Bug #3: if `emergency_shutdown` fails (heater/writer/etc. rejected
+            // the off command), the heater and fan were just set to 100% and
+            // would remain there unattended. We must NOT continue the
+            // regression in that state. Capture the shutdown result and, on
+            // failure, emit a SAFETY error and abort before replaying any
+            // fixtures or feeding the watchdog for another 500ms.
+            let shutdown_failed = ServiceContainer::with_roaster_async(|roaster| {
                 roaster.mark_overtemp_regression_active(true);
                 if let Err(err) = roaster.process_artisan_command(ArtisanCommand::SetHeater(100)) {
                     warn!("Regression heater ramp failed: {:?}", err);
@@ -62,14 +68,36 @@ mod target_impl {
                 if let Err(err) = roaster.process_artisan_command(ArtisanCommand::SetFan(100)) {
                     warn!("Regression fan ramp failed: {:?}", err);
                 }
-                if let Err(err) = roaster.emergency_shutdown("Over-temp regression") {
+                let shutdown_result = roaster.emergency_shutdown("Over-temp regression");
+                if let Err(err) = shutdown_result {
                     warn!("Regression shutdown failed: {:?}", err);
                 }
-                Ok::<(), ContainerError>(())
+                Ok::<bool, ContainerError>(shutdown_result.is_err())
             })
             .await;
 
-            self.keep_feeding_watchdog(Duration::from_millis(500)).await;
+            let shutdown_failed = shutdown_failed.unwrap_or(true);
+
+            if shutdown_failed {
+                let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
+                let _ = safety.push_str("SAFETY OT-REGRESSION-ABORTED shutdown_failed");
+                let _ = ServiceContainer::get_output_channel().try_send(safety);
+
+                // Still clear the regression flag so the device does not
+                // advertise a regression that did not actually run.
+                let _ = ServiceContainer::with_roaster_async(|roaster| {
+                    roaster.mark_overtemp_regression_active(false);
+                    Ok::<(), ContainerError>(())
+                })
+                .await;
+                return;
+            }
+
+            // Bug #4: feed the watchdog for 400ms instead of 500ms. The
+            // software watchdog timeout is 500ms (watchdog.rs:40), so feeding
+            // for exactly 500ms leaves no margin for scheduler jitter. 400ms
+            // guarantees the last feed lands well inside the window.
+            self.keep_feeding_watchdog(Duration::from_millis(400)).await;
 
             for fixture in fixture_catalog::canonical_fixtures() {
                 self.replay_fixture(fixture).await;
@@ -79,7 +107,7 @@ mod target_impl {
             let _ = safety.push_str("SAFETY OT-REGRESSION");
             let _ = ServiceContainer::get_output_channel().try_send(safety);
 
-            self.keep_feeding_watchdog(Duration::from_millis(500)).await;
+            self.keep_feeding_watchdog(Duration::from_millis(400)).await;
 
             let _ = ServiceContainer::with_roaster_async(|roaster| {
                 roaster.mark_overtemp_regression_active(false);

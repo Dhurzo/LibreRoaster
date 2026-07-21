@@ -89,13 +89,13 @@ The important detail is that LibreRoaster is not just a thin protocol shim. It c
 
 The embedded build starts these long-lived tasks:
 
-- **USB reader task** — consumes raw USB CDC bytes
-- **UART reader task** — consumes raw UART bytes
-- **USB queue processor task** — parses USB-side commands into the shared command channel
-- **UART queue processor task** — parses UART-side commands into the shared command channel
+- **USB reader task** — gathers bytes from native USB CDC and parses commands
+- **UART reader task** — gathers bytes from UART0 and parses commands
 - **Control loop task** — drains commands, reads sensors, updates control, feeds watchdogs, emits telemetry
 - **Dual output task** — routes formatted output to the currently active transport
 - **Regression task** — handles explicit over-temperature regression runs on embedded targets
+
+> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is a single command channel per transport, no intermediate queue-processor stage.
 
 ### Shared application model
 

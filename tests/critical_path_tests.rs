@@ -618,11 +618,17 @@ fn up_command_increments_heater() {
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(50))
         .expect("base 50%");
 
-    // SetHeater stores manual_heater=50 but ssr_output is slew-rate limited.
-    // UP reads ssr_output (actual applied), adds 5, and stores result.
-    let ssr_before_up = ctrl.get_status().ssr_output;
+    // Bug #8 fix: SetHeater stores manual_heater=50 (ssr_output is
+    // slew-rate-limited separately). UP must use manual_heater as the
+    // baseline — NOT ssr_output — so the operator's manual setting is
+    // honoured regardless of where the slew limiter currently is.
+    let manual_before_up = ctrl.dispatch().artisan_manual_heater();
+    assert_eq!(
+        manual_before_up, 50.0,
+        "manual_heater should be exactly 50 after SetHeater(50)"
+    );
     assert!(
-        ssr_before_up < 50.0,
+        ctrl.get_status().ssr_output < 50.0,
         "SSR output should be slew-limited below 50"
     );
 
@@ -630,12 +636,16 @@ fn up_command_increments_heater() {
     ctrl.process_artisan_command(ArtisanCommand::IncreaseHeater)
         .expect("UP");
 
-    let ssr_after_up = ctrl.get_status().ssr_output;
+    let manual_after_up = ctrl.dispatch().artisan_manual_heater();
     assert!(
-        (ssr_after_up - ssr_before_up - 5.0).abs() < 0.1,
-        "UP should add 5 to ssr_output: before={:.1}, after={:.1}",
-        ssr_before_up,
-        ssr_after_up
+        (manual_after_up - manual_before_up - 5.0).abs() < 0.1,
+        "UP should add 5 to manual_heater: before={:.1}, after={:.1}",
+        manual_before_up,
+        manual_after_up
+    );
+    assert_eq!(
+        manual_after_up, 55.0,
+        "manual_heater must end at exactly 55 after UP from 50"
     );
 }
 

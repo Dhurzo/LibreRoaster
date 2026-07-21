@@ -38,6 +38,13 @@ pub struct CoffeeRoasterPid {
     kd: f32,
     integrator: f32,
     last_error: f32,
+    /// Bug #5: `last_error` is only meaningful after the controller has
+    /// observed at least one real sample. Before that, `(error - last_error)
+    /// / dt` would be `(error - 0) / dt` — a massive derivative spike that
+    /// injects a one-tick heater surge on PID enable. We gate the derivative
+    /// term behind this flag and skip it entirely on the first tick (setting
+    /// `last_error = error` so tick #2 onward computes a real slope).
+    last_error_initialized: bool,
     derivative_rate: f32,
     last_update_ms: Option<u32>,
     target: f32,
@@ -70,6 +77,7 @@ impl CoffeeRoasterPid {
             kd,
             integrator: 0.0,
             last_error: 0.0,
+            last_error_initialized: false,
             derivative_rate: 0.0,
             last_update_ms: None,
             target: 0.0,
@@ -87,6 +95,12 @@ impl CoffeeRoasterPid {
         self.enabled = true;
         self.integrator = 0.0;
         self.last_error = 0.0;
+        // Bug #5: defer derivative computation until we have observed one
+        // real error sample. compute_output seeds `last_error` from the
+        // first error it sees and returns derivative_rate = 0.0 on that
+        // tick, eliminating the spike that the previous `last_error = 0.0`
+        // baseline produced (e.g. (200-30)/0.1 = 1700 °C/s → 85% output).
+        self.last_error_initialized = false;
         self.derivative_rate = 0.0;
         self.last_update_ms = None;
         self.last_feedback = None;
@@ -174,15 +188,25 @@ impl CoffeeRoasterPid {
             self.integrator_clamped = true;
         }
 
-        let derivative = if dt > 0.0 {
+        // Bug #5: skip the derivative term on the first tick after enable.
+        // Using `last_error = 0.0` as the baseline would produce a one-shot
+        // spike (e.g. (170 - 0) / 0.1 = 1700 °C/s → kd*derivative = 85%
+        // output surge). On the first tick we seed `last_error = error` so
+        // the next tick computes a real slope, and we emit derivative = 0.0.
+        let derivative = if self.last_error_initialized && dt > 0.0 {
             let derivative = (error - self.last_error) / dt;
             self.derivative_rate = derivative;
             derivative
         } else {
-            self.derivative_rate
+            // First tick after enable: no previous error to diff against.
+            // Maintain derivative_rate = 0.0 so STATUS telemetry does not
+            // report a phantom spike either.
+            self.derivative_rate = 0.0;
+            0.0
         };
 
         self.last_error = error;
+        self.last_error_initialized = true;
         self.saturation_active = self
             .last_feedback
             .map(|feedback| feedback.is_saturated())

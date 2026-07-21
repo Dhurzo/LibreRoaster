@@ -119,23 +119,44 @@ impl Default for TransportRxState {
 }
 
 /// Push received bytes to the event queue.
+///
+/// Bug #2 fix: if the queue is full when a new byte arrives, the entire
+/// pending partial command is flushed rather than dropping just the oldest
+/// byte. Dropping one byte from the middle of an in-progress command would
+/// corrupt it silently (e.g. "SETTAR" losing its leading 'S' becomes
+/// "ETTAR"), producing nonsense when the terminator finally arrives.
+/// Flushing the whole queue guarantees the host sees a clean error
+/// (`ERR buffer_overflow`) on the next terminator instead of a corrupted
+/// command. The error itself is emitted by `process_event_queue` when it
+/// detects the empty line caused by the flush.
 pub(crate) fn push_to_event_queue(
     event_queue: &BlockingMutex<
         CriticalSectionRawMutex,
         RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
     >,
     data: &[u8],
+    overflow: &mut EventQueueOverflow,
 ) {
     event_queue.lock(|cell| {
         if let Some(queue) = cell.borrow_mut().as_mut() {
             for &byte in data {
                 if queue.len() >= EVENT_QUEUE_SIZE {
-                    let _ = queue.pop_front();
+                    // Drop the entire pending partial command.
+                    queue.clear();
+                    overflow.triggered = true;
                 }
                 let _ = queue.push_back(byte);
             }
         }
     });
+}
+
+/// Tracks whether the event queue has overflowed since the last line was
+/// extracted. Used by `process_event_queue` to emit an `ERR buffer_overflow`
+/// instead of silently corrupting the next command.
+#[derive(Default)]
+pub struct EventQueueOverflow {
+    pub triggered: bool,
 }
 
 /// Check if the event queue has a line terminator (CR or LF).
@@ -192,6 +213,7 @@ async fn handle_parsed_command(
     let traced = TracedCommand::new(cmd, channel);
     let mut should_process = true;
     let mut sent = false;
+    let mut channel_full = false;
 
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
@@ -209,6 +231,7 @@ async fn handle_parsed_command(
                 }
                 Err(_) => {
                     debug!("{} artisan channel full, command dropped", config.name);
+                    channel_full = true;
                 }
             }
         }
@@ -218,6 +241,38 @@ async fn handle_parsed_command(
         // queue_depth metrics: use current artisan channel depth as approximation
         record_queue_depth(ServiceContainer::get_artisan_channel().len());
     }
+
+    // Bug #1: notify the host that the command was dropped because the
+    // artisan channel was full. Without this, Artisan would keep sending
+    // commands that disappear silently, leaving the roaster in an
+    // unexpected state. Emitting ERR lets the host decide to retry.
+    if channel_full {
+        send_channel_full_error(channel, config).await;
+    }
+}
+
+/// Send an `ERR channel_full` response through the output channel so the
+/// host knows its command was dropped due to backpressure. Multiplexer-aware
+/// (only writes if this channel is the active TX).
+async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig) {
+    let mut should_write = true;
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            if matches!(mux.get_active_channel(), CommChannel::None) {
+                let _ = mux.on_command_received(channel);
+            }
+            should_write = mux.should_write_to(channel);
+        }
+
+        if should_write {
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
+            let _ = message.push_str("ERR channel_full command_dropped");
+            let _ = output_channel.try_send(message);
+        }
+    });
 }
 
 /// Send a parse error response via the output channel (multiplexer-aware).
@@ -254,9 +309,22 @@ pub(crate) async fn process_event_queue(
     >,
     channel: CommChannel,
     config: &TransportConfig,
+    overflow: &mut EventQueueOverflow,
 ) {
     if event_queue_has_terminator(event_queue) {
         if let Some(command_data) = extract_line_from_event_queue(event_queue) {
+            // Bug #2: if the event queue overflowed since the last line was
+            // extracted, the current line is the trailing fragment of a
+            // command whose leading bytes were dropped. Emit an explicit
+            // buffer_overflow error so the host knows its command was
+            // discarded, rather than chasing the (truncated) remaining bytes
+            // through the parser.
+            if overflow.triggered {
+                overflow.triggered = false;
+                send_parse_error(ParseError::BufferOverflow, channel, config).await;
+                return;
+            }
+
             // If the command buffer is at capacity (256 bytes), the command
             // was truncated — emit an explicit error rather than parse the
             // truncated junk.
@@ -299,6 +367,7 @@ pub async fn run_reader_task<RX: RxSource>(
     state.init();
 
     let mut rbuf = [0u8; 64];
+    let mut overflow = EventQueueOverflow::default();
     let reader_poll_interval = Duration::from_millis(config.reader_poll_interval_ms);
     let reader_start_delay = Duration::from_millis(config.reader_start_delay_ms);
 
@@ -309,7 +378,7 @@ pub async fn run_reader_task<RX: RxSource>(
         match RX::read_bytes(&mut rbuf).await {
             Ok(len) if len > 0 => {
                 crate::hardware::error_counters::reset_error_count(config.name);
-                push_to_event_queue(&state.event_queue, &rbuf[..len]);
+                push_to_event_queue(&state.event_queue, &rbuf[..len], &mut overflow);
             }
             Ok(0) => { /* no data — idle poll */ }
             Ok(_) => { /* should not happen */ }
@@ -319,7 +388,7 @@ pub async fn run_reader_task<RX: RxSource>(
             }
         }
 
-        process_event_queue(&state.event_queue, config.channel, config).await;
+        process_event_queue(&state.event_queue, config.channel, config, &mut overflow).await;
 
         Timer::after(reader_poll_interval).await;
     }
