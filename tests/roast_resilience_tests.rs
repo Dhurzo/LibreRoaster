@@ -155,6 +155,10 @@ fn stop_during_idle_does_not_crash() {
 
 #[test]
 fn preheat_parser_edge_values() {
+    // Bug B9: parser accepts any finite temperature; the handler validates
+    // after the display→°C conversion. So PREHEAT 49 is parsed fine, and
+    // PREHEAT 301 °F (~149 °C) is a normal preheat that was previously
+    // rejected by the parser's incorrect °C check.
     assert!(matches!(
         parse_artisan_command("PREHEAT 50"),
         Ok(ArtisanCommand::Preheat(50.0))
@@ -163,8 +167,16 @@ fn preheat_parser_edge_values() {
         parse_artisan_command("PREHEAT 300"),
         Ok(ArtisanCommand::Preheat(300.0))
     ));
-    assert!(parse_artisan_command("PREHEAT 49").is_err());
-    assert!(parse_artisan_command("PREHEAT 301").is_err());
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 49"),
+        Ok(ArtisanCommand::Preheat(49.0))
+    ));
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 301"),
+        Ok(ArtisanCommand::Preheat(301.0))
+    ));
+    // Sanity: still rejects invalid numerics.
+    assert!(parse_artisan_command("PREHEAT abc").is_err());
 }
 
 #[test]
@@ -272,4 +284,98 @@ fn fanprofile_parser_case_insensitive() {
 fn empty_commands_handled_gracefully() {
     assert!(parse_artisan_command("").is_err());
     assert!(parse_artisan_command("   ").is_err());
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bug B9 — display-unit (°F) setpoints must pass the parser
+// ─────────────────────────────────────────────────────────────────────────
+// A U.S. user running Artisan in Fahrenheit routinely issues setpoints
+// above 300 °F (e.g. PID;SV;385 ≈ 196 °C) and below 50 °F (cold-start
+// preheats). The previous parser applied a 50..=300 *°C* range check
+// before the handler converted display units to °C, so every °F roast
+// was effectively unstartable. The handler does the real validation
+// after the conversion, so the parser must accept any finite value.
+
+#[test]
+fn b9_pid_sv_fahrenheit_normal_setpoint_parses() {
+    // 385 °F ≈ 196 °C — normal medium-roast setpoint, must NOT be rejected.
+    assert!(matches!(
+        parse_artisan_command("PID;SV;385"),
+        Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 385.0).abs() < f32::EPSILON
+    ));
+    assert!(matches!(
+        parse_artisan_command("PID,SV,385"),
+        Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 385.0).abs() < f32::EPSILON
+    ));
+}
+
+#[test]
+fn b9_settarget_fahrenheit_normal_setpoint_parses() {
+    assert!(matches!(
+        parse_artisan_command("SETTARGET 385"),
+        Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 385.0).abs() < f32::EPSILON
+    ));
+    // Below 50 °F also parses.
+    assert!(matches!(
+        parse_artisan_command("SETTARGET 32"),
+        Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 32.0).abs() < f32::EPSILON
+    ));
+}
+
+#[test]
+fn b9_preheat_fahrenheit_normal_setpoint_parses() {
+    assert!(matches!(
+        parse_artisan_command("PREHEAT 385"),
+        Ok(ArtisanCommand::Preheat(385.0))
+    ));
+}
+
+#[test]
+fn b9_parser_still_rejects_non_finite() {
+    assert!(parse_artisan_command("SETTARGET NaN").is_err());
+    assert!(parse_artisan_command("PID,SV,inf").is_err());
+    assert!(parse_artisan_command("PREHEAT abc").is_err());
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bug B8 — long PROFILE / FANPROFILE (>128 bytes) must parse, not truncate
+// ─────────────────────────────────────────────────────────────────────────
+// PROFILE/FANPROFILE routinely reach ~170 bytes with 16 setpoints. The
+// previous `String<128>` normaliser dropped the overflow silently with
+// `let _ = s.push(ch)`, either rejecting a valid command with `out_of_range`
+// or accepting a truncated profile that pinned the roast at an early
+// setpoint for the entire session.
+
+#[test]
+fn b8_long_profile_above_128_bytes_parses() {
+    // 16 setpoints × ~9-10 chars each + "PROFILE;" prefix ≈ 170 bytes.
+    let segments: Vec<String> = (0..16)
+        .map(|i| format!("{},{}", i * 60, 200 + i * 2))
+        .collect();
+    let cmd = format!("PROFILE;{}", segments.join(";"));
+    assert!(
+        cmd.len() > 128,
+        "test harness: PROFILE must exceed 128 bytes, got {}",
+        cmd.len()
+    );
+    assert!(matches!(
+        parse_artisan_command(&cmd),
+        Ok(ArtisanCommand::SetProfile)
+    ));
+}
+
+#[test]
+fn b8_long_fanprofile_above_128_bytes_parses() {
+    // Pad each segment with a longer time field so total > 128 bytes.
+    let segments: Vec<String> = (0..16).map(|i| format!("{:04},{}", i * 1000, 30)).collect();
+    let cmd = format!("FANPROFILE;{}", segments.join(";"));
+    assert!(
+        cmd.len() > 128,
+        "test harness: FANPROFILE must exceed 128 bytes, got {}",
+        cmd.len()
+    );
+    assert!(matches!(
+        parse_artisan_command(&cmd),
+        Ok(ArtisanCommand::SetFanProfile)
+    ));
 }

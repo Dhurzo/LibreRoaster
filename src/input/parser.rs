@@ -76,13 +76,23 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     // dispatch. init commands still match (`"CHAN 1200"` parses identically to
     // `"CHAN;1200"` once we look for `split_once(' ')`), and `OT1;75` becomes
     // `OT1 75`, hitting the existing operational parser.
-    let normalized: heapless::String<128> = {
+    let normalized: heapless::String<256> = {
         let mut s = heapless::String::new();
         for ch in trimmed.chars() {
-            // Ignore overflow — a >128-byte command is garbage and will be
-            // rejected by the operational parser anyway. We must not `panic!`
-            // or `unwrap` here (crate denies both).
-            let _ = if ch == ';' { s.push(' ') } else { s.push(ch) };
+            // Bug B8: the transport layer accepts lines up to 255 bytes
+            // (`Vec<u8, 256>`, `CommandTooLong` only fires at ≥256) and
+            // PROFILE/FANPROFILE commands routinely reach ~170 bytes with
+            // `MAX_PROFILE_SETPOINTS = 16`. The previous `String<128>` plus
+            // `let _ = s.push(ch)` silently dropped bytes past 128, splitting
+            // a number in two (rejected later as `out_of_range`) or accepting
+            // a truncated profile that pinned the roaster at an early
+            // setpoint for the entire roast. Use a 256-byte buffer matching
+            // the transport ceiling, and surface overflow as an explicit
+            // `CommandTooLong` instead of swallowing it.
+            let pushed = if ch == ';' { s.push(' ') } else { s.push(ch) };
+            if pushed.is_err() {
+                return Err(ParseError::CommandTooLong);
+            }
         }
         s
     };
@@ -201,15 +211,25 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             .trim()
             .parse::<f32>()
             .map_err(|_| ParseError::InvalidValue)?;
-        if !(50.0..=300.0).contains(&target) {
-            return Err(ParseError::OutOfRange);
+        // Bug B9: drop the (50.0..=300.0) range check from the parser. The
+        // value is in *display units* (°C or °F depending on UNITS) here; the
+        // handler `handle_set_target_temp` converts to °C and validates the
+        // converted value. A °F user with `PID;SV;385` (~196 °C, a normal
+        // setpoint) was rejected here because 385 > 300, making PID roasts
+        // impossible for anyone running Artisan in Fahrenheit. Keep only the
+        // numeric sanity check.
+        if !target.is_finite() {
+            return Err(ParseError::InvalidValue);
         }
         Ok(ArtisanCommand::SetTargetTemp(target))
     } else if cmd.eq_ignore_ascii_case("PREHEAT") {
         if parts.len() == 2 {
             let temp = parse_float(parts[1])?;
-            if !(50.0..=300.0).contains(&temp) {
-                return Err(ParseError::OutOfRange);
+            // Bug B9: same as PID;SV — the handler converts display units to
+            // °C and validates the converted value, so the parser must not
+            // apply a °C range here.
+            if !temp.is_finite() {
+                return Err(ParseError::InvalidValue);
             }
             Ok(ArtisanCommand::Preheat(temp))
         } else {
@@ -218,8 +238,10 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
             let target = parse_float(parts[1])?;
-            if !(50.0..=300.0).contains(&target) {
-                return Err(ParseError::OutOfRange);
+            // Bug B9: same as PID;SV — the handler validates after the
+            // display→°C conversion; keep only the finite sanity check here.
+            if !target.is_finite() {
+                return Err(ParseError::InvalidValue);
             }
             Ok(ArtisanCommand::SetTargetTemp(target))
         } else {
@@ -250,8 +272,10 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            if !(50.0..=300.0).contains(&target) {
-                return Err(ParseError::OutOfRange);
+            // Bug B9: drop the (50.0..=300.0) range check — the value is in
+            // display units here; the handler converts to °C and validates.
+            if !target.is_finite() {
+                return Err(ParseError::InvalidValue);
             }
             Ok(ArtisanCommand::SetTargetTemp(target))
         }
@@ -948,14 +972,22 @@ mod tests {
 
     #[test]
     fn test_parse_settarget_out_of_range() {
+        // Bug B9: the parser must NOT range-check display-unit setpoints —
+        // the handler validates after the °F→°C conversion. 350 °F is well
+        // within °C target range (~177 °C), and the parser must pass it.
         let result = parse_artisan_command("SETTARGET 350");
-        assert!(matches!(result, Err(ParseError::OutOfRange)));
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(v))
+            if (v - 350.0).abs() < f32::EPSILON));
     }
 
     #[test]
     fn test_parse_settarget_too_low() {
+        // Bug B9: see `test_parse_settarget_out_of_range`. A small value
+        // like 40 °F (~4 °C) is parsed successfully; the handler decides
+        // whether the converted target is in the operational °C window.
         let result = parse_artisan_command("SETTARGET 40");
-        assert!(matches!(result, Err(ParseError::OutOfRange)));
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(v))
+            if (v - 40.0).abs() < f32::EPSILON));
     }
 
     // ── PREHEAT command edge cases ────────────
@@ -994,17 +1026,21 @@ mod tests {
 
     #[test]
     fn test_preheat_too_low() {
+        // Bug B9: parser passes the value through; the handler validates
+        // after the display→°C conversion.
         assert!(matches!(
             parse_artisan_command("PREHEAT 40"),
-            Err(ParseError::OutOfRange)
+            Ok(ArtisanCommand::Preheat(40.0))
         ));
     }
 
     #[test]
     fn test_preheat_too_high() {
+        // Bug B9: parser passes the value through (e.g. 350 °F ≈ 177 °C
+        // is a perfectly normal preheat). Handler validates post-conversion.
         assert!(matches!(
             parse_artisan_command("PREHEAT 350"),
-            Err(ParseError::OutOfRange)
+            Ok(ArtisanCommand::Preheat(350.0))
         ));
     }
 
@@ -1106,13 +1142,16 @@ mod tests {
 
     #[test]
     fn test_pid_sv_out_of_range() {
+        // Bug B9: parser no longer range-checks display-unit setpoints.
+        // 40 °F (~4 °C) and 350 °F (~177 °C) are both accepted; the handler
+        // validates after the °F→°C conversion.
         assert!(matches!(
             parse_artisan_command("PID,SV,40"),
-            Err(ParseError::OutOfRange)
+            Ok(ArtisanCommand::SetTargetTemp(40.0))
         ));
         assert!(matches!(
             parse_artisan_command("PID,SV,350"),
-            Err(ParseError::OutOfRange)
+            Ok(ArtisanCommand::SetTargetTemp(350.0))
         ));
     }
 
@@ -1152,9 +1191,11 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_sv_out_of_range() {
+        // Bug B9: parser no longer range-checks display-unit setpoints.
+        // 40 °F is parsed successfully; the handler validates post-conversion.
         assert!(matches!(
             parse_artisan_command("PID;SV;40"),
-            Err(ParseError::OutOfRange)
+            Ok(ArtisanCommand::SetTargetTemp(40.0))
         ));
     }
 

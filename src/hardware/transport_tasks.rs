@@ -301,7 +301,21 @@ async fn send_parse_error(error: ParseError, channel: CommChannel, _config: &Tra
     });
 }
 
-/// Process the event queue: extract complete lines and handle them.
+/// Process the event queue: drain *all* complete lines in this iteration.
+///
+/// Bug B11: the previous implementation did a single `if
+/// event_queue_has_terminator` per call. With CRLF terminators the first
+/// pass extracted the command and left the trailing LF in the queue; on
+/// the next arrival the only extraction consumed that bare LF and returned
+/// `None` (terminator-only → empty buffer), silently discarding the turn
+/// even though a complete command sat in the queue. Net effect: one
+/// command per two arrivals, half of the Artisan `READ` polls unanswered,
+/// and a ramp-up burst (`CHAN;\nUNITS;\nFILT;\n` in one chunk) was
+/// serialized at one-command-per-poll.
+///
+/// Fix: (1) loop while any terminator is present, (2) on a terminator-only
+/// extraction (`None`) `continue` to keep draining rather than exit, so a
+/// bare LF (the trailing byte of CRLF) does not consume a turn.
 pub(crate) async fn process_event_queue(
     event_queue: &BlockingMutex<
         CriticalSectionRawMutex,
@@ -311,43 +325,49 @@ pub(crate) async fn process_event_queue(
     config: &TransportConfig,
     overflow: &mut EventQueueOverflow,
 ) {
-    if event_queue_has_terminator(event_queue) {
-        if let Some(command_data) = extract_line_from_event_queue(event_queue) {
-            // Bug #2: if the event queue overflowed since the last line was
-            // extracted, the current line is the trailing fragment of a
-            // command whose leading bytes were dropped. Emit an explicit
-            // buffer_overflow error so the host knows its command was
-            // discarded, rather than chasing the (truncated) remaining bytes
-            // through the parser.
-            if overflow.triggered {
-                overflow.triggered = false;
-                send_parse_error(ParseError::BufferOverflow, channel, config).await;
-                return;
+    while event_queue_has_terminator(event_queue) {
+        let Some(command_data) = extract_line_from_event_queue(event_queue) else {
+            // A terminator was present but the extracted line was empty
+            // (e.g. a bare LF left over from a CRLF). The terminator has
+            // been consumed; keep draining the rest of the queue rather
+            // than waiting for another byte to arrive.
+            continue;
+        };
+
+        // Bug #2: if the event queue overflowed since the last line was
+        // extracted, the current line is the trailing fragment of a
+        // command whose leading bytes were dropped. Emit an explicit
+        // buffer_overflow error so the host knows its command was
+        // discarded, rather than chasing the (truncated) remaining bytes
+        // through the parser.
+        if overflow.triggered {
+            overflow.triggered = false;
+            send_parse_error(ParseError::BufferOverflow, channel, config).await;
+            return;
+        }
+
+        // If the command buffer is at capacity (256 bytes), the command
+        // was truncated — emit an explicit error rather than parse the
+        // truncated junk.
+        if command_data.len() >= 256 {
+            send_parse_error(ParseError::CommandTooLong, channel, config).await;
+            continue;
+        }
+
+        let parse_result = if command_data.is_empty() {
+            Err(ParseError::EmptyCommand)
+        } else {
+            core::str::from_utf8(&command_data)
+                .map_err(|_| ParseError::InvalidValue)
+                .and_then(crate::input::parse_artisan_command)
+        };
+
+        match parse_result {
+            Ok(cmd) => {
+                handle_parsed_command(cmd, channel, config).await;
             }
-
-            // If the command buffer is at capacity (256 bytes), the command
-            // was truncated — emit an explicit error rather than parse the
-            // truncated junk.
-            if command_data.len() >= 256 {
-                send_parse_error(ParseError::CommandTooLong, channel, config).await;
-                return;
-            }
-
-            let parse_result = if command_data.is_empty() {
-                Err(ParseError::EmptyCommand)
-            } else {
-                core::str::from_utf8(&command_data)
-                    .map_err(|_| ParseError::InvalidValue)
-                    .and_then(crate::input::parse_artisan_command)
-            };
-
-            match parse_result {
-                Ok(cmd) => {
-                    handle_parsed_command(cmd, channel, config).await;
-                }
-                Err(error) => {
-                    send_parse_error(error, channel, config).await;
-                }
+            Err(error) => {
+                send_parse_error(error, channel, config).await;
             }
         }
     }
