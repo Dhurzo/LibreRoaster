@@ -367,9 +367,14 @@ impl SensorConversionHub {
         // Trigger env sensor conversion (one-shot) - fast SPI write, ~50us
         let env_trigger_result = self.env_sensor.trigger_conversion();
 
-        // Wait once for both conversions to complete (TEMPERATURE_READ_INTERVAL_MS is the typical conversion time)
+        // Wait once for both conversions to complete.
+        // Bug #B1: 50 Hz-filtered conversions take up to 185 ms (datasheet);
+        // use the dedicated `MAX31856_CONVERSION_TIME_MS` (190 ms) wait
+        // rather than `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which was
+        // shorter than the actual conversion time and could silently return
+        // the previous conversion's result.
         embassy_time::Timer::after(embassy_time::Duration::from_millis(
-            crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64,
+            crate::config::constants::MAX31856_CONVERSION_TIME_MS,
         ))
         .await;
 

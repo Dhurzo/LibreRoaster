@@ -91,6 +91,26 @@ impl CoffeeRoasterPid {
         }
     }
 
+    /// Update PID gains in place without disturbing `enabled`, `target`,
+    /// `output_min/max`, `cycle_time_ms` or any other operating state.
+    ///
+    /// Bug B5: `set_pid_gains` (handlers/temperature.rs) used to replace the
+    /// whole controller with `CoffeeRoasterPid::with_gains(...)`, which
+    /// rebuilds with `enabled: false` and `target: 0.0`. The status field
+    /// `pid_enabled` was NOT touched, so telemetry kept reporting the PID as
+    /// active while `compute_output` returned 0.0 — silently cutting the
+    /// heater to 0% any time the operator tuned gains from Artisan's PID
+    /// dialog. Resetting the integrator here avoids a one-tick I-term jump
+    /// from the new gain on the already-accumulated error.
+    pub fn set_gains(&mut self, kp: f32, ki: f32, kd: f32) {
+        self.kp = kp;
+        self.ki = ki;
+        self.kd = kd;
+        self.integrator = 0.0;
+        self.last_error = 0.0;
+        self.last_error_initialized = false;
+    }
+
     pub fn enable(&mut self) {
         self.enabled = true;
         self.integrator = 0.0;

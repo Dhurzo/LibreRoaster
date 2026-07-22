@@ -73,6 +73,10 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
     let mut led = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
 
     loop {
+        // Bug B19: feed the RWDT (already armed by init_hw_watchdog at
+        // main.rs:178) so the safe-shutdown blink pattern is observable
+        // instead of causing a ~2.2s boot-loop once B2 is fixed.
+        libreroaster::safety::watchdog::feed_hw_watchdog();
         for _ in 0..3 {
             led.set_low();
             embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
@@ -110,7 +114,12 @@ fn run_init_or_panic<T>(result: Result<T, InitError>) -> T {
         Err(e) => {
             let error_msg = format_init_error(&e);
             log::error!("safe_shutdown: {} - halting", error_msg);
+            // Bug B19: the RWDT is armed in init_hw_watchdog() (called before
+            // builder.build()). Without feeding it, fixing B2 would turn this
+            // diagnostic halt into a ~2.2s boot-loop. Feed every iteration so
+            // the operator can read the error blink pattern.
             loop {
+                libreroaster::safety::watchdog::feed_hw_watchdog();
                 esp_hal::rom::ets_delay_us(1_000_000);
             }
         }
@@ -206,7 +215,12 @@ fn main() -> ! {
             Ok(app) => app,
             Err(e) => {
                 log::error!("AppBuilder failed: {:?}", e);
+                // Bug B19: keep the RWDT fed while we halt so the error is
+                // observable. The RWDT is armed at main.rs:178 (before
+                // builder.build()), so without this feed a B2-correct
+                // watchdog would reset the system every ~2.2s.
                 loop {
+                    libreroaster::safety::watchdog::feed_hw_watchdog();
                     esp_hal::rom::ets_delay_us(1_000_000);
                 }
             }

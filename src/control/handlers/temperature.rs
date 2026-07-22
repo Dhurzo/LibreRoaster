@@ -122,7 +122,11 @@ impl TemperatureCommandHandler {
                 source: Some("negative_pid_gain"),
             });
         }
-        self.pid_controller = CoffeeRoasterPid::with_gains(kp, ki, kd);
+        // Bug B5: mutate in place via `set_gains` instead of rebuilding the
+        // whole controller with `with_gains` (which produced `enabled: false`
+        // and `target: 0.0` — silently disabling the PID and dropping the
+        // heater while `status.pid_enabled` still reported true).
+        self.pid_controller.set_gains(kp, ki, kd);
         Ok(())
     }
 

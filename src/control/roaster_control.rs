@@ -29,6 +29,15 @@ pub struct RoasterControl {
     charge_time: Option<Instant>,
     preheat_target: Option<f32>,
     bt_charge_history: heapless::Deque<f32, 10>,
+    // Bug B3: latched cooling fan after a plain STOP. `stop_streaming` sets the
+    // fan to 100% but does NOT arm the safety emergency latch (only
+    // `emergency_shutdown` does). Without this flag, the next `update_control`
+    // tick would fall through to `artisan_manual_fan()` (cleared to 0.0 by
+    // `dispatch.stop_streaming → clear_manual`) and annihilate the cooldown a
+    // single tick (~100 ms) after STOP. Set on STOP, dropped when a new roast
+    // starts (handle_start_roast), on explicit recovery (clear_emergency_explicit),
+    // or once the bean mass cools below the safe-to-handle threshold.
+    cooling_active: bool,
 }
 
 impl RoasterControl {
@@ -52,6 +61,7 @@ impl RoasterControl {
             charge_time: None,
             preheat_target: None,
             bt_charge_history: heapless::Deque::new(),
+            cooling_active: false,
         })
     }
 
@@ -191,8 +201,13 @@ impl RoasterControl {
         }
 
         if let Some(fan) = outcome.fan_target {
-            self.status.artisan_control = true;
-            self.status.pid_enabled = false;
+            // Bug B4: a fan command must NOT alter PID/mode flags (Spec F4.8).
+            // The two lines that used to live here (`artisan_control = true`
+            // and `pid_enabled = false`) made a mid-roast slider move drop
+            // the heater by disabling PID and falling into manual mode with
+            // no manual heater set. Keep only the side-effect of issuing a
+            // continuous-output tick (so Artisan sees the fan change) and the
+            // physical fan write.
             self.dispatch
                 .get_output_manager_mut()
                 .enable_continuous_output();
@@ -259,6 +274,16 @@ impl RoasterControl {
         self.charge_time = None;
         self.status.charge_detected = false;
         self.bt_charge_history.clear();
+        // Bug B3: drop any active fan profile/start-time so it can't drive the
+        // fan through a stale interpolation target during the cooldown latch.
+        self.fan_profile = None;
+        self.profile_start_time = None;
+        // Bug B3: latch cooldown so `update_control`'s fan selector keeps the
+        // fan at 100% on every subsequent tick. STOP does NOT arm the safety
+        // emergency latch (only `emergency_shutdown` does); without this flag
+        // the next tick would call `artisan_manual_fan()` (now 0.0 after
+        // `clear_manual`) and cut the airflow over the hot bean mass.
+        self.cooling_active = true;
 
         self.actuator.capture_ssr_monitor_metrics(&mut self.status);
         self.actuator.set_heater_power(0.0)?;
@@ -285,6 +310,9 @@ impl RoasterControl {
         self.status.fault_condition = false;
         self.state = crate::config::constants::RoasterState::Idle;
         self.status.state = self.state;
+        // Bug B3: explicit recovery also drops the cooldown latch — the
+        // operator is taking over, so airflow returns to operator control.
+        self.cooling_active = false;
     }
 
     pub fn is_temperature_valid(temp: f32) -> bool {
@@ -352,6 +380,23 @@ impl RoasterControl {
                     return Ok(0.0);
                 }
             }
+        }
+
+        // Bug B3: drop the cooldown latch once the bean mass has cooled below
+        // a safe-to-handle threshold. The cooldown fan is meant to protect the
+        // beans after a hot STOP; once the bean temp is safely low the latch
+        // releases so the operator (or a new roast) can take manual control
+        // of the fan again. Use a real BT reading; if BT is NaN/non-finite
+        // (faulted sensor) do NOT drop the latch — keep cooling by default.
+        if self.cooling_active
+            && self.status.bean_temp.is_finite()
+            && self.status.bean_temp < COOLING_RELEASE_BEAN_TEMP_C
+        {
+            info!(
+                "Cooldown latch released — BT {:.1}°C < {:.1}°C",
+                self.status.bean_temp, COOLING_RELEASE_BEAN_TEMP_C
+            );
+            self.cooling_active = false;
         }
 
         // Charge detection: detect bean drop via sharp BT decline
@@ -488,13 +533,16 @@ impl RoasterControl {
         self.status.saturation_active = self.dispatch.pid_saturation_active();
         self.status.integrator_clamped = self.dispatch.pid_integrator_clamped();
 
-        // Emergency cooldown priority: while the safety latch is active, force
-        // the fan to 100% to cool the hot bean mass. This must NOT be overridden
-        // by the fan profile, the manual Artisan setting, or any other source
-        // — the previous code re-wrote the fan speed every ~100ms, annihilating
-        // the emergency cooldown a single tick after it was set. The recovery
-        // path (explicit stop / clear_emergency) drops the latch.
-        let fan_output = if self.safety.is_emergency_active() {
+        // Emergency cooldown priority: while the safety latch is active, OR
+        // the B3 cooling latch is active (plain STOP without an emergency),
+        // force the fan to 100% to cool the hot bean mass. This must NOT be
+        // overridden by the fan profile, the manual Artisan setting, or any
+        // other source — the previous re-wrote the fan speed every ~100ms,
+        // annihilating the cooldown a single tick after the STOP/emergency set
+        // it. The emergency latch clears via `clear_emergency_explicit`
+        // (StopRoast); the cooling latch clears on new roast start, explicit
+        // recovery, or when BT drops below COOLING_RELEASE_BEAN_TEMP_C.
+        let fan_output = if self.safety.is_emergency_active() || self.cooling_active {
             100.0
         } else if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
             let elapsed = current_time.duration_since(start).as_secs() as u32;
@@ -626,6 +674,9 @@ impl RoasterControl {
             info!("Artisan+ START ignored - streaming already active");
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
+            // Bug B3: a new roast start drops the cooldown latch — we are
+            // re-energizing deliberately, so airflow follows the new roast.
+            self.cooling_active = false;
             self.status.artisan_control = true;
             // Use loaded profile if available, otherwise fall back to default target
             if self.active_profile.is_some() {

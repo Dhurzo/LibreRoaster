@@ -37,7 +37,7 @@ mod software_watchdog {
 
     /// Timestamp of last successful feed in milliseconds
     static LAST_FEED_MS: AtomicU64 = AtomicU64::new(0);
-    const WATCHDOG_TIMEOUT_MS: u64 = 500; // 3 missed ticks = 500ms at ~160ms loop cadence
+    const WATCHDOG_TIMEOUT_MS: u64 = 500; // 5 missed ticks = 500ms at ~100ms loop cadence
 
     pub struct WatchdogFeeder {
         last_failure: Option<&'static str>,
@@ -50,6 +50,13 @@ mod software_watchdog {
         }
 
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
+            // Bug B18: feed the HW WDT unconditionally FIRST. The fact that we
+            // are executing this at all proves the control loop is alive — even
+            // a degraded-but-alive loop (gap > 500ms) must keep the RWDT fed,
+            // otherwise (with B2 fixed) the chip resets at ~2.2s and skips the
+            // designed `SAFETY WATCHDOG` escalation + orderly shutdown.
+            super::hw_watchdog::feed();
+
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.swap(now, Ordering::SeqCst);
             if last > 0 && now - last > WATCHDOG_TIMEOUT_MS {
@@ -57,8 +64,6 @@ mod software_watchdog {
                 return Err(WatchdogError::FeedFailed("watchdog_timeout"));
             }
             self.last_failure = None;
-            // Also feed the hardware WDT on ESP32
-            super::hw_watchdog::feed();
             Ok(())
         }
 
@@ -122,17 +127,25 @@ mod hw_watchdog {
             .wdtwprotect()
             .write(|w| unsafe { w.wdt_wkey().bits(WDT_UNLOCK_KEY) });
         rtc_cntl.wdtfeed().write(|w| w.wdt_feed().set_bit());
+        // Bug B2: re-lock the WDT protect register after feeding. Leaving it
+        // unlocked meant stray writes (or a stuck task) could reconfigure the
+        // WDT silently. This pairs with the same write at the end of init().
+        rtc_cntl
+            .wdtwprotect()
+            .write(|w| unsafe { w.wdt_wkey().bits(0) });
     }
 
     /// Configures the RTC Watchdog Timer with a ~2 s timeout.
     ///
-    /// The RWDT runs off the internal 150 kHz RTC slow clock and resets
-    /// the CPU if the control loop stops feeding it.  This init is
-    /// explicit (not relying on bootloader defaults) so the safety net
-    /// is always active regardless of the flash toolchain used.
+    /// The RWDT runs off the internal ~136 kHz RTC slow clock (RC_SLOW_CLK on
+    /// the C3 is ~136 kHz, not 150 kHz) and resets the system if the control
+    /// loop stops feeding it.  With `WDT_STAGE0_HOLD = 300_000` the actual
+    /// timeout is ~2.2 s. This init is explicit (not relying on bootloader
+    /// defaults) so the safety net is always active regardless of the flash
+    /// toolchain used.
     pub fn init() {
         const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
-        // RTC_SLOW_CLK ≈ 150 kHz  →  ~2 s = 300 000 cycles
+        // RTC_SLOW_CLK ≈ 136 kHz  →  ~2.2 s = 300 000 cycles
         const WDT_STAGE0_HOLD: u32 = 300_000;
 
         let rtc_cntl = unsafe { &*esp32c3::RTC_CNTL::ptr() };
@@ -149,7 +162,13 @@ mod hw_watchdog {
             w.wdt_en()
                 .set_bit()
                 .wdt_stg0()
-                .bits(1) // 1 = SYS reset on stage-0 timeout (peripherals return to reset state)
+                // Bug B2: 3 = ResetSystem (full chip reset, peripherals back to
+                // reset state). The previous value `1` selected Interrupt —
+                // and no RWDT interrupt handler exists in this firmware, so a
+                // timeout did nothing: the safety net was effectively absent.
+                // esp-hal `RwdtStageAction`: Off=0, Interrupt=1, ResetCpu=2,
+                // ResetSystem=3, ResetRtc=4.
+                .bits(3)
                 .wdt_flashboot_mod_en()
                 .set_bit()
         });

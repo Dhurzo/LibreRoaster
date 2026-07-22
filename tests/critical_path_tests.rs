@@ -742,6 +742,239 @@ fn stop_sets_fan_to_100_percent_for_cooling() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 14b. BUG B3 — Cooldown fan latch survives the next update_control tick
+// ═══════════════════════════════════════════════════════════════════════════
+// The pre-existing `stop_sets_fan_to_100_percent_for_cooling` test never ran
+// a tick after STOP, so it passed even though `update_control` immediately
+// overwrote the fan to 0% via `artisan_manual_fan()` (cleared by STOP's
+// `clear_manual`). This test runs the tick and asserts the cooldown latch.
+
+#[test]
+fn stop_cooldown_fan_survives_next_tick() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    // Hold BT stable at a hot value across all ticks so the rate-of-rise
+    // guard stays at 0 °C/s and never arms an emergency. (A 25→200 °C jump
+    // in a single tick produces a hundreds-thousands °C/s derivative that
+    // counts up `ror_exceeded` over ticks and shadows the cooldown latch
+    // with an emergency — which also forces fan=100% for the wrong reason.)
+    tick_now(&mut ctrl, 200.0, 220.0);
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::SetFan(30))
+        .expect("fan 30%");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    // Confirm no emergency was armed by the BT spike — prove the latch, not a
+    // latched emergency, is what's keeping the fan at 100%.
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "precondition: no emergency armed by BT warm-up"
+    );
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("stop");
+    assert!(
+        ctrl.get_status().fan_output >= 99.0,
+        "STOP must set fan to 100% (immediate effect)"
+    );
+
+    // The single tick that the original test omitted — this is where B3 lived.
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "B3 must hold fan: emergency not armed, latch is the active mechanism"
+    );
+    assert!(
+        ctrl.get_status().fan_output >= 99.0,
+        "Cooldown fan latch (B3): fan must stay at 100% on the tick after STOP, got {}",
+        ctrl.get_status().fan_output
+    );
+
+    // And must keep holding for subsequent ticks while BT stays hot.
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "B3 must persist: still no emergency across subsequent hot ticks"
+    );
+    assert!(
+        ctrl.get_status().fan_output >= 99.0,
+        "Cooldown fan latch (B3) must persist across ticks while BT is hot"
+    );
+}
+
+#[test]
+fn cooldown_latch_releases_when_bean_cools_below_threshold() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    // Hold BT hot and stable so no rate-of-rise emergency fires (see
+    // `stop_cooldown_fan_survives_next_tick` for the spike rationale).
+    tick_now(&mut ctrl, 200.0, 220.0);
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("stop");
+    // Hot BT keeps the latch armed.
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "precondition: latch (not emergency) holds the cooldown fan"
+    );
+    assert!(ctrl.get_status().fan_output >= 99.0);
+
+    // Operator's manual fan setting is in effect once the beans cool.
+    ctrl.process_artisan_command(ArtisanCommand::SetFan(40))
+        .expect("fan 40%");
+    // Big drop in one tick would also spike the roRate. Drop gradually:
+    // 200 → 130 → 70 → 50 keeps each step under the guard's threshold.
+    tick_now(&mut ctrl, 130.0, 150.0);
+    assert!(
+        ctrl.get_status().fan_output >= 99.0,
+        "BT=130 is still above 60°C — latch stays armed, got {}",
+        ctrl.get_status().fan_output
+    );
+    tick_now(&mut ctrl, 70.0, 80.0);
+    assert!(
+        ctrl.get_status().fan_output >= 99.0,
+        "BT=70 is still above 60°C — latch stays armed, got {}",
+        ctrl.get_status().fan_output
+    );
+    tick_now(&mut ctrl, 50.0, 60.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "B3 release: emergency must NOT be armed after cooling below threshold"
+    );
+    assert!(
+        ctrl.get_status().fan_output <= 41.0 && ctrl.get_status().fan_output >= 39.0,
+        "Cooldown latch (B3) must release when BT < 60°C, got {}",
+        ctrl.get_status().fan_output
+    );
+}
+
+#[test]
+fn start_roast_drops_cooldown_latch() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    // Keep BT stable and hot throughout so the rate-of-rise guard stays at 0
+    // and never arms an emergency that would shadow the cooldown behaviour.
+    tick_now(&mut ctrl, 200.0, 220.0);
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start 1");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "precondition: no emergency armed during first roast"
+    );
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("stop 1");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "post-STOP cooldown must not be confused with an emergency"
+    );
+    assert!(ctrl.get_status().fan_output >= 99.0, "cooldown armed");
+
+    // New roast start overrides the cooldown latch. We must NOT issue any
+    // manual command before START2: SetFan/SetHeater keep the
+    // `is_continuous_enabled` flag set, which makes `is_streaming()` return
+    // true and START2 is silently ignored (so `cooling_active` would stay
+    // armed and the test would fail). The latch drop must come purely from
+    // the START2 path.
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start 2");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "B3: START2 must drop cooldown without arming emergency, got emergency=true"
+    );
+    assert!(
+        ctrl.get_status().fan_output < 99.0,
+        "Cooldown latch (B3) must drop on new roast start, got {}",
+        ctrl.get_status().fan_output
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14c. BUG B4 — OT2 (fan) command must NOT disable PID or drop the heater
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn fan_command_does_not_disable_pid() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    tick_now(&mut ctrl, 25.0, 30.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start");
+    tick_now(&mut ctrl, 180.0, 200.0);
+
+    let pid_enabled_before = ctrl.get_status().pid_enabled;
+    assert!(pid_enabled_before, "PID should be on after START");
+
+    // SetFan maps to OT2/IO3 in Artisan's protocol (manual fan).
+    ctrl.process_artisan_command(ArtisanCommand::SetFan(50))
+        .expect("fan 50%");
+    tick_now(&mut ctrl, 180.0, 200.0);
+
+    let status = ctrl.get_status();
+    assert!(
+        status.pid_enabled,
+        "B4: fan command must NOT disable PID (Spec F4.8), got pid_enabled=false"
+    );
+    assert!(
+        !status.artisan_control,
+        "B4: fan command must NOT flip artisan_control to true, got true"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14d. BUG B5 — Tuning PID gains mid-roast must NOT silently disable the PID
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn set_pid_gains_keeps_pid_enabled() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    tick_now(&mut ctrl, 25.0, 30.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start");
+    tick_now(&mut ctrl, 180.0, 200.0);
+
+    assert!(ctrl.get_status().pid_enabled, "PID on after START");
+
+    // Artisan PID dialog: PID;T;kp;ki;kd → SetPidGain.
+    ctrl.process_artisan_command(ArtisanCommand::SetPidGain(2.5, 0.3, 0.08))
+        .expect("pid gains");
+
+    // The bug: status.pid_enabled stayed true but the controller was rebuilt
+    // with enabled=false, so compute_output returned 0.0. A tick must show
+    // the PID actively computing (non-zero desired output when below target).
+    assert!(
+        ctrl.get_status().pid_enabled,
+        "B5: SetPidGain must NOT silently disable the PID"
+    );
+
+    // Drive the PID with a target well above the current PV so it must
+    // produce a positive MV (prove it's actually still computing, not a 0-V stub).
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(230.0))
+        .expect("target");
+    tick_now(&mut ctrl, 180.0, 200.0);
+    // MV reflects the controller's desired output (see status.mv doc comment).
+    assert!(
+        ctrl.get_status().mv > 0.0,
+        "B5: PID must keep producing a non-zero MV after a gain change, got MV={}",
+        ctrl.get_status().mv
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 15. NaN PV DURING ROAST
 // ═══════════════════════════════════════════════════════════════════════════
 

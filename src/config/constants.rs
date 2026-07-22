@@ -58,9 +58,25 @@ pub const PID_SAMPLE_TIME_MS: u32 = 100;
 /// MAX31856 thermocouple read time in milliseconds (SPI + conversion latency).
 /// Exceeds PID_SAMPLE_TIME_MS; stale-data guard prevents PID from using old readings.
 pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
+/// MAX31856 one-shot conversion wait at 50 Hz notch filter, in milliseconds.
+///
+/// The datasheet specifies up to 185 ms for a 50 Hz-filtered conversion. We
+/// add a small margin (190 ms) to ensure the conversion-complete bit is set
+/// before we read the result registers. Bug #B1: the previous wait used
+/// `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which is shorter than 50 Hz
+/// conversion time — meaning each read could silently return the *previous*
+/// conversion's temperature (stale data with no error indication).
+pub const MAX31856_CONVERSION_TIME_MS: u64 = 190;
 
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
+
+/// Bean temperature (°C) below which the post-STOP cooldown fan latch
+/// releases (bug B3). Beans below this temperature are cool enough that
+/// forced airflow is no longer safety-critical, so the operator may resume
+/// manual fan control. While the cooldown latch is active the fan stays at
+/// 100% every tick regardless of the manual setting or fan profile.
+pub const COOLING_RELEASE_BEAN_TEMP_C: f32 = 60.0;
 
 /// Maximum safe bean temperature rate of rise in °C/s.
 /// 0.5°C/s = 30°C/min — above this rate during active heating indicates

@@ -80,11 +80,17 @@ where
     pub fn new(spi: SPI) -> Result<Self, Max31856Error> {
         let mut max31856 = Max31856 { spi };
 
-        // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator mode), CJ=0000
-        max31856.write_register(0x80, 0x10)?;
-        // CR1 (0x81): Type K thermocouple, 50 Hz notch filter (bit3=1).
-        // For 50 Hz: D3=1 → 0x03 | 0x08 = 0x0B. Conversion time ~185 ms.
-        max31856.write_register(0x81, 0x0B)?;
+        // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator
+        // mode on bits 1:2), FILT50=1 (50 Hz notch filter, bit 0).
+        // Bit layout: 0b0001_0001 = 0x11. The 50 Hz filter is selected by
+        // CR0 bit 0 (not CR1 bit 3); conversion time maxes at 185 ms (datasheet).
+        max31856.write_register(0x80, 0x11)?;
+        // CR1 (0x81): AVGSEL=1 sample, TC TYPE = Type K (0011). Bits 3:0 = 0011.
+        // The 50/60 Hz filter is NOT a CR1 field; the old `0x0B` value was
+        // selecting "voltage mode with gain ×8" (TC TYPE = 1011) — no
+        // thermocouple linearization, garbage temperatures even if the
+        // readback had matched.
+        max31856.write_register(0x81, 0x03)?;
         // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
         max31856.write_register(0x82, 0x00)?;
 
@@ -107,12 +113,13 @@ where
     pub fn self_test(&mut self) -> Result<(), Max31856Error> {
         log::info!("MAX31856: Starting boot self-test");
 
-        // 1. Verify CR0 register (CMODE=0, OCFAULT=01)
+        // 1. Verify CR0 register (CMODE=0, FILT50=1). Must match the value
+        //    written in `new()` (0x11 = bit 4 + bit 0, see init comment).
         let cr0 = self.read_register(0x00).unwrap_or(0xFF);
-        log::info!("MAX31856 self-test: CR0=0x{:02X} (expected 0x10)", cr0);
-        if cr0 != 0x10 {
+        log::info!("MAX31856 self-test: CR0=0x{:02X} (expected 0x11)", cr0);
+        if cr0 != 0x11 {
             log::warn!(
-                "MAX31856 self-test: CR0 mismatch (expected 0x10, got 0x{:02X})",
+                "MAX31856 self-test: CR0 mismatch (expected 0x11, got 0x{:02X})",
                 cr0
             );
         }
@@ -183,8 +190,9 @@ where
     }
 
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
-        // 50 Hz notch filter: bit3=1 → 0x03 | 0x08 = 0x0B
-        self.write_register(0x81, 0x0B)?;
+        // Type K (TC TYPE = 0011). The 50 Hz filter lives in CR0 bit 0, not
+        // in CR1; the old `0x0B` value selected voltage mode ×8 (TC TYPE = 1011).
+        self.write_register(0x81, 0x03)?;
         Ok(())
     }
 
@@ -240,9 +248,14 @@ where
     /// harnesses and initialization paths.
     #[deprecated = "Use read_raw_temperature_async() in async contexts"]
     pub fn read_raw_temperature(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        self.write_register(0x80, 0x80)?; // Set one-shot bit
+        // Bug #B29: the previous `0x80` value set CMODE (bit 7 = continuous
+        // conversion) and cleared OCFAULT/FILT50 — masking open-circuit
+        // faults and losing the 50 Hz filter. Use the same one-shot value
+        // as the async path (0x51 = 1SHOT | FILT50 | OCFAULT=01).
+        self.write_register(0x80, 0x51)?;
 
-        const DELAY_MS: u64 = 160;
+        // Match the async conversion wait (185 ms max at 50 Hz).
+        const DELAY_MS: u64 = crate::config::constants::MAX31856_CONVERSION_TIME_MS;
 
         for _ in 0..(DELAY_MS * 10000) {
             core::hint::spin_loop();
@@ -252,9 +265,12 @@ where
     }
 
     pub fn trigger_conversion(&mut self) -> Result<(), Max31856Error> {
-        // CR0 with 1SHOT=1 (bit 6) triggers a single conversion in normally-off mode.
-        // Preserve CMODE=0 and OCFAULT settings from init.
-        self.write_register(0x80, 0x50)?;
+        // CR0 with 1SHOT=1 (bit 6) triggers a single conversion in normally-off
+        // mode. Preserve CMODE=0, OCFAULT settings from init, AND the 50 Hz
+        // notch filter (bit 0 = FILT50). 0x51 = 0b0101_0001.
+        // Bug #B1: the previous value 0x50 dropped FILT50 on every one-shot,
+        // re-selecting 60 Hz mid-roast.
+        self.write_register(0x80, 0x51)?;
         Ok(())
     }
 
@@ -263,11 +279,15 @@ where
     }
 
     pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        // Trigger one-shot conversion in normally-off mode (CMODE=0, 1SHOT=1)
-        self.write_register(0x80, 0x50)?;
+        // Trigger one-shot conversion in normally-off mode (CMODE=0, 1SHOT=1,
+        // FILT50 preserved). Bug #B1: keep the 50 Hz filter (bit 0) on each shot.
+        self.write_register(0x80, 0x51)?;
 
+        // Bug #B1: 50 Hz conversion time is 185 ms max per datasheet. The
+        // previous TEMPERATURE_READ_INTERVAL_MS (160 ms) wait could return the
+        // *previous* conversion's result without any error indication.
         Timer::after(Duration::from_millis(
-            crate::config::constants::TEMPERATURE_READ_INTERVAL_MS as u64,
+            crate::config::constants::MAX31856_CONVERSION_TIME_MS,
         ))
         .await;
 
