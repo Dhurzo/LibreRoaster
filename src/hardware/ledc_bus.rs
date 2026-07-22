@@ -166,7 +166,15 @@ impl<'a> LedcChannelHandle<'a> {
             channel.start_duty_fade(start_duty, end_duty, duration_ms)
         }) {
             Ok(Ok(())) => {
-                self.bus.store_duty(entry, end_duty as u16);
+                // Bug B10: store the *ticks* matching the fade's end value
+                // (not the percentage), so the duty cache keeps a single
+                // unit. Previously `set_duty_raw` stored ticks but this path
+                // stored `end_duty as u16` (a percentage 0–100), leaving
+                // the cache with mixed units. Subsequent fade-vs-direct
+                // decisions then compared ticks against percent (the 12-tick
+                // threshold is 0.7 °C-equivalent of percent — random).
+                let ticks = ((end_duty as u32 * self.max_duty() + 50) / 100) as u16;
+                self.bus.store_duty(entry, ticks);
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
@@ -177,13 +185,27 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
+    /// Maximum raw duty ticks for this channel's PWM resolution.
+    ///
+    /// Bug B10: the SSR channel runs at 14-bit resolution (16383 ticks) but
+    /// the fan channel runs at 8-bit (255 ticks). `applied_percent()` and
+    /// the fade-vs-direct decision both need this per-channel value; dividing
+    /// a fan duty by the SSR resolution reported a 100% fan as ~1.6% and a
+    /// later fade's percentage was treated as ticks, mis-computing `duty_delta`.
+    pub fn max_duty(&self) -> u32 {
+        match self.role {
+            ChannelRole::Fan => (1u32 << crate::config::constants::FAN_PWM_RESOLUTION) - 1,
+            ChannelRole::Ssr => (1u32 << crate::config::constants::SSR_PWM_RESOLUTION) - 1,
+        }
+    }
+
     pub fn applied_duty(&self) -> u16 {
         self.entry().duty.get()
     }
 
     pub fn applied_percent(&self) -> f32 {
-        (self.applied_duty() as f32) * 100.0
-            / ((1u32 << crate::config::constants::SSR_PWM_RESOLUTION) - 1) as f32
+        // Bug B10: divide by THIS channel's resolution, not always the SSR's.
+        (self.applied_duty() as f32) * 100.0 / self.max_duty() as f32
     }
 }
 

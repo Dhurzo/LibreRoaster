@@ -695,10 +695,24 @@ impl RoasterControl {
 
     fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
-        if self.is_streaming() {
+        // Bug B14: `is_streaming()` includes `status.pid_enabled`, which
+        // `PREHEAT` enables. So a START after PREHEAT was silently
+        // swallowed as "ignored - streaming already active" — the drum sat
+        // at the preheat target forever, `profile_start_time` never got
+        // fixed (so MAX_ROAST_TIME_SECS was inactive), charge detection
+        // was inert (requires `state == Heating`), and continuous telemetry
+        // was disabled. Explicitly allow the Preheating → Heating handoff.
+        if self.is_streaming() && self.state != RoasterState::Preheating {
             info!("Artisan+ START ignored - streaming already active");
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
+            // PREHEAT → START handoff: this is the bug-B14 path. If we were
+            // preheating, the PID was already enabled by `handle_preheat`;
+            // here we transition to `Heating`, fix `profile_start_time`
+            // (so MAX_ROAST_TIME_SECS / charge detection come alive), load
+            // the profile's t=0 target (or zero-profiled), and turn on
+            // continuous output.
+            //
             // Bug B3: a new roast start drops the cooldown latch — we are
             // re-energizing deliberately, so airflow follows the new roast.
             self.cooling_active = false;

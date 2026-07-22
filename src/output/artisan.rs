@@ -423,20 +423,33 @@ impl MutableArtisanFormatter {
             return 0.0;
         }
 
-        // Check for outliers before updating history
-        let (front, back) = self.bt_history.as_slices();
-        if !ArtisanFormatter::is_temperature_outlier(current_bt, front)
-            && !ArtisanFormatter::is_temperature_outlier(current_bt, back)
-        {
-            self.last_bt = current_bt;
-            Self::update_bt_history_with_timestamp(
-                &mut self.bt_history,
-                &mut self.timestamp_history,
-                current_bt,
-                now,
-            );
-        } else {
-            // Skip this outlier reading, return last filtered value
+        // Bug B12: the previous code refused to insert an outlier into the
+        // history, so on a smooth ramp {m, m+d, m+2d, m+3d, ...} every
+        // sample past the 3rd was rejected (a constant ramp violates the
+        // "2-sigma vs mean of {first 3 samples}" rule by construction:
+        // σ ≈ 0.82·d, while the deviation of m+3d is 2·d > 1.63·d). The
+        // window froze at 3 samples and `last_filtered_ror` was returned
+        // for the entire roast.
+        //
+        // Fix: ALWAYS advance the history so the mean/variance track the
+        // trend, and the only side-effect of an outlier is suppressing the
+        // RoR value emitted for THIS sample (return the last filtered
+        // RoR). The next clean sample finds a window that has moved on
+        // rather than one frozen at the start of the roast.
+        let is_outlier = {
+            let (front, back) = self.bt_history.as_slices();
+            ArtisanFormatter::is_temperature_outlier(current_bt, front)
+                || ArtisanFormatter::is_temperature_outlier(current_bt, back)
+        };
+        self.last_bt = current_bt;
+        Self::update_bt_history_with_timestamp(
+            &mut self.bt_history,
+            &mut self.timestamp_history,
+            current_bt,
+            now,
+        );
+        if is_outlier {
+            // Suppress the RoR for this sample; keep the window advancing.
             return self.last_filtered_ror;
         }
 
@@ -506,8 +519,13 @@ impl MutableArtisanFormatter {
         let first_ts = timestamps[0];
         let last_ts = timestamps[timestamps.len() - 1];
 
-        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_secs() as f32)
-            + (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
+        // Bug B20: `as_secs()` plus `as_millis()/1000` doubled the elapsed
+        // time for windows >= 1 s because `as_millis()` returns the FULL
+        // millisecond count (not the sub-second remainder). On the prior
+        // `last_filtered_ror` (kept by B12's outlier-skip path) this would
+        // approximately halve the reported RoR for any roast > 1 s. Use a
+        // single `as_millis()` reading divided by 1000 to get the real span.
+        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
         if time_elapsed_secs > 0.0 {
             (last_bt - first_bt) / time_elapsed_secs
         } else {
