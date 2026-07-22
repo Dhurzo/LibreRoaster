@@ -290,6 +290,16 @@ fn pid_to_manual_back_to_pid_resets_integrator() {
         "PID should be on after start"
     );
 
+    // Drive the integrator with a target *close* to the current temperature,
+    // so the PID is NOT pinned at the output_max rail. Bug B6 conditional
+    // anti-windup now stops integrating once the predictive MV hits the
+    // controller's own clamp; the previous test used DEFAULT_TARGET_TEMP with
+    // BT=25 → error ≈ 200 → P-term alone pins MV to 100% → integrator is
+    // (correctly) held at 0 by anti-windup. We instead use a small error so
+    // MV stays inside [0,100] and the integrator actually accumulates. Target
+    // must be inside `is_valid_target_temp`'s 50..=300 °C window.
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(60.0))
+        .expect("close target");
     for _ in 0..5 {
         tick_now(&mut ctrl, 25.0, 30.0);
     }
@@ -297,7 +307,7 @@ fn pid_to_manual_back_to_pid_resets_integrator() {
     let integrator_before_manual = ctrl.get_status().integrator_value;
     assert!(
         integrator_before_manual > 0.0,
-        "Integrator should have accumulated during PID mode, got {}",
+        "Integrator should have accumulated during PID mode with a small error (B6 anti-windup holds it when pinned to the rail), got {}",
         integrator_before_manual
     );
 
@@ -1131,4 +1141,57 @@ fn set_target_temp_nan_rejected() {
     assert!(ctrl
         .process_artisan_command(ArtisanCommand::SetTargetTemp(f32::NAN))
         .is_err());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14e. BUG B7 — A single transient sensor fault must NOT latch an emergency
+// ═══════════════════════════════════════════════════════════════════════════
+// `RoasterControl::update_temperatures` poisons bean_temp/env_temp with NaN
+// on the FIRST faulted sample. The PID downstream treats NaN PV as a faulted
+// sensor and triggers a latched `emergency_shutdown` on the same tick. B7
+// makes the poisoning conditional on `consecutive_fault_count >=
+// SENSOR_FAULT_DEBOUNCE`, holding the last valid value until the fault is
+// confirmed persistent — matching the F4.11 debouncer that already protects
+// `fault_condition`.
+
+#[test]
+fn single_sensor_fault_does_not_latch_emergency() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    // Stable hot roast so no rate-of-rise emergency interferes.
+    tick_now(&mut ctrl, 200.0, 220.0);
+    tick_now(&mut ctrl, 200.0, 220.0);
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start");
+    tick_now(&mut ctrl, 200.0, 220.0);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "precondition: no emergency armed at start of B7 test"
+    );
+
+    // Inject aSensorFault directly: simulate one transient SPI glitch by
+    // calling `update_temperatures` with bean_fault set. Pre-B7 this would
+    // set `status.bean_temp = NaN`, and the subsequent `update_control`
+    // would call `emergency_shutdown("Sensor fault (NaN/infinite)")`.
+    // Per B7, the value is held (NOT NaN) and no emergency is armed.
+    use libreroaster::hardware::sensors::conversion::SensorFault;
+    let transient_fault = SensorFault {
+        fault_detected: true,
+        ..SensorFault::default()
+    };
+    let now = Instant::now();
+    ctrl.update_temperatures_with_fault(200.0, 220.0, transient_fault, SensorFault::default(), now)
+        .expect("faulted read does not error");
+    // Run the control tick that would have caught a NaN PV.
+    let _ = ctrl.update_control(now);
+
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "B7: a single transient fault must NOT latch an emergency, got emergency=true"
+    );
+    assert!(
+        !ctrl.get_status().fault_condition,
+        "B7: a single fault must not set fault_condition (F4.11 debouncer protects it)"
+    );
 }

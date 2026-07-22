@@ -201,7 +201,23 @@ impl CoffeeRoasterPid {
         let dt = self.delta_seconds(timestamp_ms);
         let error = self.target - current_temp;
 
-        if self.should_integrate() {
+        // Bug B6: anti-windup must also see the PID's *own* output clamp, not
+        // just the actuator saturation reported via `should_integrate()`.
+        // In steady state at 100% (desired == applied == output_max) the
+        // actuator reports no saturation yet the integrator keeps accumulating
+        // `error * dt` every tick. A 2-minute stuck-at-100% with a 150 °C
+        // error winds the integrator to ~ki*18000 → a huge overshoot once the
+        // target is approached (plausibly tripping OVERTEMP=260 °C).
+        // Compute the *predictive* unclamped MV (P+D plus the I-term we *would*
+        // add this tick) and refuse to integrate when it has already hit a
+        // rail in the direction of the error. This is the classic conditional
+        // integration anti-windup on the controller's own clamp.
+        let p_d = (self.kp * error) + (self.kd * self.estimate_derivative(error, dt));
+        let unclamped = p_d + (self.ki * self.integrator);
+        let clamped_hi = unclamped >= self.output_max && error > 0.0;
+        let clamped_lo = unclamped <= self.output_min && error < 0.0;
+
+        if self.should_integrate() && !clamped_hi && !clamped_lo {
             self.integrator += error * dt;
             self.integrator_clamped = false;
         } else {
@@ -259,6 +275,20 @@ impl CoffeeRoasterPid {
         self.last_feedback
             .map(|feedback| !feedback.is_saturated())
             .unwrap_or(true)
+    }
+
+    /// Predictive derivative used by the B6 anti-windup pre-check.
+    ///
+    /// `compute_output` needs the P+D term *before* it has computed this
+    /// tick's derivative (it has to decide whether to integrate first). We
+    /// re-use the previous tick's derivative as the predictor — exactly what
+    /// `derivative_rate` already holds. On the first tick after enable the
+    /// derivative is 0.0 (Bug #5), so the predictive P+D reduces to just
+    /// `kp*error`, which is the right behaviour for the anti-windup rail
+    /// check: a non-zero `error` plus an integrator that is *already* at the
+    /// rail is precisely the case where we must stop accumulating.
+    fn estimate_derivative(&self, _error: f32, _dt: f32) -> f32 {
+        self.derivative_rate
     }
 
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
@@ -526,5 +556,71 @@ mod tests {
         pid.compute_output(35.0, PID_SAMPLE_TIME_MS);
 
         assert!(pid.is_saturation_active());
+    }
+
+    // ── Bug B6: anti-windup must see the PID's own output clamp ──────────
+    //
+    // Steady state at output_max with no actuator saturation feedback: the
+    // integrator must NOT keep accumulating `error * dt` indefinitely. The
+    // pre-fix code only gated on `should_integrate()` (actuator saturation),
+    // which is false in this scenario, so the integrator grew unbounded
+    // → large overshoot when the target was finally approached.
+
+    #[test]
+    fn b6_windup_clamps_at_output_max_in_steady_state() {
+        // Aggressive gains + small output range so we hit the rail quickly.
+        let mut pid = CoffeeRoasterPid::with_gains(5.0, 0.5, 0.05);
+        pid.set_output_limits(0.0, 100.0);
+        pid.enable();
+        pid.set_target(250.0).unwrap();
+
+        // Simulate the plant stuck at 100 °C with the heater maxed: the
+        // actuator reports NO saturation (desired == applied == output_max)
+        // — exactly the regime B6 lived in. Pre-fix, the integrator would
+        // grow ~ki*error*dt each tick with no clamp.
+        let mut timestamp = 0u32;
+        let mut max_integrator = 0.0f32;
+        for _ in 0..200 {
+            let out = pid.compute_output(100.0, timestamp);
+            // Steady actuator: applied == desired, guard not busy.
+            pid.update_feedback(PidFeedback::new(out, out, false));
+            timestamp += PID_SAMPLE_TIME_MS;
+            max_integrator = max_integrator.max(pid.integrator_value());
+        }
+        // The integrator must have stopped accumulating long before 200 ticks.
+        // Pre-fix it would reach ki*150*200*0.1 = 1500 — way over 1000.
+        assert!(
+            max_integrator <= 1000.0,
+            "B6: integrator must be anti-windup bounded, max={max_integrator}"
+        );
+        // Final MV must be clamped at output_max even with the integrator held.
+        let final_mv = pid.compute_output(100.0, timestamp);
+        assert!(
+            final_mv <= 100.0 + f32::EPSILON,
+            "B6: MV must be clamped at output_max, got {final_mv}"
+        );
+    }
+
+    #[test]
+    fn b6_windup_clamps_at_output_min_with_negative_error() {
+        // Negative-error rail: target below PV (cooling scenario). The
+        // integrator must not accumulate negative headroom past output_min.
+        let mut pid = CoffeeRoasterPid::with_gains(5.0, 0.5, 0.05);
+        pid.set_output_limits(0.0, 100.0);
+        pid.enable();
+        pid.set_target(0.0).unwrap();
+
+        let mut timestamp = 0u32;
+        let mut min_integrator = 0.0f32;
+        for _ in 0..200 {
+            let out = pid.compute_output(150.0, timestamp);
+            pid.update_feedback(PidFeedback::new(out, out, false));
+            timestamp += PID_SAMPLE_TIME_MS;
+            min_integrator = min_integrator.min(pid.integrator_value());
+        }
+        assert!(
+            min_integrator >= -1000.0,
+            "B6: integrator must be anti-windup bounded (negative rail), min={min_integrator}"
+        );
     }
 }

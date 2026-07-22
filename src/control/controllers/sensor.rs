@@ -114,12 +114,24 @@ impl SensorController {
             });
         }
 
-        // If a sensor is faulted, mark its temperature as NaN so PID rejects it
-        if bean_fault.has_fault() {
+        // If a sensor is faulted, decide whether to poison the temperature
+        // with NaN. Bug B7: the F4.11 debouncer only protects
+        // `status.fault_condition` — but the PID downstream rejects NaN PV by
+        // triggering an *emergency* (see update_control NaN guard). Poisoning
+        // bean_temp on the FIRST fault sample therefore turned a single
+        // transient SPI glitch into a latched emergency immediately, even
+        // though the next 160 ms read might have been clean. Only poison the
+        // value once the fault has persisted across SENSOR_FAULT_DEBOUNCE
+        // consecutive samples; until then hold the last valid temperature so
+        // the PID and emergency guards keep operating on real data and the
+        // debounce machinery has a chance to do its job.
+        if bean_fault.has_fault() && self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
             status.bean_temp = f32::NAN;
+            // else: hold the last valid value already in status.bean_temp.
         }
-        if env_fault.has_fault() {
+        if env_fault.has_fault() && self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
             status.env_temp = f32::NAN;
+            // else: hold the last valid value already in status.env_temp.
         }
 
         Ok(())
@@ -283,6 +295,36 @@ mod tests {
             ..SensorFault::default()
         };
 
+        // Bug B7: the FIRST few faulted samples must NOT poison bean_temp
+        // (the F4.11 debounce protects against a transient SPI glitch). Run
+        // the same faulted read fewer than SENSOR_FAULT_DEBOUNCE times and
+        // assert the last valid value is held (here the offset-adjusted
+        // OVERTEMP_THRESHOLD, NOT NaN). The overtemp guard must still be
+        // skipped because the channel is signal-faulted.
+        for _ in 0..(SENSOR_FAULT_DEBOUNCE - 1) {
+            let result = ctrl.update_temperatures(
+                OVERTEMP_THRESHOLD,
+                120.0,
+                bean_fault,
+                no_fault,
+                now,
+                &mut status,
+            );
+            assert!(result.is_ok());
+            assert!(
+                !status.bean_temp.is_nan(),
+                "B7: pre-debounce fault must hold the last valid value, not NaN"
+            );
+            // Apply the debouncer as the production read path does so
+            // consecutive_fault_count advances toward the threshold.
+            ctrl.apply_fault_debounce(true, &mut status);
+        }
+
+        // After SENSOR_FAULT_DEBOUNCE consecutive faults the temperature IS
+        // poisoned, matching the F4.11 latch. Drive the debouncer one more
+        // time so consecutive_fault_count reaches the threshold, then the
+        // next faulted read poisons bean_temp.
+        ctrl.apply_fault_debounce(true, &mut status);
         let result = ctrl.update_temperatures(
             OVERTEMP_THRESHOLD,
             120.0,
@@ -291,7 +333,6 @@ mod tests {
             now,
             &mut status,
         );
-
         assert!(result.is_ok());
         assert!(status.bean_temp.is_nan());
     }
@@ -308,9 +349,24 @@ mod tests {
             ..SensorFault::default()
         };
 
+        // Bug B7: a SINGLE faulty ET read must not poison env_temp. The PID
+        // downstream treats NaN as an emergency; debouncing before poisoning
+        // prevents a transient SPI glitch from latching one.
         ctrl.update_temperatures(150.0, 120.0, no_fault, env_fault, now, &mut status)
             .unwrap();
+        assert!(!status.bean_temp.is_nan());
+        assert!(
+            !status.env_temp.is_nan(),
+            "B7: first faulty ET read must hold the last valid value, not NaN"
+        );
 
+        // Drive the debouncer to the threshold, then the next faulted read
+        // poisons env_temp (matching the F4.11 latch).
+        for _ in 0..SENSOR_FAULT_DEBOUNCE {
+            ctrl.apply_fault_debounce(true, &mut status);
+        }
+        ctrl.update_temperatures(150.0, 120.0, no_fault, env_fault, now, &mut status)
+            .unwrap();
         assert!(!status.bean_temp.is_nan());
         assert!(status.env_temp.is_nan());
     }

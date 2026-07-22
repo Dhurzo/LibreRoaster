@@ -105,11 +105,36 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         let no_fault = Default::default();
+        self.update_temperatures_with_fault(bean_temp, env_temp, no_fault, no_fault, current_time)
+    }
+
+    /// Temperature update with explicit sensor-fault flags. Used by the
+    /// production read path (which derives faults from the MAX31856 status
+    /// register) and by tests that need to inject a faulted sample directly.
+    /// Bug B7: a faulted channel does NOT immediately poison its temperature
+    /// with NaN — the F4.11 debouncer must confirm the fault is persistent
+    /// (≥ `SENSOR_FAULT_DEBOUNCE` consecutive samples) before NaN propagates
+    /// and the PID/emergency guard sees a faulted PV.
+    pub fn update_temperatures_with_fault(
+        &mut self,
+        bean_temp: f32,
+        env_temp: f32,
+        bean_fault: crate::hardware::sensors::conversion::SensorFault,
+        env_fault: crate::hardware::sensors::conversion::SensorFault,
+        current_time: Instant,
+    ) -> Result<(), RoasterError> {
+        // Mirror the production read path: drive the F4.11 debouncer with
+        // the OR of channel faults BEFORE applying the temperature update, so
+        // `consecutive_fault_count` is current when the NaN-vs-hold decision
+        // is taken inside `SensorController::update_temperatures`.
+        let has_fault = bean_fault.has_fault() || env_fault.has_fault();
+        self.sensor
+            .apply_fault_debounce(has_fault, &mut self.status);
         match self.sensor.update_temperatures(
             bean_temp,
             env_temp,
-            no_fault,
-            no_fault,
+            bean_fault,
+            env_fault,
             current_time,
             &mut self.status,
         ) {
