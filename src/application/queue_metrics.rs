@@ -1,7 +1,14 @@
-use crate::input::COMMAND_QUEUE_SIZE;
+use crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
 use portable_atomic::{AtomicUsize, Ordering};
 
-pub const QUEUE_DEPTH_BACKLOG_THRESHOLD: usize = COMMAND_QUEUE_SIZE * 3 / 4;
+// Bug B27: the previous threshold was derived from `COMMAND_QUEUE_SIZE`
+// (the F5.3-deleted legacy queue), so `backlog_events` would fire at
+// 24 deeply-queued commands even though the channel was deleting plain
+// commands at cap 8. Recompute against the `ARTISAN_CMD_CHANNEL_SIZE = 8`
+// channel that is the actual measurement point so the metric fires under
+// real saturation, giving B26's "command silently dropped" path the
+// telemetry it should have had all along.
+pub const QUEUE_DEPTH_BACKLOG_THRESHOLD: usize = ARTISAN_CMD_CHANNEL_SIZE * 3 / 4;
 
 pub struct QueueProcessorMetrics {
     queue_depth: AtomicUsize,

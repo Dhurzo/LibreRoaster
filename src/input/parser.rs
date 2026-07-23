@@ -194,6 +194,15 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             let kp = parse_float(parts[1])?;
             let ki = parse_float(parts[2])?;
             let kd = parse_float(parts[3])?;
+            // Bug B21: PIDGAIN accepts kp/ki/kd via `parse_float`, which
+            // happily parses "NaN"/"inf"/"-inf". A NaN gain yields a NaN MV
+            // (the PID clamping passes NaN through unchanged, and the SSR
+            // driver treats it as "anything"). Reject non-finite inputs here
+            // so the operator gets `ERR out_of_range` instead of an
+            // undefined heater command.
+            if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
+                return Err(ParseError::OutOfRange);
+            }
             Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
         } else {
             Err(ParseError::InvalidValue)
@@ -295,6 +304,15 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
+            // Bug B21: `f32::from_str("NaN")/("inf")/("-inf")` parses cleanly
+            // into f32 — a NaN/Inf PID gain would propagate into
+            // `compute_output` and yield a NaN MV every tick, which the SSR
+            // driver then attempts to clamp, leaving heater power undefined.
+            // PROTO-1 already fixed the same class on PID;LIMIT; here we also
+            // apply the is_finite() check to PID;T and (below) PIDGAIN.
+            if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
+                return Err(ParseError::OutOfRange);
+            }
             if kp < 0.0 || ki < 0.0 || kd < 0.0 {
                 return Err(ParseError::OutOfRange);
             }
