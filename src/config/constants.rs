@@ -41,9 +41,17 @@ pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 /// Maximum allowed drift between commanded and actual LEDC duty (raw ticks).
 /// At 14-bit, 128 ticks ≈ 0.78 % of full scale.
 pub const SSR_DUTY_TOLERANCE_TICKS: u16 = 128;
-/// Minimum non-zero duty in raw ticks. At 14-bit / 5 Hz: 193 ticks ≈ 2.4 ms
-/// on-time, enough for one AC half-cycle at 50 Hz mains.
-pub const SSR_MIN_DUTY_TICKS: u16 = 193;
+/// Minimum non-zero duty in raw ticks. At 14-bit / 5 Hz, one full PWM
+/// cycle is 200 ms; one AC half-cycle at 50 Hz mains is 10 ms. With a
+/// non-zero-cross-synchronised LEDC output, a ~2.4 ms ON pulse (193 ticks,
+/// the previous value) only coincides with a zero crossing ~25-30 % of the
+/// time, so a zero-cross SSR fires erratically at the minimum commanded
+/// power. Bug B28: raise the floor to one AC half-cycle (10 ms ≈ 820 ticks
+/// at 14-bit / 5 Hz) so a zero-cross SSR reliably lands at least one
+/// half-cycle of mains on every active PWM period, giving a deterministic
+/// minimum delivered power. Use 1639 (a full 20 ms mains cycle) if DC bias
+/// across the mains is a concern on the target SSR.
+pub const SSR_MIN_DUTY_TICKS: u16 = 820;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 pub const MAX_SAFE_TEMP: f32 = 250.0;
@@ -147,7 +155,15 @@ pub enum ArtisanCommand {
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
 pub const MAX_COMMANDS_PER_TICK: usize = 8;
 pub const CHARGE_DROP_THRESHOLD_C: f32 = 20.0;
+/// Bug B23: intended charge-detection window in seconds. The bean-drop
+/// detector samples `bt_charge_history` (Deque<10>) once every
+/// `CHARGE_SAMPLE_TICK_DIV` control ticks (loop cadence ~100 ms/tick), so
+/// 10 samples × 3 ticks × 100 ms = 3 s. A >20 °C BT drop in 3 s is the
+/// physical signature of bean charge.
 pub const CHARGE_DETECTION_WINDOW_S: u32 = 3;
+/// Bug B23: number of ~100 ms control ticks between charge-history samples.
+/// `CHARGE_DETECTION_WINDOW_S = 3` × 1 s/3 ticks → 3 s spanned by 10 samples.
+pub const CHARGE_SAMPLE_TICK_DIV: u8 = 3;
 
 /// Maximum allowed roast duration in seconds (30 minutes).
 /// If exceeded during an active roast, emergency shutdown is triggered.

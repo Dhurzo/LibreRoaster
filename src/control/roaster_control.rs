@@ -29,6 +29,14 @@ pub struct RoasterControl {
     charge_time: Option<Instant>,
     preheat_target: Option<f32>,
     bt_charge_history: heapless::Deque<f32, 10>,
+    /// Bug B23: per-tick divider that throttles `bt_charge_history` sampling
+    /// to once every `CHARGE_SAMPLE_TICK_DIV` ticks. The control loop runs at
+    /// ~100 ms/tick; the deque holds 10 samples; sampling every tick gave a
+    /// ~1 s charge-detection window (a >20 °C drop in 1 s is physically
+    /// impossible for a BT probe with 1-5 °C/s thermal inertia), so #CHARGE
+    /// was effectively indetectable. With `CHARGE_DETECTION_WINDOW_S = 3` we
+    /// sample every 300 ms → 10 samples × 300 ms = 3 s, the original intent.
+    charge_history_tick_div: u8,
     // Bug B3: latched cooling fan after a plain STOP. `stop_streaming` sets the
     // fan to 100% but does NOT arm the safety emergency latch (only
     // `emergency_shutdown` does). Without this flag, the next `update_control`
@@ -61,6 +69,7 @@ impl RoasterControl {
             charge_time: None,
             preheat_target: None,
             bt_charge_history: heapless::Deque::new(),
+            charge_history_tick_div: 0,
             cooling_active: false,
         })
     }
@@ -424,32 +433,42 @@ impl RoasterControl {
             self.cooling_active = false;
         }
 
-        // Charge detection: detect bean drop via sharp BT decline
+        // Charge detection: detect bean drop via sharp BT decline.
+        // Bug B23: throttle the history sampling to once every
+        // `CHARGE_SAMPLE_TICK_DIV` ticks so the 10-sample deque covers the
+        // full 3 s `CHARGE_DETECTION_WINDOW_S` (was ~1 s when sampled every
+        // tick, making #CHARGE effectively indetectable for any realistic BT
+        // thermal inertia).
         if self.state == RoasterState::Heating && !self.charge_detected {
-            let bt = self.status.bean_temp;
-            if bt > 50.0 {
-                if self.bt_charge_history.len() >= 10 {
-                    let _ = self.bt_charge_history.pop_front();
-                }
-                let _ = self.bt_charge_history.push_back(bt);
-                if self.bt_charge_history.len() >= 5 {
-                    let (front, _back) = self.bt_charge_history.as_slices();
-                    let first = front.first().copied().unwrap_or(bt);
-                    let drop = first - bt;
-                    if drop > CHARGE_DROP_THRESHOLD_C {
-                        self.charge_detected = true;
-                        self.charge_time = Some(current_time);
-                        self.status.charge_detected = true;
-                        info!("#CHARGE detected — BT dropped {:.1}°C", drop);
-                        let output_channel = crate::application::service_container::ServiceContainer::get_output_channel();
-                        let mut charge_msg = heapless::String::<
-                            { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
-                        >::new();
-                        let _ = core::fmt::Write::write_fmt(
-                            &mut charge_msg,
-                            core::format_args!("#CHARGE dt={:.1}", drop),
-                        );
-                        let _ = output_channel.try_send(charge_msg);
+            self.charge_history_tick_div = self.charge_history_tick_div.saturating_add(1);
+            if self.charge_history_tick_div >= CHARGE_SAMPLE_TICK_DIV {
+                self.charge_history_tick_div = 0;
+                let bt = self.status.bean_temp;
+                if bt > 50.0 {
+                    if self.bt_charge_history.len() >= 10 {
+                        let _ = self.bt_charge_history.pop_front();
+                    }
+                    let _ = self.bt_charge_history.push_back(bt);
+                    if self.bt_charge_history.len() >= 5 {
+                        let (front, _back) = self.bt_charge_history.as_slices();
+                        let first = front.first().copied().unwrap_or(bt);
+                        let drop = first - bt;
+                        if drop > CHARGE_DROP_THRESHOLD_C {
+                            self.charge_detected = true;
+                            self.charge_time = Some(current_time);
+                            self.status.charge_detected = true;
+                            info!("#CHARGE detected — BT dropped {:.1}°C", drop);
+                            let output_channel =
+                                crate::application::service_container::ServiceContainer::get_output_channel();
+                            let mut charge_msg = heapless::String::<
+                                { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
+                            >::new();
+                            let _ = core::fmt::Write::write_fmt(
+                                &mut charge_msg,
+                                core::format_args!("#CHARGE dt={:.1}", drop),
+                            );
+                            let _ = output_channel.try_send(charge_msg);
+                        }
                     }
                 }
             }
@@ -957,17 +976,29 @@ impl RoasterControl {
 
     fn handle_set_profile(&mut self) -> Result<(), RoasterError> {
         let taken = crate::input::parser::take_profile();
-        if let Some(profile) = taken {
-            for sp in &profile.setpoints {
-                if !crate::config::constants::is_valid_target_temp(sp.temperature) {
+        if let Some(mut profile) = taken {
+            // Bug B25: PROFILE setpoints arrive in the host's display units
+            // (same convention as SetTargetTemp / Preheat, fixed by "Bug #5").
+            // The previous code validated the raw value as °C directly: a
+            // °F user sending `60,300` meaning 300 °F (≈149 °C) had it
+            // stored as a 300 °C target — the same over-temperature safety
+            // bug class that "Bug #5" closed, on the parallel PROFILE path.
+            // Convert each setpoint to °C before validating and storing.
+            for sp in profile.setpoints.iter_mut() {
+                let converted = self
+                    .status
+                    .temperature_settings
+                    .convert_from_display(sp.temperature);
+                if !crate::config::constants::is_valid_target_temp(converted) {
                     warn!(
-                        "Profile rejected: setpoint {:.1}°C at {}s outside valid range (50–300°C)",
-                        sp.temperature, sp.time_secs,
+                        "Profile rejected: setpoint {:.1} (raw) → {:.1}°C at {}s outside valid range (50–300°C)",
+                        sp.temperature, converted, sp.time_secs,
                     );
                     return Err(RoasterError::InvalidState {
                         source: Some("profile_temp_out_of_range"),
                     });
                 }
+                sp.temperature = converted;
             }
             let count = profile.setpoints.len();
             self.active_profile = Some(profile);
@@ -1087,13 +1118,19 @@ impl RoasterControl {
     }
 
     /// Send OT2-clamped notification through the output channel so Artisan
-    /// is aware the heater was cut due to out-of-range fan values.
+    /// is aware the fan value was clamped. Per Spec F4.8 an out-of-range OT2
+    /// clamps the fan value to [0,100] but must NOT change the heater state
+    /// or affect PID status — the previous `heater_cut` wording claimed the
+    /// heater was cut when it was not, the dangerous direction of the error
+    /// (an operator/automation that reads `heater_cut` would assume the
+    /// heater is off while it is still energised). Bug B24: report the
+    /// actual semantics — fan clamped, heater unchanged.
     fn send_ot2_clamped_notification(&self, fan_value: u8) {
         use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
         let mut msg = heapless::String::<{ TRACE_EVENT_MAX_LEN }>::new();
         let _ = core::fmt::Write::write_fmt(
             &mut msg,
-            core::format_args!("ERR OT2_CLAMPED heater_cut fan={}", fan_value),
+            core::format_args!("ERR OT2_CLAMPED fan={} heater_unchanged", fan_value),
         );
         let _ = crate::application::service_container::ServiceContainer::get_output_channel()
             .try_send(msg);

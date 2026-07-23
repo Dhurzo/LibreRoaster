@@ -230,7 +230,26 @@ impl SsrControlBase {
                 Ok(is_detected) => {
                     let heat_detected = is_detected;
 
-                    if current_duty > 0 && !heat_detected {
+                    // Bug B22: with the SSR driven by a 5 Hz LEDC PWM (200 ms
+                    // period) and `periodic_check` sampling once per ~100 ms
+                    // control-loop tick, there are exactly 2 samples per PWM
+                    // period in slowly drifting phase alignments. For duty
+                    // <50 % the ON window is shorter than the sampling
+                    // interval, so phase alignments exist where BOTH samples
+                    // of a period land in the OFF window even though the SSR
+                    // is functioning correctly. The previous `current_duty > 0`
+                    // gate counted those legitimate low-power ticks as
+                    // mismatches, reaching `HEAT_MISMATCH_MAX = 5` in ≤500 ms
+                    // and latching `hardware_status = Error` mid-roast during
+                    // normal low-power operation. Only declare a mismatch when
+                    // the ON window is observably wide at this cadence
+                    // (≥50 % duty = one full sample interval of ON per
+                    // period), so the cross-check cannot alias with the PWM.
+                    let min_observable_ticks =
+                        (1u32 << crate::config::constants::SSR_PWM_RESOLUTION) / 2;
+                    let duty_observable = (current_duty as u32) >= min_observable_ticks;
+
+                    if duty_observable && !heat_detected {
                         self.heat_mismatch_count = self.heat_mismatch_count.saturating_add(1);
                         warn!(
                             "Heat detection mismatch: heater ON (duty {}) but no heat detected (mismatch count: {})",
