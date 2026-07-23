@@ -234,9 +234,18 @@ fn report_stage_with_failure(
 
 async fn drain_commands(tick_state: &mut TickState) {
     let cmd_channel = ServiceContainer::get_artisan_channel();
-    // Drain all pending commands from the channel. Commands arriving between ticks
-    // are queued up to capacity. The fallback pattern in UART/USB task code retries
-    // via the direct artisan_channel when the main queue is full, preventing silent drops.
+    // Bug B26: the previous comment claimed a fallback pattern that does NOT
+    // exist — when the artisan channel is full, `try_send` in
+    // `transport_tasks::handle_parsed_command` returns Err, and the only
+    // surfacing was `send_channel_full_error` emitting
+    // `ERR channel_full command_dropped` to the host. The previous wording
+    // ("fallback pattern... prevents silent drops") implied an internal
+    // retry path that we never implemented. The host is now told explicitly
+    // when a command is dropped due to backpressure, which is the contract
+    // Artisan uses to retry. Further hardening (priority eviction of older
+    // commands when STOP/EmergencyStop arrives) is documented but out of
+    // scope for this audit — touch only when adding pre-emptive priority
+    // support.
     let mut cmds_this_tick: usize = 0;
     while let Ok(traced_command) = cmd_channel.try_receive() {
         cmds_this_tick = cmds_this_tick.saturating_add(1);
