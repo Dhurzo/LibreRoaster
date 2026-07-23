@@ -46,6 +46,16 @@ pub struct RoasterControl {
     // starts (handle_start_roast), on explicit recovery (clear_emergency_explicit),
     // or once the bean mass cools below the safe-to-handle threshold.
     cooling_active: bool,
+    /// Bug B13: queue of `#DUMP` rows waiting to be sent. The async emitter
+    /// in `src/application/tasks.rs::run_control_loop` drains one row per
+    /// tick via `.await output_channel.send(...)`. The sync `handle_dump_log`
+    /// only fills this queue because `with_roaster_async`'s closure cannot
+    /// `.await` — sending per-row inside the closure dropped rows whenever
+    /// the 16-slot output channel filled faster than the executor drained it,
+    /// so the dump's first-cutoff rows were silently discarded (asado de 15
+    /// min perdía ≥90 % del registro). Cap 64 rows × 256 bytes = ≥16 KiB,
+    /// comfortably larger than the 8 KiB `DUMP_BUFFER_SIZE` payload.
+    dump_pending: heapless::Deque<heapless::String<256>, 64>,
 }
 
 impl RoasterControl {
@@ -71,6 +81,7 @@ impl RoasterControl {
             bt_charge_history: heapless::Deque::new(),
             charge_history_tick_div: 0,
             cooling_active: false,
+            dump_pending: heapless::Deque::new(),
         })
     }
 
@@ -1009,19 +1020,45 @@ impl RoasterControl {
         Ok(())
     }
 
+    /// Bug B13: drain one queued `#DUMP` row for the async emitter to send.
+    /// Called from `ServiceContainer::with_roaster_async` (sync closure),
+    /// then the caller `.await`s `output_channel.send(row)` outside the lock.
+    pub fn take_dump_row(&mut self) -> Option<heapless::String<256>> {
+        self.dump_pending.pop_front()
+    }
+
     fn handle_dump_log(&mut self) -> Result<(), RoasterError> {
-        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+        // Bug B13: previously this method filled the output channel via
+        // `try_send` from inside a sync closure — by the time the executor
+        // could drain the channel, the 16-slot cap had filled and every
+        // subsequent `try_send` was a silent `let _ = drop`. With a 256-row
+        // CSV dump the first ~16 rows landed and the rest vanished, leaving
+        // the user with the dump header and pre-charge samples only. Now we
+        // queue each line into `RoasterControl.dump_pending` (cap 64 × 256)
+        // and let the async emitter pop one row per tick.
+        //
+        // Bug B13 + B17: `start_offset` is now part of the logger state too
+        // (B16) but for this method the dump is computed from the
+        // `RoastLogger.time_s` column, so this side just enqueues.
         let dump = crate::logging::roast_logger::dump();
-        let output_channel =
-            crate::application::service_container::ServiceContainer::get_output_channel();
         for line in dump.split('\n') {
-            if !line.is_empty() {
-                if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(line) {
-                    let _ = output_channel.try_send(msg);
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(msg) = heapless::String::<256>::try_from(line) {
+                // Capacity 64 ≥ 30–100 expected dump rows; if the deque is
+                // full (extreme dumps or a slow emitter), drop the row
+                // entirely rather than block — B13's spirit is to surface
+                // the early rows, which are already enqueued.
+                if self.dump_pending.push_back(msg).is_err() {
+                    break;
                 }
             }
         }
-        info!("Roast log dump requested");
+        info!(
+            "Roast log dump requested ({} rows queued)",
+            self.dump_pending.len()
+        );
         Ok(())
     }
 

@@ -101,6 +101,15 @@ struct TickState {
     /// How many control-loop ticks between telemetry emissions.
     /// 1000 ms / 100 ms = 10.
     telemetry_emit_every: u8,
+    /// Bug B16: the moment a roast started, captured on the rising edge of
+    /// continuous telemetry (the point `is_continuous_now` toggles true).
+    /// `tick_start.elapsed()` (the previous code) was always ~0 because the
+    /// telemetry block ran microseconds after `tick_start` was sampled at the
+    /// top of the loop, so the roast-logger's `time_s` column was stuck at 0
+    /// for the whole roast. The roast logger itself (RoastLogger.start_roast)
+    /// also stored its `_now` argument into `start_offset` and exposes an
+    /// `elapsed_secs_at(now) -> u32` helper.
+    roast_start: Option<Instant>,
 }
 
 impl TickState {
@@ -119,6 +128,20 @@ impl TickState {
             telemetry_tick_counter: 0,
             telemetry_emit_every: (crate::config::constants::DEFAULT_OUTPUT_INTERVAL_MS / 100)
                 as u8,
+            // Bug B16: roast start captured on the rising edge of continuous
+            // telemetry (first `is_continuous_now == true && was_continuous
+            // == false` iteration). Initialised None until the first roast.
+            roast_start: None,
+        }
+    }
+
+    /// Bug B16: capture the roast start instant on the rising edge of
+    /// continuous telemetry, when ROAST start has been signalled. Idempotent:
+    /// subsequent calls (while `roast_start` is already `Some`) are no-ops so
+    /// `start_roast` can be called multiple times without churning the offset.
+    fn mark_continuous_started(&mut self, now: Instant) {
+        if self.roast_start.is_none() {
+            self.roast_start = Some(now);
         }
     }
 }
@@ -705,6 +728,17 @@ async fn emit_telemetry_stage(
     if is_continuous_now != tick_state.was_continuous {
         tick_state.formatter.reset();
         tick_state.was_continuous = is_continuous_now;
+        if is_continuous_now {
+            // Bug B16: the rising edge of continuous telemetry is the
+            // canonical "roast started" moment from this telemetry emitter's
+            // point of view. `RoastLogger` stores its OWN start_offset via
+            // `crate::logging::roast_logger::start_roast`, but the ring buffer
+            // is also driven from this task — so we need a per-task offset
+            // too. `mark_continuous_started` is idempotent (subsequent rising
+            // edges are ignored) so a fallback read of an existing log can
+            // happen without resetting elapsed_secs.
+            tick_state.mark_continuous_started(tick_start);
+        }
     }
 
     // Bug #7 fix: respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for telemetry.
@@ -716,20 +750,33 @@ async fn emit_telemetry_stage(
         tick_state.telemetry_tick_counter = 0;
     }
 
-    // Feed ring-buffer roast logger (runs every tick, independent of telemetry rate)
-    if let Some(status) = status_for_output {
-        crate::logging::roast_logger::log_sample(crate::logging::roast_logger::LogSampleData {
-            elapsed_secs: tick_start.elapsed().as_secs() as u32,
-            bt: status.bean_temp,
-            et: status.env_temp,
-            heater: status.ssr_output,
-            fan: status.fan_output,
-            target: status.target_temp,
-            ror: status.derivative_rate,
-        });
-    }
-
+    // Bug B17: feed the ring-buffer roast logger ONLY on the 1 Hz telemetry
+    // tick. The previous code ran `log_sample` on every ~100 ms control tick
+    // (regardless of `should_emit`), so 256 samples covered ~25.6 s instead
+    // of the intended ~256 s — a roast that survived a Disconnect/#DUMP
+    // recovery lost the most recent data because the ring had already cycled.
     if should_emit {
+        if let Some(status) = status_for_output {
+            // Bug B16: the ring's `time_s` column must be elapsed seconds
+            // since the roast started, not microseconds since this tick
+            // began. `tick_start.elapsed()` was always 0 here. `roast_start`
+            // is captured on the continuous-telemetry rising edge (see the
+            // `mark_continuous_started` call above).
+            let roast_elapsed_sec = tick_state
+                .roast_start
+                .map(|s| tick_start.duration_since(s).as_secs() as u32)
+                .unwrap_or(0);
+            crate::logging::roast_logger::log_sample(crate::logging::roast_logger::LogSampleData {
+                elapsed_secs: roast_elapsed_sec,
+                bt: status.bean_temp,
+                et: status.env_temp,
+                heater: status.ssr_output,
+                fan: status.fan_output,
+                target: status.target_temp,
+                ror: status.derivative_rate,
+            });
+        }
+
         if let Some(status) = status_for_output {
             let line = tick_state.formatter.format(&status);
 
@@ -743,6 +790,24 @@ async fn emit_telemetry_stage(
                 Err(e) => {
                     debug!("Formatter error: {:?}", e);
                 }
+            }
+        }
+
+        // Bug B13: drain one pending `#DUMP` row per tick. The sync
+        // `handle_dump_log` could not `.await` the output channel; rows are
+        // queued on `RoasterControl.dump_pending` and we pop one outside the
+        // lock here. `with_roaster_async` itself is `.await`-able, but the
+        // inner closure must stay sync — we only `.is_some()` so a
+        // no-dump-pending tick is a cheap lock. We do `try_send` here (not
+        // `send().await`) so the per-row dispatcher cost stays bounded by
+        // the channel cap (16). The previous bug-free path used `try_send`
+        // too, but the producer was inside the sync closure; here the lock
+        // is released first so no tick is blocked.
+        if let Ok(next_dump_row) =
+            ServiceContainer::with_roaster_async(|roaster| roaster.take_dump_row()).await
+        {
+            if let Some(row) = next_dump_row {
+                let _ = output_channel.try_send(row);
             }
         }
     }
