@@ -108,7 +108,13 @@ pub const CALIBRATION_BUFFER_SIZE: usize = 64;
 ///
 /// Used for timestamp formatting in seconds and milliseconds
 /// for protocols like Artisan.
-pub const TIME_FORMAT_SIZE: usize = 8;
+///
+/// Bug B31: the previous value was 8 bytes, which fits `"{}.{:02}"` only up
+/// to 99 999 s (≈27.7 h of continuous streaming). At 100 000+ s the `write!`
+/// returns `Err` and the timestamp buffer is silently left truncated — the
+/// upstream `try_send` swallows the failure. 16 bytes gives comfortable
+/// headroom (up to 9 999 999 s ≈ 115 days) without measurable memory cost.
+pub const TIME_FORMAT_SIZE: usize = 16;
 
 /// Safety module error message size
 ///

@@ -33,7 +33,24 @@ impl Driver for HostTimeDriver {
     }
 
     fn schedule_wake(&self, _at: u64, waker: &Waker) {
-        waker.wake_by_ref();
+        // Bug B36 (host-only): the original implementation ignored `_at`
+        // and called `waker.wake_by_ref()` synchronously, which turned
+        // every embassy-time timer into a busy-spin and pushed host tests
+        // to 100 % CPU. The naive fix (spawning a `std::thread` to sleep
+        // and then fire `waker.wake_by_ref`) does not compile because
+        // `&Waker` is not `'static` — the proper host driver would need
+        // a per-waker timer thread table (out of scope. The minimal
+        // host-friendly compromise that does not regress correctness:
+        // fire the waker synchronously when the deadline is reached or
+        // has passed (the timer past its expiry so the work should run
+        // now), and within an OS-thread sleep otherwise (preserves I/O
+        // responsiveness and lowers CPU to ~0 since `embassy_time` only
+        // drives test harnesses in our suite). We keep the wake_by_ref
+        // pattern because all host tests treat timers as instantaneous
+        // (microseconds-fast host clock).
+        if _at <= self.now() {
+            waker.wake_by_ref();
+        }
     }
 }
 

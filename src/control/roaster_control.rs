@@ -190,6 +190,15 @@ impl RoasterControl {
             self.status.fault_condition = outcome.emergency_active;
 
             if outcome.emergency_active {
+                // Bug B34: `RoasterCommand::EmergencyStop` (the safety-policy
+                // branch) used to set `fault_condition = true` but leave
+                // `self.state` untouched — so the artisan protocol showed
+                // Heating/Stable while the safety latch was armed. Mirror the
+                // state transition that `emergency_shutdown()` performs
+                // (RoasterState::Error + `apply_guarded_heater` zeroing the
+                // SSR) so observers see a consistent `state = Error`.
+                self.state = crate::config::constants::RoasterState::Error;
+                self.status.state = self.state;
                 self.apply_safety_outcome(&outcome, current_time)?;
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("emergency_shutdown"),
