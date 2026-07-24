@@ -308,10 +308,6 @@ impl RoasterControl {
         Ok(())
     }
 
-    fn is_streaming(&self) -> bool {
-        self.dispatch.is_streaming(&self.status)
-    }
-
     fn stop_streaming(&mut self) -> Result<(), RoasterError> {
         self.dispatch.stop_streaming(&mut self.status);
         // Bug V2-1 (B34 consistency): do NOT repaint the roaster state to
@@ -418,11 +414,19 @@ impl RoasterControl {
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
 
         // C5: Comms idle timeout — no command from Artisan for > COMMS_IDLE_TIMEOUT_MS.
-        // Applies during active roast states (Preheating/Heating/Stable), not Idle.
-        if matches!(
+        // Bug V2-16c: gate by *physical condition* (heater energized OR an active
+        // roast/preheat state), not by roast state alone. In pure Artisan-manual
+        // mode (OT1/OT2 from sliders, no START) the state stays Idle, so the
+        // previous state-only gate left a USB disconnect with the heater at 80 %
+        // completely unprotected. We add `ssr_output > 0` so manual heater
+        // commands also cover this backstop. Preheating/Heating/Stable stay
+        // covered (the OR state arm already matched them).
+        let heater_energized = self.status.ssr_output > 0.0;
+        let roast_active = matches!(
             self.state,
             RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
-        ) {
+        );
+        if heater_energized || roast_active {
             let idle_ms = current_time
                 .as_millis()
                 .saturating_sub(self.status.last_command_received_at_ms);
@@ -436,11 +440,10 @@ impl RoasterControl {
             }
         }
 
-        // Maximum roast time safety backstop
-        if matches!(
-            self.state,
-            RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
-        ) {
+        // Maximum roast time safety backstop. Bug V2-16c: same physical gate as
+        // comms-idle — protect any roasting session with the heater energized,
+        // not only the named roast states.
+        if heater_energized || roast_active {
             if let Some(start) = self.profile_start_time {
                 let elapsed_secs = current_time.duration_since(start).as_secs() as u32;
                 if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
@@ -784,15 +787,21 @@ impl RoasterControl {
 
     fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
-        // Bug B14: `is_streaming()` includes `status.pid_enabled`, which
-        // `PREHEAT` enables. So a START after PREHEAT was silently
-        // swallowed as "ignored - streaming already active" — the drum sat
-        // at the preheat target forever, `profile_start_time` never got
-        // fixed (so MAX_ROAST_TIME_SECS was inactive), charge detection
-        // was inert (requires `state == Heating`), and continuous telemetry
-        // was disabled. Explicitly allow the Preheating → Heating handoff.
-        if self.is_streaming() && self.state != RoasterState::Preheating {
-            info!("Artisan+ START ignored - streaming already active");
+        // Bug V2-4 (B14 residual): the original `is_streaming() && state !=
+        // Preheating` gate swallowed START whenever `PID;SV` or `OT1` had been
+        // issued in Idle — both make `is_streaming()` true via
+        // `status.pid_enabled` / `status.artisan_control` WITHOUT leaving the
+        // Idle state. Then `profile_start_time` stayed unset, so the temporal
+        // backstops (comms-idle, MAX_ROAST_TIME_SECS — V2-16c) and charge
+        // detection were all inert for that roast. Gate by *state* instead: a
+        // START during an actually-active roast (Heating/Stable) is "ignored";
+        // every other state (Idle-with-PID, Idle-manual, Preheating, Error
+        // recovery via V2-1) takes the full handoff.
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            info!(
+                "Artisan+ START ignored - roast already active (state={:?})",
+                self.state
+            );
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
             // PREHEAT → START handoff: this is the bug-B14 path. If we were
@@ -1789,6 +1798,141 @@ mod tests {
             ctrl.get_state(),
             RoasterState::Error,
             "Preheating must not flip to Error from a RoR transient"
+        );
+    }
+
+    // ── V2-4: START swallowed after PID;SV / OT1 in Idle ───────────
+
+    #[test]
+    fn start_after_pid_sv_in_idle_starts_roast() {
+        // Bug V2-4: `PID;SV` enables PID with state=Idle, which made
+        // `is_streaming()` true. The old gate swallowed START as "ignored",
+        // keeping `profile_start_time` unset so the temporal backstops stayed
+        // inactive. The state-based gate (V2-4/V2-16c) must take the full
+        // handoff when the state is Idle.
+        let mut ctrl = make_control();
+
+        // Pre-condition: PID enabled from Idle, state remains Idle.
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        assert!(r.is_ok());
+        assert!(ctrl.get_status().pid_enabled);
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+
+        // START must now perform the handoff, not be ignored.
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        // `enable_pid_control` is called from the START handoff, so PID is
+        // the active mode (pid_enabled=true, artisan_control=false by design
+        // — see `dispatch.enable_pid` setting it false).
+        assert!(
+            ctrl.get_status().pid_enabled,
+            "START must enable PID control"
+        );
+        assert!(
+            ctrl.profile_start_time.is_some(),
+            "START must fix profile_start_time so MAX_ROAST_TIME/comms-idle activate"
+        );
+    }
+
+    #[test]
+    fn start_after_ot1_in_idle_starts_roast() {
+        // Bug V2-4: `OT1` enables `artisan_control` in Idle (manual heater),
+        // which also counted as "streaming" under the old gate. START must take
+        // the full handoff.
+        let mut ctrl = make_control();
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetHeater(40));
+        assert!(r.is_ok());
+        assert!(ctrl.get_status().artisan_control);
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        assert!(ctrl.profile_start_time.is_some());
+    }
+
+    #[test]
+    fn start_during_active_roast_is_ignored() {
+        // Regression guard for V2-4: the new state-based gate must still
+        // ignore a second START that arrives during an active roast.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        let first_start = ctrl.profile_start_time;
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        // START ignored keeps the ORIGINAL start time — a second START must
+        // not silently restart the roast clock.
+        assert_eq!(ctrl.profile_start_time, first_start);
+    }
+
+    // ── V2-16c: temporal backstops protect manual mode too ──────────
+
+    #[test]
+    fn comms_idle_protects_manual_mode_when_heater_energized() {
+        // Bug V2-16c: in pure Artisan-manual mode (OT1 from a slider, no
+        // START) the state stays Idle, so the previous state-only gate left a
+        // USB disconnect with the heater at 80 % completely unprotected. The
+        // physical gate (heater_energized || roast_active) must trigger the
+        // comms-idle emergency even from Idle.
+        let mut ctrl = make_control();
+
+        // Energize the heater via OT1 in Idle. After the guarded heater write
+        // `status.ssr_output` reflects the commanded percentage.
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+        assert!(r.is_ok());
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: heater must actually be energized"
+        );
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+
+        // Backdate last_command_received_at_ms so the idle window is exceeded.
+        // Use a large fixed `now` (NOT `Instant::now()`): the host driver's
+        // baseline starts at process boot, so early tests see `now.as_millis()`
+        // well below COMMS_IDLE_TIMEOUT_MS (15 s), which would make
+        // `saturating_sub` clamp to zero and the comms-idle check never trip.
+        let now = Instant::from_millis(60_000);
+        let backdated = Instant::from_millis(
+            60_000u64.saturating_sub(crate::config::constants::COMMS_IDLE_TIMEOUT_MS + 1000),
+        )
+        .as_millis();
+        ctrl.status_mut().last_command_received_at_ms = backdated;
+
+        let out = ctrl.update_control(now);
+        // `emergency_shutdown` returns `Ok(())`; `update_control` propagates
+        // it after its `emergency_shutdown?` call as `Ok(0.0)`. The assertion
+        // is on the side-effect (latch armed), not the return.
+        let _ = out;
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "Comms-idle must trigger an emergency when the heater is energized in Idle"
+        );
+    }
+
+    #[test]
+    fn comms_idle_does_not_trigger_when_idle_and_heater_off() {
+        // Regression guard: the physical gate must NOT over-trigger and
+        // spuriously shut down an idle, cold roaster that has simply been
+        // quiet for a while (the common pre-roast waiting state).
+        let mut ctrl = make_control();
+        let now = Instant::from_millis(60_000);
+        let backdated = Instant::from_millis(
+            60_000u64.saturating_sub(crate::config::constants::COMMS_IDLE_TIMEOUT_MS + 5000),
+        )
+        .as_millis();
+        ctrl.status_mut().last_command_received_at_ms = backdated;
+        ctrl.status_mut().ssr_output = 0.0;
+
+        let _ = ctrl.update_control(now);
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "Idle + heater off must NOT trigger comms-idle, even after a long quiet period"
         );
     }
 }
