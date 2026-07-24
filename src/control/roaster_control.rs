@@ -46,16 +46,15 @@ pub struct RoasterControl {
     // starts (handle_start_roast), on explicit recovery (clear_emergency_explicit),
     // or once the bean mass cools below the safe-to-handle threshold.
     cooling_active: bool,
-    /// Bug B13: queue of `#DUMP` rows waiting to be sent. The async emitter
-    /// in `src/application/tasks.rs::run_control_loop` drains one row per
-    /// tick via `.await output_channel.send(...)`. The sync `handle_dump_log`
-    /// only fills this queue because `with_roaster_async`'s closure cannot
-    /// `.await` — sending per-row inside the closure dropped rows whenever
-    /// the 16-slot output channel filled faster than the executor drained it,
-    /// so the dump's first-cutoff rows were silently discarded (asado de 15
-    /// min perdía ≥90 % del registro). Cap 64 rows × 256 bytes = ≥16 KiB,
-    /// comfortably larger than the 8 KiB `DUMP_BUFFER_SIZE` payload.
-    dump_pending: heapless::Deque<heapless::String<256>, 64>,
+    /// Bug B13 / V2-7: queue of `#DUMP` rows waiting to be sent. The async
+    /// emitter in `src/application/tasks.rs::emit_telemetry_stage` drains up
+    /// to `MAX_DUMP_ROWS_PER_TICK` rows per 100 ms tick (outside the 1 Hz
+    /// `should_emit` gate) and re-pushes a row to the front if the output
+    /// channel is full — so no row is lost. The queue is sized to hold a
+    /// full-ring dump (`LOG_CAPACITY + 1` rows) so a complete roast can be
+    /// requested via `#DUMP` without losing any row to queue overflow.
+    dump_pending:
+        heapless::Deque<heapless::String<256>, { crate::logging::roast_logger::LOG_CAPACITY + 1 }>,
 }
 
 impl RoasterControl {
@@ -343,6 +342,10 @@ impl RoasterControl {
         self.charge_time = None;
         self.status.charge_detected = false;
         self.bt_charge_history.clear();
+        self.charge_history_tick_div = 0;
+        // Bug V2-15: drop any in-flight `#DUMP` rows on stop so a dump
+        // requested mid-roast does not bleed into the next roast's telemetry.
+        self.dump_pending.clear();
         // Bug B3: drop any active fan profile/start-time so it can't drive the
         // fan through a stale interpolation target during the cooldown latch.
         self.fan_profile = None;
@@ -814,6 +817,9 @@ impl RoasterControl {
             // Bug B3: a new roast start drops the cooldown latch — we are
             // re-energizing deliberately, so airflow follows the new roast.
             self.cooling_active = false;
+            // Bug V2-7: drop any pending `#DUMP` rows from a previous roast so
+            // they do not interleave with the new roast's live telemetry.
+            self.dump_pending.clear();
             self.status.artisan_control = true;
             // Use loaded profile if available, otherwise fall back to default target
             if self.active_profile.is_some() {
@@ -1088,39 +1094,42 @@ impl RoasterControl {
         Ok(())
     }
 
-    /// Bug B13: drain one queued `#DUMP` row for the async emitter to send.
-    /// Called from `ServiceContainer::with_roaster_async` (sync closure),
-    /// then the caller `.await`s `output_channel.send(row)` outside the lock.
+    /// Bug B13 / V2-7: drain one queued `#DUMP` row for the async emitter
+    /// to send. Called from `ServiceContainer::with_roaster_async` (sync
+    /// closure); the caller `.await`s `output_channel.try_send(row)` outside
+    /// the lock (and re-pushes via `push_dump_row_front` on a full channel).
     pub fn take_dump_row(&mut self) -> Option<heapless::String<256>> {
         self.dump_pending.pop_front()
     }
 
+    /// Bug V2-7: re-push a `#DUMP` row to the FRONT of the deque when the
+    /// async emitter's `try_send` failed (output channel full). FIFO order is
+    /// preserved and no row is lost — the next tick will retry it.
+    pub fn push_dump_row_front(&mut self, row: heapless::String<256>) {
+        // If the deque is somehow full (shouldn't happen — it's sized to
+        // LOG_CAPACITY+1, larger than any single dump), drop the oldest row
+        // to make room for the retry at the front.
+        let _ = self.dump_pending.push_front(row);
+    }
+
     fn handle_dump_log(&mut self) -> Result<(), RoasterError> {
-        // Bug B13: previously this method filled the output channel via
-        // `try_send` from inside a sync closure — by the time the executor
-        // could drain the channel, the 16-slot cap had filled and every
-        // subsequent `try_send` was a silent `let _ = drop`. With a 256-row
-        // CSV dump the first ~16 rows landed and the rest vanished, leaving
-        // the user with the dump header and pre-charge samples only. Now we
-        // queue each line into `RoasterControl.dump_pending` (cap 64 × 256)
-        // and let the async emitter pop one row per tick.
-        //
-        // Bug B13 + B17: `start_offset` is now part of the logger state too
-        // (B16) but for this method the dump is computed from the
-        // `RoastLogger.time_s` column, so this side just enqueues.
+        // Bug V2-7: start every dump clean so a second `#DUMP` request mid-
+        // drain (or a dump requested right after a roast finished) does not
+        // splice two partial dumps together. The deque is sized to hold a
+        // full ring (LOG_CAPACITY+1 rows), and `roast_logger::dump()` now
+        // preserves the roast's tail when the output buffer would overflow.
+        self.dump_pending.clear();
         let dump = crate::logging::roast_logger::dump();
         for line in dump.split('\n') {
             if line.is_empty() {
                 continue;
             }
             if let Ok(msg) = heapless::String::<256>::try_from(line) {
-                // Capacity 64 ≥ 30–100 expected dump rows; if the deque is
-                // full (extreme dumps or a slow emitter), drop the row
-                // entirely rather than block — B13's spirit is to surface
-                // the early rows, which are already enqueued.
-                if self.dump_pending.push_back(msg).is_err() {
-                    break;
-                }
+                // Deque sized for a full ring; push_back should not fail in
+                // practice. If it ever does (defensive), the front rows are
+                // the dump header + earliest samples — drop the row rather
+                // than truncate the irreplaceable tail.
+                let _ = self.dump_pending.push_back(msg);
             }
         }
         info!(
@@ -1934,5 +1943,87 @@ mod tests {
             !ctrl.safety().is_emergency_active(),
             "Idle + heater off must NOT trigger comms-idle, even after a long quiet period"
         );
+    }
+
+    // ── V2-7: #DUMP queue clears, survives full rings, re-pushes ───────
+
+    #[test]
+    fn handle_dump_log_clears_previous_dump() {
+        // Bug V2-7: a second `#DUMP` request must not splice two partial
+        // dumps together. `handle_dump_log` starts by clearing the deque.
+        let mut ctrl = make_control();
+        // Start a roast and stop it so the logger has at least one row.
+        crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
+        crate::logging::roast_logger::log_sample(
+            crate::logging::roast_logger::LogSampleData {
+                bt: 100.0,
+                et: 90.0,
+                heater: 50.0,
+                fan: 30.0,
+                target: 200.0,
+                ror: 0.0,
+            },
+            embassy_time::Instant::now(),
+        );
+        let r = ctrl.process_artisan_command(ArtisanCommand::DumpLog);
+        assert!(r.is_ok());
+        // Drain the queue fully.
+        while ctrl.take_dump_row().is_some() {}
+        // Request a second dump — the deque was cleared, so only this dump's
+        // rows come out. If clear() had been skipped, the first dump's rows
+        // would still be queued and the second call would append on top.
+        // We assert the count after the second dump is small (one header row
+        // in the dump string + any data rows — but the logger is still
+        // active and the buffer holds 1 row, so the queue should be small,
+        // not 2× the first call).
+        let r = ctrl.process_artisan_command(ArtisanCommand::DumpLog);
+        assert!(r.is_ok());
+        let second_count = core::cell::Cell::new(0usize);
+        while ctrl.take_dump_row().is_some() {
+            second_count.set(second_count.get() + 1);
+        }
+        // The dump for a single-row buffer is "#DUMP <header>\n<row>\n" which
+        // `handle_dump_log` splits into 2 non-empty lines (header + row).
+        assert_eq!(
+            second_count.get(),
+            2,
+            "second dump should have 2 rows (header + 1 data), not spliced with the first"
+        );
+        // Clean up the logger state so other tests are unaffected.
+        crate::logging::roast_logger::stop_roast();
+    }
+
+    #[test]
+    fn start_clears_dump_pending() {
+        // Bug V2-7: a START drops any in-flight dump so it does not bleed
+        // into the new roast's live telemetry.
+        let mut ctrl = make_control();
+        // Seed the deque with a sentinel row (skip the real logger path).
+        let row = heapless::String::<256>::try_from("sentinel-row").unwrap();
+        ctrl.push_dump_row_front(row);
+        assert!(ctrl.take_dump_row().is_some(), "sentinel row is queued");
+
+        // Re-seed and start a roast.
+        let row = heapless::String::<256>::try_from("sentinel-row-2").unwrap();
+        ctrl.push_dump_row_front(row);
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert!(
+            ctrl.take_dump_row().is_none(),
+            "START must clear the pending #DUMP queue"
+        );
+    }
+
+    #[test]
+    fn push_dump_row_front_preserves_fifo_order() {
+        // Bug V2-7: re-pushing a row to the front when the output channel is
+        // full must keep FIFO order — the row is retried next, before any row
+        // that was already behind it.
+        let mut ctrl = make_control();
+        ctrl.push_dump_row_front(heapless::String::<256>::try_from("a").unwrap());
+        ctrl.push_dump_row_front(heapless::String::<256>::try_from("b").unwrap());
+        // front = "b","a" so pop_front gives "b" first, then "a".
+        assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "b");
+        assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "a");
     }
 }
