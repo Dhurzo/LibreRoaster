@@ -391,6 +391,17 @@ impl MutableArtisanFormatter {
     }
 
     fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
+        // Bug V2-12: a single non-finite BT (sensor fault → NaN flowing into
+        // `derivative_rate` is the more common upstream path, but this method
+        // is also called with the raw BT for the formatter) poisons the IIR
+        // forever: `last_filtered_ror = α·NaN + (1-α)·prev = NaN`, and every
+        // subsequent clean sample still mixes with `NaN`. Return the last
+        // filtered RoR and DO NOT advance history with garbage — the next
+        // finite sample finds a clean window so the IIR recovers immediately.
+        if !current_bt.is_finite() {
+            return self.last_filtered_ror;
+        }
+
         // Bug #6: use an explicit initialisation flag instead of treating
         // `last_bt == 0.0` as the "first sample" sentinel. A legitimate BT
         // of 0 °C (cold ambient, MAX31856 fallback) no longer corrupts ROR
@@ -437,9 +448,22 @@ impl MutableArtisanFormatter {
         // RoR). The next clean sample finds a window that has moved on
         // rather than one frozen at the start of the roast.
         let is_outlier = {
+            // Bug V2-11 (B12 residual): the previous code applied the 2σ test
+            // to `front` and `back` SEPARATELY (each slice using its own
+            // mean/σ). When the deque wraps, the front slice holds only the
+            // oldest samples; on a linear ramp the current sample deviates up
+            // to ~9d from that fragment while 2σ of a 3-element slice is
+            // ~1.63d → guaranteed outlier. The simulation in the v2 report
+            // showed 70-85 % of ramp samples suppressed, so the IIR only
+            // updated ~2 of every 10 samples and the emitted RoR converged
+            // ~20-30 s late. Combine both slices into a single window (as
+            // the RoR calc a few lines below already does) so the test uses
+            // the mean/σ of the WHOLE history.
+            let mut window: heapless::Vec<f32, BT_HISTORY_SIZE> = heapless::Vec::new();
             let (front, back) = self.bt_history.as_slices();
-            ArtisanFormatter::is_temperature_outlier(current_bt, front)
-                || ArtisanFormatter::is_temperature_outlier(current_bt, back)
+            let _ = window.extend_from_slice(front);
+            let _ = window.extend_from_slice(back);
+            ArtisanFormatter::is_temperature_outlier(current_bt, &window)
         };
         self.last_bt = current_bt;
         Self::update_bt_history_with_timestamp(
@@ -1073,6 +1097,103 @@ mod tests {
         assert_eq!(
             parts[12], "-45.36",
             "Derivative must be °F/min (rate), not °F (temperature)"
+        );
+    }
+
+    // ── V2-12: calculate_ror must not be poisoned by a non-finite BT ──
+
+    #[test]
+    fn calculate_ror_nan_bt_does_not_poison_filter() {
+        // Bug V2-12: a single NaN flowing into the IIR left
+        // `last_filtered_ror = α·NaN + (1-α)·prev = NaN` forever; every clean
+        // sample afterwards still mixed with NaN and the RoR never recovered.
+        // The fix early-returns on non-finite BT WITHOUT advancing history,
+        // so the next finite sample finds a clean window.
+        let mut fmt = MutableArtisanFormatter::new();
+
+        // Seed a history and a baseline RoR.
+        let t0 = Instant::from_millis(0);
+        let r0 = fmt.calculate_ror(100.0, t0); // init
+        assert_eq!(r0, 0.0);
+        let t1 = Instant::from_millis(1000);
+        let _ = fmt.calculate_ror(110.0, t1); // finite RoR
+        let baseline = fmt.calculate_ror(120.0, Instant::from_millis(2000));
+        // The filter is finite and non-zero after a 10 °C/s jump (α=0.25).
+        assert!(
+            baseline.is_finite(),
+            "baseline must be finite: {}",
+            baseline
+        );
+        assert!(baseline > 0.0, "baseline must be positive: {}", baseline);
+
+        // Inject a NaN — the method MUST return the last filtered RoR (which
+        // is finite) and NOT propagate NaN into the IIR state.
+        let t_nan = Instant::from_millis(3000);
+        let r_nan = fmt.calculate_ror(f32::NAN, t_nan);
+        assert!(
+            r_nan.is_finite(),
+            "NaN BT must not propagate to the emitted RoR: {}",
+            r_nan
+        );
+
+        // A subsequent finite sample recovers a finite RoR — the IIR was not
+        // poisoned by the NaN.
+        let r_after = fmt.calculate_ror(130.0, Instant::from_millis(4000));
+        assert!(
+            r_after.is_finite(),
+            "RoR after a NaN sample must be finite (IIR not poisoned): {}",
+            r_after
+        );
+        assert!(r_after > 0.0);
+    }
+
+    // ── V2-11: outlier test uses the COMBINED history window ─────────
+
+    #[test]
+    fn outlier_test_uses_combined_window_on_linear_ramp() {
+        // Bug V2-11 (B12 residual): the previous per-slice test marked
+        // 70-85 % of a linear ramp as outliers because the front slice (when
+        // the deque wrapped) held only the oldest samples — the current
+        // sample deviated up to ~9d from that fragment while 2σ of a
+        // 3-element slice was ~1.63d → guaranteed outlier. The fix combines
+        // both slices into a single window so the 2σ test uses the mean of
+        // the WHOLE history; on a linear ramp the deviation from the
+        // combined mean stays under 2σ for the bulk of the samples.
+        //
+        // A neat way to exercise this is to fill the BT_HISTORY_SIZE=5 deque
+        // (which forces a wrap, splitting front/back) and check that the
+        // LAST sample of a clean ramp is NOT classified as an outlier — the
+        // per-slice version flagged it.
+        let mut fmt = MutableArtisanFormatter::new();
+
+        // Drive a clean linear ramp 100, 102, 104, 106, 108 °C at 1 s steps.
+        // The 5th sample will evict the 1st (deque wrap → front holds oldest
+        // 4, back holds 0; the per-slice test on a single 4-element slice was
+        // actually safe). To force a true front+back split, drive 6 samples.
+        let bt_series = [100.0_f32, 102.0, 104.0, 106.0, 108.0, 110.0];
+        let mut last_ror = 0.0_f32;
+        for (i, &bt) in bt_series.iter().enumerate() {
+            let t = Instant::from_millis((i as u64) * 1000);
+            last_ror = fmt.calculate_ror(bt, t);
+            // Every sample of a clean, monotonic ramp must produce a finite
+            // RoR. The IIR must update on every one of them (the bug
+            // suppressed ~70-85 % of them, so `last_filtered_ror` would have
+            // frozen at the first or second sample's value).
+            assert!(
+                last_ror.is_finite(),
+                "RoR at sample {} must be finite: {}",
+                i,
+                last_ror
+            );
+        }
+        // A 2 °C/s ramp filtered with α=0.25 from 0 must end meaningfully
+        // above zero (the per-slice bug would have returned the same frozen
+        // value for all late samples; we assert it advanced past the first
+        // sample's 0.0). 5 updates of 2°C/s × 0.25 → ≥ 0.5 °C/s.
+        assert!(
+            last_ror > 0.5,
+            "RoR must advance on a clean ramp (per-slice bug froze it): {}",
+            last_ror
         );
     }
 }

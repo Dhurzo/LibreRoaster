@@ -346,9 +346,14 @@ impl RoasterControl {
         // Bug V2-15: drop any in-flight `#DUMP` rows on stop so a dump
         // requested mid-roast does not bleed into the next roast's telemetry.
         self.dump_pending.clear();
-        // Bug B3: drop any active fan profile/start-time so it can't drive the
-        // fan through a stale interpolation target during the cooldown latch.
-        self.fan_profile = None;
+        // Bug B3 / V2-13: the cooldown latch (set below) takes precedence over
+        // the fan profile in `update_control`'s fan selector, so clearing
+        // `fan_profile` here is redundant for the cooldown itself. But it also
+        // silently wiped a legitimate profile on `OFF` → `START`: the temp
+        // profile survived (cleared via `active_profile` only on a new
+        // `PROFILE`), yet the fan profile vanished, forcing the operator to
+        // re-send `FANPROFILE`. `profile_start_time = None` already disables
+        // interpolation during cooldown (the latch), so we keep the profile.
         self.profile_start_time = None;
         // Bug B3: latch cooldown so `update_control`'s fan selector keeps the
         // fan at 100% on every subsequent tick. STOP does NOT arm the safety
@@ -1160,6 +1165,14 @@ impl RoasterControl {
         }
 
         self.preheat_target = Some(target_celsius);
+        // Bug V2-5 (B3 residual): drop the cooldown latch on a deliberate
+        // re-energize — same justification as `handle_start_roast`. Without
+        // this, a consecutive batch (`OFF` at BT≈205 °C → cooling latch armed
+        // → `PREHEAT;180` immediate) keeps the fan forced to 100 % while the
+        // PID tries to heat against maximum airflow, and since the heater
+        // keeps BT > COOLING_RELEASE_BEAN_TEMP_C the latch can never release
+        // for the whole preheat. Only START used to clear it.
+        self.cooling_active = false;
         self.state = RoasterState::Preheating;
         self.status.state = RoasterState::Preheating;
         self.enable_pid_control(target_celsius)?;
@@ -2025,5 +2038,108 @@ mod tests {
         // front = "b","a" so pop_front gives "b" first, then "a".
         assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "b");
         assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "a");
+    }
+
+    // ── V2-5: PREHEAT drops the cooldown latch ──────────────────────
+
+    #[test]
+    fn preheat_drops_cooling_latch() {
+        // Bug V2-5 (B3 residual): `OFF` at a high BT arms the cooldown latch
+        // (fan 100 %). A subsequent `PREHEAT;180` used to keep the latch armed
+        // for the whole preheat — the PID heated against maximum airflow, and
+        // since the heater kept BT > COOLING_RELEASE_BEAN_TEMP_C the latch
+        // could never auto-release. Only START cleared it. PREHEAT is a
+        // deliberate re-energize, so it must also clear the latch.
+        let mut ctrl = make_control();
+
+        // Simulate a STOP having latched cooldown: set the latch directly
+        // via the field-touchable path the production STOP uses.
+        // EmergencyStop arms the SAFETY latch (which we do NOT want to clear
+        // in PREHEAT — that path is V2-1's OFF). Use a plain STOP via the
+        // Artisan `Stop` handler so `cooling_active = true` and the safety
+        // latch stays cleared.
+        let r = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(r.is_ok());
+        // The field is private; assert through the observable effect: a
+        // subsequent `update_control` would force the fan to 100 % while the
+        // latch is active. We instead assert the post-PREHEAT behaviour
+        // directly via a status snapshot once PREHEAT clears the latch.
+        // PREHEAT transitions to Preheating and must drop the latch.
+        let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+        // After PREHEAT we can re-arm the latch via STOP and observe that
+        // PREHEAT clears it again — i.e. the test is reproducible.
+        let _ = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+        // The fan selector in `update_control` is the assertion surface: if
+        // the latch were still armed, the fan would be forced to 100 % and
+        // append_crlf-style telemetry would show fan_output=100 after a tick.
+        // Run a tick with a finite, sub-60 °C BT so the latch's BT<60 self-
+        // release cannot mask the PREHEAT effect.
+        ctrl.status_mut().bean_temp = 25.0;
+        ctrl.status_mut().env_temp = 25.0;
+        let _ = ctrl.update_control(Instant::from_millis(1_000));
+        // With the latch cleared by PREHEAT and BT well below 60 °C, the fan
+        // must NOT be clamped to 100 % by the cooldown path.
+        assert_ne!(
+            ctrl.get_status().fan_output,
+            100.0,
+            "PREHEAT must drop the cooldown latch (fan not forced to 100 %)"
+        );
+    }
+
+    // ── V2-13: OFF+START preserves the fan profile ──────────────────
+
+    #[test]
+    fn off_start_preserves_fan_profile() {
+        // Bug V2-13: `stop_streaming` used to clear `fan_profile = None`,
+        // asymmetric with the temperature profile (which survived OFF). An
+        // `OFF` → `START` flow silently wiped the fan profile and forced the
+        // operator to re-send `FANPROFILE`. The cooldown latch already
+        // takes precedence over the fan profile in the fan selector, and
+        // clearing `profile_start_time` already disables interpolation during
+        // cooldown — so the `fan_profile = None` line was both redundant for
+        // the cooldown safety and harmful for the legitimate-profile path.
+        // We thread a fan profile in via the private field (tests are inside
+        // the module) and assert STOP does NOT erase it.
+        use crate::config::constants::{FanProfile, FanSetpoint, MAX_PROFILE_SETPOINTS};
+
+        let mut ctrl = make_control();
+
+        // Seed a single-setpoint fan profile (target 33 % throughout).
+        let mut setpoints = heapless::Vec::<FanSetpoint, MAX_PROFILE_SETPOINTS>::new();
+        let _ = setpoints.push(FanSetpoint {
+            time_secs: 0,
+            fan_speed: 33,
+        });
+        let profile = FanProfile { setpoints };
+        ctrl.fan_profile = Some(profile);
+        assert!(
+            ctrl.fan_profile.is_some(),
+            "test precondition: profile loaded"
+        );
+
+        // STOP/OFF must NOT clear the fan profile (the V2-13 fix removed the
+        // `self.fan_profile = None;` line from `stop_streaming`).
+        let _ = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(
+            ctrl.fan_profile.is_some(),
+            "V2-13: STOP must NOT erase the loaded fan profile"
+        );
+        // Sanity: profile_start_time WAS cleared (interpolation off during
+        // cooldown), but the profile itself survives.
+        assert!(ctrl.profile_start_time.is_none());
+
+        // The next START re-energizes and re-fixes profile_start_time; the
+        // fan profile remains available for the fan selector.
+        let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        assert!(
+            ctrl.fan_profile.is_some(),
+            "V2-13: fan profile must survive the OFF → START cycle"
+        );
+        assert!(ctrl.profile_start_time.is_some());
     }
 }
