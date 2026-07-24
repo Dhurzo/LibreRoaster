@@ -31,7 +31,15 @@ instrumentation = []
 async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
-regression = ["embedded-hal-mock"]
+# Bug V2-6: `regression` no longer pulls `embedded-hal-mock` (a std-only
+# crate) into the embedded build — that broke `riscv32 + regression` (the
+# `void` transitive dep wanted std, cascading into 14 errors). The
+# regression runner is `no_std` and replays SensorConversionHub fixtures
+# via `from_fixture`, which itself depends on `new_uninit()` whose riscv32
+# branch panics unless `simulated-sensors` is on — so `regression` implies
+# `simulated-sensors` to select the safe `new_simulated(default)` branch
+# instead of pulling host test deps into the device build.
+regression = ["simulated-sensors"]
 
 [[bin]]
 name = "libreroaster"

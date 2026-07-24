@@ -2,9 +2,8 @@
 mod target_impl {
     use crate::application::service_container::{ContainerError, ServiceContainer};
     use crate::config::{ArtisanCommand, SystemStatus, WATCHDOG_FEED_INTERVAL_MS};
-    use crate::hardware::sensors::conversion::{FixtureReading, SensorConversionHub, SensorSample};
+    use crate::hardware::sensors::conversion::{SensorConversionHub, SensorSample};
     use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
-    use crate::memory::SAFETY_ERROR_MSG_MAX_LEN;
     use crate::output::artisan::ArtisanFormatter;
     use embassy_executor::{task, Spawner};
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -90,10 +89,19 @@ mod target_impl {
                     warn!("Regression fan ramp failed: {:?}", err);
                 }
                 let shutdown_result = roaster.emergency_shutdown("Over-temp regression");
-                if let Err(err) = shutdown_result {
+                // Bug V2-6: capture `is_err()` BEFORE the `if let Err` move
+                // so the closure can still return a plain `bool` for
+                // `with_roaster_async` (which wraps it in `Result<bool, _>`).
+                // The previous `Ok::<bool,_>(shutdown_result.is_err())` after
+                // the `if let Err(err) = shutdown_result` move was a use-after-
+                // partial-move (E0382) once the std-only `embedded-hal-mock`
+                // mask was lifted, and `shutdown_result.is_err()` on a moved
+                // `Result` is the same class of error.
+                let failed = shutdown_result.is_err();
+                if let Err(ref err) = shutdown_result {
                     warn!("Regression shutdown failed: {:?}", err);
                 }
-                Ok::<bool, ContainerError>(shutdown_result.is_err())
+                failed
             })
             .await;
 
@@ -124,8 +132,17 @@ mod target_impl {
                 self.replay_fixture(fixture).await;
             }
 
+            // Bug V2-6: do not announce a regression pass with an empty
+            // catalogue — that advertishes a regression that tested nothing.
+            // An empty gate is left in deliberately for a future HIL-validated
+            // fixture set; until then we emit an explicit EMPTY marker so the
+            // host cannot mistake `SAFETY OT-REGRESSION` for a green run.
             let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
-            let _ = safety.push_str("SAFETY OT-REGRESSION");
+            if fixture_catalog::canonical_fixtures().is_empty() {
+                let _ = safety.push_str("SAFETY OT-REGRESSION-EMPTY no_fixtures");
+            } else {
+                let _ = safety.push_str("SAFETY OT-REGRESSION");
+            }
             let _ = ServiceContainer::get_output_channel().try_send(safety);
 
             self.keep_feeding_watchdog(Duration::from_millis(400)).await;
@@ -142,7 +159,19 @@ mod target_impl {
         async fn replay_fixture(&mut self, fixture: &'static fixture_catalog::RegressionFixture) {
             info!("Regression fixture replay: {}", fixture.name);
 
-            let mut hub = SensorConversionHub::new();
+            // Bug V2-6: the previous `SensorConversionHub::new()` (no args)
+            // only exists on the host build; on `riscv32 + !simulated-sensors`
+            // it is E0061 (two-arg variant). `from_fixture` exists exactly
+            // for this path and internally uses `new_uninit()` — which the
+            // `regression` feature now makes select the safe
+            // `simulated-sensors` branch (see Cargo.toml feature gating).
+            let mut hub = match SensorConversionHub::from_fixture(fixture.reading) {
+                Ok(hub) => hub,
+                Err(err) => {
+                    warn!("Fixture {} failed to build hub: {:?}", fixture.name, err);
+                    return;
+                }
+            };
             let sample = match hub.sample_from_fixture(fixture.reading) {
                 Ok(sample) => sample,
                 Err(err) => {
@@ -199,8 +228,8 @@ mod target_impl {
                 );
             }
 
-            if let Ok(mut buffer) = heapless::String::<
-                crate::logging::traceability::TRACE_EVENT_MAX_LEN,
+            if let Ok(buffer) = heapless::String::<
+                { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
             >::try_from(line.as_str())
             {
                 let _ = ServiceContainer::get_output_channel().try_send(buffer);

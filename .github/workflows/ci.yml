@@ -125,3 +125,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build for ESP32-C3
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+      # Bug V2-6: the `regression` feature has been broken for the embedded
+      # target across THREE rounds of "fixes" because nothing in CI compiled
+      # `--features embedded,regression`. It pulls host-only crates (or, after
+      # the V2-6 fix, depends on `simulated-sensors`) into the device build.
+      # This 6-line step surfaces a class of breakage that previously escaped
+      # every green CI run.
+      - name: Build regression feature for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,regression
