@@ -309,8 +309,22 @@ impl RoasterControl {
 
     fn stop_streaming(&mut self) -> Result<(), RoasterError> {
         self.dispatch.stop_streaming(&mut self.status);
-        self.state = crate::config::constants::RoasterState::Idle;
-        self.status.state = self.state;
+        // Bug V2-1 (B34 consistency): do NOT repaint the roaster state to
+        // `Idle` while the emergency latch is still armed. `OFF` with the
+        // latch armed now runs `clear_emergency_explicit` first (see
+        // `process_artisan_command`), so by the time `stop_streaming` runs
+        // through that path the latch is already cleared and we happily set
+        // `Idle`. But `handle_emergency_stop` and other internal callers
+        // reach `stop_streaming` (or `dispatch.stop_streaming`) WITHOUT
+        // clearing the latch — overwriting `state` to `Idle` here made the
+        // telemetry claim "Idle" while the SSR was force-zeroed, the fan was
+        // pinned at 100 %, and every command was rejected with
+        // `fault_condition_active`. Keep the armed `Error` state in that
+        // case so observers see a consistent picture.
+        if !self.safety.is_emergency_active() {
+            self.state = crate::config::constants::RoasterState::Idle;
+            self.status.state = self.state;
+        }
 
         // Bug #3: this function used to call `self.safety.clear_emergency()`
         // and reset `fault_condition = false` here, which had the effect of
@@ -513,10 +527,23 @@ impl RoasterControl {
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
 
-        if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
-            warn!("Rate-of-rise check failed: {:?}", e);
-            self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
-            return Ok(0.0);
+        // Bug V2-16a: the RoR guard historically ran every tick in *all*
+        // modes and states. With an empty drum and a low-mass BT probe, the
+        // probe heats faster than 0.5 °C/s during PREHEAT, so the guard
+        // fired `rate_of_rise_exceeded → emergency_shutdown` in the first
+        // 1-2 seconds of heating — and via V2-1 that became a power-cycle
+        // brick on the first real PREHEAT. The guard must only protect once
+        // beans are present. Gate it to the post-charge roasting states
+        // (`Heating` / `Stable`); Idle/Preheating must not trigger it
+        // (Preheating is by definition heating an empty drum). This is the
+        // conservative fix — the threshold stays at 0.5 °C/s; relaxing it
+        // is an independent knob if real-fast-roast ramp data demands it.
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
+                warn!("Rate-of-rise check failed: {:?}", e);
+                self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
+                return Ok(0.0);
+            }
         }
 
         let desired_output = if self.safety.is_emergency_active() {
@@ -694,7 +721,25 @@ impl RoasterControl {
             crate::config::ArtisanCommand::SetFanSpeed(value, was_clamped) => {
                 self.handle_set_fan_speed(value, was_clamped, current_time)
             }
-            crate::config::ArtisanCommand::Stop => self.handle_stop(),
+            crate::config::ArtisanCommand::Stop => {
+                // Bug V2-1: `STOP` parses to `EmergencyStop` and arms the
+                // emergency latch (`activate_emergency` + `fault_condition`),
+                // but the only sanctioned un-latch path
+                // (`RoasterCommand::StopRoast → clear_emergency_explicit`)
+                // has NO producer in production code — so a single `STOP`
+                // bricked the roaster until a power cycle. The host needs an
+                // *reachable* recovery action. We extend plain `OFF`
+                // (`ArtisanCommand::Stop`, token "OFF", *not* the latch-arming
+                // `STOP`) to act as stop-and-recover when it arrives with the
+                // latch armed and the device in the `Error` state: clear the
+                // latch first, then run the normal stop. The whitelist at the
+                // top of this method already permits `Stop` with
+                // `fault_condition` active, so this is the sanctioned door.
+                if self.status.fault_condition && self.safety.is_emergency_active() {
+                    self.clear_emergency_explicit();
+                }
+                self.handle_stop()
+            }
             crate::config::ArtisanCommand::EmergencyStop => self.handle_emergency_stop(),
             crate::config::ArtisanCommand::IncreaseHeater => {
                 self.handle_increase_heater(current_time)
@@ -1626,5 +1671,119 @@ mod tests {
         let mut ctrl = make_control();
         let result = ctrl.process_artisan_command(ArtisanCommand::ReadStatus);
         assert!(result.is_ok());
+    }
+
+    // ── V2-1: STOP bricks the roaster — OFF must recover ───────
+
+    #[test]
+    fn stop_latches_then_off_recovers() {
+        // Bug V2-1: `STOP` (→ EmergencyStop) arms the latch and leaves the
+        // device bricked (the only sanctioned recovery, `RoasterCommand::
+        // StopRoast`, has no protocol producer). `OFF` (which parses to
+        // `ArtisanCommand::Stop`, token "OFF"/"PID,OFF") must un-latch and
+        // return the roaster to a controllable state.
+        let mut ctrl = make_control();
+
+        // Arm the latch the way `STOP` does.
+        let r = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(r.is_ok(), "STOP path must succeed at arming the latch");
+        assert!(ctrl.safety().is_emergency_active());
+        assert!(ctrl.get_status().fault_condition);
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+
+        // Any non-whitelisted command must still be rejected while latched.
+        let blocked = ctrl.process_artisan_command(ArtisanCommand::SetHeater(50));
+        assert!(blocked.is_err(), "Latch must reject heater commands");
+
+        // `OFF` must clear the latch and recover.
+        let recover = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(recover.is_ok(), "OFF recovery path must succeed");
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "OFF must clear the emergency latch"
+        );
+        assert!(
+            !ctrl.get_status().fault_condition,
+            "OFF must clear fault_condition"
+        );
+        assert_eq!(
+            ctrl.get_state(),
+            RoasterState::Idle,
+            "OFF recovery returns the roaster to Idle"
+        );
+
+        // After recovery a heater command must work again — i.e. the device
+        // is no longer bricked.
+        let after = ctrl.process_artisan_command(ArtisanCommand::SetHeater(50));
+        assert!(
+            after.is_ok(),
+            "Post-recovery heater command must be accepted: {:?}",
+            after
+        );
+    }
+
+    #[test]
+    fn stop_streaming_does_not_clear_state_while_latched() {
+        // Bug V2-1 (B34 consistency): while the emergency latch is armed,
+        // `stop_streaming` must NOT repaint the state to `Idle`. The
+        // `EmergencyStop` handler reaches `dispatch.stop_streaming` without
+        // clearing the latch; the device must remain visibly `Error` so
+        // telemetry does not claim "Idle" with the fan pinned and commands
+        // rejected.
+        let mut ctrl = make_control();
+        let _ = ctrl.emergency_shutdown("test latch");
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+
+        // Driving the plain `EmergencyStop` artisan command again calls
+        // `handle_emergency_stop`, which re-arms and re-stops without ever
+        // clearing the latch — the state must stay `Error`.
+        let r = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(r.is_ok());
+        assert!(ctrl.safety().is_emergency_active());
+        assert_eq!(
+            ctrl.get_state(),
+            RoasterState::Error,
+            "Latched stop must keep state = Error, not Idle"
+        );
+        assert_eq!(ctrl.get_status().state, RoasterState::Error);
+    }
+
+    // ── V2-16a: RoR guard must not fire during empty-drum PREHEAT ─
+
+    #[test]
+    fn ror_guard_skipped_in_preheat_empty_drum() {
+        // Bug V2-16a: an empty drum with a low-mass BT probe heats faster
+        // than MAX_BT_RATE_OF_RISE during PREHEAT; the guard used to fire
+        // every tick in all states, bricking the device (via V2-1) within
+        // 1-2 seconds. The guard is now gated to `Heating`/`Stable`.
+        let mut ctrl = make_control();
+
+        // Drive PREHEAT (state -> Preheating, PID enabled).
+        let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+
+        // Inject two samples ~0.8s apart with a 1.0 °C jump → 1.25 °C/s,
+        // well above MAX_BT_RATE_OF_RISE (0.5 °C/s). The derivative filter
+        // (α=0.3) will produce a non-zero rate that exceeds the limit. The
+        // guard must NOT fire in Preheating.
+        let t0 = Instant::from_millis(0);
+        let t1 = Instant::from_millis(800);
+        ctrl.update_temperatures(150.0, 120.0, t0).unwrap();
+        // Run one control tick so the filter seeds `last_pv_sample`.
+        let _ = ctrl.update_control(t0);
+        ctrl.update_temperatures(151.0, 120.0, t1).unwrap();
+        let out = ctrl.update_control(t1);
+
+        assert!(
+            out.is_ok(),
+            "RoR guard must not trigger emergency in Preheating: {:?}",
+            out
+        );
+        assert_ne!(
+            ctrl.get_state(),
+            RoasterState::Error,
+            "Preheating must not flip to Error from a RoR transient"
+        );
     }
 }
