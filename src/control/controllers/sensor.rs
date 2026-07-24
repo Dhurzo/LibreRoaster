@@ -25,7 +25,17 @@ pub struct SensorController {
     last_pv_sample_time: Option<Instant>,
     last_filtered_derivative: f32,
     ror_exceeded_count: u8,
-    consecutive_fault_count: u8,
+    // Bug V2-3 / B7 residual: per-channel fault counters. A single shared
+    // counter fed with `bean_fault || env_fault` was defeated by a chronically
+    // disconnected ET (a single-probe configuration the code itself supports):
+    // the shared counter sat permanently >= threshold, so the FIRST transient
+    // BT glitch immediately met `bean_fault && count >= DEBOUNCE` and poisoned
+    // bean_temp with NaN in the same tick — exactly the spurious emergency B7
+    // was supposed to eliminate. Each channel now debounces against its OWN
+    // counter, so a faulted-but-unused channel cannot arm the other channel's
+    // NaN decision.
+    consecutive_bean_faults: u8,
+    consecutive_env_faults: u8,
 }
 
 impl SensorController {
@@ -37,15 +47,19 @@ impl SensorController {
             last_pv_sample_time: None,
             last_filtered_derivative: 0.0,
             ror_exceeded_count: 0,
-            consecutive_fault_count: 0,
+            consecutive_bean_faults: 0,
+            consecutive_env_faults: 0,
         }
     }
 
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
-        let has_fault = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
-        // F4.11 (Gap #3): debounce before latching.
-        self.apply_fault_debounce(has_fault, status);
+        // F4.11 (Gap #3) + V2-3: debounce each channel against its own counter.
+        self.apply_fault_debounce(
+            sample.bean_fault.has_fault(),
+            sample.env_fault.has_fault(),
+            status,
+        );
         self.update_temperatures(
             sample.bean_temp,
             sample.env_temp,
@@ -56,22 +70,35 @@ impl SensorController {
         )
     }
 
-    /// F4.11 (Gap #3): Debounce sensor fault reads. A single faulty sample
-    /// increments the counter but does NOT latch the fault — a transient SPI
-    /// glitch therefore self-clears on the next clean read. Only after
-    /// `SENSOR_FAULT_DEBOUNCE` consecutive faulty samples do we set
-    /// `fault_condition = true`, protecting against a real wiring or
-    /// open-thermocouple fault while avoiding spurious lockouts from a
-    /// one-off bus error. Other paths that set `fault_condition` (overtemp in
+    /// F4.11 (Gap #3) + V2-3: per-channel debounce. Each channel increments
+    /// its own counter only on its own fault and resets only on its own clean
+    /// read, so a chronically faulted-but-unused channel cannot push the other
+    /// channel's counter to the NaN threshold. `fault_condition` latches once
+    /// EITHER channel reaches `SENSOR_FAULT_DEBOUNCE` consecutive faults — the
+    /// operator must still investigate a real wiring/open-thermocouple fault on
+    /// any channel. Other paths that set `fault_condition` (overtemp in
     /// `update_temperatures`, manual emergency, RWDT) are not affected.
-    pub fn apply_fault_debounce(&mut self, has_fault: bool, status: &mut SystemStatus) {
-        if has_fault {
-            self.consecutive_fault_count = self.consecutive_fault_count.saturating_add(1);
-            if self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
+    pub fn apply_fault_debounce(
+        &mut self,
+        bean_fault: bool,
+        env_fault: bool,
+        status: &mut SystemStatus,
+    ) {
+        if bean_fault {
+            self.consecutive_bean_faults = self.consecutive_bean_faults.saturating_add(1);
+            if self.consecutive_bean_faults >= SENSOR_FAULT_DEBOUNCE {
                 status.fault_condition = true;
             }
         } else {
-            self.consecutive_fault_count = 0;
+            self.consecutive_bean_faults = 0;
+        }
+        if env_fault {
+            self.consecutive_env_faults = self.consecutive_env_faults.saturating_add(1);
+            if self.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE {
+                status.fault_condition = true;
+            }
+        } else {
+            self.consecutive_env_faults = 0;
         }
     }
 
@@ -98,11 +125,39 @@ impl SensorController {
             });
         }
 
-        status.bean_temp = bean_temp + BT_THERMOCOUPLE_OFFSET;
-        status.env_temp = env_temp + ET_THERMOCOUPLE_OFFSET;
+        // Bug V2-2 / B7 residual: "hold last value" was NOT implemented. The
+        // previous code wrote `status.bean_temp = bean_temp + OFFSET`
+        // UNCONDITIONALLY here, BEFORE the fault gate below. So during the
+        // pre-debounce window the value "held" was THIS faulted sample's raw
+        // garbage (typically 0 from an open thermocouple), not the last valid
+        // one — and the comment claiming "hold the last valid value" was
+        // false. The PID/RoR/overtemp guards then operated on that garbage
+        // for up to ~0.5-0.8 s until the 5th fault sample finally poisoned
+        // the value with NaN.
+        //
+        // Fix: write `status.*_temp` ONLY when the channel is not faulted;
+        // if the channel is faulted AND its own debounce counter has reached
+        // the threshold, poison with NaN; otherwise leave the previous value
+        // in `status.*_temp` untouched — a REAL hold of the last valid reading.
+        if !bean_fault.has_fault() {
+            status.bean_temp = bean_temp + BT_THERMOCOUPLE_OFFSET;
+        } else if self.consecutive_bean_faults >= SENSOR_FAULT_DEBOUNCE {
+            status.bean_temp = f32::NAN;
+        }
+        // else: status.bean_temp keeps the last valid value (real hold).
+
+        if !env_fault.has_fault() {
+            status.env_temp = env_temp + ET_THERMOCOUPLE_OFFSET;
+        } else if self.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE {
+            status.env_temp = f32::NAN;
+        }
+        // else: status.env_temp keeps the last valid value (real hold).
+
         self.last_temp_read = Some(current_time);
 
-        // Only check overtemp against valid sensors (ignore faulted ones)
+        // Only check overtemp against valid sensors (ignore faulted ones).
+        // A faulted channel did not overwrite status.*_temp above, so this
+        // gate is only re-tested on a freshly-written clean reading.
         if !bean_fault.has_fault() && status.bean_temp >= OVERTEMP_THRESHOLD {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
@@ -112,26 +167,6 @@ impl SensorController {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
             });
-        }
-
-        // If a sensor is faulted, decide whether to poison the temperature
-        // with NaN. Bug B7: the F4.11 debouncer only protects
-        // `status.fault_condition` — but the PID downstream rejects NaN PV by
-        // triggering an *emergency* (see update_control NaN guard). Poisoning
-        // bean_temp on the FIRST fault sample therefore turned a single
-        // transient SPI glitch into a latched emergency immediately, even
-        // though the next 160 ms read might have been clean. Only poison the
-        // value once the fault has persisted across SENSOR_FAULT_DEBOUNCE
-        // consecutive samples; until then hold the last valid temperature so
-        // the PID and emergency guards keep operating on real data and the
-        // debounce machinery has a chance to do its job.
-        if bean_fault.has_fault() && self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
-            status.bean_temp = f32::NAN;
-            // else: hold the last valid value already in status.bean_temp.
-        }
-        if env_fault.has_fault() && self.consecutive_fault_count >= SENSOR_FAULT_DEBOUNCE {
-            status.env_temp = f32::NAN;
-            // else: hold the last valid value already in status.env_temp.
         }
 
         Ok(())
@@ -295,44 +330,40 @@ mod tests {
             ..SensorFault::default()
         };
 
-        // Bug B7: the FIRST few faulted samples must NOT poison bean_temp
-        // (the F4.11 debounce protects against a transient SPI glitch). Run
-        // the same faulted read fewer than SENSOR_FAULT_DEBOUNCE times and
-        // assert the last valid value is held (here the offset-adjusted
-        // OVERTEMP_THRESHOLD, NOT NaN). The overtemp guard must still be
-        // skipped because the channel is signal-faulted.
+        // V2-2 fix: a faulted BT channel must NOT overwrite status.bean_temp
+        // with its raw garbage. Seed a valid prior reading, then drive faulted
+        // samples that carry a *distinct* garbage value (999.0 — out of the
+        // valid range yet still not NaN) below the debounce threshold. The
+        // last valid value (150.0 + offset) must be retained — NOT 999.0 and
+        // NOT NaN — proving the "hold last value" comment now tells the truth.
+        ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, now, &mut status)
+            .expect("seed clean reading");
+        let last_valid_bt = status.bean_temp;
+
         for _ in 0..(SENSOR_FAULT_DEBOUNCE - 1) {
-            let result = ctrl.update_temperatures(
-                OVERTEMP_THRESHOLD,
-                120.0,
-                bean_fault,
-                no_fault,
-                now,
-                &mut status,
-            );
+            let result =
+                ctrl.update_temperatures(999.0, 120.0, bean_fault, no_fault, now, &mut status);
             assert!(result.is_ok());
             assert!(
                 !status.bean_temp.is_nan(),
-                "B7: pre-debounce fault must hold the last valid value, not NaN"
+                "B7/V2-2: pre-debounce fault must hold the last valid value, not NaN"
             );
-            // Apply the debouncer as the production read path does so
-            // consecutive_fault_count advances toward the threshold.
-            ctrl.apply_fault_debounce(true, &mut status);
+            assert_eq!(
+                status.bean_temp, last_valid_bt,
+                "V2-2: pre-debounce fault must NOT overwrite bean_temp with the \
+                 faulted sample's raw value"
+            );
+            // The overtemp guard must still be skipped because the channel is
+            // signal-faulted (no error even though 999.0 > OVERTEMP_THRESHOLD).
+            // Drive the debouncer as the production read path does so the bean
+            // counter advances toward the threshold.
+            ctrl.apply_fault_debounce(true, false, &mut status);
         }
 
-        // After SENSOR_FAULT_DEBOUNCE consecutive faults the temperature IS
-        // poisoned, matching the F4.11 latch. Drive the debouncer one more
-        // time so consecutive_fault_count reaches the threshold, then the
-        // next faulted read poisons bean_temp.
-        ctrl.apply_fault_debounce(true, &mut status);
-        let result = ctrl.update_temperatures(
-            OVERTEMP_THRESHOLD,
-            120.0,
-            bean_fault,
-            no_fault,
-            now,
-            &mut status,
-        );
+        // Drive the debouncer one more time so consecutive_bean_faults reaches
+        // the threshold, then the next faulted read poisons bean_temp.
+        ctrl.apply_fault_debounce(true, false, &mut status);
+        let result = ctrl.update_temperatures(999.0, 120.0, bean_fault, no_fault, now, &mut status);
         assert!(result.is_ok());
         assert!(status.bean_temp.is_nan());
     }
@@ -349,26 +380,93 @@ mod tests {
             ..SensorFault::default()
         };
 
+        // V2-2 fix: seed a valid env_temp, then drive faulted ET samples with
+        // a distinct garbage value (888.0) below the debounce threshold. The
+        // last valid value must be retained — NOT 888.0 and NOT NaN.
+        ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, now, &mut status)
+            .expect("seed clean reading");
+        let last_valid_et = status.env_temp;
+
         // Bug B7: a SINGLE faulty ET read must not poison env_temp. The PID
         // downstream treats NaN as an emergency; debouncing before poisoning
         // prevents a transient SPI glitch from latching one.
-        ctrl.update_temperatures(150.0, 120.0, no_fault, env_fault, now, &mut status)
+        ctrl.update_temperatures(150.0, 888.0, no_fault, env_fault, now, &mut status)
             .unwrap();
         assert!(!status.bean_temp.is_nan());
         assert!(
             !status.env_temp.is_nan(),
             "B7: first faulty ET read must hold the last valid value, not NaN"
         );
+        assert_eq!(
+            status.env_temp, last_valid_et,
+            "V2-2: pre-debounce ET fault must NOT overwrite env_temp with the \
+             faulted sample's raw value"
+        );
 
         // Drive the debouncer to the threshold, then the next faulted read
         // poisons env_temp (matching the F4.11 latch).
         for _ in 0..SENSOR_FAULT_DEBOUNCE {
-            ctrl.apply_fault_debounce(true, &mut status);
+            ctrl.apply_fault_debounce(false, true, &mut status);
         }
-        ctrl.update_temperatures(150.0, 120.0, no_fault, env_fault, now, &mut status)
+        ctrl.update_temperatures(150.0, 888.0, no_fault, env_fault, now, &mut status)
             .unwrap();
         assert!(!status.bean_temp.is_nan());
         assert!(status.env_temp.is_nan());
+    }
+
+    // V2-3: per-channel counters — a chronically faulted ET must NOT push the
+    // BT counter to the NaN threshold, so the first transient BT glitch does
+    // NOT poison BT in the same tick.
+    #[test]
+    fn single_chronic_env_fault_does_not_poison_bean_on_bt_glitch() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let now = embassy_time::Instant::now();
+        let no_fault = SensorFault::default();
+        let bean_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+        let env_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+
+        // Seed a valid prior reading on both channels.
+        ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, now, &mut status)
+            .expect("seed");
+        let last_valid_bt = status.bean_temp;
+
+        // ET chronically faulted well past the threshold (10 ticks). BT stays
+        // clean throughout, so the env counter saturates but the bean counter
+        // stays 0 because BT is not faulted.
+        for _ in 0..10 {
+            ctrl.apply_fault_debounce(false, true, &mut status);
+        }
+        assert!(
+            status.fault_condition,
+            "chronic ET fault latches fault_condition"
+        );
+        assert_eq!(ctrl.consecutive_bean_faults, 0);
+        assert!(ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE);
+
+        // First transient BT glitch: with a SHARED counter the bean NaN
+        // decision would have fired immediately. With per-channel counters,
+        // the BT counter has just incremented to 1 (< DEBOUNCE), so bean_temp
+        // retains its last valid value — no NaN, no emergency this tick.
+        ctrl.apply_fault_debounce(true, true, &mut status);
+        ctrl.update_temperatures(999.0, 888.0, bean_fault, env_fault, now, &mut status)
+            .expect("faulted read");
+        assert_eq!(
+            status.bean_temp, last_valid_bt,
+            "V2-3: BT must hold its last valid value on the first BT glitch even \
+             while ET is chronically faulted (per-channel debounce)"
+        );
+        assert!(
+            status.env_temp.is_nan(),
+            "ET already past debounce poisons now"
+        );
     }
 
     #[test]
@@ -456,7 +554,7 @@ mod tests {
         ));
     }
 
-    // ── F4.11 (Gap #3): fault_condition debounce ─────────────────────────
+    // ── F4.11 (Gap #3) + V2-3: fault_condition debounce, per-channel ──────
 
     #[test]
     fn fault_debounce_single_transient_does_not_latch() {
@@ -466,8 +564,9 @@ mod tests {
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
 
-        ctrl.apply_fault_debounce(true, &mut status);
-        assert_eq!(ctrl.consecutive_fault_count, 1);
+        ctrl.apply_fault_debounce(true, false, &mut status);
+        assert_eq!(ctrl.consecutive_bean_faults, 1);
+        assert_eq!(ctrl.consecutive_env_faults, 0);
         assert!(
             !status.fault_condition,
             "Single faulty read must not latch fault_condition"
@@ -480,16 +579,17 @@ mod tests {
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
 
-        // 3 faulty reads (still below threshold of 5)
+        // 3 faulty reads on BT (still below threshold of 5)
         for _ in 0..3 {
-            ctrl.apply_fault_debounce(true, &mut status);
+            ctrl.apply_fault_debounce(true, false, &mut status);
         }
-        assert_eq!(ctrl.consecutive_fault_count, 3);
+        assert_eq!(ctrl.consecutive_bean_faults, 3);
+        assert_eq!(ctrl.consecutive_env_faults, 0);
         assert!(!status.fault_condition);
 
         // A single clean read resets the counter entirely
-        ctrl.apply_fault_debounce(false, &mut status);
-        assert_eq!(ctrl.consecutive_fault_count, 0);
+        ctrl.apply_fault_debounce(false, false, &mut status);
+        assert_eq!(ctrl.consecutive_bean_faults, 0);
         assert!(!status.fault_condition);
     }
 
@@ -501,14 +601,14 @@ mod tests {
 
         // Below threshold: no latch
         for _ in 0..(SENSOR_FAULT_DEBOUNCE - 1) {
-            ctrl.apply_fault_debounce(true, &mut status);
+            ctrl.apply_fault_debounce(true, false, &mut status);
         }
-        assert_eq!(ctrl.consecutive_fault_count, SENSOR_FAULT_DEBOUNCE - 1);
+        assert_eq!(ctrl.consecutive_bean_faults, SENSOR_FAULT_DEBOUNCE - 1);
         assert!(!status.fault_condition);
 
         // Nth consecutive fault: latch
-        ctrl.apply_fault_debounce(true, &mut status);
-        assert_eq!(ctrl.consecutive_fault_count, SENSOR_FAULT_DEBOUNCE);
+        ctrl.apply_fault_debounce(true, false, &mut status);
+        assert_eq!(ctrl.consecutive_bean_faults, SENSOR_FAULT_DEBOUNCE);
         assert!(
             status.fault_condition,
             "After {} consecutive faults, fault_condition must be latched",
@@ -525,9 +625,9 @@ mod tests {
         let mut status = make_status();
 
         for _ in 0..(SENSOR_FAULT_DEBOUNCE + 200) {
-            ctrl.apply_fault_debounce(true, &mut status);
+            ctrl.apply_fault_debounce(true, false, &mut status);
         }
-        assert_eq!(ctrl.consecutive_fault_count, 205);
+        assert_eq!(ctrl.consecutive_bean_faults, 205);
         assert!(status.fault_condition);
     }
 
@@ -540,11 +640,35 @@ mod tests {
         let mut status = make_status();
 
         for i in 0..20 {
-            ctrl.apply_fault_debounce(i % 2 == 0, &mut status);
+            ctrl.apply_fault_debounce(i % 2 == 0, false, &mut status);
         }
         assert!(
             !status.fault_condition,
             "Intermittent fault must not latch fault_condition"
         );
+    }
+
+    #[test]
+    fn fault_debounce_independent_channels() {
+        // V2-3: a fault on one channel must not advance the other's counter.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+
+        // 10 ticks with only ET faulted: bean counter stays 0.
+        for _ in 0..10 {
+            ctrl.apply_fault_debounce(false, true, &mut status);
+        }
+        assert_eq!(ctrl.consecutive_bean_faults, 0);
+        assert!(ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE);
+        assert!(status.fault_condition);
+
+        // A clean ET tick resets env; a subsequent BT-only fault advances
+        // bean alone.
+        ctrl.apply_fault_debounce(false, false, &mut status);
+        assert_eq!(ctrl.consecutive_env_faults, 0);
+        ctrl.apply_fault_debounce(true, false, &mut status);
+        assert_eq!(ctrl.consecutive_bean_faults, 1);
+        assert_eq!(ctrl.consecutive_env_faults, 0);
     }
 }

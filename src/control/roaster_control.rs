@@ -144,12 +144,17 @@ impl RoasterControl {
         current_time: Instant,
     ) -> Result<(), RoasterError> {
         // Mirror the production read path: drive the F4.11 debouncer with
-        // the OR of channel faults BEFORE applying the temperature update, so
-        // `consecutive_fault_count` is current when the NaN-vs-hold decision
-        // is taken inside `SensorController::update_temperatures`.
-        let has_fault = bean_fault.has_fault() || env_fault.has_fault();
-        self.sensor
-            .apply_fault_debounce(has_fault, &mut self.status);
+        // each channel's fault separately BEFORE applying the temperature
+        // update, so `consecutive_{bean,env}_faults` is current when the
+        // NaN-vs-hold decision is taken inside
+        // `SensorController::update_temperatures`. V2-3: per-channel counters
+        // so a chronically disconnected ET cannot push BT's debounce to the
+        // NaN threshold.
+        self.sensor.apply_fault_debounce(
+            bean_fault.has_fault(),
+            env_fault.has_fault(),
+            &mut self.status,
+        );
         match self.sensor.update_temperatures(
             bean_temp,
             env_temp,
