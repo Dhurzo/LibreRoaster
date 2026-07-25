@@ -156,14 +156,27 @@ pub const MAX_PROFILE_SETPOINTS: usize = 16;
 pub const MAX_COMMANDS_PER_TICK: usize = 8;
 pub const CHARGE_DROP_THRESHOLD_C: f32 = 20.0;
 /// Bug B23: intended charge-detection window in seconds. The bean-drop
-/// detector samples `bt_charge_history` (Deque<10>) once every
-/// `CHARGE_SAMPLE_TICK_DIV` control ticks (loop cadence ~100 ms/tick), so
-/// 10 samples × 3 ticks × 100 ms = 3 s. A >20 °C BT drop in 3 s is the
-/// physical signature of bean charge.
+/// detector samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>)
+/// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (loop cadence
+/// `CONTROL_LOOP_PERIOD_MS`/tick), so the deque spans
+/// `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_PERIOD_MS`.
+/// A >20 °C BT drop in 3 s is the physical signature of bean charge.
 pub const CHARGE_DETECTION_WINDOW_S: u32 = 3;
-/// Bug B23: number of ~100 ms control ticks between charge-history samples.
-/// `CHARGE_DETECTION_WINDOW_S = 3` × 1 s/3 ticks → 3 s spanned by 10 samples.
-pub const CHARGE_SAMPLE_TICK_DIV: u8 = 3;
+/// Number of BT samples the charge-history deque holds. Forms half of the
+/// `CHARGE_DETECTION_WINDOW_S` expression (see `CHARGE_SAMPLE_TICK_DIV`).
+pub const CHARGE_HISTORY_CAPACITY: u32 = 10;
+/// Control-loop period in milliseconds — the cadence at which
+/// `update_control` ticks. The other half of the charge-window expression.
+pub const CONTROL_LOOP_PERIOD_MS: u32 = 100;
+/// Bug B23 (V2-15): number of ~100 ms control ticks between charge-history
+/// samples. Now DERIVED from `CHARGE_DETECTION_WINDOW_S` so the window is a
+/// single source of truth — `WINDOW_S × 1000 ms/s = CAP × TICK_DIV × PERIOD_MS`,
+/// hence `TICK_DIV = WINDOW_S × 1000 / (CAP × PERIOD_MS)`. With (3, 10, 100)
+/// the result is `3000 / 1000 = 3` (a 3 s window spanned by 10 samples
+/// taken 300 ms apart). Changing the window without re-deriving the divisor
+/// no longer silently leaves the deque sampling at the wrong cadence.
+pub const CHARGE_SAMPLE_TICK_DIV: u8 =
+    (CHARGE_DETECTION_WINDOW_S * 1000 / (CHARGE_HISTORY_CAPACITY * CONTROL_LOOP_PERIOD_MS)) as u8;
 
 /// Maximum allowed roast duration in seconds (30 minutes).
 /// If exceeded during an active roast, emergency shutdown is triggered.

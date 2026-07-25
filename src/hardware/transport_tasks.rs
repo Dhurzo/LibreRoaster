@@ -237,10 +237,11 @@ async fn handle_parsed_command(
         }
     });
 
-    if sent {
-        // queue_depth metrics: use current artisan channel depth as approximation
-        record_queue_depth(ServiceContainer::get_artisan_channel().len());
-    }
+    // Bug V2-15: record the queue depth on EVERY dispatch decision — the
+    // drop path (channel full) is the one that motivated this metric in the
+    // first place, but the previous code only recorded it inside `if sent`.
+    // Dropped commands left zero telemetry footprint, hiding back-pressure.
+    record_queue_depth(ServiceContainer::get_artisan_channel().len());
 
     // Bug #1: notify the host that the command was dropped because the
     // artisan channel was full. Without this, Artisan would keep sending
@@ -331,6 +332,18 @@ pub(crate) async fn process_event_queue(
             // (e.g. a bare LF left over from a CRLF). The terminator has
             // been consumed; keep draining the rest of the queue rather
             // than waiting for another byte to arrive.
+            // Bug V2-10: but if an overflow was latched, the trailing
+            // fragment (here, only terminators) carried the overflow flag
+            // and must still produce the buffer_overflow error — otherwise
+            // the flag survives into the next VALID command and gets
+            // wrongly attributed to it. Consume the flag here and surface
+            // the error for THIS extraction turn rather than the next
+            // command.
+            if overflow.triggered {
+                overflow.triggered = false;
+                send_parse_error(ParseError::BufferOverflow, channel, config).await;
+                return;
+            }
             continue;
         };
 

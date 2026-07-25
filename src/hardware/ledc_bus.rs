@@ -125,7 +125,21 @@ impl<'a> LedcChannelHandle<'a> {
             .with_channel_mut(entry, |channel| channel.set_duty(duty))
         {
             Ok(Ok(())) => {
-                self.bus.store_duty(entry, duty as u16);
+                // Bug V2-14 (B10 latent): the cache MUST store *ticks* (the
+                // unit used by `set_duty_raw` and `start_duty_fade`'s
+                // end-state), not the percentage 0–100 esp-hal's
+                // `Channel::set_duty` accepts. Storing `duty as u16` (a
+                // percentage) here left the cache in mixed units — the very
+                // class of bug B10 closed elsewhere. There are no production
+                // callers today (the live SSR/fan paths go through the fade
+                // and `set_duty_raw`), but the HIL examples (hil_fan /
+                // hil_ssr / gpio_roast_test) exercise it directly, so the
+                // latent trap reintroduces B10 the moment a future feature
+                // adopts the per-channel direct path. Convert with the same
+                // formula `start_duty_fade` uses so the cache stays unit-
+                // consistent across all three write APIs.
+                let ticks = ((duty as u32 * self.max_duty() + 50) / 100) as u16;
+                self.bus.store_duty(entry, ticks);
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
