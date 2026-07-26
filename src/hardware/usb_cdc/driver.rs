@@ -11,6 +11,9 @@ use static_cell::StaticCell;
 use crate::hardware::static_sync::SyncCell;
 
 #[cfg(target_arch = "riscv32")]
+use embassy_time::{with_timeout, Duration as EmbassyDuration};
+
+#[cfg(target_arch = "riscv32")]
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,14 +57,36 @@ impl UsbCdcTxDriver {
     }
 
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UsbCdcError> {
+        // Bug A2 (2026-07-25): `UsbSerialJtagTx::write_async` only completes
+        // when the host reads from the endpoint. If the host disappears mid-
+        // roast (Artisan killed, USB unplugged, …) the awaited write blocks
+        // FOREVER with the TX mutex held, and every subsequent output line
+        // (including telemetry that would have fallen back to UART) is
+        // dropped silently because the channel fills. Bound the write at 50 ms
+        // and treat the timeout as "line discarded" — the next telemetry tick
+        // already carries a fresh sample, and the roaster cannot be allowed to
+        // depend on a reader being present at all times.
         use embedded_io_async::Write;
-        Write::write(&mut self.usb, data)
-            .await
-            .map_err(|_| UsbCdcError::TransmissionError)?;
-        Write::flush(&mut self.usb)
-            .await
-            .map_err(|_| UsbCdcError::TransmissionError)?;
-        Ok(())
+        match with_timeout(
+            EmbassyDuration::from_millis(50),
+            Write::write(&mut self.usb, data),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return Err(UsbCdcError::TransmissionError),
+            Err(_timeout) => return Err(UsbCdcError::TransmissionError),
+        }
+        match with_timeout(
+            EmbassyDuration::from_millis(20),
+            Write::flush(&mut self.usb),
+        )
+        .await
+        {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(_)) => Err(UsbCdcError::TransmissionError),
+            Err(_timeout) => Err(UsbCdcError::TransmissionError),
+        }
     }
 }
 

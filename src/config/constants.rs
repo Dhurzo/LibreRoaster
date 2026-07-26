@@ -74,7 +74,7 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 /// `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which is shorter than 50 Hz
 /// conversion time — meaning each read could silently return the *previous*
 /// conversion's temperature (stale data with no error indication).
-pub const MAX31856_CONVERSION_TIME_MS: u64 = 190;
+pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
@@ -154,7 +154,11 @@ pub enum ArtisanCommand {
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
 pub const MAX_COMMANDS_PER_TICK: usize = 8;
-pub const CHARGE_DROP_THRESHOLD_C: f32 = 20.0;
+// Bug M2 (2026-07-25): the previous `20.0` was unreachable with a real BT
+// probe (verified by simulation: a TC4-style drop is 2–3 °C/s, ≈ 6–9 °C in
+// the 3 s sampling window). Drop the threshold to a probe-attainable value
+// so `#CHARGE` fires reliably on the first real charge.
+pub const CHARGE_DROP_THRESHOLD_C: f32 = 8.0;
 /// Bug B23: intended charge-detection window in seconds. The bean-drop
 /// detector samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>)
 /// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (loop cadence

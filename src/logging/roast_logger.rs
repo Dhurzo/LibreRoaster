@@ -123,13 +123,21 @@ impl RoastLogger {
 
     /// Append a CSV-formatted sample. Oldest sample is evicted if buffer is full.
     /// Bug V2-8: derive `time_s` from `self.start` and `now`, not the caller.
+    /// Bug A1 (2026-07-25): `Instant::duration_since` panics on `now < self.start`
+    /// (embassy-time's `Instant` is a saturating-checking `Instant` that
+    /// `unwrap!`-s the underlying subtraction). On the tick where `START` is
+    /// processed, the control loop's `tick_start` can be slightly EARLIER
+    /// than the `Instant::now()` captured inside `start_roast`, producing
+    /// `now < self.start` and a panic that locks the duty holding its last
+    /// value until the RTC WDT resets the device. Use saturating arithmetic
+    /// so out-of-order `now` reads degrade to 0 elapsed instead of panicking.
     pub fn log_sample(&mut self, data: LogSampleData, now: Instant) {
         if !self.active {
             return;
         }
         let elapsed_secs = self
             .start
-            .map(|s| now.duration_since(s).as_secs() as u32)
+            .map(|s| now.saturating_duration_since(s).as_secs() as u32)
             .unwrap_or(0);
         let mut entry = HeaplessString::<SAMPLE_CAPACITY>::new();
         let _ = core::fmt::Write::write_fmt(

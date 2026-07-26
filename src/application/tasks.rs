@@ -86,6 +86,12 @@ struct WatchdogSnapshot {
 struct TickState {
     formatter: MutableArtisanFormatter,
     was_continuous: bool,
+    /// L2: tracks the rising edge of `roast_logger::is_logging_active()` so
+    /// the formatter epoch resets on START itself (sharing the roast
+    /// logger's epoch), not just on the continuous-output rising edge
+    /// (which also fires on pre-roast OT1/OT2 and would desynchronise
+    /// the stream's `time_s` from the `#DUMP` `time_s`).
+    was_roast_active: bool,
     last_guard_total_timeouts: u16,
     stage_tracker: StageTracker,
     stage_reporter: StageReporter,
@@ -94,13 +100,16 @@ struct TickState {
     tick_app_error: Option<AppError>,
     sensor_err: Option<ContainerError>,
     consecutive_sensor_errors: u8,
-    /// Counter for throttling telemetry emission to DEFAULT_OUTPUT_INTERVAL_MS.
-    /// The control loop runs at 100 ms (10 Hz); we only emit telemetry every
-    /// `telemetry_emit_every` ticks to respect the documented 1 Hz rate.
-    telemetry_tick_counter: u8,
-    /// How many control-loop ticks between telemetry emissions.
-    /// 1000 ms / 100 ms = 10.
-    telemetry_emit_every: u8,
+    /// Timestamp of last telemetry emission (`None` → never emitted).
+    /// Bug M1 (2026-07-25): the previous design throttled telemetry by tick
+    /// count assuming every tick was exactly 100 ms. The control loop spends
+    /// ≈ 190 ms waiting for the MAX31856 conversion every tick, so the real
+    /// tick period is ~290 ms; a 10-tick gate therefore emitted every ≈ 2.9 s
+    /// — telemetry 3× slower than documented and `#DUMP` drainage 3× slower
+    /// than the comment claimed. We gate by elapsed wall-clock instead, so
+    /// the rate is `DEFAULT_OUTPUT_INTERVAL_MS` regardless of how the tick
+    /// budget is spent.
+    last_telemetry_emit: Option<Instant>,
     // Bug V2-8: the roast epoch (`time_s` base for `#DUMP` and the ring
     // logger) is now OWNED by `RoastLogger` itself — set by its
     // `start_roast(now)`, called from `handle_start_roast`. The per-task
@@ -117,6 +126,7 @@ impl TickState {
         Self {
             formatter: MutableArtisanFormatter::new(),
             was_continuous: false,
+            was_roast_active: false,
             last_guard_total_timeouts: ledc_guard::total_timeouts(),
             stage_tracker: StageTracker::new(),
             stage_reporter: StageReporter::new(),
@@ -125,9 +135,7 @@ impl TickState {
             tick_app_error: None,
             sensor_err: None,
             consecutive_sensor_errors: 0,
-            telemetry_tick_counter: 0,
-            telemetry_emit_every: (crate::config::constants::DEFAULT_OUTPUT_INTERVAL_MS / 100)
-                as u8,
+            last_telemetry_emit: None,
         }
     }
 
@@ -733,13 +741,33 @@ async fn emit_telemetry_stage(
         // on manual OT1/OT2 too and was never reset between roasts.
     }
 
-    // Bug #7 fix: respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for telemetry.
-    // The control loop runs at 100 ms; we only emit every N ticks where
-    // N = DEFAULT_OUTPUT_INTERVAL_MS / 100 = 10 (i.e., 1 Hz instead of 10 Hz).
-    tick_state.telemetry_tick_counter = tick_state.telemetry_tick_counter.saturating_add(1);
-    let should_emit = tick_state.telemetry_tick_counter >= tick_state.telemetry_emit_every;
+    // L2: also align the FORMATTER's epoch with the START event itself,
+    // not only with the continuous-output rising edge. Otherwise manual
+    // OT1/OT2 before START lets the formatter accumulate time while the
+    // roast logger sits at 0s — start_streaming after the START produces
+    // a #timestamp for the ARTISAN line that disagrees with the #DUMP
+    // `time_s` base. Reset on the actual START transition only.
+    let roast_active_now = crate::logging::roast_logger::is_logging_active();
+    if roast_active_now && !tick_state.was_roast_active {
+        tick_state.formatter.reset();
+    }
+    tick_state.was_roast_active = roast_active_now;
+
+    // Bug M1 (2026-07-25): respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for
+    // telemetry by checking elapsed wall-clock from the *last emission*
+    // instead of a tick counter. The control loop spends ≈ 190 ms of every
+    // tick waiting for MAX31856 conversion, so a tick-count gate emitted
+    // every 2.9 s of real time and the `#DUMP` drain ran 3× slower than the
+    // previous comment claimed.
+    let should_emit = match tick_state.last_telemetry_emit {
+        None => true,
+        Some(last) => {
+            tick_start.saturating_duration_since(last).as_millis()
+                >= crate::config::constants::DEFAULT_OUTPUT_INTERVAL_MS
+        }
+    };
     if should_emit {
-        tick_state.telemetry_tick_counter = 0;
+        tick_state.last_telemetry_emit = Some(tick_start);
     }
 
     // Bug B17: feed the ring-buffer roast logger ONLY on the 1 Hz telemetry
@@ -751,7 +779,10 @@ async fn emit_telemetry_stage(
         if let Some(status) = status_for_output {
             // Bug V2-8: the `time_s` column is derived INSIDE the logger from
             // its own epoch (`start`, set by `start_roast`) and this `now`.
-            // The caller no longer owns the time base.
+            // The caller no longer owns the time base. M8: feed the `#DUMP`
+            // `ror` column in °C/min (the unit the column header declares),
+            // not the internal °C/s — `LogSampleData.ror` is documented in
+            // roast_logger.rs as "°C/min".
             crate::logging::roast_logger::log_sample(
                 crate::logging::roast_logger::LogSampleData {
                     bt: status.bean_temp,
@@ -759,7 +790,7 @@ async fn emit_telemetry_stage(
                     heater: status.ssr_output,
                     fan: status.fan_output,
                     target: status.target_temp,
-                    ror: status.derivative_rate,
+                    ror: status.derivative_rate * 60.0,
                 },
                 tick_start,
             );

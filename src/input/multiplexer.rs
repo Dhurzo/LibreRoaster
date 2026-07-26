@@ -1,11 +1,24 @@
-#[cfg(target_arch = "riscv32")]
+// Bug L9 (2026-07-25): the `Instant` mock used to be gated to
+// `#[cfg(not(target_arch = "riscv32"))]`, which kept it active on EVERY host
+// build — including non-test host builds where `CommandMultiplexer`'s
+// 60 s idle-failover is supposed to be a real safety feature (the host-side
+// simulation runs the multiplexer with the same Embassy executor that feeds
+// the device build, backed by `HostTimeDriver`). The mock returned
+// `Instant(u64::MAX - 1)` for every `now()` and `Duration::from_secs(0)` for
+// every `duration_since`, so on a host build the failover fired instantly
+// (or never, depending on the branch) regardless of wall-clock reality.
+//
+// Gate the mock to `#[cfg(all(not(target_arch = "riscv32"), test))]` so it
+// only applies to the unit tests; everywhere else (device build AND host
+// non-test build) we use the real `embassy_time::Instant`.
+#[cfg(any(target_arch = "riscv32", not(feature = "test")))]
 use embassy_time::Instant;
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(all(not(target_arch = "riscv32"), feature = "test"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Instant(u64);
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(all(not(target_arch = "riscv32"), feature = "test"))]
 impl Instant {
     pub fn now() -> Self {
         Self(u64::MAX - 1) // Mock time for testing

@@ -71,6 +71,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run host tests
         run: cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
+      # Bug C4b (2026-07-25): doctests for the doc-comment examples live in
+      # `src/common/`. Without an explicit step, a copy-pasted snippet that
+      # no longer compiles would slip through CI silently.
+      - name: Run doctests
+        run: cargo test --target x86_64-unknown-linux-gnu --features test --doc
 
   regression:
     name: Regression Tests
@@ -133,3 +138,9 @@ jobs:
       # every green CI run.
       - name: Build regression feature for ESP32-C3
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,regression
+      # Bug C4b (2026-07-25): build the `embedded,instrumentation` cell that
+      # nobody compiled; without it, dead-code from the telemetry path that
+      # is gated on `instrumentation` accumulates and a producer/consumer can
+      # silently desynchronise.
+      - name: Build with instrumentation for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,instrumentation

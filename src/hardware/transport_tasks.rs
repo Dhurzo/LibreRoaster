@@ -407,11 +407,18 @@ pub async fn run_reader_task<RX: RxSource>(
     Timer::after(reader_start_delay).await;
 
     loop {
+        // L6: track whether the most recent read filled the buffer so we
+        // can skip the 10 ms poll sleep when a burst is in flight and the
+        // UART FIFO would otherwise overflow waiting for the next tick.
+        let mut buffer_was_full = false;
         // Read from the transport using the trait's static method
         match RX::read_bytes(&mut rbuf).await {
             Ok(len) if len > 0 => {
                 crate::hardware::error_counters::reset_error_count(config.name);
                 push_to_event_queue(&state.event_queue, &rbuf[..len], &mut overflow);
+                if len == rbuf.len() {
+                    buffer_was_full = true;
+                }
             }
             Ok(0) => { /* no data — idle poll */ }
             Ok(_) => { /* should not happen */ }
@@ -423,7 +430,9 @@ pub async fn run_reader_task<RX: RxSource>(
 
         process_event_queue(&state.event_queue, config.channel, config, &mut overflow).await;
 
-        Timer::after(reader_poll_interval).await;
+        if !buffer_was_full {
+            Timer::after(reader_poll_interval).await;
+        }
     }
 }
 

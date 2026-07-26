@@ -65,6 +65,11 @@ where
                     }
                 }
             }
+            // MANDATORY flush before CS is raised by SpiDeviceWithCs: without it, the
+            // FIFO can still be draining while CS is asserted high, truncating the last
+            // write bytes (e.g. MAX31856 register writes silently dropped → POR 0x000000
+            // = 0.0°C with no failure flag).
+            bus.flush()?;
             Ok(())
         })
     }

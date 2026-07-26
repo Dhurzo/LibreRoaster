@@ -234,7 +234,7 @@ impl SensorConversionHub {
         }
     }
 
-    #[cfg(not(target_arch = "riscv32"))]
+    #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
     pub fn new() -> Self {
         Self {
             last_sample: None,
@@ -245,6 +245,18 @@ impl SensorConversionHub {
             env_filtered: 0.0,
             env_filter_initialized: false,
         }
+    }
+
+    /// Bug C4b (V2-6 residual, 2026-07-25): host-targeted `new()` that ALSO
+    /// initialises the `simulated_source` field. The `not(simulated-sensors)`
+    /// variant above has no such field; the `simulated-sensors` variant here
+    /// supplies the default curve. Both are named `new()` but are mutually
+    /// exclusive via cfg — exactly one compiles per host feature combination,
+    /// so the 53 test callers (gated variously under `test` and
+    /// `test,regression`) all resolve to a single definition.
+    #[cfg(all(not(target_arch = "riscv32"), feature = "simulated-sensors"))]
+    pub fn new() -> Self {
+        Self::new_simulated(SimulatedSensorSource::default_curve())
     }
 
     #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
@@ -266,7 +278,15 @@ impl SensorConversionHub {
         Self::new_simulated(SimulatedSensorSource::default_curve())
     }
 
-    #[cfg(not(target_arch = "riscv32"))]
+    // Bug C4b (V2-6 residual, 2026-07-25): the host `new_uninit` used to be
+    // gated only on `not(target_arch = "riscv32")`, which collides with the
+    // `simulated-sensors` variant above when `--features test,regression`
+    // (regression implies simulated-sensors) builds the host target — Rust
+    // saw two `new_uninit` definitions and errored with E0592. Gate the host
+    // variant to `not(riscv32) AND not(simulated-sensors)` so exactly one
+    // definition is selected per feature combination; the simulated-sensors
+    // variant above handles the `test,regression` host build.
+    #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
     fn new_uninit() -> Self {
         Self::new()

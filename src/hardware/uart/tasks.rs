@@ -1,8 +1,8 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::hardware::transport_tasks::{
-    run_reader_task, run_writer_task, RxSource, TransportConfig, TransportRxState, TxSink,
-    COMMAND_PIPE_SIZE, EVENT_QUEUE_SIZE,
+    run_reader_task, RxSource, TransportConfig, TransportRxState, COMMAND_PIPE_SIZE,
+    EVENT_QUEUE_SIZE,
 };
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
@@ -23,16 +23,11 @@ impl RxSource for UartRx {
     }
 }
 
-/// UART-specific TxSink implementation.
-pub struct UartTx;
-
-impl TxSink for UartTx {
-    type Error = crate::hardware::uart::driver::UartError;
-
-    async fn write_bytes(data: &[u8]) -> Result<(), Self::Error> {
-        driver::uart_write_bytes(data).await
-    }
-}
+// L8: `UartTx` was removed together with the unused `uart_writer_task`.
+// Output goes through `dual_output_task` via the shared output channel,
+// so leaving a second writer on the pipe is a recipe for interleaved
+// lines. The embedded driver `uart_write_bytes` is still re-exported in
+// case a future transport wants it directly.
 
 /// UART transport configuration.
 static UART_CONFIG: TransportConfig = TransportConfig {
@@ -54,11 +49,12 @@ pub async fn uart_reader_task() {
     run_reader_task(UartRx, &UART_STATE, &UART_CONFIG).await;
 }
 
-/// UART writer task - thin wrapper around generic implementation.
-#[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
-pub async fn uart_writer_task() {
-    run_writer_task(UartTx, &UART_STATE, &UART_CONFIG).await;
-}
+// L8: `uart_writer_task` was removed. Returning the same `run_writer_task`
+// wrapper would race `dual_output_task` (which owns the single output pipe
+// and is the only sanctioned writer) — the dead wrapper is replaced with
+// a compile-time assertion that the generic `run_writer_task` stays
+// available for current and future use, even though no spawner references
+// it today.
 
 /// Send a response via UART (multiplexer-aware).
 pub async fn send_response(response: &str) -> Result<(), crate::input::InputError> {

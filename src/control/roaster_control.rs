@@ -24,6 +24,15 @@ pub struct RoasterControl {
     last_pid_update: Option<Instant>,
     active_profile: Option<RoastProfile>,
     profile_start_time: Option<Instant>,
+    /// Bug M3 (2026-07-25): the maximum-roast-time backstop used to key on
+    /// `profile_start_time` (the timestamp `START` captures). In TC4 manual
+    /// mode (the most common Artisan flow) the heater is energized at OT1
+    /// without a `START` ever arriving, so the time cap was inert and a
+    /// forgotten heater could keep cooking indefinitely. Track when the
+    /// heater first crosses 0 with the time cap active; both
+    /// `profile_start_time`-set roasts and heater-energized manual sessions
+    /// get the same time budget.
+    heat_session_start: Option<Instant>,
     fan_profile: Option<crate::config::FanProfile>,
     charge_detected: bool,
     charge_time: Option<Instant>,
@@ -73,6 +82,7 @@ impl RoasterControl {
             last_pid_update: None,
             active_profile: None,
             profile_start_time: None,
+            heat_session_start: None,
             fan_profile: None,
             charge_detected: false,
             charge_time: None,
@@ -246,15 +256,27 @@ impl RoasterControl {
         );
 
         if let Some(heater) = outcome.heater_target {
+            // M10: hardware-first discipline. The software state mutations
+            // (`pid_enabled = false`, `artisan_control = true`,
+            // `manual_heater = heater`) commit ONLY if `apply_guarded_heater`
+            // accepts the write — a `ssr_cycle_busy` rejection now returns
+            // an Err with the state still pointing at the previous value,
+            // so the next tick retries the same value (no silent drop, no
+            // fan-out-of-phase state). `ArtisanCommandHandler::evaluate`
+            // already wrote `self.manual_heater` (handler-local state); it
+            // no longer calls `apply_to_status(status)` for heater commands.
+            // The pid/artisan_control/continuous-output commits live here,
+            // post-write.
+            self.actuator
+                .apply_guarded_heater(heater, current_time, true, &mut self.status)?;
+
+            // Hardware accepted the write — commit the rest of the policy.
             self.dispatch.disable_pid();
             self.status.pid_enabled = false;
             self.status.artisan_control = true;
             self.dispatch
                 .get_output_manager_mut()
                 .enable_continuous_output();
-
-            self.actuator
-                .apply_guarded_heater(heater, current_time, true, &mut self.status)?;
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         }
 
@@ -355,6 +377,10 @@ impl RoasterControl {
         // re-send `FANPROFILE`. `profile_start_time = None` already disables
         // interpolation during cooldown (the latch), so we keep the profile.
         self.profile_start_time = None;
+        // Bug M3 (2026-07-25): a STOP closes the heat session too — drop
+        // `heat_session_start` so the next tick does not consider a manual
+        // session still in progress against the time budget.
+        self.heat_session_start = None;
         // Bug B3: latch cooldown so `update_control`'s fan selector keeps the
         // fan at 100% on every subsequent tick. STOP does NOT arm the safety
         // emergency latch (only `emergency_shutdown` does); without this flag
@@ -444,16 +470,38 @@ impl RoasterControl {
                     idle_ms
                 );
                 self.emergency_shutdown("Comms idle timeout")?;
-                return Ok(0.0);
             }
+        }
+
+        // Bug M3 (2026-07-25): track when the heater first crosses 0 → positive
+        // and clear it on 0 again, so manual-mode (no `START`) heater sessions
+        // also get a time budget. The instrumentation is colocated here (next
+        // to the `roast_active` gate that already inspects the same state)
+        // because both decisions conceptually belong together: "what is the
+        // physical session for this tick?".
+        if heater_energized {
+            if self.heat_session_start.is_none() {
+                self.heat_session_start = Some(current_time);
+            }
+        } else {
+            // Heater off → the heat session ends here. Drop the timestamp so
+            // the next energising starts a fresh window (a 30-min manual
+            // session followed by a 30-min idle followed by another manual
+            // session should NOT inherit the original start).
+            self.heat_session_start = None;
         }
 
         // Maximum roast time safety backstop. Bug V2-16c: same physical gate as
         // comms-idle — protect any roasting session with the heater energized,
         // not only the named roast states.
+        // Bug M3 (2026-07-25): use `profile_start_time.or(heat_session_start)`
+        // so the cap covers BOTH named-roast (START with profile) AND manual
+        // (OT1/OT2 without START) heater sessions; the previous design keyed
+        // exclusively on `profile_start_time`, inert to the most common
+        // Artisan flow (OT1/OT2).
         if heater_energized || roast_active {
-            if let Some(start) = self.profile_start_time {
-                let elapsed_secs = current_time.duration_since(start).as_secs() as u32;
+            if let Some(start) = self.profile_start_time.or(self.heat_session_start) {
+                let elapsed_secs = current_time.saturating_duration_since(start).as_secs() as u32;
                 if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
                     warn!(
                         "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
@@ -461,7 +509,6 @@ impl RoasterControl {
                         crate::config::constants::MAX_ROAST_TIME_SECS
                     );
                     self.emergency_shutdown("Maximum roast time exceeded")?;
-                    return Ok(0.0);
                 }
             }
         }
@@ -489,7 +536,15 @@ impl RoasterControl {
         // full 3 s `CHARGE_DETECTION_WINDOW_S` (was ~1 s when sampled every
         // tick, making #CHARGE effectively indetectable for any realistic BT
         // thermal inertia).
-        if self.state == RoasterState::Heating && !self.charge_detected {
+        // Bug M2 (2026-07-25): the previous gate stopped sampling after the
+        // Heating → Stable transition (which fires immediately after PREHEAT
+        // START because the target is already met). Combined with the 20 °C
+        // threshold (verified by simulation to be unattainable with a real
+        // probe cooling at ≈ 2–3 °C/s), `#CHARGE` was dead. Activate sampling
+        // in BOTH roast-active states until charge is detected.
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+            && !self.charge_detected
+        {
             self.charge_history_tick_div = self.charge_history_tick_div.saturating_add(1);
             if self.charge_history_tick_div >= CHARGE_SAMPLE_TICK_DIV {
                 self.charge_history_tick_div = 0;
@@ -538,7 +593,6 @@ impl RoasterControl {
         if !current_pv.is_finite() {
             warn!("Sensor input NaN/infinite (fault) — emergency shutdown");
             self.emergency_shutdown("Sensor fault (NaN/infinite temperature)")?;
-            return Ok(0.0);
         }
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
@@ -551,14 +605,31 @@ impl RoasterControl {
         // brick on the first real PREHEAT. The guard must only protect once
         // beans are present. Gate it to the post-charge roasting states
         // (`Heating` / `Stable`); Idle/Preheating must not trigger it
-        // (Preheating is by definition heating an empty drum). This is the
-        // conservative fix — the threshold stays at 0.5 °C/s; relaxing it
-        // is an independent knob if real-fast-roast ramp data demands it.
+        // (Preheating is by definition heating an empty drum).
+        //
+        // Bug M4 (2026-07-25): additionally, FEED the guard from the BT-only
+        // `refresh_bt_guard_derivative`, not from `status.derivative_rate`
+        // (which is the active PV — either BT or ET). With `PID;CHAN;1`
+        // (ET-as-PV, supported by `pid_channel_1_uses_env_temp_as_pv`), the
+        // 0.5 °C/s threshold calibrated for the sluggish BT was being applied
+        // to ET (which climbs much faster) → spurious emergency on a healthy
+        // roast while a genuine BT runaway remained unguarded.
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            if let Some(bt_rate) = self
+                .sensor
+                .refresh_bt_guard_derivative(self.status.bean_temp, current_time)
+            {
+                if let Err(e) = self.sensor.check_bt_rate(bt_rate) {
+                    warn!("BT rate-of-rise guard failed: {:?}", e);
+                    self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
+                }
+            }
+            // Backwards-compat: also feed the legacy `status.derivative_rate`
+            // path so telemetry still sees the PV-derivative (relevant when
+            // ET is the chosen PV). This call does NOT influence the BT guard.
             if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
                 warn!("Rate-of-rise check failed: {:?}", e);
                 self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
-                return Ok(0.0);
             }
         }
 
@@ -738,20 +809,20 @@ impl RoasterControl {
                 self.handle_set_fan_speed(value, was_clamped, current_time)
             }
             crate::config::ArtisanCommand::Stop => {
-                // Bug V2-1: `STOP` parses to `EmergencyStop` and arms the
-                // emergency latch (`activate_emergency` + `fault_condition`),
-                // but the only sanctioned un-latch path
-                // (`RoasterCommand::StopRoast → clear_emergency_explicit`)
-                // has NO producer in production code — so a single `STOP`
-                // bricked the roaster until a power cycle. The host needs an
-                // *reachable* recovery action. We extend plain `OFF`
-                // (`ArtisanCommand::Stop`, token "OFF", *not* the latch-arming
-                // `STOP`) to act as stop-and-recover when it arrives with the
-                // latch armed and the device in the `Error` state: clear the
-                // latch first, then run the normal stop. The whitelist at the
-                // top of this method already permits `Stop` with
-                // `fault_condition` active, so this is the sanctioned door.
-                if self.status.fault_condition && self.safety.is_emergency_active() {
+                // Reported bug C3 / V2-1: `STOP` (token "STOP" via
+                // `EmergencyStop`) arms the emergency latch
+                // (`activate_emergency` + `fault_condition`), but the only
+                // sanctioned un-latch path
+                // (`RoasterCommand::StopRoast → clear_emergency_explicit`) has
+                // no producer in production code, so a single sensor-fault
+                // latched the roaster until a power cycle. Decision
+                // (2026-07-25): make plain `OFF` (`ArtisanCommand::Stop`,
+                // token "OFF") the *unconditional* recovery: if any fault or
+                // emergency latch is active, clear it BEFORE running the
+                // normal stop, so the host always has a reachable door back to
+                // `Idle`. The whitelist at the top of this method already
+                // permits `Stop` while `fault_condition` is active.
+                if self.status.fault_condition || self.safety.is_emergency_active() {
                     self.clear_emergency_explicit();
                 }
                 self.handle_stop()
@@ -1287,9 +1358,16 @@ impl RoasterControl {
     fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {
         use crate::config::constants::SsrHardwareStatus;
 
+        // M7: the throttle must respect the operator-configured
+        // `pid_cycle_time_ms` (PID;CT;...), not the compile-time default. A
+        // setting like `PID;CT;1000` was previously inert — the I-term would
+        // integrate ten times faster than the configured cadence. Defensive
+        // floor of 10 ms guards against absurd inputs (PID;CT;0 would freeze
+        // the throttle at "due" and burn CPU).
+        let cycle_ms = self.status.pid_cycle_time_ms.max(10) as u64;
         let should_update = if let Some(last_update) = self.last_pid_update {
             current_time.duration_since(last_update)
-                >= embassy_time::Duration::from_millis(crate::config::PID_SAMPLE_TIME_MS as u64)
+                >= embassy_time::Duration::from_millis(cycle_ms)
         } else {
             true
         };
@@ -1319,10 +1397,33 @@ impl RoasterControl {
             self.last_pid_update = Some(current_time);
 
             if self.state == crate::config::constants::RoasterState::Heating {
-                let temp_error = (self.status.bean_temp - self.status.target_temp).abs();
+                // Bug L11 (2026-07-25): pivot on the active PV, not always on
+                // `bean_temp`. When `PID;CHAN;1` selects ET as the PID's PV
+                // (`status.pv = env_temp`), the PID is driving ET toward the
+                // target. The Heating→Stable transition records "the loop has
+                // converged on its setpoint" — using `bean_temp` here would
+                // ignore the loop the PID actually closed (BT may lag ET by
+                // tens of degrees during heat-up). With channel=2 (the
+                // default) `status.pv == bean_temp`, so this is behaviour-
+                // preserving for the common case.
+                let pv_for_transition = self.status.pv;
+                let temp_error = (pv_for_transition - self.status.target_temp).abs();
                 if temp_error < 2.0 {
                     self.state = crate::config::constants::RoasterState::Stable;
                     info!("Target temperature reached, entering stable state");
+                }
+            } else if self.state == crate::config::constants::RoasterState::Stable {
+                // Bug M2 (2026-07-25): hysteresis — the previous transition
+                // Heating → Stable was unidirectional, so once the operator
+                // (or a ramp) raised target beyond `+3 °C`, the state stayed
+                // `Stable` even though the system was clearly chasing the new
+                // setpoint again. Flip back to `Heating` when the gap widens
+                // past the upper threshold (3 °C) so the rest of the FSM keeps
+                // its expected Heating-typed semantics.
+                let temp_error = (self.status.bean_temp - self.status.target_temp).abs();
+                if temp_error >= 3.0 {
+                    self.state = crate::config::constants::RoasterState::Heating;
+                    info!("Target moved beyond hysteresis band, re-entering heating state");
                 }
             }
 
@@ -1927,9 +2028,12 @@ mod tests {
         ctrl.status_mut().last_command_received_at_ms = backdated;
 
         let out = ctrl.update_control(now);
-        // `emergency_shutdown` returns `Ok(())`; `update_control` propagates
-        // it after its `emergency_shutdown?` call as `Ok(0.0)`. The assertion
-        // is on the side-effect (latch armed), not the return.
+        // Bug L11 (2026-07-25): `emergency_shutdown` always returns `Err` (the
+        // actuator's `emergency_shutdown` ends with `Err(RoasterError::EmergencyShutdown)`),
+        // so `update_control`'s `emergency_shutdown(...)?` early-returns with
+        // that Err — the dead `return Ok(0.0)` that used to follow it has been
+        // removed. The relevant assertion is the side-effect (latch armed),
+        // not the return value, so `let _ = out;` covers both Ok and Err.
         let _ = out;
         assert!(
             ctrl.safety().is_emergency_active(),

@@ -59,7 +59,15 @@ mod software_watchdog {
 
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.swap(now, Ordering::SeqCst);
-            if last > 0 && now - last > WATCHDOG_TIMEOUT_MS {
+            // Bug L7 (2026-07-25): saturating subtraction. With
+            // `overflow-checks = true` (release builds may still opt-in for
+            // `embedded`), `now - last` would underflow if the embassy-time
+            // clock were to wrap or two test threads interleaved so that the
+            // new `now` is older than `last`. Saturate to 0 so a transient
+            // out-of-order pair NEVER panics; if `now - last` is 0 the
+            // timeout branch is taken conservatively (correct: a clock that
+            // wrapped is unreliable).
+            if last > 0 && now.saturating_sub(last) > WATCHDOG_TIMEOUT_MS {
                 self.last_failure = Some("watchdog_timeout");
                 return Err(WatchdogError::FeedFailed("watchdog_timeout"));
             }
@@ -74,7 +82,7 @@ mod software_watchdog {
         pub fn is_alive(&self) -> bool {
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
-            last == 0 || now - last <= WATCHDOG_TIMEOUT_MS
+            last == 0 || now.saturating_sub(last) <= WATCHDOG_TIMEOUT_MS
         }
     }
 }
@@ -139,14 +147,31 @@ mod hw_watchdog {
     ///
     /// The RWDT runs off the internal ~136 kHz RTC slow clock (RC_SLOW_CLK on
     /// the C3 is ~136 kHz, not 150 kHz) and resets the system if the control
-    /// loop stops feeding it.  With `WDT_STAGE0_HOLD = 300_000` the actual
-    /// timeout is ~2.2 s. This init is explicit (not relying on bootloader
-    /// defaults) so the safety net is always active regardless of the flash
-    /// toolchain used.
+    /// loop stops feeding it.
+    ///
+    /// Bug A5 (2026-07-25): the effective HOLD written into the register is
+    /// `HOLD << (1 + WDT_DELAY_SEL)` where `WDT_DELAY_SEL ∈ {0,1,2,3}` is
+    /// stored in efuse `RD_REPEAT_DATA1`. With the typical value `0`, the
+    /// actual timeout is 2× the value we write — so naively writing 300 000
+    /// yields ~4.4 s instead of the documented ~2.2 s, and with `1..=3` it
+    /// blows up to 8.8 s / 17.6 s / 35.2 s, all well past the safety budget.
+    /// We compensate by shifting the requested value right by `(1 + sel)`
+    /// before writing; that delivers the requested ≈ 2.2 s nominal timeout
+    /// across the whole efuse range.
+    ///
+    /// Additionally, `esp_hal::init` leaves `WDTCONFIG0` zeroed, so
+    /// `wdt_sys_reset_length` / `wdt_cpu_reset_length` are 0 — i.e. a 100 ns
+    /// reset pulse that the flash chip may not even see. esp-hal programs 7
+    /// (≈ 3.2 µs). We do the same so the reset reliably reaches the
+    /// peripherals and the flash boot loader.
     pub fn init() {
         const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
-        // RTC_SLOW_CLK ≈ 136 kHz  →  ~2.2 s = 300 000 cycles
-        const WDT_STAGE0_HOLD: u32 = 300_000;
+        // RTC_SLOW_CLK ≈ 136 kHz  →  ~2.2 s nominal = 300 000 cycles
+        const WDT_STAGE0_HOLD_NOMINAL: u32 = 300_000;
+        // 7 ≈ 3.2 µs reset pulse — mirror esp-hal defaults so the WD timeout
+        // reliably latches the system into reset instead of producing a
+        // 100 ns blip that peripherals can ignore.
+        const WDT_RESET_PULSE_LEN: u8 = 7;
 
         let rtc_cntl = unsafe { &*esp32c3::RTC_CNTL::ptr() };
 
@@ -154,9 +179,19 @@ mod hw_watchdog {
             .wdtwprotect()
             .write(|w| unsafe { w.wdt_wkey().bits(WDT_UNLOCK_KEY) });
 
+        // Read the efuse-stored `wdt_delay_sel` (0..=3) before configuring the
+        // RWDT so we can compensate its ×2/×4/×8/×16 shift upstream.
+        let efuse = unsafe { &*esp32c3::EFUSE::ptr() };
+        let wdt_delay_sel: u32 = efuse.rd_repeat_data1().read().wdt_delay_sel().bits() as u32;
+        // Saturating right shift: a 0 sel → 1, a 3 sel → 4. Clamp to 6 (the
+        // upper bound the report cites; saturating at 6 also guards against a
+        // future efuse value we have not accounted for).
+        let shift = 1u32 + wdt_delay_sel.min(3);
+        let hold = WDT_STAGE0_HOLD_NOMINAL >> shift;
+
         rtc_cntl
             .wdtconfig1()
-            .write(|w| unsafe { w.hold().bits(WDT_STAGE0_HOLD) });
+            .write(|w| unsafe { w.hold().bits(hold) });
 
         rtc_cntl.wdtconfig0().modify(|_, w| unsafe {
             w.wdt_en()
@@ -169,6 +204,10 @@ mod hw_watchdog {
                 // esp-hal `RwdtStageAction`: Off=0, Interrupt=1, ResetCpu=2,
                 // ResetSystem=3, ResetRtc=4.
                 .bits(3)
+                .wdt_sys_reset_length()
+                .bits(WDT_RESET_PULSE_LEN)
+                .wdt_cpu_reset_length()
+                .bits(WDT_RESET_PULSE_LEN)
                 .wdt_flashboot_mod_en()
                 .set_bit()
         });

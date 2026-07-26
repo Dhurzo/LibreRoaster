@@ -151,8 +151,15 @@ pub trait StatusGetters {
 
 impl SsrControlBase {
     pub fn new() -> Self {
+        // Boot-time status is `Available`: at duty 0 the SSR does not conduct
+        // and the documentation-defined wiring (pin pulled HIGH when SSR off,
+        // LOW when SSR conducts) makes a single sample at boot uninformative.
+        // Treating the heater as available at boot is necessary so manual and
+        // PID commands are not silently masked out by a false NotDetected latch
+        // (caused by the dead-lock the report flags: 0% duty → pin HIGH →
+        // NotDetected → output forced to 0 → 0% duty forever).
         SsrControlBase {
-            hardware_status: SsrHardwareStatus::NotDetected,
+            hardware_status: SsrHardwareStatus::Available,
             current_duty: 0,
             last_duty_delta_ticks: 0,
             retry_count: 0,
@@ -165,6 +172,14 @@ impl SsrControlBase {
 
     /// Detect heat source using a closure to read the detection pin.
     /// This eliminates duplicate code in SsrControl and SsrControlSimple.
+    ///
+    /// Observability gate: when `current_duty` is too low (belly of the 5 Hz
+    /// PWM cycle shorter than the sample interval, including duty 0 at boot),
+    /// the detection pin is uninformative — a HIGH sample does NOT mean "SSR
+    /// stuck off", it means "we sampled during the OFF window". Skipping the
+    /// state update for low duty windows prevents the boot-time dead-lock
+    /// where the SSR could never become `Available` (0% duty → HIGH → NOTDET
+    /// → output forced to 0 → never 50%+ duty → never Available).
     pub fn detect_heat_source<F, E>(
         &mut self,
         current_time: u32,
@@ -173,6 +188,15 @@ impl SsrControlBase {
     where
         F: FnMut() -> Result<bool, E>,
     {
+        // ≥50% duty ≈ one full sample interval of conduction per PWM period at
+        // 5 Hz vs. ~100 ms sampling; below that the pin read may legitimately
+        // land in the OFF window even when the SSR is wired and functional.
+        let min_observable_ticks = (1u32 << SSR_PWM_RESOLUTION) / 2;
+        if (self.current_duty as u32) < min_observable_ticks {
+            self.last_detection_check = Some(current_time);
+            return Ok(());
+        }
+
         match read_pin() {
             Ok(is_detected) => {
                 let new_status = if is_detected {
@@ -391,7 +415,7 @@ where
                 source: "channel_init_failed",
             })?;
 
-        let mut ssr = SsrControl {
+        let ssr = SsrControl {
             pin,
             detection_pin,
             pwm_channel,
@@ -399,8 +423,10 @@ where
             _phantom: PhantomData,
         };
 
-        ssr.detect_heat_source(0)?;
-
+        // Boot-time detection is uninformative at duty=0 (pin HIGH is the
+        // expecter OFF state, NOT evidence of missing hardware). The
+        // `detect_heat_source` runs from `periodic_check` once enough duty is
+        // commanded for the pin read to be meaningful.
         info!(
             "SSR control initialized with PWM - heat source: {:?}",
             ssr.base.hardware_status
@@ -477,15 +503,19 @@ where
                 source: "channel_init_failed",
             })?;
 
-        let mut ssr = SsrControlSimple {
+        let ssr = SsrControlSimple {
             detection_pin,
             pwm_channel,
             base: SsrControlBase::new(),
             _phantom: PhantomData,
         };
 
-        ssr.detect_heat_source(0)?;
-
+        // Boot-time detection is uninformative at duty=0 (pin HIGH is the
+        // expected OFF state). The `detect_heat_source` runs from
+        // `periodic_check` once enough duty is commanded for the pin read to
+        // be meaningful. `SsrControlBase::new` already initializes the
+        // hardware status to `Available` to avoid the dead-lock the report
+        // flags.
         info!(
             "SSR control initialized (simple mode) - heat source: {:?}",
             ssr.base.hardware_status

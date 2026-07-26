@@ -46,11 +46,15 @@ fn expected_warm_status() -> &'static str {
     // 20 columns: env_temp,bean_temp,heater,fan,watchdog_flag,failure_count,failure_reason,
     // guard_timeouts,regression_flag,pv,mv,integrator,derivative,saturation,integrator_clamp,
     // derivative_available,cmd_latency,max_cmd_latency,temp_scale,fault_flag
-    "0.8,4.7,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,0.24,1,1,1,0,0,0,0"
+    //
+    // Bug M8 (2026-07-25): derivative column 12 is now emitted in °C/min
+    // (Artisan convention) instead of internal °C/s. 0.24 °C/s → 14.40 °C/min.
+    "0.8,4.7,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,14.40,1,1,1,0,0,0,0"
 }
 
 fn expected_cold_status() -> &'static str {
-    "0.0,-0.3,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,0.08,0,0,1,0,0,0,0"
+    // Bug M8 (2026-07-25): 0.08 °C/s → 4.80 °C/min.
+    "0.0,-0.3,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,4.80,0,0,1,0,0,0,0"
 }
 
 fn expected_fault_status() -> &'static str {
@@ -284,7 +288,13 @@ mod column_order_verification {
         assert_eq!(parts[9], "150.0", "Column 9 (pv) should be 150.0");
         assert_eq!(parts[10], "75.0", "Column 10 (mv) should be 75.0");
         assert_eq!(parts[11], "12.0", "Column 11 (integrator) should be 12.0");
-        assert_eq!(parts[12], "0.24", "Column 12 (derivative) should be 0.24");
+        // Bug M8 (2026-07-25): STATUS field 12 (derivative) is now emitted
+        // in °C/min (Artisan convention), not the internal °C/s. The fixture's
+        // 0.24 °C/s → 0.24 × 60 = 14.40 °C/min.
+        assert_eq!(
+            parts[12], "14.40",
+            "Column 12 (derivative) should be 14.40 °C/min"
+        );
         assert_eq!(parts[13], "1", "Column 13 (saturation) should be 1");
         assert_eq!(parts[14], "1", "Column 14 (integrator_clamp) should be 1");
         assert_eq!(
@@ -333,13 +343,25 @@ mod fixture_hub_agreement {
             status.fault_condition = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
             status.overtemp_regression_active = true; // Regression fixtures run with flag set
 
-            // Parse expected line to extract pv/mv/integrator/etc
+            // Parse expected line to extract pv/mv/integrator/etc. Bug M8
+            // (2026-07-25): column 12 of `expected_line` is in °C/min (the
+            // Artisan-facing unit the formatter emits), but `status.derivative_rate`
+            // is the INTERNAL value in °C/s. Parsing the °C/min figure back
+            // into `derivative_rate` then re-running the formatter's `× 60`
+            // conversion double-counts (14.40 °C/min × 60 → 864.0). Instead
+            // we feed the internal °C/s per fixture (0.24 for warm, 0.08 for
+            // cold, 0 for fault) so the formatter reproduces the expected line
+            // exactly.
             // Columns 9-15 are the same in 20-column format (new cols are 18,19)
             let parts: Vec<&str> = expected_line.split(',').collect();
             status.pv = parts[9].parse().unwrap_or(0.0);
             status.mv = parts[10].parse().unwrap_or(0.0);
             status.integrator_value = parts[11].parse().unwrap_or(0.0);
-            status.derivative_rate = parts[12].parse().unwrap_or(0.0);
+            status.derivative_rate = match name {
+                "warm" => 0.24, // °C/s → formatter emits 14.40 °C/min
+                "cold" => 0.08, // °C/s → formatter emits 4.80 °C/min
+                _ => 0.0,       // fault fixture carries a zero derivative
+            };
             status.saturation_active = parts[13] == "1";
             status.integrator_clamped = parts[14] == "1";
             status.derivative_available = parts[15] == "1";

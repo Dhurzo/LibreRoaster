@@ -102,8 +102,14 @@ impl OutputFormatter for ArtisanFormatter {
         &mut self,
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
-        let elapsed_secs = self.start_time.elapsed().as_secs();
-        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
+        // L3: read the clock ONCE per `format()` call. Two separate
+        // `start_time.elapsed()` calls can straddle a millisecond rollover
+        // (e.g. `as_secs()` sees 12 then `as_millis()%1000` sees 13), making
+        // the artisan line disagree with itself (`12,1500` vs `12,1401`).
+        // Cheap and trivially safe.
+        let elapsed = self.start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs();
+        let elapsed_ms = elapsed.as_millis() % 1000;
 
         let et = status.env_temp;
         let bt = status.bean_temp;
@@ -230,15 +236,18 @@ impl ArtisanFormatter {
         // wrapped them in `convert_to_display`, and a test blessed the bug.
         let mv = Self::normalize_read_value(status.mv);
         let integrator_value = Self::normalize_read_value(status.integrator_value);
-        // `derivative_rate` is in °C/s internally. When Artisan is in °F
-        // mode it expects rate in °F/min (not °F as if it were a temperature).
-        // °F/min = °C/s × (9/5) × 60. The previous code applied the
-        // temperature formula `(C*9/5)+32`, producing nonsense values like
-        // 31.24 for a -0.42 °C/s RoR.
+        // M8: STATUS field 13 emits the RoR in degrees-per-minute of the
+        // active display scale (Artisan convention) — °C/min in Celsius mode,
+        // °F/min in °F mode. Internally `derivative_rate` is °C/s, so:
+        //   °C/min = °C/s × 60
+        //   °F/min = °C/s × (9/5) × 60
+        // Pre-fix, the Celsius branch emitted raw °C/s while the Fahrenheit
+        // branch emitted °F/min — the same RoR displayed as ~0.42 (°C/min felt)
+        // or ~−45.36 (°F/min felt), a 108× mismatch on `UNITS` toggle.
         let derivative_value = if status.temperature_settings.is_fahrenheit() {
             Self::normalize_read_value(status.derivative_rate * (9.0 / 5.0) * 60.0)
         } else {
-            Self::normalize_read_value(status.derivative_rate)
+            Self::normalize_read_value(status.derivative_rate * 60.0)
         };
         let saturation_flag = if status.saturation_active { 1 } else { 0 };
         let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
@@ -303,23 +312,36 @@ impl ArtisanFormatter {
     }
 
     pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
-        if history.len() < 3 {
+        // M9: contrast against a linear extrapolation of the window, NOT
+        // against the mean. On a clean ramp {m, m+d, m+2d, m+3d, ...} the
+        // mean-based 2σ test flat-out flags every sample past the 3rd
+        // (the ramp slope variance is ~2 d per step while 2σ ≈ 1.63·d with
+        // n=3), suppressing the very behavior the RoR is supposed to track.
+        // The linear approach uses the residuals against the estimated slope
+        // (the right baseline for a ramp), floors the rejection threshold at
+        // 2.0 °C so a near-perfect window doesn't reject innocent noise, and
+        // widens it to 3·σ so real spikes still trip. Requires n ≥ 4 to fit
+        // both a slope and a non-trivial residual sample.
+        if history.len() < 4 {
             return false;
         }
 
-        let mean = history.iter().sum::<f32>() / history.len() as f32;
-        let variance = history
-            .iter()
-            .map(|&v| {
-                let diff = v - mean;
-                diff * diff
-            })
-            .sum::<f32>()
-            / history.len() as f32;
-        let std_dev = libm::sqrtf(variance);
+        let n = history.len() as f32;
+        let slope = (history[history.len() - 1] - history[0]) / (n - 1.0); // paso medio
+        let predicted = history[history.len() - 1] + slope;
 
-        // 2-sigma rule: values more than 2 standard deviations from mean are outliers
-        (current_temp - mean).abs() > 2.0 * std_dev
+        // σ of step-to-step residuals around the slope estimate.
+        let mut var = 0.0f32;
+        for pair in history.windows(2) {
+            let r = (pair[1] - pair[0]) - slope;
+            var += r * r;
+        }
+        let sd = libm::sqrtf(var / (n - 1.0));
+
+        // 3σ with 2 °C absolute floor — prevents noisy-but-clean streams
+        // from being marked as outliers when σ is near zero, but still
+        // rejects genuine spikes.
+        (current_temp - predicted).abs() > (3.0 * sd).max(2.0)
     }
 }
 
@@ -362,8 +384,11 @@ impl MutableArtisanFormatter {
         &mut self,
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
-        let elapsed_secs = self.start_time.elapsed().as_secs();
-        let elapsed_ms = self.start_time.elapsed().as_millis() % 1000;
+        // L3: read the clock ONCE per `format()` call (paired single-read
+        // with `ArtisanFormatter::format` above).
+        let elapsed = self.start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs();
+        let elapsed_ms = elapsed.as_millis() % 1000;
 
         // Use original Celsius for ROR calculation
         let bt_c = status.bean_temp;
@@ -376,8 +401,22 @@ impl MutableArtisanFormatter {
         let bt_display = status.temperature_settings.convert_to_display(bt_c);
         let gas = status.ssr_output; // SSR output as gas control
 
+        // M8: emit continuous-stream RoR in degrees-per-minute of the
+        // active display scale (Artisan convention). Internally `ror` is the
+        // °C/s value computed by `calculate_ror` so apply the same ×60
+        // °C/s → °C/min scaling and the 9/5 scale conversion for °F. Without
+        // this, the continuous stream shows the rate in °C/s while STATUS
+        // emits °C/min — same value, different units, contradicting each
+        // other on the wire.
+        let ror_display = if status.temperature_settings.is_fahrenheit() {
+            ror * (9.0 / 5.0) * 60.0
+        } else {
+            ror * 60.0
+        };
+
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
-        let line = ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror, gas);
+        let line =
+            ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror_display, gas);
 
         // Bug #7: prefix the spontaneous continuous-telemetry line with '#' so
         // a line-oriented client can distinguish it from a synchronous `READ`
@@ -419,19 +458,16 @@ impl MutableArtisanFormatter {
         }
 
         if current_bt == self.last_bt {
-            // Bug #7: still record the sample in history so the time base
-            // advances. Returning 0.0 without updating the history left a
-            // gap in the timestamp series, so subsequent ROR computations
-            // used stale time spans and produced a static ROR even when
-            // earlier samples indicated a trend.
-            self.last_bt = current_bt;
-            Self::update_bt_history_with_timestamp(
-                &mut self.bt_history,
-                &mut self.timestamp_history,
-                current_bt,
-                now,
-            );
-            return 0.0;
+            // L1: the previous "early-return 0.0 on equal BT" produced a
+            // saw-tooth RoR where holding temp (a normal pre/post 1C stall)
+            // dropped the RoR to 0 °C/min for the duration of the plateau
+            // instead of tracking whatever trend existed in the window —
+            // a transient would fool the debounce and force the IIR to
+            // converge again. Drop the early-return: advance history with
+            // the new timestamp and let the normal RoR path compute the
+            // rate from the window. A duplicated sample in the middle of a
+            // ramp contributes 0 d(BT) for that step but the rest of the
+            // window still slopes.
         }
 
         // Bug B12: the previous code refused to insert an outlier into the
@@ -676,7 +712,9 @@ mod tests {
         assert_eq!(parts[9], "150.5");
         assert_eq!(parts[10], "88.5");
         assert_eq!(parts[11], "37.1");
-        assert_eq!(parts[12], "-0.42");
+        // M8: STATUS field 12 (derivative) is in °C/min of the active scale.
+        // −0.42 °C/s × 60 = −25.20 °C/min (formatter is `{:.2}`).
+        assert_eq!(parts[12], "-25.20");
         assert_eq!(parts[13], "1");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "1");
@@ -716,7 +754,9 @@ mod tests {
 
         assert_eq!(parts.len(), 20);
         assert_eq!(parts[11], "51.2");
-        assert_eq!(parts[12], "0.73");
+        // M8: derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
+        // M8: derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
+        assert_eq!(parts[12], "43.80");
         assert_eq!(parts[13], "1");
         assert_eq!(parts[14], "0");
         assert_eq!(parts[15], "1");
@@ -730,6 +770,7 @@ mod tests {
         assert!(output.contains(",none,"));
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 20);
+        // M8: zero °C/s × 60 = 0.00 °C/min (unchanged, but documenting the unit).
         assert_eq!(parts[12], "0.00");
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "0");
@@ -1043,7 +1084,7 @@ mod tests {
         assert_eq!(parts[9], "150.5", "PV in Celsius");
         assert_eq!(parts[10], "88.5", "MV in Celsius");
         assert_eq!(parts[11], "37.1", "Integrator in Celsius");
-        assert_eq!(parts[12], "-0.42", "Derivative in Celsius");
+        assert_eq!(parts[12], "-25.20", "Derivative in °C/min (M8)");
         assert_eq!(parts[13], "1");
         assert_eq!(parts[14], "1");
         assert_eq!(parts[15], "1");

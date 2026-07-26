@@ -211,33 +211,26 @@ fn full_emergency_recovery_cycle() {
     assert!(ctrl.get_status().fault_condition);
     assert!(ctrl.safety().is_emergency_active());
 
-    // Bug #3 regression: Artisan's `ArtisanCommand::Stop` (which is the
-    // "stop streaming" path, mapped from `PID;OFF` over the protocol) must
-    // NOT un-latch a held emergency — only the explicit recovery command
-    // (StopRoast) clears it. The previous test asserted the opposite here,
-    // blessing the bug. Stop may drop us back to Idle for streaming
-    // bookkeeping, but the latch stays armed until recovery.
+    // Bug C3 doctrine (2026-07-25): `ArtisanCommand::Stop` (token "OFF") is the
+    // *unconditional* recovery door for the host. A latched emergency with no
+    // reachable recovery used to brick the device until a power cycle, because
+    // `RoasterCommand::StopRoast` (the only un-latch path) had no producer in
+    // production code. OFF now clears the latch first and then runs the
+    // normal stop, so the device always returns to `Idle` on the visible
+    // Artisan button.
     ctrl.process_artisan_command(ArtisanCommand::Stop)
-        .expect("artisan stop does not un-latch emergency");
+        .expect("OFF is the recovery path; must not panic");
 
-    // The streaming task is idle, but the safety latch is still armed and
-    // the fault flag is still asserted.
+    // After OFF: latch released, fault cleared, state back to Idle.
     assert!(
-        ctrl.safety().is_emergency_active(),
-        "STOP must not release the emergency latch"
+        !ctrl.safety().is_emergency_active(),
+        "OFF must release the emergency latch (host recovery route)"
     );
     assert!(
-        ctrl.get_status().fault_condition,
-        "STOP must not clear the fault flag (only StopRoast does)"
+        !ctrl.get_status().fault_condition,
+        "OFF must clear the fault flag (host recovery route)"
     );
-
-    // The operator's explicit recovery path releases the latch.
-    let recover_now = Instant::from_millis(2000);
-    ctrl.process_command(RoasterCommand::StopRoast, recover_now)
-        .expect("StopRoast clears emergency");
     assert_eq!(ctrl.get_state(), RoasterState::Idle);
-    assert!(!ctrl.get_status().fault_condition);
-    assert!(!ctrl.safety().is_emergency_active());
 
     tick_now(&mut ctrl, 25.0, 30.0);
     ctrl.process_artisan_command(ArtisanCommand::StartRoast)

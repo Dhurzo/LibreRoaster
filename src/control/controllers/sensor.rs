@@ -24,6 +24,17 @@ pub struct SensorController {
     last_pv_sample: Option<f32>,
     last_pv_sample_time: Option<Instant>,
     last_filtered_derivative: f32,
+    /// Bug M4 (2026-07-25): dedicated sample pair for the BT-only RoR guard.
+    /// The previous design keyed the runaway guard on `status.derivative_rate`
+    /// which is the PV (BT or ET) derivative chosen by `update_pid_control`.
+    /// With `PID;CHAN;1` (ET as PV — supported and tested downstream), the
+    /// 0.5 °C/s threshold (calibrated for the sluggish BT) is applied to ET
+    /// (which climbs much faster), causing a latched emergency on a healthy
+    /// roast while a real BT runaway goes unguarded. Keep the guard on BT
+    /// always and the PID feed on whatever PV is configured; they are now
+    /// independent measurements.
+    last_bt_guard_sample: Option<(f32, Instant)>,
+    bt_guard_derivative: f32,
     ror_exceeded_count: u8,
     // Bug V2-3 / B7 residual: per-channel fault counters. A single shared
     // counter fed with `bean_fault || env_fault` was defeated by a chronically
@@ -46,6 +57,8 @@ impl SensorController {
             last_pv_sample: None,
             last_pv_sample_time: None,
             last_filtered_derivative: 0.0,
+            last_bt_guard_sample: None,
+            bt_guard_derivative: 0.0,
             ror_exceeded_count: 0,
             consecutive_bean_faults: 0,
             consecutive_env_faults: 0,
@@ -248,6 +261,60 @@ impl SensorController {
             self.ror_exceeded_count = 0;
         }
 
+        Ok(())
+    }
+
+    /// Bug M4 (2026-07-25): refresh the BT-only rate-of-rise dedicated for the
+    /// runaway guard. `update_temperatures` already gates BT in
+    /// `status.bean_temp`, and `update_control` calls this every tick with
+    /// the canonical BT reading (independent of the active PV channel). The
+    /// IIR-filtered slope is consumed by the guard below (`check_bt_rate`),
+    /// never by the PID feed path that uses `refresh_filtered_derivative`.
+    ///
+    /// Returns `None` on the first sample (no prior pair), when BT is
+    /// non-finite (NaN during the post-debounce poison window), or when the
+    /// clock would have to run backwards (saturating zero).
+    pub fn refresh_bt_guard_derivative(&mut self, bt: f32, now: Instant) -> Option<f32> {
+        if !bt.is_finite() {
+            return None;
+        }
+        let out = self.last_bt_guard_sample.and_then(|(prev_bt, prev_time)| {
+            let dt = now.saturating_duration_since(prev_time).as_micros() as f32 * 1e-6;
+            if dt > 0.0 {
+                self.bt_guard_derivative = DERIVATIVE_FILTER_ALPHA * ((bt - prev_bt) / dt)
+                    + (1.0 - DERIVATIVE_FILTER_ALPHA) * self.bt_guard_derivative;
+                Some(self.bt_guard_derivative)
+            } else {
+                None
+            }
+        });
+        self.last_bt_guard_sample = Some((bt, now));
+        out
+    }
+
+    /// Bug M4 (2026-07-25): the BT-only runaway guard. Threshold semantics
+    /// match `check_rate_of_rise` (consecutive-count-style debounce) but
+    /// consume the BT-only derivative so a healthy ET-as-PV roast never
+    /// trips the BT guard while a genuine BT runaway still does.
+    pub fn check_bt_rate(&mut self, bt_rate: f32) -> Result<(), RoasterError> {
+        if bt_rate > MAX_BT_RATE_OF_RISE {
+            self.ror_exceeded_count = self.ror_exceeded_count.saturating_add(1);
+            warn!(
+                "BT RoR guard {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
+                bt_rate,
+                MAX_BT_RATE_OF_RISE,
+                self.ror_exceeded_count,
+                ROR_EXCEEDED_CONSECUTIVE_LIMIT
+            );
+            if self.ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+                self.ror_exceeded_count = 0;
+                return Err(RoasterError::TemperatureOutOfRange {
+                    source: Some("bt_rate_of_rise_exceeded"),
+                });
+            }
+        } else {
+            self.ror_exceeded_count = 0;
+        }
         Ok(())
     }
 }

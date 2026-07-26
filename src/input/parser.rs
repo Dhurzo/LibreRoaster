@@ -386,10 +386,16 @@ fn parse_float(value_str: &str) -> Result<f32, ParseError> {
 
 /// Parse OT2 fan speed value with decimal support.
 ///
-/// OT2 semantics differ from OT1/IO3: the MAX31856-style protocol specifies that
-/// out-of-range OT2 values indicate a sensor fault, so the heater is cut when
-/// clamping occurs. Values outside [0,100] are rounded and clamped to that range,
-/// and the caller receives `was_clamped=true` to trigger the heater safety cutoff.
+/// OT2 clamps out-of-range fan values to the `[0, 100]` range and reports
+/// the clamping back to the caller via `was_clamped=true` so the control
+/// layer can emit an `ERR OT2_CLAMPED` notification.
+///
+/// Bug L10 (2026-07-25): earlier drafts claimed that out-of-range OT2
+/// triggers a heater safety cutoff. That diverged from the implementation
+/// in `roaster_control.rs::handle_set_fan_speed` (Spec F4.8: OT2 is a
+/// fan-override command and must NOT change the heater or PID state). Docs
+/// and this doc-comment now describe what the code actually does: clamp
+/// the fan, leave the heater alone, notify the host.
 ///
 /// - Decimals are rounded to nearest integer
 /// - Values are silently clamped to 0-100 range
@@ -399,6 +405,15 @@ fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
     let value = value_str
         .parse::<f32>()
         .map_err(|_| ParseError::InvalidValue)?;
+
+    // M6: NaN / Inf parse as a valid f32, but for a safety actuator (cooling
+    // fan) they must be rejected outright — clamping `(NaN+0.5) as i32` would
+    // saturate to 0 and silently issue `SetFanSpeed(0, true)` with the heater
+    // still energised. Sister paths (PIDGAIN/PID;T/PID;LIMIT/SV/SETTARGET/
+    // PREHEAT) already do this; bring OT2 in line.
+    if !value.is_finite() {
+        return Err(ParseError::InvalidValue);
+    }
 
     let was_clamped = !(0.0..=100.0).contains(&value);
 
@@ -435,8 +450,17 @@ fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
             .parse()
             .map_err(|_| ParseError::InvalidValue)?;
 
-        if !(50.0..=300.0).contains(&temperature) {
-            return Err(ParseError::OutOfRange);
+        // Bug A4 (2026-07-25): the previous range check (50.0..=300.0) was
+        // applied to the RAW numeric value (whichever scale the host sent),
+        // but `handle_set_profile` converts to °C with
+        // `convert_from_display` first and validates in °C. With UNITS=F the
+        // raw °F values for any real roast easily exceed 300 (e.g. 400 °F
+        // ≈ 204 °C — a typical drop-BT) and got rejected with
+        // `ERR out_of_range` before the converter ever ran. Only reject
+        // numerical garbage here (NaN/Inf); range check belongs on the
+        // converted value in the handler.
+        if !temperature.is_finite() {
+            return Err(ParseError::InvalidValue);
         }
 
         profile

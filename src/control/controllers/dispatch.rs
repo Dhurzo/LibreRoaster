@@ -69,7 +69,15 @@ impl CommandDispatcher {
     ) -> Result<(), RoasterError> {
         status.artisan_control = false;
         self.temp_handler.set_pid_target(target_temp)?;
-        self.temp_handler.enable_pid();
+        // Bug A3 (2026-07-25): Artisan's ramp/soak profile re-sends SV on
+        // every step. Calling `enable_pid` unconditionally would call
+        // `PidController::enable` every time, which clears the I-term and
+        // derivative history → steady-state droop on every ramp step. Only
+        // arm the controller the first time we transition out of manual
+        // mode; subsequent calls just update the target.
+        if !self.temp_handler.pid_is_enabled() {
+            self.temp_handler.enable_pid();
+        }
         status.pid_enabled = true;
         status.target_temp = target_temp;
         // Ensure telemetry starts emitting when PID is enabled.

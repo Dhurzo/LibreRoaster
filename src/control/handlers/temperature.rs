@@ -78,6 +78,16 @@ impl TemperatureCommandHandler {
         self.pid_controller.enable();
     }
 
+    /// Bug A3 (2026-07-25): expose the PID-enabled state so `enable_pid` in
+    /// `CommandDispatcher` can decide whether to (re-)enable the controller
+    /// or just update the target. Artisan's ramp/soak driver fires `PID;SV`
+    /// on every setpoint change; each call MUST NOT poke `enable()` because
+    /// that resets the integrator and the previous-derivative history,
+    /// defeating the I-term and causing visible droop on every update.
+    pub fn pid_is_enabled(&self) -> bool {
+        self.pid_controller.is_enabled()
+    }
+
     /// Disable PID control
     pub fn disable_pid(&mut self) {
         self.pid_controller.disable();

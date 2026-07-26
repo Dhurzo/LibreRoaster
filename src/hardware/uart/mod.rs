@@ -1,4 +1,3 @@
-pub mod buffer;
 #[cfg(target_arch = "riscv32")]
 pub mod driver;
 #[cfg(not(target_arch = "riscv32"))]
@@ -6,7 +5,11 @@ pub mod driver;
 pub mod driver;
 pub mod tasks;
 
-pub use buffer::CircularBuffer;
+// L8: `CircularBuffer` (relaxed-atomics SPSC ring; produced `Ok` even on
+// partial-write/silent-loss) was removed — the production path uses
+// `embassy_sync::Channel`, not a manual ring. The `pub use driver::*`
+// re-exports are still needed (in particular `uart_write_bytes` for the
+// transport)'s possible direct callers).
 pub use driver::{init_uart, uart_read_bytes, uart_write_bytes, UartError};
 // Bug #9 fix: the embedded UART driver is now split into TX and RX halves
 // (UartTxDriver / UartRxDriver) so RX and TX can be guarded by independent
@@ -15,9 +18,10 @@ pub use driver::{init_uart, uart_read_bytes, uart_write_bytes, UartError};
 pub use driver::UartDriver;
 #[cfg(target_arch = "riscv32")]
 pub use driver::{UartRxDriver, UartTxDriver};
-pub use tasks::{
-    process_command_data, send_response, send_stream, uart_reader_task, uart_writer_task,
-};
+// L8: `uart_writer_task` was removed (never spawned; would race
+// `dual_output_task` for the output pipe). Keep the reader + the helper
+// re-exports.
+pub use tasks::{process_command_data, send_response, send_stream, uart_reader_task};
 
 pub use crate::hardware::transport_tasks::{COMMAND_PIPE_SIZE, EVENT_QUEUE_SIZE};
 

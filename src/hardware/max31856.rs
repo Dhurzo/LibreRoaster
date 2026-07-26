@@ -153,14 +153,19 @@ where
         // 4. Perform one-shot conversion and verify temperature
         self.trigger_conversion()?;
         log::info!(
-            "MAX31856 self-test: Conversion triggered, waiting 185ms (50Hz conversion time)..."
+            "MAX31856 self-test: Conversion triggered, waiting {}ms (50Hz conversion time + OCFAULT budget)...",
+            crate::config::constants::MAX31856_CONVERSION_TIME_MS
         );
 
         // Spec F2.2: use Instant::elapsed() instead of fixed-iteration spin_loop.
-        // 50 Hz conversion time is ~185 ms per datasheet. Busy-wait using wall-clock
-        // time — this is more accurate than the fixed-iteration spin_loop.
+        // 50 Hz conversion time is ~185 ms per datasheet, but OCFAULT=01 adds
+        // ~10 ms for the open-circuit detection step (configured at init).
+        // Use the project-wide `MAX31856_CONVERSION_TIME_MS` budget so all
+        // sensor reads agree — L5 lifts that constant to 210 ms.
         let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(185) {
+        while start.elapsed()
+            < Duration::from_millis(crate::config::constants::MAX31856_CONVERSION_TIME_MS)
+        {
             // spin_loop hint yields to the scheduler on a pre-emptive RTOS
             core::hint::spin_loop();
         }
@@ -254,10 +259,18 @@ where
         // as the async path (0x51 = 1SHOT | FILT50 | OCFAULT=01).
         self.write_register(0x80, 0x51)?;
 
-        // Match the async conversion wait (185 ms max at 50 Hz).
-        const DELAY_MS: u64 = crate::config::constants::MAX31856_CONVERSION_TIME_MS;
-
-        for _ in 0..(DELAY_MS * 10000) {
+        // L4: wait wall-clock time (single sample `Instant::now` + spin
+        // until the elapsed budget is exceeded), like `self_test` already
+        // did. The previous uncalibrated spin of `DELAY_MS * 10000` (1.6M
+        // iterations per call) returned in ~12-25 ms on modern CPUs, so
+        // callers could read the previous conversion's result instead of
+        // the just-triggered one — without any error indication. The async
+        // path uses `Timer::after(...)`; this sync variant emulates it with
+        // the same `embassy_time::Instant` already imported above.
+        let start = Instant::now();
+        while start.elapsed()
+            < Duration::from_millis(crate::config::constants::MAX31856_CONVERSION_TIME_MS)
+        {
             core::hint::spin_loop();
         }
 

@@ -419,7 +419,27 @@ impl RoastCurve {
         }
 
         if elapsed_secs <= self.points[0].time_secs {
-            return (self.points[0].bean_temp, self.points[0].env_temp);
+            // Bug C4b-exposed (2026-07-25): when the FIRST two points share
+            // the same `time_secs` (e.g. a curve authored so the user can
+            // express "from t=0 the bean is at X, the env is at Y" as two
+            // coincident points), `elapsed_secs == points[0].time_secs`
+            // matched the FIRST point rather than the LATEST point at that
+            // time. Returning the first point is also what `points[0]`
+            // already gives us, so this early-return was only the legacy
+            // behaviour — but the same loop below resolves `range == 0` in
+            // favour of `curr`. We now do the same here: scan forward while
+            // the next point shares this `time_secs` and return the LAST
+            // coincident one, so a 0-range at t=0 is consistent with a
+            // 0-range elsewhere in the curve. (This test was previously
+            // unreachable because the C4b cfg bug blocked `regression`
+            // from compiling at all; fixing that exposed this latent gap.)
+            let mut idx = 0usize;
+            while idx + 1 < self.points.len()
+                && self.points[idx + 1].time_secs == self.points[0].time_secs
+            {
+                idx += 1;
+            }
+            return (self.points[idx].bean_temp, self.points[idx].env_temp);
         }
 
         for i in 1..self.points.len() {

@@ -102,9 +102,20 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                     return ManualPolicyOutcome::failed("Invalid heater value >100%");
                 }
 
+                // M10: defer state mutation (`manual_heater`, `pid_enabled`,
+                // `artisan_control`) to the actuator's `apply_policy_outcome`,
+                // which ONLY commits if `apply_guarded_heater` accepts the
+                // write. Pre-fix, the typed policy outcome called
+                // `apply_to_status(status)` here (mutating `pid_enabled`/
+                // `artisan_control`/`manual_heater` *before* the hardware
+                // write), so a `reject_on_busy` `Err(ssr_cycle_busy)` left
+                // Artisan with an "ERR" while the software state had already
+                // adopted the new value — the next tick applied it blindly.
                 self.manual_heater = value as f32;
                 let outcome = ManualPolicyOutcome::heater(value as f32);
-                outcome.apply_to_status(status);
+                // NB: deliberate no `apply_to_status(status)` here. The
+                // state side-effects live in `apply_policy_outcome` after the
+                // hardware write succeeds.
 
                 info!("Artisan+ manual heater set to: {}%", value);
                 outcome
@@ -118,6 +129,13 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
 
                 self.manual_fan = value as f32;
                 let outcome = ManualPolicyOutcome::fan(value as f32);
+                // M10(b): same hardware-first discipline as heater, but a
+                // fan write cannot currently be guarded by the heater's
+                // `ssr_cycle_busy` mechanism (independent LEDC channel,
+                // no busy window). To preserve the contract the heater side
+                // commits here, the fan write in `apply_policy_outcome`
+                // (RoasterControl) commits state up-front; the comment there
+                // documents this asymmetry.
                 outcome.apply_to_status(status);
 
                 info!("Artisan+ manual fan set to: {}%", value);
@@ -131,7 +149,9 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                 self.manual_heater = new_value;
 
                 let outcome = ManualPolicyOutcome::heater(new_value);
-                outcome.apply_to_status(status);
+                // M10: no `apply_to_status(status)` for heater; see comment
+                // in `SetHeaterManual` and the commit site in
+                // `RoasterControl::apply_policy_outcome`.
 
                 info!("Artisan+ UP: heater increased to {:.0}%", new_value);
                 outcome
@@ -143,7 +163,8 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                 self.manual_heater = new_value;
 
                 let outcome = ManualPolicyOutcome::heater(new_value);
-                outcome.apply_to_status(status);
+                // M10: no `apply_to_status(status)` for heater; see comment
+                // in `SetHeaterManual`.
 
                 info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
                 outcome

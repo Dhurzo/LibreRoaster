@@ -155,7 +155,12 @@ Implementation behavior:
 - clamps to the `0..100` range,
 - marks whether clamping occurred.
 
-If clamping occurs, the control layer treats that as a safety event and cuts the heater.
+If clamping occurs, the control layer emits an `ERR OT2_CLAMPED fan=<n> heater_unchanged`
+notification so Artisan knows the value was sanitised. Per Spec F4.8 the `OT2` command
+is intentionally fan-only: the heater and PID state are left untouched. (Bug L10:
+earlier drafts of this document claimed clamping cut the heater — that diverged from
+the implementation in `roaster_control.rs::handle_set_fan_speed`, which keeps the
+heater unchanged by design.)
 
 ### `IO3 <0-100>` / `IO3;<0-100>`
 
