@@ -14,6 +14,11 @@ use log::{debug, error, info, warn};
 
 use crate::hardware::sensors::SensorConversionHub;
 
+/// Bug R7 (2026-07-26): a manual heater session (`heat_session_start`) only
+/// closes after the heater has been OFF for this long. Prevents a momentary
+/// `OT1 0` from resetting the MAX_ROAST_TIME budget.
+const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
+
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
@@ -33,6 +38,13 @@ pub struct RoasterControl {
     /// `profile_start_time`-set roasts and heater-energized manual sessions
     /// get the same time budget.
     heat_session_start: Option<Instant>,
+    /// Bug R7 (2026-07-26): tracks when the heater last went OFF mid-session.
+    /// `heat_session_start` used to be dropped on the FIRST heater==0 tick,
+    /// so a single `OT1 0` between commands reset the MAX_ROAST_TIME budget
+    /// (a 30-min cap bypassable by toggling the heater off for one tick).
+    /// With this debounce, the session only closes after the heater has been
+    /// OFF for `HEAT_SESSION_OFF_DEBOUNCE_SECS`.
+    heat_session_off_since: Option<Instant>,
     fan_profile: Option<crate::config::FanProfile>,
     charge_detected: bool,
     charge_time: Option<Instant>,
@@ -83,6 +95,7 @@ impl RoasterControl {
             active_profile: None,
             profile_start_time: None,
             heat_session_start: None,
+            heat_session_off_since: None,
             fan_profile: None,
             charge_detected: false,
             charge_time: None,
@@ -389,9 +402,22 @@ impl RoasterControl {
         self.cooling_active = true;
 
         self.actuator.capture_ssr_monitor_metrics(&mut self.status);
-        self.actuator.set_heater_power(0.0)?;
+        // Bug NEW-2 (2026-07-26): the previous `?` on the heater-off write
+        // skipped the fan-100% write when the heater failed — leaving the hot
+        // bean mass without cooling exactly when things are going wrong. Cut
+        // the heater AND force the fan independently; only a fan failure
+        // propagates (no fan means unsafe to continue).
+        if let Err(e) = self.actuator.set_heater_power(0.0) {
+            log::error!(
+                "stop_streaming: heater off failed: {:?} — continuing to fan 100%",
+                e
+            );
+        }
         // Bug #13: Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
-        self.actuator.set_fan_raw(100.0)?;
+        if let Err(e) = self.actuator.set_fan_raw(100.0) {
+            log::error!("stop_streaming: fan 100% failed: {:?}", e);
+            return Err(e);
+        }
         self.status.fan_output = 100.0;
 
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
@@ -483,12 +509,22 @@ impl RoasterControl {
             if self.heat_session_start.is_none() {
                 self.heat_session_start = Some(current_time);
             }
-        } else {
-            // Heater off → the heat session ends here. Drop the timestamp so
-            // the next energising starts a fresh window (a 30-min manual
-            // session followed by a 30-min idle followed by another manual
-            // session should NOT inherit the original start).
-            self.heat_session_start = None;
+            self.heat_session_off_since = None;
+        } else if let Some(off_since) = self.heat_session_off_since {
+            // Bug R7 (2026-07-26): the session end is debounced — a momentary
+            // `OT1 0` (or a one-tick heater dropout) must NOT close the heat
+            // session and reset the 30-min MAX_ROAST_TIME budget. Only after
+            // the heater has been OFF for HEAT_SESSION_OFF_DEBOUNCE_SECS does
+            // the session really end and the timestamp drop.
+            if current_time.saturating_duration_since(off_since).as_secs()
+                >= HEAT_SESSION_OFF_DEBOUNCE_SECS
+            {
+                self.heat_session_start = None;
+                self.heat_session_off_since = None;
+            }
+        } else if self.heat_session_start.is_some() {
+            // Heater off mid-session — start the debounce window.
+            self.heat_session_off_since = Some(current_time);
         }
 
         // Maximum roast time safety backstop. Bug V2-16c: same physical gate as
@@ -521,6 +557,11 @@ impl RoasterControl {
         // (faulted sensor) do NOT drop the latch — keep cooling by default.
         if self.cooling_active
             && self.status.bean_temp.is_finite()
+            // Bug R8 (2026-07-26): BT=0.0 — the status default, or the
+            // MAX31856 POR 0x000000 fault value — must NOT release the
+            // cooldown latch: the probe may simply not have been read yet.
+            // Only a real reading above 0 °C and below the threshold releases.
+            && self.status.bean_temp > 0.0
             && self.status.bean_temp < COOLING_RELEASE_BEAN_TEMP_C
         {
             info!(
@@ -626,7 +667,12 @@ impl RoasterControl {
             }
             // Backwards-compat: also feed the legacy `status.derivative_rate`
             // path so telemetry still sees the PV-derivative (relevant when
-            // ET is the chosen PV). This call does NOT influence the BT guard.
+            // ET is the chosen PV). Bug R1 (2026-07-26): this call is fully
+            // INDEPENDENT of the BT guard — `check_rate_of_rise` uses its own
+            // `pv_ror_exceeded_count`, while `check_bt_rate` above uses
+            // `bt_ror_exceeded_count`. (Previously a single shared counter
+            // meant every healthy ET tick reset the BT runaway debounce,
+            // defeating the guard in PID;CHAN;1 mode.)
             if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
                 warn!("Rate-of-rise check failed: {:?}", e);
                 self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
@@ -660,15 +706,27 @@ impl RoasterControl {
                     current_time.duration_since(last_read) > Duration::from_millis(500)
                 // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
                 } else {
-                    false
+                    // Bug NEW-5 (2026-07-26): "never read" was treated as
+                    // "fresh" — if the first sensor read failed and the
+                    // operator sent START, the PID computed against PV=0.0 and
+                    // drove the heater to 100% with no temperature feedback
+                    // (up to the 15 s comms-idle backstop). Treat a never-read
+                    // sensor as stale so the PID holds instead of ramping.
+                    warn!("PID enabled but no sensor read yet — treating as stale");
+                    true
                 };
 
                 if is_stale {
                     debug!(
-                        "Sensor data is stale (>{}ms), holding last PID output",
+                        "Sensor data is stale (>{}ms), holding last APPLIED output",
                         PID_SAMPLE_TIME_MS
                     );
-                    self.status.mv // Hold last output
+                    // Bug R2 (2026-07-26): the stale hold used to return
+                    // `status.mv` — the PID's *intent* (can be 100%) — so the
+                    // actuator's slew limiter kept ramping toward it during
+                    // the staleness window instead of holding the last value
+                    // the SSR is physically applying. Return `ssr_output`.
+                    self.status.ssr_output // Hold last applied output
                 } else {
                     self.update_pid_control(current_time)
                 }
@@ -1003,8 +1061,16 @@ impl RoasterControl {
         // Cut the heater directly and force the fan to 100% to cool the
         // hot bean mass. Fan persistence during the cooldown is enforced
         // in `update_control` (see fix #2), so this 100% is sticky.
-        self.actuator.set_heater_power(0.0)?;
-        self.actuator.set_fan_raw(100.0)?;
+        // Bug R3 (2026-07-26): the previous `?` on the heater-off write
+        // skipped the fan write when the heater failed — the hot bean mass
+        // left without cooling during the most critical path. Cut heater and
+        // force fan independently.
+        if let Err(e) = self.actuator.set_heater_power(0.0) {
+            log::error!("Emergency stop: heater off failed: {:?}", e);
+        }
+        if let Err(e) = self.actuator.set_fan_raw(100.0) {
+            log::error!("Emergency stop: fan 100% failed: {:?}", e);
+        }
         self.status.fan_output = 100.0;
 
         // Stop streaming the protocol output without touching the latch.
@@ -1070,6 +1136,10 @@ impl RoasterControl {
     }
 
     fn handle_chan(&mut self, rate: u16) -> Result<(), RoasterError> {
+        // Bug DRA-7 (2026-07-26): the polling-rate request was only echoed in
+        // the ack and otherwise discarded. Record it on the status so it is
+        // observable (the emitter keeps its own 1 Hz cadence for now).
+        self.status.chan_poll_rate_hz = rate;
         let ack = crate::output::artisan::ArtisanFormatter::format_chan_ack(rate);
         self.send_text_response(ack.as_str());
         debug!("Chan command received - sent ack for rate {}", rate);
@@ -1077,7 +1147,21 @@ impl RoasterControl {
     }
 
     fn handle_run_regression(&mut self) -> Result<(), RoasterError> {
-        info!("Artisan regression command received");
+        // Bug M9 (2026-07-26): the old handler was an info-only no-op and the
+        // task layer `continue`-ed past dispatch, so REG produced NO output
+        // (not even OK) — Artisan had zero feedback about whether the
+        // regression ran. Now the handler replies explicitly depending on
+        // whether the `regression` feature is compiled into the build.
+        #[cfg(all(target_arch = "riscv32", feature = "regression"))]
+        {
+            self.send_text_response("OK regression_started");
+            info!("Artisan regression command received");
+        }
+        #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
+        {
+            self.send_text_response("ERR regression_disabled");
+            warn!("REG command received but regression feature is not enabled");
+        }
         Ok(())
     }
 
@@ -1094,7 +1178,11 @@ impl RoasterControl {
         result
     }
 
-    fn handle_filt(&mut self, _val: u8) -> Result<(), RoasterError> {
+    fn handle_filt(&mut self, val: u8) -> Result<(), RoasterError> {
+        // Bug DRA-7 (2026-07-26): the requested filter value was discarded.
+        // Record it on the status — the firmware applies its internal EMA
+        // alpha, but the host's request is now observable.
+        self.status.requested_filter = val;
         self.send_text_response("OK");
         debug!("Filt command received - sent OK");
         Ok(())

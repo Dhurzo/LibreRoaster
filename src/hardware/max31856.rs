@@ -81,7 +81,8 @@ where
         let mut max31856 = Max31856 { spi };
 
         // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator
-        // mode on bits 1:2), FILT50=1 (50 Hz notch filter, bit 0).
+        // mode on bits 5:4 per datasheet table for register 00h/80h), FILT50=1
+        // (50 Hz notch filter, bit 0).
         // Bit layout: 0b0001_0001 = 0x11. The 50 Hz filter is selected by
         // CR0 bit 0 (not CR1 bit 3); conversion time maxes at 185 ms (datasheet).
         max31856.write_register(0x80, 0x11)?;

@@ -289,7 +289,11 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             Ok(ArtisanCommand::SetTargetTemp(target))
         }
         "T" => {
-            if parts.len() < 4 {
+            // Bug DRH-3 (2026-07-26): `parts.len() < 4` silently accepted
+            // extra tokens after kd (`parts[4..]` ignored). Require exactly
+            // `PID;T;kp;ki;kd` so a malformed command is rejected loudly
+            // instead of partially applied.
+            if parts.len() != 4 {
                 return Err(ParseError::InvalidValue);
             }
             let kp = parts[1]

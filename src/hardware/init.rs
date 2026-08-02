@@ -128,7 +128,9 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
         .configure(timer::config::Config {
             duty: timer::config::Duty::Duty8Bit,
             clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_hz(25000),
+            // Bug DRH-2 (2026-07-26): use the named constant instead of the
+            // hardcoded 25000 Hz so the fan PWM frequency is single-sourced.
+            frequency: Rate::from_hz(crate::config::constants::FAN_PWM_FREQUENCY_HZ),
         })
         .map_err(|e| InitError::HardwareInit {
             what: "Timer 1",

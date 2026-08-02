@@ -197,7 +197,15 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 
 ### Key validation rules
 
-- target temperatures currently accept the range **50.0 to 300.0**
+- target temperature values must parse as finite floats at the parser layer
+  (NaN/Inf rejected); **there is no raw-numeric range check in the parser**
+  (Bug B9: the old `50.0..=300.0` check ran on the raw display-unit value
+  and rejected legitimate °F setpoints such as `400` °F ≈ 204 °C). The
+  `50–300 °C` range is enforced in the control layer **after** display-unit
+  conversion to Celsius (`convert_from_display`), so `SETTARGET`, `PREHEAT`
+  and `PROFILE` setpoints are validated in true °C.
+- a `PROFILE` whose converted setpoint falls outside that range is rejected
+  with `ERR handler_failed invalid_state:profile_temp_out_of_range`
 - PID gains must parse as floats
 - semicolon PID gains reject negative values
 - PID cycle time rejects values below 10 ms
@@ -241,7 +249,13 @@ The formatter emits simple line-oriented acknowledgements and errors:
 - `#<value>` for `CHAN`
 - `ERR ...` for failures
 
-The exact numeric/code content of all error cases is intentionally lightweight. Client code should not assume a rich structured error taxonomy.
+Handler-level failures are emitted as `ERR handler_failed <token>:<source>`
+(e.g. `ERR handler_failed invalid_state:profile_temp_out_of_range`, `ERR
+handler_failed invalid_state:fault_condition_active`). Valid tokens:
+`temperature_out_of_range`, `sensor_fault`, `invalid_state`, `pid_error`,
+`hardware_error`, `emergency_shutdown`. The `:source` suffix is a
+diagnostic discriminator, not a stable contract — client code should not
+assume a rich structured error taxonomy.
 
 ## 11. Protocol edge cases that matter
 

@@ -7,7 +7,6 @@ use crate::hardware::sensors::SensorConversionHub;
 #[cfg(target_arch = "riscv32")]
 use crate::hardware::uart::initialize_uart_system;
 use crate::input::ArtisanInput;
-use crate::output::artisan::ArtisanFormatter;
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 #[cfg(target_arch = "riscv32")]
@@ -27,7 +26,6 @@ pub struct AppBuilder {
     uart_rx: Option<esp_hal::peripherals::GPIO20<'static>>,
     #[cfg(target_arch = "riscv32")]
     uart_tx: Option<esp_hal::peripherals::GPIO21<'static>>,
-    formatter: Option<ArtisanFormatter>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
     sensor_hub: Option<SensorConversionHub>,
@@ -48,7 +46,6 @@ impl AppBuilder {
             uart_rx: None,
             #[cfg(target_arch = "riscv32")]
             uart_tx: None,
-            formatter: None,
             heater: None,
             fan: None,
             sensor_hub: None,
@@ -110,11 +107,6 @@ impl AppBuilder {
         self
     }
 
-    pub fn with_formatter(mut self, formatter: ArtisanFormatter) -> Self {
-        self.formatter = Some(formatter);
-        self
-    }
-
     pub fn build(self) -> Result<Application, BuildError> {
         #[cfg(target_arch = "riscv32")]
         if let (Some(uart0), Some(rx), Some(tx)) = (self.uart0, self.uart_rx, self.uart_tx) {
@@ -136,7 +128,6 @@ impl AppBuilder {
             RoasterControl::new(heater, fan, sensor_hub).map_err(BuildError::RoasterInit)?;
 
         let artisan_input = ArtisanInput::new().map_err(BuildError::ArtisanInit)?;
-        let formatter = self.formatter.unwrap_or_default();
 
         ServiceContainer::init_roaster(roaster);
         ServiceContainer::init_artisan_input(artisan_input);
@@ -147,27 +138,15 @@ impl AppBuilder {
 
         info!("Application components initialized successfully");
 
-        Ok(Application {
-            formatter,
-            built: true,
-        })
+        Ok(Application { built: true })
     }
 }
 
 pub struct Application {
-    formatter: ArtisanFormatter,
     built: bool,
 }
 
 impl Application {
-    pub fn formatter(&self) -> &ArtisanFormatter {
-        &self.formatter
-    }
-
-    pub fn clone_formatter(&self) -> ArtisanFormatter {
-        self.formatter.clone()
-    }
-
     pub fn verify_initialization(&self) -> Result<(), VerificationError> {
         if !self.built {
             return Err(VerificationError::NotBuilt);

@@ -83,7 +83,12 @@ impl<'a> FanController<'a> {
         let target_duty = Self::percentage_to_duty(clamped_speed);
 
         if let Some(handle) = self.ledc_handle {
-            let current_duty = handle.applied_duty();
+            // Bug DRH-1 (2026-07-26): start from the LIVE duty (DUTY_R), not
+            // the cached config duty. If the previous fade is still running,
+            // the cache holds its END target and the fade-vs-direct decision
+            // (and the next fade's start) would jump to that target first —
+            // a surge. DUTY_R is where the hardware actually is.
+            let current_duty = handle.live_duty();
             let duty_delta = (target_duty as u16).abs_diff(current_duty);
 
             if duty_delta > FADE_THRESHOLD_DUTY as u16 {

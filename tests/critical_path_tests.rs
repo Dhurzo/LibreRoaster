@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use embassy_time::{Duration, Instant};
 
 use libreroaster::common::{StubFan, StubHeater};
-use libreroaster::config::constants::RoasterCommand;
 use libreroaster::config::constants::{RoasterState, COMMS_IDLE_TIMEOUT_MS, MAX_ROAST_TIME_SECS};
 use libreroaster::config::{ArtisanCommand, ProfileSetpoint, RoastProfile, SystemStatus};
 use libreroaster::control::roaster_control::RoasterControl;
@@ -40,13 +39,6 @@ fn tick_now(ctrl: &mut RoasterControl, bt: f32, et: f32) -> f32 {
     let now = Instant::now();
     ctrl.update_temperatures(bt, et, now).expect("temps");
     ctrl.update_control(now).expect("update")
-}
-
-/// Tick at a fixed instant. Use for tests where `Instant::now()` inside
-/// `process_artisan_command` causes timing races with safety checks.
-fn tick_at(ctrl: &mut RoasterControl, bt: f32, et: f32, t: Instant) -> f32 {
-    ctrl.update_temperatures(bt, et, t).expect("temps");
-    ctrl.update_control(t).expect("update")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -67,9 +67,12 @@ impl ArtisanCommandHandler {
     ///
     /// New heater value clamped to 0-100 range
     fn apply_heater_delta(current_value: f32, direction: i8) -> f32 {
-        let delta = direction * Self::HEATER_DELTA;
-        let new_value = (current_value as i16 + delta as i16).clamp(0, 100);
-        new_value as f32
+        // Bug R6 (2026-07-26): the previous `(current_value as i16 + delta as
+        // i16)` truncated fractional heater values (e.g. 47.6 → 47) on every
+        // UP/DOWN — a small error that accumulates across presses and drifts
+        // the displayed value from the applied one. Do the math in f32.
+        let delta = (direction as f32) * (Self::HEATER_DELTA as f32);
+        (current_value + delta).clamp(0.0, 100.0)
     }
 }
 

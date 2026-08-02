@@ -35,7 +35,18 @@ pub struct SensorController {
     /// independent measurements.
     last_bt_guard_sample: Option<(f32, Instant)>,
     bt_guard_derivative: f32,
-    ror_exceeded_count: u8,
+    /// Bug R1 (2026-07-26): debounce counter for the legacy PV-RoR check
+    /// (`check_rate_of_rise`). Previously a SINGLE `ror_exceeded_count` was
+    /// shared with the BT-only runaway guard (`check_bt_rate`, bug M4): with
+    /// `PID;CHAN;1` (ET as PV) a healthy ET tick reset the shared counter
+    /// every tick, so a genuine BT runaway never accumulated to
+    /// `ROR_EXCEEDED_CONSECUTIVE_LIMIT` — the BT guard was silently neutered
+    /// in the exact configuration it was built for. Each guard now owns its
+    /// own counter.
+    pv_ror_exceeded_count: u8,
+    /// Bug R1: dedicated counter for the BT-only runaway guard
+    /// (`check_bt_rate`). Independent of `pv_ror_exceeded_count`.
+    bt_ror_exceeded_count: u8,
     // Bug V2-3 / B7 residual: per-channel fault counters. A single shared
     // counter fed with `bean_fault || env_fault` was defeated by a chronically
     // disconnected ET (a single-probe configuration the code itself supports):
@@ -59,7 +70,8 @@ impl SensorController {
             last_filtered_derivative: 0.0,
             last_bt_guard_sample: None,
             bt_guard_derivative: 0.0,
-            ror_exceeded_count: 0,
+            pv_ror_exceeded_count: 0,
+            bt_ror_exceeded_count: 0,
             consecutive_bean_faults: 0,
             consecutive_env_faults: 0,
         }
@@ -239,26 +251,26 @@ impl SensorController {
 
     pub fn check_rate_of_rise(&mut self, status: &SystemStatus) -> Result<(), RoasterError> {
         if !status.derivative_available {
-            self.ror_exceeded_count = 0;
+            self.pv_ror_exceeded_count = 0;
             return Ok(());
         }
 
         if status.derivative_rate > MAX_BT_RATE_OF_RISE {
-            self.ror_exceeded_count = self.ror_exceeded_count.saturating_add(1);
+            self.pv_ror_exceeded_count = self.pv_ror_exceeded_count.saturating_add(1);
             warn!(
                 "BT RoR {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
                 status.derivative_rate,
                 MAX_BT_RATE_OF_RISE,
-                self.ror_exceeded_count,
+                self.pv_ror_exceeded_count,
                 ROR_EXCEEDED_CONSECUTIVE_LIMIT
             );
-            if self.ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+            if self.pv_ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("rate_of_rise_exceeded"),
                 });
             }
         } else {
-            self.ror_exceeded_count = 0;
+            self.pv_ror_exceeded_count = 0;
         }
 
         Ok(())
@@ -298,22 +310,22 @@ impl SensorController {
     /// trips the BT guard while a genuine BT runaway still does.
     pub fn check_bt_rate(&mut self, bt_rate: f32) -> Result<(), RoasterError> {
         if bt_rate > MAX_BT_RATE_OF_RISE {
-            self.ror_exceeded_count = self.ror_exceeded_count.saturating_add(1);
+            self.bt_ror_exceeded_count = self.bt_ror_exceeded_count.saturating_add(1);
             warn!(
                 "BT RoR guard {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
                 bt_rate,
                 MAX_BT_RATE_OF_RISE,
-                self.ror_exceeded_count,
+                self.bt_ror_exceeded_count,
                 ROR_EXCEEDED_CONSECUTIVE_LIMIT
             );
-            if self.ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
-                self.ror_exceeded_count = 0;
+            if self.bt_ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+                self.bt_ror_exceeded_count = 0;
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("bt_rate_of_rise_exceeded"),
                 });
             }
         } else {
-            self.ror_exceeded_count = 0;
+            self.bt_ror_exceeded_count = 0;
         }
         Ok(())
     }
@@ -561,13 +573,13 @@ mod tests {
 
         let r1 = ctrl.check_rate_of_rise(&status);
         assert!(r1.is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 1);
+        assert_eq!(ctrl.pv_ror_exceeded_count, 1);
 
         // Reset to a rate below MAX_BT_RATE_OF_RISE (0.5°C/s)
         status.derivative_rate = 0.3;
         let r2 = ctrl.check_rate_of_rise(&status);
         assert!(r2.is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 0);
+        assert_eq!(ctrl.pv_ror_exceeded_count, 0);
     }
 
     #[test]
@@ -580,9 +592,9 @@ mod tests {
         status.derivative_available = true;
 
         assert!(ctrl.check_rate_of_rise(&status).is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 1);
+        assert_eq!(ctrl.pv_ror_exceeded_count, 1);
         assert!(ctrl.check_rate_of_rise(&status).is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 2);
+        assert_eq!(ctrl.pv_ror_exceeded_count, 2);
         assert!(ctrl.check_rate_of_rise(&status).is_err());
     }
 
@@ -596,7 +608,42 @@ mod tests {
         status.derivative_available = true;
 
         assert!(ctrl.check_rate_of_rise(&status).is_ok());
-        assert_eq!(ctrl.ror_exceeded_count, 1);
+        assert_eq!(ctrl.pv_ror_exceeded_count, 1);
+    }
+
+    /// Bug R1 (2026-07-26): the BT runaway guard and the legacy PV-RoR check
+    /// must use SEPARATE debounce counters. Previously one shared counter
+    /// meant a healthy ET-as-PV tick (which resets the PV counter every tick)
+    /// also reset the BT guard counter, so a genuine BT runaway never reached
+    /// `ROR_EXCEEDED_CONSECUTIVE_LIMIT` in `PID;CHAN;1` mode.
+    #[test]
+    fn bt_guard_counter_independent_of_pv_check() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+
+        // Healthy PV (ET as PV, e.g.): the legacy check resets its own counter.
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 0.1; // below MAX_BT_RATE_OF_RISE
+        status.derivative_available = true;
+        assert!(ctrl.check_rate_of_rise(&status).is_ok());
+        assert_eq!(ctrl.pv_ror_exceeded_count, 0);
+
+        // BT is genuinely running away: its guard must accumulate despite the
+        // healthy PV checks interleaved between ticks.
+        assert!(ctrl.check_bt_rate(1.0).is_ok());
+        assert_eq!(ctrl.bt_ror_exceeded_count, 1);
+        assert!(ctrl.check_rate_of_rise(&status).is_ok()); // healthy ET tick
+        assert_eq!(ctrl.pv_ror_exceeded_count, 0);
+        assert!(
+            ctrl.bt_ror_exceeded_count == 1,
+            "healthy PV tick must NOT reset the BT guard counter (R1)"
+        );
+        assert!(ctrl.check_bt_rate(1.0).is_ok());
+        assert_eq!(ctrl.bt_ror_exceeded_count, 2);
+        // Third consecutive BT violation trips the guard even though the PV
+        // path kept resetting its own (independent) counter.
+        assert!(ctrl.check_bt_rate(1.0).is_err());
     }
 
     #[test]

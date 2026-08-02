@@ -43,21 +43,6 @@ impl QueueProcessorMetrics {
             self.backlog_events.fetch_add(1, Ordering::Relaxed);
         }
     }
-
-    pub fn reset(&self) {
-        self.queue_depth.store(0, Ordering::Relaxed);
-        self.max_depth.store(0, Ordering::Relaxed);
-        self.backlog_events.store(0, Ordering::Relaxed);
-    }
-
-    fn snapshot(&self) -> QueueProcessorMetricsSnapshot {
-        QueueProcessorMetricsSnapshot {
-            queue_depth: self.queue_depth.load(Ordering::Relaxed),
-            max_depth: self.max_depth.load(Ordering::Relaxed),
-            backlog_events: self.backlog_events.load(Ordering::Relaxed),
-            threshold: QUEUE_DEPTH_BACKLOG_THRESHOLD,
-        }
-    }
 }
 
 impl Default for QueueProcessorMetrics {
@@ -66,28 +51,8 @@ impl Default for QueueProcessorMetrics {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct QueueProcessorMetricsSnapshot {
-    pub queue_depth: usize,
-    pub max_depth: usize,
-    pub backlog_events: usize,
-    pub threshold: usize,
-}
-
 pub static QUEUE_PROCESSOR_METRICS: QueueProcessorMetrics = QueueProcessorMetrics::new();
-
-pub fn queue_processor_metrics_snapshot() -> QueueProcessorMetricsSnapshot {
-    QUEUE_PROCESSOR_METRICS.snapshot()
-}
-
-pub fn reset_queue_processor_metrics() {
-    QUEUE_PROCESSOR_METRICS.reset();
-}
 
 pub fn record_queue_depth(depth: usize) {
     QUEUE_PROCESSOR_METRICS.record_depth(depth);
-}
-
-pub fn queue_processor_backlog_threshold() -> usize {
-    QUEUE_DEPTH_BACKLOG_THRESHOLD
 }

@@ -32,6 +32,8 @@ use libreroaster::output::OutputFormatter;
 /// Helper to create test SystemStatus
 fn create_test_status() -> SystemStatus {
     SystemStatus {
+        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
+        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
         state: RoasterState::Stable,
         bean_temp: 150.5,
         env_temp: 120.3,
@@ -52,6 +54,8 @@ fn create_test_status() -> SystemStatus {
 /// Helper to create minimal SystemStatus for ROR tests
 fn create_minimal_status(bean_temp: f32, env_temp: f32, ssr_output: f32) -> SystemStatus {
     SystemStatus {
+        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
+        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
         bean_temp,
         env_temp,
         ssr_output,

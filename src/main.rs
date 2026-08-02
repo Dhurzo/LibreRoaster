@@ -199,8 +199,7 @@ fn main() -> ! {
             .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
             .with_real_ssr(hw_handles.ssr)
             .with_fan_control(hw_handles.fan)
-            .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor)
-            .with_formatter(ArtisanFormatter::new());
+            .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor);
 
         #[cfg(feature = "simulated-sensors")]
         let builder = AppBuilder::new()
@@ -208,8 +207,7 @@ fn main() -> ! {
             .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
             .with_real_ssr(hw_handles.ssr)
             .with_fan_control(hw_handles.fan)
-            .with_simulated_sensors()
-            .with_formatter(ArtisanFormatter::new());
+            .with_simulated_sensors();
 
         match builder.build() {
             Ok(app) => app,

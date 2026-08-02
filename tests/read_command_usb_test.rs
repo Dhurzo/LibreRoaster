@@ -52,6 +52,8 @@ use mock_usb_driver::MockUsbCdcDriver;
 /// Create a standard test SystemStatus for READ response validation.
 fn test_status() -> SystemStatus {
     SystemStatus {
+        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
+        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
         state: RoasterState::Stable,
         bean_temp: 155.7,
         env_temp: 125.5,

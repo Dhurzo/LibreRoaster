@@ -89,19 +89,20 @@ mod target_impl {
                     warn!("Regression fan ramp failed: {:?}", err);
                 }
                 let shutdown_result = roaster.emergency_shutdown("Over-temp regression");
-                // Bug V2-6: capture `is_err()` BEFORE the `if let Err` move
-                // so the closure can still return a plain `bool` for
-                // `with_roaster_async` (which wraps it in `Result<bool, _>`).
-                // The previous `Ok::<bool,_>(shutdown_result.is_err())` after
-                // the `if let Err(err) = shutdown_result` move was a use-after-
-                // partial-move (E0382) once the std-only `embedded-hal-mock`
-                // mask was lifted, and `shutdown_result.is_err()` on a moved
-                // `Result` is the same class of error.
-                let failed = shutdown_result.is_err();
+                // Bug NEW-1 (2026-07-26): `emergency_shutdown` returns
+                // `Err(EmergencyShutdown)` BY DESIGN (actuator.rs — it is the
+                // "emergency armed" signal, not a failure). The V2-6
+                // `is_err()` capture therefore made `failed` ALWAYS true, so
+                // the runner aborted (SAFETY OT-REGRESSION-ABORTED
+                // shutdown_failed) before replaying any fixture — the whole
+                // regression feature was dead code. The real failure indicator
+                // is the SSR hardware status: after the actuator's retries,
+                // `Error` means the heater did NOT shut off.
                 if let Err(ref err) = shutdown_result {
-                    warn!("Regression shutdown failed: {:?}", err);
+                    warn!("Regression shutdown returned: {:?}", err);
                 }
-                failed
+                roaster.get_status().ssr_hardware_status
+                    == crate::config::constants::SsrHardwareStatus::Error
             })
             .await;
 

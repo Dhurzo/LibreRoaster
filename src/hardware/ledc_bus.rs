@@ -83,7 +83,20 @@ impl<'a> LedcBus<'a> {
 
     fn read_register(&self, entry: &ChannelEntry<'a>) -> u16 {
         let regs = unsafe { &*LEDC::ptr() };
-        let raw = regs.ch(entry.number as usize).duty().read().duty().bits();
+        // Bug RHC-2 (2026-07-26): read the LIVE duty from DUTY_R — the value
+        // the hardware is currently applying on the wire — not the config DUTY
+        // register, which only mirrors the last value written. During a fade
+        // the config register already holds the fade's END target, so
+        // consumers of this read (fan fade decision, SSR heat-source
+        // detection) saw the target instead of the real output. DUTY_R is a
+        // read-only register tracking the actual output duty (esp32c3 PAC
+        // 0.32.2: `ch(n).duty_r().read().duty_r().bits()`, 19 bits).
+        let raw = regs
+            .ch(entry.number as usize)
+            .duty_r()
+            .read()
+            .duty_r()
+            .bits();
         (raw >> 4) as u16
     }
 
@@ -215,6 +228,16 @@ impl<'a> LedcChannelHandle<'a> {
 
     pub fn applied_duty(&self) -> u16 {
         self.entry().duty.get()
+    }
+
+    /// Bug DRH-1 (2026-07-26): read the LIVE wire duty (DUTY_R register)
+    /// instead of the cached config duty. If a previous fade is still
+    /// mid-flight, the cache holds that fade's END target — restarting a
+    /// fade from the cache would jump the fan to the old target before
+    /// ramping to the new one (surge). DUTY_R reflects the actual output,
+    /// so a fade restarted mid-fade continues from where the hardware is.
+    pub fn live_duty(&self) -> u16 {
+        self.bus.read_register(self.entry())
     }
 
     pub fn applied_percent(&self) -> f32 {

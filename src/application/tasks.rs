@@ -265,8 +265,14 @@ async fn drain_commands(tick_state: &mut TickState) {
             continue;
         }
         if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
+            // Bug M9 (2026-07-26): the previous `continue` here skipped the
+            // normal dispatch, so REG produced NO output — Artisan had zero
+            // feedback. `request_regression()` starts the runner (embedded +
+            // `regression` feature) or is a no-op stub (host); the command
+            // then flows through the normal handler path so
+            // `handle_run_regression` emits `OK regression_started` or
+            // `ERR regression_disabled` via the output channel.
             regression::request_regression();
-            continue;
         }
 
         tick_state.tick_trace_id = Some(traced_command.trace_id);
@@ -783,14 +789,33 @@ async fn emit_telemetry_stage(
             // `ror` column in °C/min (the unit the column header declares),
             // not the internal °C/s — `LogSampleData.ror` is documented in
             // roast_logger.rs as "°C/min".
+            //
+            // Bug DRA-1 (2026-07-26): the buffer used to store raw INTERNAL
+            // °C (and °C/min RoR) regardless of the active display scale,
+            // while the live stream (`ArtisanFormatter`) converts to the
+            // host's scale. After a Disconnect/#DUMP recovery in °F mode the
+            // dump showed °C values — 1.8×+32 off from the live curve.
+            // Apply the same conversion as the live formatter so dump and
+            // stream agree.
+            let ts = &status.temperature_settings;
+            let bt = ts.convert_to_display(status.bean_temp);
+            let et = ts.convert_to_display(status.env_temp);
+            let target = ts.convert_to_display(status.target_temp);
+            // M8 established °C/min for the ror column; in °F mode mirror the
+            // live formatter (°C/s × 9/5 × 60 = °F/min).
+            let ror = if ts.is_fahrenheit() {
+                status.derivative_rate * (9.0 / 5.0) * 60.0
+            } else {
+                status.derivative_rate * 60.0
+            };
             crate::logging::roast_logger::log_sample(
                 crate::logging::roast_logger::LogSampleData {
-                    bt: status.bean_temp,
-                    et: status.env_temp,
+                    bt,
+                    et,
                     heater: status.ssr_output,
                     fan: status.fan_output,
-                    target: status.target_temp,
-                    ror: status.derivative_rate * 60.0,
+                    target,
+                    ror,
                 },
                 tick_start,
             );

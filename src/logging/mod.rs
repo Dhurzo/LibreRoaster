@@ -1,19 +1,14 @@
 //! Logging infrastructure for LibreRoaster
 //!
-//! Provides channel-prefixed logging that outputs to UART0 using esp_println.
-//! Channel prefixes: USB, UART, SYSTEM
+//! Provides ring-buffer roast logging and traceability.
 //!
 //! ## Architecture
 //!
-//! Uses esp_println::println! directly for reliable UART0 output.
-//! Simpler than defmt-rtt + drain task pipeline.
-//!
-//! ## Modules
-//!
-//! - `channel`: Channel enum and log_channel! macro
-//! - `drain_task`: Documentation and architectural decisions
-
-pub mod channel;
+//! Uses the standard `log` facade; no direct esp_println output to the
+//! protocol port (Bug #6 — logs must never corrupt the Artisan protocol
+//! stream). Bug M12 (2026-07-26): the `channel` module and `log_channel!`
+//! macro (which wrote via `esp_println::println!` straight to the protocol
+//! port) had ZERO invocations anywhere and were deleted.
 
 pub mod roast_logger;
 pub mod traceability;

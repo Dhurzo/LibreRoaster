@@ -604,6 +604,8 @@ mod tests {
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
+            chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
+            requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
             state: RoasterState::Stable,
             bean_temp: 150.5,
             env_temp: 120.3,
@@ -754,7 +756,6 @@ mod tests {
 
         assert_eq!(parts.len(), 20);
         assert_eq!(parts[11], "51.2");
-        // M8: derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
         // M8: derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
         assert_eq!(parts[12], "43.80");
         assert_eq!(parts[13], "1");

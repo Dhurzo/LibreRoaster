@@ -19,7 +19,7 @@ impl RoasterCommandHandler for SystemCommandHandler {
     ///
     /// # Commands Handled
     ///
-    /// - `Reset` - Reset system status to default values
+    /// - `Reset` - Reset telemetry/control state (safety latch preserved)
     ///
     /// # Arguments
     ///
@@ -38,8 +38,25 @@ impl RoasterCommandHandler for SystemCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::Reset => {
-                *status = SystemStatus::default();
-                info!("System reset completed");
+                // Bug R5 (2026-07-26): the previous `*status = SystemStatus::default()`
+                // wiped `fault_condition` and the safety latch — a `Reset`
+                // (dead on the wire today — no parser produces it — but
+                // latent) would have cleared an armed emergency as a side
+                // effect. Reset only telemetry/control data; the safety latch
+                // is released exclusively via the explicit recovery path
+                // (`clear_emergency_explicit`).
+                status.bean_temp = 0.0;
+                status.env_temp = 0.0;
+                status.target_temp = 0.0;
+                status.ssr_output = 0.0;
+                status.fan_output = 0.0;
+                status.derivative_rate = 0.0;
+                status.derivative_available = false;
+                status.integrator_value = 0.0;
+                status.charge_detected = false;
+                // status.fault_condition intentionally untouched — it is
+                // controlled by the safety latch.
+                info!("System telemetry reset (safety latch preserved)");
                 Ok(())
             }
 

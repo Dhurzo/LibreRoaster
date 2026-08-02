@@ -73,6 +73,8 @@ fn status_from_sample(
     derivative_available: bool,
 ) -> SystemStatus {
     SystemStatus {
+        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
+        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
         state: RoasterState::Idle,
         bean_temp: sample.bean_temp,
         env_temp: sample.env_temp,
@@ -349,19 +351,16 @@ mod fixture_hub_agreement {
             // is the INTERNAL value in °C/s. Parsing the °C/min figure back
             // into `derivative_rate` then re-running the formatter's `× 60`
             // conversion double-counts (14.40 °C/min × 60 → 864.0). Instead
-            // we feed the internal °C/s per fixture (0.24 for warm, 0.08 for
-            // cold, 0 for fault) so the formatter reproduces the expected line
-            // exactly.
+            // we invert the formatter's own `× 60` (divide by 60) to recover
+            // the internal °C/s value — exact for every fixture, with no
+            // per-fixture hardcoding (a newly added fixture is handled
+            // automatically rather than silently falling back to 0.0).
             // Columns 9-15 are the same in 20-column format (new cols are 18,19)
             let parts: Vec<&str> = expected_line.split(',').collect();
             status.pv = parts[9].parse().unwrap_or(0.0);
             status.mv = parts[10].parse().unwrap_or(0.0);
             status.integrator_value = parts[11].parse().unwrap_or(0.0);
-            status.derivative_rate = match name {
-                "warm" => 0.24, // °C/s → formatter emits 14.40 °C/min
-                "cold" => 0.08, // °C/s → formatter emits 4.80 °C/min
-                _ => 0.0,       // fault fixture carries a zero derivative
-            };
+            status.derivative_rate = parts[12].parse::<f32>().unwrap_or(0.0) / 60.0;
             status.saturation_active = parts[13] == "1";
             status.integrator_clamped = parts[14] == "1";
             status.derivative_available = parts[15] == "1";

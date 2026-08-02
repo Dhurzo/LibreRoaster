@@ -32,7 +32,8 @@ pub struct LogSampleData {
     pub fan: f32,
     /// Target temperature (°C).
     pub target: f32,
-    /// Rate of rise (°C/min).
+    /// Rate of rise (display scale: °C/min or °F/min — Bug DRA-1: the caller
+    /// converts from internal °C/s using the active display scale).
     pub ror: f32,
 }
 

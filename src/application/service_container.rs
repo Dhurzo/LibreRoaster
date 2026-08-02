@@ -32,7 +32,9 @@ pub struct ServiceContainer {
     /// queue rather than fail).
     pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
-    pub multiplexer: Mutex<RefCell<Option<CommandMultiplexer>>>,
+    // Bug DRA-2 (2026-07-26): the `multiplexer` field was removed — it was
+    // NEVER read or written (always None). The real multiplexer lives in the
+    // `ARTISAN_MULTIPLEXER` static, accessed via `get_multiplexer()`.
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
 }
 
@@ -141,7 +143,6 @@ impl ServiceContainer {
         static SERVICE: ServiceContainer = ServiceContainer {
             roaster: EmbassyMutex::new(None),
             artisan_input: Mutex::new(RefCell::new(None)),
-            multiplexer: Mutex::new(RefCell::new(None)),
             watchdog_feeder: Mutex::new(RefCell::new(None)),
         };
         &SERVICE

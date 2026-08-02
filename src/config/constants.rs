@@ -683,6 +683,14 @@ pub struct SystemStatus {
     /// Millis-since-boot timestamp of the last received Artisan command.
     /// Used by the comms idle timeout safety check. 0 = no command yet.
     pub last_command_received_at_ms: u64,
+    /// Bug DRA-7 (2026-07-26): Artisan `CHAN` polling-rate request (Hz),
+    /// recorded by `handle_chan`. Informational for now — the telemetry
+    /// emitter keeps its own 1 Hz cadence.
+    pub chan_poll_rate_hz: u16,
+    /// Bug DRA-7 (2026-07-26): Artisan `FILT` filter request, recorded by
+    /// `handle_filt`. The firmware applies its own internal EMA alpha; the
+    /// host's request is preserved for observability.
+    pub requested_filter: u8,
 }
 
 impl Default for SystemStatus {
@@ -723,6 +731,8 @@ impl Default for SystemStatus {
             pid_output_min: 0.0,
             pid_output_max: 100.0,
             last_command_received_at_ms: 0,
+            chan_poll_rate_hz: 0,
+            requested_filter: 0,
         }
     }
 }
