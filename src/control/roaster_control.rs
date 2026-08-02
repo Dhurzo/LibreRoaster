@@ -51,12 +51,12 @@ pub struct RoasterControl {
     preheat_target: Option<f32>,
     bt_charge_history: heapless::Deque<f32, 10>,
     /// Bug B23: per-tick divider that throttles `bt_charge_history` sampling
-    /// to once every `CHARGE_SAMPLE_TICK_DIV` ticks. The control loop runs at
-    /// ~100 ms/tick; the deque holds 10 samples; sampling every tick gave a
-    /// ~1 s charge-detection window (a >20 °C drop in 1 s is physically
-    /// impossible for a BT probe with 1-5 °C/s thermal inertia), so #CHARGE
-    /// was effectively indetectable. With `CHARGE_DETECTION_WINDOW_S = 3` we
-    /// sample every 300 ms → 10 samples × 300 ms = 3 s, the original intent.
+    /// to once every `CHARGE_SAMPLE_TICK_DIV` ticks. With the real tick
+    /// cadence (`CONTROL_LOOP_TICK_MS` ≈ 330 ms, see constants.rs) the
+    /// divisor resolves to 1 — the deque of 10 samples covers the intended
+    /// ≈ 3 s charge window. (The earlier derivation assumed the 100 ms timer
+    /// alone, so the deque actually spanned ~9.9 s and `#CHARGE` was
+    /// effectively indetectable — bug audit 2026-08-02.)
     charge_history_tick_div: u8,
     // Bug B3: latched cooling fan after a plain STOP. `stop_streaming` sets the
     // fan to 100% but does NOT arm the safety emergency latch (only

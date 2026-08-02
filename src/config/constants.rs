@@ -96,7 +96,6 @@ pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.
 pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
-pub const HEAT_SOURCE_CHECK_INTERVAL_MS: u32 = 1000;
 
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
 pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
@@ -161,26 +160,47 @@ pub const MAX_COMMANDS_PER_TICK: usize = 8;
 pub const CHARGE_DROP_THRESHOLD_C: f32 = 8.0;
 /// Bug B23: intended charge-detection window in seconds. The bean-drop
 /// detector samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>)
-/// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (loop cadence
-/// `CONTROL_LOOP_PERIOD_MS`/tick), so the deque spans
-/// `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_PERIOD_MS`.
-/// A >20 °C BT drop in 3 s is the physical signature of bean charge.
+/// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (real cadence
+/// `CONTROL_LOOP_TICK_MS`/tick), so the deque spans
+/// `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`.
+/// A >`CHARGE_DROP_THRESHOLD_C` °C BT drop in 3 s is the physical signature
+/// of bean charge.
 pub const CHARGE_DETECTION_WINDOW_S: u32 = 3;
 /// Number of BT samples the charge-history deque holds. Forms half of the
 /// `CHARGE_DETECTION_WINDOW_S` expression (see `CHARGE_SAMPLE_TICK_DIV`).
 pub const CHARGE_HISTORY_CAPACITY: u32 = 10;
-/// Control-loop period in milliseconds — the cadence at which
-/// `update_control` ticks. The other half of the charge-window expression.
+/// Control-loop period in milliseconds — the cadence of the `Timer::after`
+/// in `control_loop_task`. NOT the full tick time: one tick additionally
+/// waits `MAX31856_CONVERSION_TIME_MS` for the sensor conversion, so the
+/// real cadence is `CONTROL_LOOP_TICK_MS`. This constant is deliberately
+/// split from `CONTROL_LOOP_TICK_MS` so charge-window math uses the real
+/// cadence (see `CHARGE_SAMPLE_TICK_DIV`).
 pub const CONTROL_LOOP_PERIOD_MS: u32 = 100;
-/// Bug B23 (V2-15): number of ~100 ms control ticks between charge-history
-/// samples. Now DERIVED from `CHARGE_DETECTION_WINDOW_S` so the window is a
-/// single source of truth — `WINDOW_S × 1000 ms/s = CAP × TICK_DIV × PERIOD_MS`,
-/// hence `TICK_DIV = WINDOW_S × 1000 / (CAP × PERIOD_MS)`. With (3, 10, 100)
-/// the result is `3000 / 1000 = 3` (a 3 s window spanned by 10 samples
-/// taken 300 ms apart). Changing the window without re-deriving the divisor
-/// no longer silently leaves the deque sampling at the wrong cadence.
-pub const CHARGE_SAMPLE_TICK_DIV: u8 =
-    (CHARGE_DETECTION_WINDOW_S * 1000 / (CHARGE_HISTORY_CAPACITY * CONTROL_LOOP_PERIOD_MS)) as u8;
+/// Real embedded control-loop cadence in milliseconds: the sensor
+/// conversion wait (210 ms) plus the 100 ms post-tick timer plus small
+/// overhead (command drain, telemetry emit) ≈ 330 ms.
+/// Bug audit 2026-08-02: the charge-window derivation previously used
+/// `CONTROL_LOOP_PERIOD_MS` (100 ms), so with `CHARGE_SAMPLE_TICK_DIV = 3`
+/// the deque actually spanned 10 × 3 × 330 ms ≈ 9.9 s instead of the
+/// intended 3 s — a real TC4 charge drop (2–3 °C/s) was diluted over the
+/// window and `#CHARGE` could silently never fire.
+pub const CONTROL_LOOP_TICK_MS: u32 = CONTROL_LOOP_PERIOD_MS + MAX31856_CONVERSION_TIME_MS as u32;
+/// Bug B23 (V2-15): number of control ticks between charge-history samples.
+/// Now DERIVED from `CHARGE_DETECTION_WINDOW_S` so the window is a single
+/// source of truth — `WINDOW_S × 1000 ms/s = CAP × TICK_DIV × TICK_MS`,
+/// hence `TICK_DIV = WINDOW_S × 1000 / (CAP × TICK_MS)`, floored at 1.
+/// With (3, 10, 310) the result is `3000 / 3100 → 0 → 1` (a ≈ 3.1 s window
+/// spanned by 10 samples taken once per tick ≈ 330 ms apart). Changing the
+/// window without re-deriving the divisor no longer silently leaves the
+/// deque sampling at the wrong cadence.
+pub const CHARGE_SAMPLE_TICK_DIV: u8 = {
+    let div = (CHARGE_DETECTION_WINDOW_S * 1000) / (CHARGE_HISTORY_CAPACITY * CONTROL_LOOP_TICK_MS);
+    if div == 0 {
+        1
+    } else {
+        div as u8
+    }
+};
 
 /// Maximum allowed roast duration in seconds (30 minutes).
 /// If exceeded during an active roast, emergency shutdown is triggered.

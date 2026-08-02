@@ -101,8 +101,18 @@ pub struct SsrControlBase {
     pub(crate) current_duty: u16,
     pub(crate) last_duty_delta_ticks: i16,
     pub(crate) retry_count: u8,
-    pub(crate) last_detection_check: Option<u32>,
     pub(crate) is_pwm_enabled: bool,
+    /// Consecutive `detect_heat_source` samples that read "no heat" while the
+    /// duty is ≥ 50 %. Managed by `heat_presence::debounce_heat_absent`;
+    /// only when it reaches `HEAT_ABSENT_DEBOUNCE` does the status flip to
+    /// `NotDetected`.
+    ///
+    /// Bug audit 2026-08-02: a single OFF sample is ambiguous (the PWM OFF
+    /// window at duty ≥ 50 % reads HIGH even when the SSR is conducting) —
+    /// the previous one-sample flip latched `NotDetected` mid-roast, which
+    /// forces the heater to 0 % and (because duty 0 falls below the
+    /// observability gate) dead-locks the heater until power cycle.
+    heat_absent_count: u8,
     #[allow(dead_code)]
     heat_mismatch_count: u8,
     /// Debounce counter for the "heat present while heater off" branch.
@@ -117,11 +127,12 @@ pub struct SsrControlBase {
 
 #[allow(dead_code)]
 const HEAT_MISMATCH_MAX: u8 = 5;
-/// `heat_mismatch_count`/`heat_present_count` thresholds are sampled at ~100ms
-/// (one control-loop tick). `HEAT_MISMATCH_MAX = 5` therefore represents ≈
-/// 500ms ≈ 2.5 full PWM cycles at 5 Hz, which filters out the 70% of the cycle
-/// that legitimately reads "no heat" at duty=30%. `HEAT_PRESENT_MISMATCH_MAX
-/// = 10` (≈ 2 s) tolerates the residual heat of the metal mass and only fires
+/// `heat_mismatch_count`/`heat_present_count` thresholds are sampled every
+/// control-loop tick (~330 ms on embedded: 210 ms MAX31856 wait + 100 ms
+/// timer + overhead). `HEAT_MISMATCH_MAX = 5` therefore represents ≈ 1.7 s
+/// ≈ 8.5 full PWM cycles at 5 Hz, which filters out the ~70 % of the cycle
+/// that legitimately reads "no heat" at duty = 30 %. `HEAT_PRESENT_MISMATCH_MAX
+/// = 10` (≈ 3.3 s) tolerates the residual heat of the metal mass and only fires
 /// when the SSR is genuinely stuck on.
 #[allow(dead_code)]
 const HEAT_PRESENT_MISMATCH_MAX: u8 = 10;
@@ -163,8 +174,8 @@ impl SsrControlBase {
             current_duty: 0,
             last_duty_delta_ticks: 0,
             retry_count: 0,
-            last_detection_check: None,
             is_pwm_enabled: true,
+            heat_absent_count: 0,
             heat_mismatch_count: 0,
             heat_present_count: 0,
         }
@@ -180,45 +191,58 @@ impl SsrControlBase {
     /// state update for low duty windows prevents the boot-time dead-lock
     /// where the SSR could never become `Available` (0% duty → HIGH → NOTDET
     /// → output forced to 0 → never 50%+ duty → never Available).
+    ///
+    /// Debounce (bug audit 2026-08-02): the OFF → `NotDetected` transition is
+    /// no longer a single-sample flip. At duty ≥ 50 % a HIGH sample is still
+    /// ambiguous (it may be the PWM OFF window), so it only accumulates via
+    /// `heat_presence::debounce_heat_absent`; the status flips after
+    /// `HEAT_ABSENT_DEBOUNCE` consecutive samples (see the module docs for
+    /// the run-bound argument that makes this aliasing-proof at the real tick
+    /// cadence). A LOW sample, by contrast, is trustworthy evidence of
+    /// current flow and restores `Available` immediately.
     pub fn detect_heat_source<F, E>(
         &mut self,
-        current_time: u32,
+        _current_time: u32,
         mut read_pin: F,
     ) -> Result<(), SsrError>
     where
         F: FnMut() -> Result<bool, E>,
     {
+        use crate::hardware::heat_presence::{debounce_heat_absent, HeatPresenceOutcome};
+
         // ≥50% duty ≈ one full sample interval of conduction per PWM period at
-        // 5 Hz vs. ~100 ms sampling; below that the pin read may legitimately
+        // 5 Hz vs. ~330 ms sampling; below that the pin read may legitimately
         // land in the OFF window even when the SSR is wired and functional.
         let min_observable_ticks = (1u32 << SSR_PWM_RESOLUTION) / 2;
         if (self.current_duty as u32) < min_observable_ticks {
-            self.last_detection_check = Some(current_time);
+            // Duty too low for the pin to be informative — and a low-power
+            // stretch must not accumulate toward NotDetected.
+            self.heat_absent_count = 0;
             return Ok(());
         }
 
         match read_pin() {
             Ok(is_detected) => {
-                let new_status = if is_detected {
-                    SsrHardwareStatus::Available
-                } else {
-                    SsrHardwareStatus::NotDetected
-                };
-
-                if new_status != self.hardware_status {
-                    match new_status {
-                        SsrHardwareStatus::Available => {
+                let (new_count, outcome) =
+                    debounce_heat_absent(self.heat_absent_count, is_detected, true);
+                self.heat_absent_count = new_count;
+                match outcome {
+                    HeatPresenceOutcome::HeatDetected => {
+                        if self.hardware_status != SsrHardwareStatus::Available {
                             info!("Heat source detected - SSR heating operational");
+                            self.hardware_status = SsrHardwareStatus::Available;
                         }
-                        SsrHardwareStatus::NotDetected => {
-                            warn!("Heat source not detected - SSR commands work but no heat generated");
-                        }
-                        _ => {}
                     }
-                    self.hardware_status = new_status;
+                    HeatPresenceOutcome::HeatAbsent => {
+                        if self.hardware_status == SsrHardwareStatus::Available {
+                            warn!(
+                                "Heat source not detected - SSR commands work but no heat generated"
+                            );
+                            self.hardware_status = SsrHardwareStatus::NotDetected;
+                        }
+                    }
+                    HeatPresenceOutcome::NoChange => {}
                 }
-
-                self.last_detection_check = Some(current_time);
                 Ok(())
             }
             Err(_) => {
@@ -537,15 +561,15 @@ where
     }
 
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
-        let should_check = if let Some(last_check) = self.base.last_detection_check {
-            current_time.saturating_sub(last_check) >= crate::config::HEAT_SOURCE_CHECK_INTERVAL_MS
-        } else {
-            true
-        };
-
-        if should_check {
-            self.detect_heat_source(current_time)?;
-        }
+        // No throttle (bug audit 2026-08-02): consecutive detects must stay
+        // one control-loop tick apart (~330 ms → ~130 ms of PWM phase
+        // separation, provably in the (100, 200) ms band the
+        // `HEAT_ABSENT_DEBOUNCE` run-bound analysis relies on). The previous
+        // 1000 ms gate made the separation depend on the tick multiple — up
+        // to 3 ticks — where the OFF window could alias with the phase and
+        // produce long spurious "no heat" runs. A GPIO read is negligible;
+        // the per-tick cadence also matches `cross_check_heat_detection`.
+        self.detect_heat_source(current_time)?;
 
         self.base
             .cross_check_heat_detection(self.base.current_duty, || self.detection_pin.is_low())?;
@@ -654,15 +678,9 @@ where
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
     fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
-        let should_check = if let Some(last_check) = self.base.last_detection_check {
-            current_time.saturating_sub(last_check) >= crate::config::HEAT_SOURCE_CHECK_INTERVAL_MS
-        } else {
-            true
-        };
-
-        if should_check {
-            self.detect_heat_source(current_time)?;
-        }
+        // No throttle — see SsrControlSimple::periodic_check for the
+        // phase-separation argument (bug audit 2026-08-02).
+        self.detect_heat_source(current_time)?;
 
         Ok(())
     }
@@ -863,4 +881,9 @@ mod tests {
     // riscv32 target. The underlying behaviour — `SsrError: embedded_hal::
     // digital::Error` returning `ErrorKind::Other` — is exercised trivially by
     // the trait impl at lines 84-88 above and needs no dedicated test.
+    //
+    // Note: this module is replaced by `ssr_stub.rs` on host builds, so the
+    // tests here only compile on the riscv32 target. The heat-source
+    // detection debounce logic therefore lives in `heat_presence.rs` (an
+    // un-gated module) where its unit tests actually run in CI.
 }

@@ -12,6 +12,7 @@ pub mod fan;
 #[path = "fan_host.rs"]
 pub mod fan;
 
+pub mod heat_presence;
 #[cfg(target_arch = "riscv32")]
 pub mod init;
 #[cfg(target_arch = "riscv32")]

@@ -37,7 +37,15 @@ mod software_watchdog {
 
     /// Timestamp of last successful feed in milliseconds
     static LAST_FEED_MS: AtomicU64 = AtomicU64::new(0);
-    const WATCHDOG_TIMEOUT_MS: u64 = 500; // 5 missed ticks = 500ms at ~100ms loop cadence
+    // Bug audit 2026-08-02: the previous 500 ms assumed a ~100 ms loop
+    // cadence ("5 missed ticks"). The real cadence is one tick per
+    // MAX31856 conversion wait (210 ms) + 100 ms timer + overhead ≈ 330 ms,
+    // leaving only ~170 ms of margin — two slightly delayed ticks tripped a
+    // false emergency shutdown mid-roast. 1000 ms covers three full ticks
+    // (~990 ms) plus margin, while still failing well before the 2.2 s HW
+    // RWDT (which, unlike the software path, resets the chip without the
+    // orderly `SAFETY WATCHDOG` escalation + shutdown).
+    const WATCHDOG_TIMEOUT_MS: u64 = 1000;
 
     pub struct WatchdogFeeder {
         last_failure: Option<&'static str>,
