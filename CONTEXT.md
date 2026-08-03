@@ -57,7 +57,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop cycles at ~160 ms
-- ✅ 243/244 host tests pass (1 pre-existing failure in `ssr_scheduler`)
+- ✅ All host tests pass (443 as of 2026-08-03, including `ssr_scheduler` 3/3 — the previously reported "1 pre-existing failure" no longer exists)
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (Temperature, Heater, Fan, Safety)
@@ -117,7 +117,10 @@ Read these in order depending on what you need to do:
 
 ```bash
 # Full baseline (fmt → clippy → test):
-cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --locked --lib --tests --no-fail-fast
+# NB: the plain `cargo test --locked --lib --tests` command FAILS at link
+# time (`undefined symbol: _embassy_time_now`) — host tests need the `test`
+# feature (and the host target) so the Embassy time driver is provided.
+cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 
 # Embedded build:
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded

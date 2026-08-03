@@ -1079,8 +1079,21 @@ fn send_handler_error(
 /// to the selected USB or UART driver.
 ///
 /// Does NOT include the `Timer::after(5ms)` — that's the caller's responsibility.
+///
+/// Bug E2 (2026-08-03): drains up to `MAX_MESSAGES_PER_TICK` per invocation
+/// instead of exactly one. A `#DUMP` backlog (up to 256 rows pushed at 4 rows
+/// per control tick) used to monopolize the channel: with one `try_receive`
+/// per 5 ms tick every SAFETY/ERR/STATUS message produced behind the dump was
+/// dropped silently (`try_send` on a full channel). Draining up to 4 messages
+/// per 5 ms tick still bounds the USB/UART write blocking per tick while
+/// clearing the dump backlog ~4× faster, cutting the silent-drop window.
+const MAX_MESSAGES_PER_TICK: usize = 4;
+
 async fn dual_output_tick(output_channel: &OutputChannel) {
-    if let Ok(data) = output_channel.try_receive() {
+    for _ in 0..MAX_MESSAGES_PER_TICK {
+        let Ok(data) = output_channel.try_receive() else {
+            break;
+        };
         let (channel, data_to_write) = critical_section::with(|cs| {
             let multiplexer = ServiceContainer::get_multiplexer();
             let mut guard = multiplexer.borrow(cs).borrow_mut();

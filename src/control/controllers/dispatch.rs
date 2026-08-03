@@ -62,6 +62,18 @@ impl CommandDispatcher {
         self.artisan_handler.evaluate(command, status)
     }
 
+    /// Commit a manual heater value AFTER the hardware write was accepted
+    /// (Bug C, 2026-08-03). See `ArtisanCommandHandler::commit_manual_heater`.
+    pub fn commit_manual_heater(&mut self, value: f32) {
+        self.artisan_handler.commit_manual_heater(value);
+    }
+
+    /// Commit a manual fan value AFTER the hardware write was accepted
+    /// (Bug C, 2026-08-03). See `ArtisanCommandHandler::commit_manual_fan`.
+    pub fn commit_manual_fan(&mut self, value: f32) {
+        self.artisan_handler.commit_manual_fan(value);
+    }
+
     pub fn enable_pid(
         &mut self,
         target_temp: f32,

@@ -36,6 +36,19 @@ pub const FAN_LEDC_TIMER: u8 = 1;
 pub const SSR_PWM_RESOLUTION: u8 = 14;
 /// Fan LEDC duty resolution in bits (8-bit → 256 steps).
 pub const FAN_PWM_RESOLUTION: u8 = 8;
+
+/// Bug A (2026-08-03): minimum fan speed (%) enforced whenever the heater is
+/// energized. The fan selector in `update_control` otherwise falls through to
+/// `artisan_manual_fan()` — which defaults to 0.0 when the operator sent no
+/// `OT2` / `FANPROFILE` — so a documented PID roast (SETTARGET+START, or
+/// PREHEAT without a fan profile) ran the SSR at up to 100 % with ZERO airflow
+/// every tick. The firmware's own standard treats 'no fan' as unsafe
+/// (`stop_streaming`: "no fan means unsafe to continue"); this floor applies
+/// that standard to the energizing path too. It is a one-way safety valve on
+/// heater-on / fan-off only: any commanded fan at or above the floor passes
+/// through untouched, and fan control below this value while the heater fires
+/// is simply not permitted (an explicit `OT2 0` with heat on is overridden).
+pub const FAN_MIN_SAFETY_PCT: f32 = 20.0;
 /// Minimum interval between SSR duty updates in ms.
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 /// Maximum allowed drift between commanded and actual LEDC duty (raw ticks).

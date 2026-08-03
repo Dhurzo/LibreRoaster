@@ -295,6 +295,13 @@ impl RoasterControl {
                 .apply_guarded_heater(heater, current_time, true, &mut self.status)?;
 
             // Hardware accepted the write — commit the rest of the policy.
+            // Bug C (2026-08-03): `manual_heater` is committed here too, ONLY
+            // after the write was accepted. Pre-fix, `ArtisanCommandHandler::
+            // evaluate` wrote it before the write, so a `ssr_cycle_busy`
+            // rejection left manual state ahead of the mode flags and PID
+            // kept control, silently ignoring the operator's value (worst
+            // case: an `OT1 0` cut that never lands).
+            self.dispatch.commit_manual_heater(heater);
             self.dispatch.disable_pid();
             self.status.pid_enabled = false;
             self.status.artisan_control = true;
@@ -317,6 +324,10 @@ impl RoasterControl {
                 .enable_continuous_output();
 
             self.actuator.set_fan_speed(fan, &mut self.status)?;
+            // Bug C (2026-08-03): commit `manual_fan` only after the write
+            // succeeded — a failed fan write must not leave the handler state
+            // ahead of the hardware.
+            self.dispatch.commit_manual_fan(fan);
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         }
 
@@ -793,12 +804,27 @@ impl RoasterControl {
             .actuator
             .ssr_guard_next_cycle_allowed(current_time)
             .is_err();
-        let applied_output = self.actuator.apply_guarded_heater(
+        // Bug B (2026-08-03): a heater-write failure here previously short-
+        // circuited into the tasks-level warn-only path. But on a failed write
+        // the SSR keeps whatever duty it last latched (possibly 100 %) with no
+        // command to change it — an unknown-heater-state condition. Treat it
+        // like the fan failure below and escalate to a full emergency shutdown.
+        let applied_output = match self.actuator.apply_guarded_heater(
             desired_output,
             current_time,
             false,
             &mut self.status,
-        )?;
+        ) {
+            Ok(output) => output,
+            Err(e) => {
+                warn!(
+                    "SAFETY HEATER-FAIL: heater write failed in control loop: {:?}",
+                    e
+                );
+                self.emergency_shutdown("Heater control failure")?;
+                0.0 // unreachable; emergency_shutdown always returns Err
+            }
+        };
         let feedback = PidFeedback::new(desired_output, applied_output, guard_busy);
         self.dispatch.set_pid_feedback(feedback);
 
@@ -832,11 +858,34 @@ impl RoasterControl {
         } else {
             self.dispatch.artisan_manual_fan()
         };
-        self.actuator
-            .set_fan_speed(fan_output, &mut self.status)
-            .map_err(|_| RoasterError::HardwareError {
-                source: Some("fan_set_in_control_loop_failed"),
-            })?;
+        // Bug A (2026-08-03): heater↔fan interlock. The selector above falls
+        // through to `artisan_manual_fan()` (0.0 by default) whenever the
+        // operator never sent `OT2` / `FANPROFILE` — so a PID roast or PREHEAT
+        // ran the heater at up to 100 % with ZERO airflow every tick. The
+        // firmware's own standard says no-fan is unsafe (see `stop_streaming`);
+        // enforce the same on the energizing path: whenever the heater is being
+        // driven above 0 %, the fan never drops below `FAN_MIN_SAFETY_PCT`.
+        // Explicit operator values at or above the floor pass through untouched.
+        let mut fan_output = fan_output;
+        if desired_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT {
+            warn!(
+                "SAFETY FAN-FLOOR: heater at {:.1}% with fan at {:.1}% — raising fan to minimum {:.0}%",
+                desired_output, fan_output, FAN_MIN_SAFETY_PCT
+            );
+            fan_output = FAN_MIN_SAFETY_PCT;
+        }
+        // Bug B (2026-08-03): a fan-write failure in the control loop used to
+        // propagate via `?` up to `update_control_stage` (tasks.rs), which only
+        // logged a warning — while the heater duty written moments earlier
+        // stayed on the SSR and the watchdog kept certifying the loop healthy.
+        // A failed fan write with heat on is exactly the 'no fan = unsafe to
+        // continue' condition the STOP path treats as fatal; escalate to a
+        // full `emergency_shutdown` (latch + heater off + fan 100 % retries)
+        // instead of returning a logged error.
+        if let Err(e) = self.actuator.set_fan_speed(fan_output, &mut self.status) {
+            warn!("SAFETY FAN-FAIL: fan write failed in control loop: {:?}", e);
+            self.emergency_shutdown("Fan control failure")?;
+        }
 
         // Bug P5 (2026-08-03): probe-stuck detector. A hard thermocouple
         // short reads a flat ~0 °C — a VALID temperature (no MAX31856 fault
@@ -1642,7 +1691,15 @@ impl RoasterControl {
                 // setpoint again. Flip back to `Heating` when the gap widens
                 // past the upper threshold (3 °C) so the rest of the FSM keeps
                 // its expected Heating-typed semantics.
-                let temp_error = (self.status.bean_temp - self.status.target_temp).abs();
+                // Bug F (2026-08-03): pivot on the active PV here too, mirroring the
+                // L11 fix on the Heating→Stable arm below. Pre-fix this arm
+                // read `bean_temp` unconditionally, so under `PID;CHAN;1`
+                // (ET as PV) the FSM flip-flopped Heating↔Stable on every PID
+                // cycle during heat-up: ET converged (±2 °C) → Stable, then
+                // BT's lag (tens of degrees) re-opened the ≥3 °C gap →
+                // Heating. With channel 2 (default) `status.pv == bean_temp`,
+                // so behaviour is unchanged there.
+                let temp_error = (self.status.pv - self.status.target_temp).abs();
                 if temp_error >= 3.0 {
                     self.state = crate::config::constants::RoasterState::Heating;
                     info!("Target moved beyond hysteresis band, re-entering heating state");

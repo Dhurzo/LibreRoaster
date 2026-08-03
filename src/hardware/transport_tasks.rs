@@ -260,6 +260,21 @@ async fn handle_parsed_command(
     if channel_full {
         send_channel_full_error(channel, config).await;
     }
+
+    // Bug D (2026-08-03): a command on the INACTIVE transport was silently
+    // discarded by the multiplexer — this path had NO feedback at all (the
+    // ERR paths only exist for channel_full / parse errors, and both write
+    // to the active transport). An EmergencyStop or STOP sent over the wrong
+    // wire (e.g. UART while USB is the active session) was lost forever with
+    // only an `info!` in the log. Emit an explicit ERR through the output
+    // channel; the dual-output task routes it to the active session, so the
+    // operator at least sees that a command was refused, not processed.
+    if !should_process {
+        let output_channel = ServiceContainer::get_output_channel();
+        let mut msg = String::<TRACE_EVENT_MAX_LEN>::new();
+        let _ = msg.push_str("ERR command_ignored_inactive_channel");
+        let _ = output_channel.try_send(msg);
+    }
 }
 
 /// Send an `ERR channel_full` response through the output channel so the

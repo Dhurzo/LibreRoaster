@@ -38,7 +38,14 @@ pub struct ServiceContainer {
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
 }
 
-pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 8;
+// Bug E1 (2026-08-03): was 8. The channel is drained once per control tick
+// (~310 ms) and Artisan's session-open burst (UNITS/FILT/CHAN/PID/OT1/OT2/
+// START — typically 10-15 lines) used to overrun it, dropping the TAIL of the
+// burst (which is where START, or a mid-burst STOP/EmergencyStop, lands).
+// Doubling the buffer keeps a full burst resident across one tick window.
+// It also makes `MAX_COMMANDS_PER_TICK` (8) reachable in `drain_commands`,
+// activating the previously-dead rate-limit branch and its emergency bypass.
+pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 16;
 pub const ARTISAN_OUTPUT_CHANNEL_SIZE: usize = 16;
 static ARTISAN_CMD_CHANNEL: Channel<
     CriticalSectionRawMutex,
@@ -269,8 +276,12 @@ impl ServiceContainer {
         })
     }
 
-    pub fn get_command_sender(
-    ) -> embassy_sync::channel::Sender<'static, CriticalSectionRawMutex, TracedCommand, 8> {
+    pub fn get_command_sender() -> embassy_sync::channel::Sender<
+        'static,
+        CriticalSectionRawMutex,
+        TracedCommand,
+        ARTISAN_CMD_CHANNEL_SIZE,
+    > {
         ARTISAN_CMD_CHANNEL.sender()
     }
 }
