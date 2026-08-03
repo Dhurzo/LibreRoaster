@@ -98,20 +98,36 @@ impl SensorController {
     /// F4.11 (Gap #3) + V2-3: per-channel debounce. Each channel increments
     /// its own counter only on its own fault and resets only on its own clean
     /// read, so a chronically faulted-but-unused channel cannot push the other
-    /// channel's counter to the NaN threshold. `fault_condition` latches once
-    /// EITHER channel reaches `SENSOR_FAULT_DEBOUNCE` consecutive faults — the
-    /// operator must still investigate a real wiring/open-thermocouple fault on
-    /// any channel. Other paths that set `fault_condition` (overtemp in
-    /// `update_temperatures`, manual emergency, RWDT) are not affected.
+    /// channel's counter to the NaN threshold.
+    ///
+    /// Bug P2 (2026-08-03): `fault_condition` now latches ONLY when the
+    /// chronically faulted channel is the ACTIVE PID input (`pid_channel`):
+    /// 1 = ET, anything else = BT (see the PV selector in
+    /// `RoasterControl::update_control`). The single-probe configuration the
+    /// code explicitly supports (V2-3/B7: BT-only with ET unplugged) used to
+    /// latch the GLOBAL fault after 5 ET-fault ticks, which rejected every
+    /// subsequent START/OT1/PREHEAT with `fault_condition_active` — the
+    /// device became inoperable while the fault was in a channel the control
+    /// loop never reads. An unused channel's persistent fault still advances
+    /// its own debounce counter (so switching `pid_channel` to it re-arms the
+    /// latch) and still poisons its own temperature with NaN, but it no
+    /// longer blocks the whole device. Other paths that set
+    /// `fault_condition` (overtemp in `update_temperatures`, manual
+    /// emergency, RWDT) are not affected.
     pub fn apply_fault_debounce(
         &mut self,
         bean_fault: bool,
         env_fault: bool,
         status: &mut SystemStatus,
     ) {
+        // The PID input selector in `update_control` treats `pid_channel == 1`
+        // as ET and EVERY other value as BT — mirror it here so the latch
+        // decision tracks exactly which channel the control loop consumes.
+        let bean_is_pv = status.pid_channel != 1;
+        let env_is_pv = status.pid_channel == 1;
         if bean_fault {
             self.consecutive_bean_faults = self.consecutive_bean_faults.saturating_add(1);
-            if self.consecutive_bean_faults >= SENSOR_FAULT_DEBOUNCE {
+            if self.consecutive_bean_faults >= SENSOR_FAULT_DEBOUNCE && bean_is_pv {
                 status.fault_condition = true;
             }
         } else {
@@ -119,7 +135,7 @@ impl SensorController {
         }
         if env_fault {
             self.consecutive_env_faults = self.consecutive_env_faults.saturating_add(1);
-            if self.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE {
+            if self.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE && env_is_pv {
                 status.fault_condition = true;
             }
         } else {
@@ -523,9 +539,14 @@ mod tests {
         for _ in 0..10 {
             ctrl.apply_fault_debounce(false, true, &mut status);
         }
+        // Bug P2 (2026-08-03): with the default `pid_channel = 2` (BT is the
+        // PV), a chronic ET fault must NOT latch the GLOBAL fault_condition —
+        // the old behaviour bricked single-probe configs by rejecting every
+        // START/OT1/PREHEAT. The env counter is at threshold (so switching
+        // pid_channel to 1 re-arms the latch) but the device stays operable.
         assert!(
-            status.fault_condition,
-            "chronic ET fault latches fault_condition"
+            !status.fault_condition,
+            "P2: a chronically faulted non-PV channel must not latch fault_condition"
         );
         assert_eq!(ctrl.consecutive_bean_faults, 0);
         assert!(ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE);
@@ -769,13 +790,19 @@ mod tests {
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
 
-        // 10 ticks with only ET faulted: bean counter stays 0.
+        // 10 ticks with only ET faulted: bean counter stays 0, and (Bug P2:
+        // default pid_channel=2 → BT is the PV) the GLOBAL fault_condition
+        // must NOT latch — a single-probe (BT-only) configuration stays
+        // operable with ET unplugged.
         for _ in 0..10 {
             ctrl.apply_fault_debounce(false, true, &mut status);
         }
         assert_eq!(ctrl.consecutive_bean_faults, 0);
         assert!(ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE);
-        assert!(status.fault_condition);
+        assert!(
+            !status.fault_condition,
+            "P2: ET fault must not latch fault_condition while BT is the PV"
+        );
 
         // A clean ET tick resets env; a subsequent BT-only fault advances
         // bean alone.
@@ -784,5 +811,63 @@ mod tests {
         ctrl.apply_fault_debounce(true, false, &mut status);
         assert_eq!(ctrl.consecutive_bean_faults, 1);
         assert_eq!(ctrl.consecutive_env_faults, 0);
+    }
+
+    // ── Bug P2 (2026-08-03): fault_condition latches only on the ACTIVE PV ──
+
+    #[test]
+    fn env_fault_latch_does_not_arm_when_pid_channel_is_bt() {
+        // Single-probe (BT-only) configuration: ET is chronically faulted but
+        // `pid_channel = 2` (the default) means the control loop never reads
+        // ET. The GLOBAL latch must NOT arm — otherwise the device rejects
+        // every START/OT1/PREHEAT and is inoperable until a power cycle.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_channel = 2; // default — BT is the PV
+
+        for _ in 0..(SENSOR_FAULT_DEBOUNCE + 2) {
+            ctrl.apply_fault_debounce(false, true, &mut status);
+        }
+        assert!(
+            !status.fault_condition,
+            "P2: chronic ET fault must not latch while pid_channel = 2 (BT PV)"
+        );
+        assert!(
+            ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE,
+            "the env debounce counter must still accumulate for a future channel switch"
+        );
+    }
+
+    #[test]
+    fn env_fault_latch_arms_when_pid_channel_is_env() {
+        // `PID;CHAN;1` (ET as PV): a chronic ET fault IS a fault of the active
+        // input — the latch must arm exactly as before.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_channel = 1; // ET is the PV
+
+        for _ in 0..SENSOR_FAULT_DEBOUNCE {
+            ctrl.apply_fault_debounce(false, true, &mut status);
+        }
+        assert!(
+            status.fault_condition,
+            "P2: chronic ET fault must latch while pid_channel = 1 (ET PV)"
+        );
+    }
+
+    #[test]
+    fn bean_fault_latch_arms_when_pid_channel_is_bt() {
+        // Default configuration: BT is the PV, so a chronic BT fault latches.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_channel = 2;
+
+        for _ in 0..SENSOR_FAULT_DEBOUNCE {
+            ctrl.apply_fault_debounce(true, false, &mut status);
+        }
+        assert!(status.fault_condition);
     }
 }

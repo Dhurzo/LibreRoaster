@@ -159,6 +159,16 @@ pub struct EventQueueOverflow {
     pub triggered: bool,
 }
 
+/// Bug P7 (2026-08-03): decide whether a read error on `channel` should be
+/// counted toward the comms-error emergency threshold. ONLY the multiplexer's
+/// ACTIVE channel counts: 10 consecutive read failures on a transport that is
+/// not in use (e.g. a broken UART line while Artisan runs over USB) must not
+/// abort the session with `emergency_shutdown`. Errors on an inactive channel
+/// are still logged for diagnostics.
+pub fn should_count_read_error(active: CommChannel, channel: CommChannel) -> bool {
+    active == channel
+}
+
 /// Check if the event queue has a line terminator (CR or LF).
 pub(crate) fn event_queue_has_terminator(
     event_queue: &BlockingMutex<
@@ -255,15 +265,19 @@ async fn handle_parsed_command(
 /// Send an `ERR channel_full` response through the output channel so the
 /// host knows its command was dropped due to backpressure. Multiplexer-aware
 /// (only writes if this channel is the active TX).
+///
+/// Bug P8 (2026-08-03): a dropped/parse-error command must NOT activate a
+/// channel from `None` — previously both error paths called
+/// `mux.on_command_received(channel)`, so boot-time garbage on UART could
+/// hijack the multiplexer (making UART the active/response route) before any
+/// VALID command had been seen. Channel activation is reserved for
+/// `handle_parsed_command` (a successfully parsed command only).
 async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig) {
     let mut should_write = true;
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            if matches!(mux.get_active_channel(), CommChannel::None) {
-                let _ = mux.on_command_received(channel);
-            }
             should_write = mux.should_write_to(channel);
         }
 
@@ -277,16 +291,21 @@ async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig
 }
 
 /// Send a parse error response via the output channel (multiplexer-aware).
-async fn send_parse_error(error: ParseError, channel: CommChannel, _config: &TransportConfig) {
+///
+/// Bug P8 (2026-08-03): must NOT activate a channel from `None` — see
+/// `send_channel_full_error`. A garbage line in the boot window is silently
+/// dropped (no active channel to reply to); a real session is unaffected.
+pub(crate) async fn send_parse_error(
+    error: ParseError,
+    channel: CommChannel,
+    _config: &TransportConfig,
+) {
     let mut should_write = true;
 
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            if matches!(mux.get_active_channel(), CommChannel::None) {
-                let _ = mux.on_command_received(channel);
-            }
             should_write = mux.should_write_to(channel);
         }
 
@@ -423,7 +442,24 @@ pub async fn run_reader_task<RX: RxSource>(
             Ok(0) => { /* no data — idle poll */ }
             Ok(_) => { /* should not happen */ }
             Err(e) => {
-                crate::hardware::error_counters::increment_error_count(config.name);
+                // Bug P7 (2026-08-03): count a read error only when this
+                // transport is the multiplexer's ACTIVE channel. The control
+                // loop trips a global emergency at 10 consecutive errors
+                // (`MAX_COMMS_READ_ERRORS`); counting every transport
+                // regardless of the active session meant a dead UART line
+                // could abort a healthy USB roast (~1 s of failure). Errors on
+                // an inactive transport are still logged for diagnostics.
+                let active_channel = critical_section::with(|cs| {
+                    ServiceContainer::get_multiplexer()
+                        .borrow(cs)
+                        .borrow()
+                        .as_ref()
+                        .map(|mux| mux.get_active_channel())
+                        .unwrap_or(CommChannel::None)
+                });
+                if should_count_read_error(active_channel, config.channel) {
+                    crate::hardware::error_counters::increment_error_count(config.name);
+                }
                 log::warn!("{} read error: {:?}", config.name, e);
             }
         }

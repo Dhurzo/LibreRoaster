@@ -115,6 +115,16 @@ mod target_impl {
 
                 // Still clear the regression flag so the device does not
                 // advertise a regression that did not actually run.
+                // Bug P9 (2026-08-03): the emergency latch must NOT be cleared
+                // on this path. `shutdown_failed` means the regression could
+                // not turn the heater OFF (SSR stuck in `Error` after the
+                // retries) — a real hardware fault, not a test artifact.
+                // Keeping the latch (heater output forced to 0, fan pinned at
+                // 100 %, commands rejected) is the correct end state until the
+                // operator intervenes physically; clearing it would drop the
+                // forced cooldown fan exactly when the heater may be wedged on.
+                // The SUCCESS path below is the P9 recovery (restore operator
+                // control after a clean self-test).
                 let _ = ServiceContainer::with_roaster_async(|roaster| {
                     roaster.mark_overtemp_regression_active(false);
                     Ok::<(), ContainerError>(())
@@ -148,8 +158,17 @@ mod target_impl {
 
             self.keep_feeding_watchdog(Duration::from_millis(400)).await;
 
+            // Bug P9 (2026-08-03): restore operator control at the end of the
+            // run. `emergency_shutdown("Over-temp regression")` above armed
+            // the safety latch (`activate_emergency` + `fault_condition` +
+            // state=Error); the old body only cleared the regression flag, so
+            // the roaster stayed in `Error` — every START/OT1/PREHEAT rejected
+            // until an `OFF` or a power cycle. `clear_emergency_explicit` is
+            // the single sanctioned un-latch path (same as the START
+            // recovery): it returns the device to a recoverable `Idle`.
             let _ = ServiceContainer::with_roaster_async(|roaster| {
                 roaster.mark_overtemp_regression_active(false);
+                roaster.clear_emergency_explicit();
                 Ok::<(), ContainerError>(())
             })
             .await;

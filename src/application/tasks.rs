@@ -1802,4 +1802,79 @@ mod tests {
         }
         count
     }
+
+    // ── Bug P7 (2026-08-03): comms read errors are channel-aware ──────────
+
+    #[test]
+    fn should_count_read_error_only_active_channel() {
+        use crate::hardware::transport_tasks::should_count_read_error;
+
+        // Only the multiplexer's ACTIVE channel counts toward the
+        // MAX_COMMS_READ_ERRORS emergency threshold.
+        assert!(should_count_read_error(CommChannel::Usb, CommChannel::Usb));
+        assert!(should_count_read_error(
+            CommChannel::Uart,
+            CommChannel::Uart
+        ));
+        assert!(
+            !should_count_read_error(CommChannel::Usb, CommChannel::Uart),
+            "P7: a dead UART line must not count during a USB session"
+        );
+        assert!(
+            !should_count_read_error(CommChannel::Uart, CommChannel::Usb),
+            "P7: a dead USB line must not count during a UART session"
+        );
+        assert!(
+            !should_count_read_error(CommChannel::None, CommChannel::Uart),
+            "P7: no active session → nothing counts"
+        );
+        assert!(!should_count_read_error(
+            CommChannel::None,
+            CommChannel::Usb
+        ));
+    }
+
+    // ── Bug P8 (2026-08-03): garbage must not hijack the multiplexer ───────
+
+    #[test]
+    fn garbage_line_does_not_hijack_channel() {
+        use crate::hardware::transport_tasks::{send_parse_error, TransportConfig};
+        use crate::input::parser::ParseError;
+
+        let _guard = acquire_test_lock();
+        // Fresh multiplexer — active channel starts as `None`.
+        ServiceContainer::init_multiplexer();
+        drain_all_channels();
+
+        let config = TransportConfig {
+            name: "UART",
+            channel: CommChannel::Uart,
+            ..TransportConfig::default()
+        };
+
+        // Boot-window garbage that fails to parse must NOT activate UART.
+        block_on(async {
+            send_parse_error(ParseError::UnknownCommand, CommChannel::Uart, &config).await;
+        });
+
+        let active = critical_section::with(|cs| {
+            ServiceContainer::get_multiplexer()
+                .borrow(cs)
+                .borrow()
+                .as_ref()
+                .map(|mux| mux.get_active_channel())
+        });
+        assert_eq!(
+            active,
+            Some(CommChannel::None),
+            "P8: a parse error in the None window must not hijack the channel"
+        );
+        // With no active channel there is nowhere to reply — nothing emitted.
+        assert!(
+            ServiceContainer::get_output_channel()
+                .try_receive()
+                .is_err(),
+            "P8: no ERR may be emitted while no channel is active"
+        );
+    }
 }

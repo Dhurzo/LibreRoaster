@@ -330,7 +330,12 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<u8>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            if !(1..=4).contains(&ch) {
+            // Bug P12 (2026-08-03): accept only `1..=2` — the firmware has
+            // exactly two thermocouples (1 = ET, 2 = BT). The previous `1..=4`
+            // accepted `PID;CHAN;3|4` and silently executed them as BT (the PV
+            // selector treats anything != 1 as BT), leaving the operator with
+            // no error and a control input they did not intend.
+            if !(1..=2).contains(&ch) {
                 return Err(ParseError::OutOfRange);
             }
             Ok(ArtisanCommand::SetPidChannel(ch))
@@ -1289,6 +1294,25 @@ mod tests {
     fn test_pid_semicolon_chan_invalid() {
         assert!(matches!(
             parse_artisan_command("PID;CHAN;5"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_3_and_4_rejected() {
+        // Bug P12: the firmware has exactly two thermocouples (1 = ET, 2 =
+        // BT). The previous `1..=4` accepted 3|4 and silently executed them
+        // as BT (the PV selector treats anything != 1 as BT) — reject loudly.
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;3"),
+            Err(ParseError::OutOfRange)
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;4"),
+            Err(ParseError::OutOfRange)
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;0"),
             Err(ParseError::OutOfRange)
         ));
     }

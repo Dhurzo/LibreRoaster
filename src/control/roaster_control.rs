@@ -58,6 +58,15 @@ pub struct RoasterControl {
     /// alone, so the deque actually spanned ~9.9 s and `#CHARGE` was
     /// effectively indetectable — bug audit 2026-08-02.)
     charge_history_tick_div: u8,
+    /// Bug P5 (2026-08-03): probe-stuck detector state. A hard thermocouple
+    /// short reads a flat ~0 °C, which is a VALID temperature — no MAX31856
+    /// fault bit, so the fault/NaN paths never fire and the PID would drive
+    /// the heater blind. While the heater runs ≥ `PROBE_STUCK_HEATER_MIN_PCT`,
+    /// BT must move by more than `PROBE_STUCK_VARIATION_C` within
+    /// `PROBE_STUCK_TIMEOUT_SECS`; otherwise the probe is shorted/broken and
+    /// `emergency_shutdown("Probe stuck")` fires (see `update_control`).
+    probe_stuck_last_bt: Option<f32>,
+    probe_stuck_last_change: Option<Instant>,
     // Bug B3: latched cooling fan after a plain STOP. `stop_streaming` sets the
     // fan to 100% but does NOT arm the safety emergency latch (only
     // `emergency_shutdown` does). Without this flag, the next `update_control`
@@ -102,6 +111,8 @@ impl RoasterControl {
             preheat_target: None,
             bt_charge_history: heapless::Deque::new(),
             charge_history_tick_div: 0,
+            probe_stuck_last_bt: None,
+            probe_stuck_last_change: None,
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
         })
@@ -535,7 +546,17 @@ impl RoasterControl {
         // (OT1/OT2 without START) heater sessions; the previous design keyed
         // exclusively on `profile_start_time`, inert to the most common
         // Artisan flow (OT1/OT2).
-        if heater_energized || roast_active {
+        // Bug P6 (2026-08-03): exclude the Preheating state from the cap. A
+        // big drum can legitimately preheat for well over 30 minutes; counting
+        // that time against the roast budget caused a false
+        // `emergency_shutdown("Maximum roast time exceeded")` before the beans
+        // were ever loaded. The START handoff anchors the clock to
+        // `profile_start_time`, and comms-idle (above) still covers a
+        // forgotten preheat.
+        let max_roast_time_armed = (heater_energized
+            && !matches!(self.state, RoasterState::Preheating))
+            || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
+        if max_roast_time_armed {
             if let Some(start) = self.profile_start_time.or(self.heat_session_start) {
                 let elapsed_secs = current_time.saturating_duration_since(start).as_secs() as u32;
                 if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
@@ -638,9 +659,9 @@ impl RoasterControl {
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
 
-        // Bug V2-16a: the RoR guard historically ran every tick in *all*
-        // modes and states. With an empty drum and a low-mass BT probe, the
-        // probe heats faster than 0.5 °C/s during PREHEAT, so the guard
+        // Bug V2-16a (2026-07-25): the RoR guard historically ran every tick in
+        // *all* modes and states. With an empty drum and a low-mass BT probe,
+        // the probe heats faster than 0.5 °C/s during PREHEAT, so the guard
         // fired `rate_of_rise_exceeded → emergency_shutdown` in the first
         // 1-2 seconds of heating — and via V2-1 that became a power-cycle
         // brick on the first real PREHEAT. The guard must only protect once
@@ -655,7 +676,20 @@ impl RoasterControl {
         // 0.5 °C/s threshold calibrated for the sluggish BT was being applied
         // to ET (which climbs much faster) → spurious emergency on a healthy
         // roast while a genuine BT runaway remained unguarded.
-        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+        //
+        // Bug P4 (2026-08-03): extend the gate — `PID;SV`/`SETTARGET` from
+        // `Idle` enables the PID (state stays `Idle`) and the heater heats
+        // toward the setpoint with NO RoR supervision (the previous gate only
+        // covered Heating/Stable). Arm the guard in `Idle` whenever the PID
+        // is enabled AND the heater is actually energized; Preheating stays
+        // exempt (empty drum, V2-16a) and pure-manual `OT1` sessions
+        // (`pid_enabled = false`) are not covered (their runaway backstop is
+        // the comms-idle / MAX_ROAST_TIME gate).
+        let ror_guard_active = matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+            || (matches!(self.state, RoasterState::Idle)
+                && self.status.pid_enabled
+                && heater_energized);
+        if ror_guard_active {
             if let Some(bt_rate) = self
                 .sensor
                 .refresh_bt_guard_derivative(self.status.bean_temp, current_time)
@@ -673,9 +707,21 @@ impl RoasterControl {
             // `bt_ror_exceeded_count`. (Previously a single shared counter
             // meant every healthy ET tick reset the BT runaway debounce,
             // defeating the guard in PID;CHAN;1 mode.)
-            if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
-                warn!("Rate-of-rise check failed: {:?}", e);
-                self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
+            //
+            // Bug P1 (2026-08-03): this legacy check consumes
+            // `status.derivative_rate`, which is refreshed from the ACTIVE PV
+            // (`env_temp` under `PID;CHAN;1`). The 0.5 °C/s threshold is
+            // calibrated for the sluggish BT; with ET-as-PV a healthy heat-up
+            // (ET climbing >0.5 °C/s) aborted every roast ~1 s after entering
+            // the guard. Gate the legacy check to the BT channel only — the
+            // genuine runaway protection for CHAN;1 is `check_bt_rate` above
+            // (BT-only, per M4). Telemetry still sees the PV derivative (the
+            // `refresh_filtered_derivative` call above is untouched).
+            if self.status.pid_channel != 1 {
+                if let Err(e) = self.sensor.check_rate_of_rise(&self.status) {
+                    warn!("Rate-of-rise check failed: {:?}", e);
+                    self.emergency_shutdown("Bean temperature rate-of-rise exceeded")?;
+                }
             }
         }
 
@@ -792,6 +838,57 @@ impl RoasterControl {
                 source: Some("fan_set_in_control_loop_failed"),
             })?;
 
+        // Bug P5 (2026-08-03): probe-stuck detector. A hard thermocouple
+        // short reads a flat ~0 °C — a VALID temperature (no MAX31856 fault
+        // bit), so the fault/NaN guards below never fire and the PID drives
+        // the heater blind until MAX_ROAST_TIME. If the heater has been at or
+        // above `PROBE_STUCK_HEATER_MIN_PCT` and BT has not moved by more than
+        // `PROBE_STUCK_VARIATION_C` for `PROBE_STUCK_TIMEOUT_SECS`, the probe
+        // is shorted or broken → emergency. Any real probe moves well over
+        // 1 °C within 2 minutes at ≥50 % power; a non-finite BT (faulted
+        // channel) keeps the detector disarmed — the NaN emergency covers it.
+        // The detector disarms while the PID regulates within
+        // `PROBE_STUCK_TARGET_MARGIN_C` of the setpoint: a stable roast holds
+        // BT nearly flat BY DESIGN, and at a cold ambient / big drum the
+        // equilibrium duty can exceed 50 % — a healthy steady state must not
+        // trip. Manual mode (no PID target) stays fully armed.
+        let probe_bt = self.status.bean_temp;
+        let near_target = self.status.pid_enabled
+            && (self.status.target_temp - probe_bt).abs() <= PROBE_STUCK_TARGET_MARGIN_C;
+        if self.status.ssr_output >= PROBE_STUCK_HEATER_MIN_PCT
+            && probe_bt.is_finite()
+            && !near_target
+        {
+            match self.probe_stuck_last_bt {
+                None => {
+                    self.probe_stuck_last_bt = Some(probe_bt);
+                    self.probe_stuck_last_change = Some(current_time);
+                }
+                Some(prev) => {
+                    if (probe_bt - prev).abs() > PROBE_STUCK_VARIATION_C {
+                        self.probe_stuck_last_bt = Some(probe_bt);
+                        self.probe_stuck_last_change = Some(current_time);
+                    } else if let Some(last_change) = self.probe_stuck_last_change {
+                        if current_time
+                            .saturating_duration_since(last_change)
+                            .as_secs()
+                            >= PROBE_STUCK_TIMEOUT_SECS
+                        {
+                            warn!(
+                                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s at ≥{:.0}% heater — emergency",
+                                probe_bt, PROBE_STUCK_TIMEOUT_SECS, PROBE_STUCK_HEATER_MIN_PCT
+                            );
+                            self.emergency_shutdown("Probe stuck")?;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Heater below the threshold (or BT faulted) — disarm.
+            self.probe_stuck_last_bt = None;
+            self.probe_stuck_last_change = None;
+        }
+
         self.status.state = self.state;
 
         if applied_output > 0.0
@@ -837,13 +934,19 @@ impl RoasterControl {
         // Bug #6 fix: Reject all commands when a fault condition is active.
         // Prevents heater ramp commands from worsening an over-temp situation
         // that was detected between sensor reads.
-        // Exception: READ, STATUS, and STOP are always allowed for monitoring and safety.
+        // Exception: READ, STATUS, STOP, START and PREHEAT are always allowed.
+        // READ/STATUS are monitoring; STOP/EmergencyStop are safety; and
+        // START/PREHEAT (Bug P3, 2026-08-03) are the operator's deliberate
+        // re-energize actions — the handlers clear the held latch, so the
+        // manual flow after a STOP is no longer bricked until `OFF`.
         if self.status.fault_condition {
             match command {
                 crate::config::ArtisanCommand::ReadStatus
                 | crate::config::ArtisanCommand::StatusReport
                 | crate::config::ArtisanCommand::Stop
-                | crate::config::ArtisanCommand::EmergencyStop => { /* allow */ }
+                | crate::config::ArtisanCommand::EmergencyStop
+                | crate::config::ArtisanCommand::StartRoast
+                | crate::config::ArtisanCommand::Preheat(_) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     return Err(RoasterError::InvalidState {
@@ -950,6 +1053,31 @@ impl RoasterControl {
             //
             // Bug B3: a new roast start drops the cooldown latch — we are
             // re-energizing deliberately, so airflow follows the new roast.
+            //
+            // Bug P3 (2026-08-03): START is the operator's deliberate act of
+            // re-energizing — clear any latched emergency/fault BEFORE the
+            // handoff so a STOP (which arms the latch via `EmergencyStop`) no
+            // longer bricks the next roast until the undocumented `OFF` token.
+            // Same rationale as `clear_emergency_explicit`'s doc: START is the
+            // sanctioned recovery in the documented manual flow.
+            if self.status.fault_condition || self.safety.is_emergency_active() {
+                self.clear_emergency_explicit();
+            }
+            // Bug P11 (2026-08-03): reset the charge-detection state on START.
+            // `stop_streaming` already resets it on every STOP/OFF, but a
+            // batch that ends WITHOUT a STOP (PREHEAT → START cadence) kept
+            // `charge_detected = true`, so the `!charge_detected` gate never
+            // re-fired `#CHARGE` on the next batch. Clearing here makes START
+            // idempotent for every path into a new roast.
+            self.charge_detected = false;
+            self.charge_time = None;
+            self.status.charge_detected = false;
+            // Bug P6 (2026-08-03): reset the manual heat-session clock on
+            // START. The 30-minute MAX_ROAST_TIME budget then anchors to
+            // `profile_start_time` (set below) — preheat time (which can
+            // legitimately exceed half an hour on big drums, and which the
+            // time-cap gate now excludes) must not carry into the new roast.
+            self.heat_session_start = None;
             self.cooling_active = false;
             // Bug V2-7: drop any pending `#DUMP` rows from a previous roast so
             // they do not interleave with the new roast's live telemetry.
@@ -1304,6 +1432,12 @@ impl RoasterControl {
     }
 
     fn handle_preheat(&mut self, target: f32) -> Result<(), RoasterError> {
+        // Bug P3 (2026-08-03): PREHEAT is a deliberate re-energize action —
+        // clear any latched emergency/fault so the STOP → PREHEAT flow works
+        // (same rationale as the START recovery in `handle_start_roast`).
+        if self.status.fault_condition || self.safety.is_emergency_active() {
+            self.clear_emergency_explicit();
+        }
         // Bug #5 (units) + plan-informe F4.7 (unbounded value): convert the
         // incoming target from the host's display units to °C, then validate
         // against the same range as SetTargetTemp. Artisan in °F mode reports
@@ -2333,5 +2467,405 @@ mod tests {
             "V2-13: fan profile must survive the OFF → START cycle"
         );
         assert!(ctrl.profile_start_time.is_some());
+    }
+
+    // ── P1 (2026-08-03): legacy RoR guard must not apply BT threshold to ET ──
+
+    #[test]
+    fn pid_channel_1_does_not_trigger_legacy_ror() {
+        // Bug P1: with `PID;CHAN;1` (ET as PV), the legacy
+        // `check_rate_of_rise` consumes `status.derivative_rate` — which
+        // `refresh_filtered_derivative` feeds from the ACTIVE PV (ET). The
+        // 0.5 °C/s threshold calibrated for the sluggish BT would abort a
+        // healthy roast ~1 s into Heating. Reproduce: CHAN;1, ET climbing
+        // ~1 °C/s for 5 ticks in Heating → no emergency. The BT-only
+        // `check_bt_rate` guard (fed by `refresh_bt_guard_derivative`) is
+        // what must protect this configuration.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetPidChannel(1));
+        assert!(r.is_ok());
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        assert_eq!(ctrl.get_status().pid_channel, 1);
+
+        // Seed the sample pair, then climb ET ~0.31 °C per 310 ms tick
+        // (≈ 1.0 °C/s — well above MAX_BT_RATE_OF_RISE) while BT stays flat.
+        let t0 = Instant::from_millis(1000);
+        ctrl.update_temperatures(150.0, 150.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        let mut et = 151.0;
+        let mut now = Instant::from_millis(1310);
+        for _ in 0..5 {
+            ctrl.update_temperatures(150.0, et, now).unwrap();
+            let out = ctrl.update_control(now);
+            assert!(
+                out.is_ok(),
+                "P1: healthy ET heat-up under CHAN;1 must not trip the legacy RoR guard at {:?}: {:?}",
+                now, out
+            );
+            assert_ne!(
+                ctrl.get_state(),
+                RoasterState::Error,
+                "P1: CHAN;1 must not flip to Error from a healthy ET heat-up"
+            );
+            et += 0.31;
+            now = Instant::from_millis(now.as_millis() + 310);
+        }
+    }
+
+    // ── P3 (2026-08-03): START/PREHEAT recover from the STOP latch ─────────
+
+    #[test]
+    fn start_after_stop_recovers_to_heating() {
+        // Bug P3: `STOP` (→ EmergencyStop) arms the emergency latch, and the
+        // only previously-sanctioned recovery (`RoasterCommand::StopRoast`)
+        // has no production producer — the next roast was impossible until
+        // the undocumented `OFF` token. START is the operator's deliberate
+        // re-energize: it must un-latch and start the roast.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(r.is_ok(), "STOP path must arm the latch");
+        assert!(ctrl.safety().is_emergency_active());
+        assert!(ctrl.get_status().fault_condition);
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok(), "START after STOP must be accepted: {:?}", r);
+        assert_eq!(
+            ctrl.get_state(),
+            RoasterState::Heating,
+            "START after STOP must recover to a running roast"
+        );
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "P3: START must clear the emergency latch"
+        );
+        assert!(
+            !ctrl.get_status().fault_condition,
+            "P3: START must clear fault_condition"
+        );
+        assert!(
+            ctrl.profile_start_time.is_some(),
+            "P3: recovered roast must have a profile clock"
+        );
+    }
+
+    #[test]
+    fn preheat_after_stop_recovers() {
+        // Bug P3 companion: PREHEAT is likewise a deliberate re-energize and
+        // must recover from a latched STOP.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(ctrl.safety().is_emergency_active());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert!(r.is_ok(), "PREHEAT after STOP must be accepted: {:?}", r);
+        assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+        assert!(!ctrl.safety().is_emergency_active());
+        assert!(!ctrl.get_status().fault_condition);
+    }
+
+    // ── P4 (2026-08-03): RoR guard arms for PID;SV from Idle ───────────────
+
+    #[test]
+    fn pid_sv_in_idle_energizes_with_ror_guard() {
+        // Bug P4: `PID;SV`/`SETTARGET` from Idle enables the PID (state stays
+        // Idle) and the heater heats toward the setpoint with NO RoR
+        // supervision — a runaway was only stopped by overtemp/comms-idle.
+        // The guard must now arm on (Idle && pid_enabled && heater_energized):
+        // BT climbing > 0.5 °C/s for 3 ticks → emergency shutdown.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        assert!(r.is_ok());
+        assert!(ctrl.get_status().pid_enabled);
+        assert_eq!(ctrl.get_state(), RoasterState::Idle);
+
+        // Tick 0: seed a fresh reading; the PID (Kp=2, error=50) drives the
+        // heater to saturation, so ssr_output must be > 0 afterwards.
+        let t0 = Instant::from_millis(60_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(150.0, 120.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: PID;SV in Idle must energize the heater"
+        );
+
+        // BT climbs ~1.6 °C/s (0.5 °C per 310 ms tick) toward the target.
+        // After the EMA filter warms up, the derivative exceeds 0.5 °C/s for
+        // 3 consecutive ticks → the extended guard must abort.
+        let mut bt = 150.5;
+        let mut now = Instant::from_millis(60_310);
+        for _ in 0..6 {
+            ctrl.update_temperatures(bt, 120.0, now).unwrap();
+            let _ = ctrl.update_control(now);
+            bt += 0.5;
+            now = Instant::from_millis(now.as_millis() + 310);
+        }
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "P4: unsupervised PID;SV heater in Idle with BT rising >0.5 °C/s must abort"
+        );
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    #[test]
+    fn pid_sv_in_idle_does_not_abort_on_healthy_bt() {
+        // Regression guard for the P4 extension: a healthy BT drift
+        // (< 0.5 °C/s) under PID;SV from Idle must NOT trip the guard.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        let t0 = Instant::from_millis(70_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(150.0, 120.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+
+        let mut bt = 150.1;
+        let mut now = Instant::from_millis(70_310);
+        for _ in 0..8 {
+            ctrl.update_temperatures(bt, 120.0, now).unwrap();
+            let _ = ctrl.update_control(now);
+            bt += 0.1; // ~0.32 °C/s — comfortably below the 0.5 °C/s limit
+            now = Instant::from_millis(now.as_millis() + 310);
+        }
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "P4: a healthy <0.5 °C/s drift under PID;SV in Idle must not abort"
+        );
+        assert_ne!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    // ── P5 (2026-08-03): probe-stuck detector ──────────────────────────────
+
+    #[test]
+    fn probe_stuck_detector_fires_after_flat_bt() {
+        // Bug P5: a shorted thermocouple reads a flat ~0 °C — VALID
+        // temperature with no MAX31856 fault bit — so the PID drives the
+        // heater blind. Heater ≥ 50 % with flat BT for PROBE_STUCK_TIMEOUT_SECS
+        // must abort with an emergency.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+        assert!(r.is_ok());
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: manual heater must be energized"
+        );
+
+        let t0 = Instant::from_millis(300_000);
+        // Pretend the OT1 command arrived at t0 so the comms-idle backstop
+        // does not fire instead of the probe detector.
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(0.0, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0); // arms the baseline on the first ≥50% tick
+
+        let t1 = Instant::from_millis(
+            300_000 + crate::config::constants::PROBE_STUCK_TIMEOUT_SECS * 1000 + 1000,
+        );
+        ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+        ctrl.update_temperatures(0.0, 25.0, t1).unwrap();
+        let _ = ctrl.update_control(t1);
+
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "P5: flat BT at ≥50% heater for the timeout must abort"
+        );
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    #[test]
+    fn probe_stuck_detector_does_not_fire_on_moving_bt() {
+        // A live probe that moves ≥ PROBE_STUCK_VARIATION_C within the window
+        // must NOT trip the detector.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+        let t0 = Instant::from_millis(400_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(40.0, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+
+        let t1 = Instant::from_millis(
+            400_000 + crate::config::constants::PROBE_STUCK_TIMEOUT_SECS * 1000 + 1000,
+        );
+        ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+        ctrl.update_temperatures(42.0, 25.0, t1).unwrap(); // moved +2 °C
+        let _ = ctrl.update_control(t1);
+
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "P5: a probe that moved ≥ 1 °C must not trip the detector"
+        );
+        assert_ne!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    #[test]
+    fn probe_stuck_does_not_fire_when_regulating_near_target() {
+        // A healthy roast in steady state holds BT nearly flat BY DESIGN (the
+        // PID's job), and on a cold ambient / big drum the equilibrium duty
+        // can sit at or above PROBE_STUCK_HEATER_MIN_PCT. The detector must
+        // disarm within PROBE_STUCK_TARGET_MARGIN_C of the setpoint —
+        // otherwise a stable roast at ≥50 % duty trips a FALSE "Probe stuck"
+        // emergency.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        // High proportional gain with zero integral: the output is purely
+        // proportional, so BT parked 0.2 °C under the target yields a
+        // STEADY ≥ 50 % duty with a FLAT BT — the exact steady-state regime
+        // the margin exists to protect.
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetPidGain(300.0, 0.0, 0.0));
+
+        let t0 = Instant::from_millis(900_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(199.8, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        assert!(
+            ctrl.get_status().ssr_output >= 50.0,
+            "test precondition: steady-state duty must be ≥ PROBE_STUCK_HEATER_MIN_PCT \
+             (got {:.1}%)",
+            ctrl.get_status().ssr_output
+        );
+
+        let t1 = Instant::from_millis(
+            900_000 + crate::config::constants::PROBE_STUCK_TIMEOUT_SECS * 1000 + 1000,
+        );
+        ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+        ctrl.update_temperatures(199.8, 25.0, t1).unwrap(); // flat, near target
+        let _ = ctrl.update_control(t1);
+
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "P5: a flat BT within the target margin while PID-regulating must not trip"
+        );
+        assert_ne!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    // ── P6 (2026-08-03): MAX_ROAST_TIME must not run during PREHEAT ────────
+
+    #[test]
+    fn preheat_does_not_count_toward_max_roast_time() {
+        // Bug P6: the 30-min cap must NOT run during Preheating — big drums
+        // legitimately preheat for over half an hour. The old gate keyed on
+        // `heater_energized || roast_active` (Preheating included), so a long
+        // preheat hit the cap mid-preheat and aborted before loading beans.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+
+        let t0 = Instant::from_millis(500_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(25.0, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        // Second tick: `heater_energized` only sees the output applied on
+        // tick 0, so the heat-session clock arms here.
+        let t1 = Instant::from_millis(500_310);
+        ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+        ctrl.update_temperatures(25.5, 25.5, t1).unwrap();
+        let _ = ctrl.update_control(t1);
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: preheat heater must be energized"
+        );
+        assert!(
+            ctrl.heat_session_start.is_some(),
+            "test precondition: the heat-session clock is armed"
+        );
+
+        // Backdate the heat session past MAX_ROAST_TIME_SECS (tests are
+        // in-module so the private field is reachable) and tick again at a
+        // timestamp that implies ≥ 30 minutes of session time.
+        ctrl.heat_session_start = Some(Instant::from_millis(100_000));
+        let t_far = Instant::from_millis(2_000_000);
+        ctrl.status_mut().last_command_received_at_ms = t_far.as_millis();
+        // BT moves +2 °C across the gap so the P5 probe detector stays happy.
+        ctrl.update_temperatures(27.0, 27.0, t_far).unwrap();
+        let _ = ctrl.update_control(t_far);
+
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "P6: a preheat longer than MAX_ROAST_TIME_SECS must NOT abort"
+        );
+        assert_ne!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    #[test]
+    fn start_resets_heat_session_clock() {
+        // Bug P6 companion: START drops the manual heat-session clock so the
+        // roast budget anchors to `profile_start_time` from the START.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+        let t0 = Instant::from_millis(1000);
+        ctrl.update_temperatures(25.0, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        // Second tick so the heat-session clock sees the applied heater output.
+        let t1 = Instant::from_millis(1310);
+        ctrl.update_temperatures(25.5, 25.5, t1).unwrap();
+        let _ = ctrl.update_control(t1);
+        assert!(ctrl.heat_session_start.is_some());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        assert!(
+            ctrl.heat_session_start.is_none(),
+            "P6: START must reset the heat-session clock"
+        );
+        assert!(ctrl.profile_start_time.is_some());
+    }
+
+    // ── P10 (2026-08-03): #CHARGE fires on a realistic 2.26 °C/s drop ──────
+
+    #[test]
+    fn charge_detection_fires_on_low_rate_drop() {
+        // Bug P10: with CHARGE_DROP_THRESHOLD_C = 6.0, a ~2.26 °C/s drop
+        // (0.7 °C per 310 ms tick) spanning the 10-sample deque (~3.1 s)
+        // fires #CHARGE. Under the previous 8.0 threshold the same profile
+        // only accumulated 6.3 °C — the charge would have been silently
+        // missed at the low end of the real 2–3 °C/s charge signature.
+        let mut ctrl = make_control();
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+
+        let t0 = Instant::from_millis(5_000);
+        ctrl.update_temperatures(200.0, 220.0, t0).unwrap();
+        let _ = ctrl.update_control(t0);
+        let mut bt = 199.3;
+        let mut now = Instant::from_millis(5_310);
+        for _ in 1..10 {
+            ctrl.update_temperatures(bt, 220.0, now).unwrap();
+            let _ = ctrl.update_control(now);
+            bt -= 0.7;
+            now = Instant::from_millis(now.as_millis() + 310);
+        }
+        assert!(
+            ctrl.get_status().charge_detected,
+            "P10: a ~2.26 °C/s drop must fire #CHARGE with the 6.0 °C threshold"
+        );
+    }
+
+    // ── P11 (2026-08-03): START resets the charge-detection state ──────────
+
+    #[test]
+    fn start_clears_charge_state() {
+        // Bug P11: a batch that ends WITHOUT a STOP (e.g. PREHEAT → START
+        // cadence) kept `charge_detected` latched, so the `!charge_detected`
+        // gate never re-fired #CHARGE on the next batch. START must reset it
+        // (idempotent with the `stop_streaming` reset on STOP/OFF).
+        let mut ctrl = make_control();
+        // Simulate a previous roast in which charge was detected.
+        ctrl.charge_detected = true;
+        ctrl.charge_time = Some(Instant::from_millis(100));
+        ctrl.status_mut().charge_detected = true;
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Heating);
+        assert!(
+            !ctrl.charge_detected
+                && ctrl.charge_time.is_none()
+                && !ctrl.get_status().charge_detected,
+            "P11: START must clear the charge-detection state for the next batch"
+        );
     }
 }

@@ -93,6 +93,33 @@ pub const MAX_BT_RATE_OF_RISE: f32 = 0.5;
 /// Consecutive RoR exceedances required before emergency shutdown.
 /// Prevents false triggers from single-spike sensor glitches.
 pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
+
+/// Bug P5 (2026-08-03): probe-stuck detector — the heater output at or above
+/// this percentage arms the detector: a heater this hot must move the BT
+/// probe. If a probe holds a flat temperature while the heater runs this hot
+/// for `PROBE_STUCK_TIMEOUT_SECS`, the thermocouple is shorted or broken and
+/// `emergency_shutdown("Probe stuck")` fires.
+pub const PROBE_STUCK_HEATER_MIN_PCT: f32 = 50.0;
+/// Bug P5: the BT reading must vary by more than this many °C to count as a
+/// live probe. A shorted thermocouple reads a flat ~0 °C — a VALID
+/// temperature with no MAX31856 fault bit; a broken probe holds any flat
+/// value. 1 °C over 2 minutes is far less than any real probe moves at
+/// ≥ 50 % heater.
+pub const PROBE_STUCK_VARIATION_C: f32 = 1.0;
+/// Bug P5: consecutive seconds of flat BT at ≥ `PROBE_STUCK_HEATER_MIN_PCT`
+/// heater before the probe-stuck emergency fires.
+pub const PROBE_STUCK_TIMEOUT_SECS: u64 = 120;
+/// Bug P5 (2026-08-03): the detector disarms while the PID is legitimately
+/// REGULATING within this many °C of the setpoint. A stable roast holds BT
+/// nearly flat by design (that is the PID's job), and on a cold ambient /
+/// big drum the equilibrium duty can sit at or above
+/// `PROBE_STUCK_HEATER_MIN_PCT` — without this margin a healthy steady-state
+/// roast would trip a false "Probe stuck" emergency. The stuck-probe
+/// signature is a flat BT FAR from the target the loop is chasing (a shorted
+/// thermocouple reads ~0 °C against a 200 °C setpoint); near the target,
+/// flat BT is expected control behaviour. Manual mode (`pid_enabled =
+/// false`) has no regulation target, so it stays fully armed.
+pub const PROBE_STUCK_TARGET_MARGIN_C: f32 = 5.0;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.
 pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
@@ -157,7 +184,13 @@ pub const MAX_COMMANDS_PER_TICK: usize = 8;
 // probe (verified by simulation: a TC4-style drop is 2–3 °C/s, ≈ 6–9 °C in
 // the 3 s sampling window). Drop the threshold to a probe-attainable value
 // so `#CHARGE` fires reliably on the first real charge.
-pub const CHARGE_DROP_THRESHOLD_C: f32 = 8.0;
+// Bug P10 (2026-08-03): `8.0` was still marginal — the real sampling window
+// is `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`
+// ≈ 3.1 s, so 8 °C demanded ≈ 2.6 °C/s sustained, at the very top of the
+// typical 2–3 °C/s charge signature. `6.0` fires on a ≥ ~1.9 °C/s drop —
+// comfortably inside the physical range with margin for a sluggish first
+// charge.
+pub const CHARGE_DROP_THRESHOLD_C: f32 = 6.0;
 /// Bug B23: intended charge-detection window in seconds. The bean-drop
 /// detector samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>)
 /// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (real cadence

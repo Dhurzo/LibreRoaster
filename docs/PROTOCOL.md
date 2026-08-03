@@ -174,6 +174,14 @@ Increment or decrement heater output in 5% steps.
 
 Emergency stop path. Heater is cut and fan is forced to 100%.
 
+`STOP` arms the safety latch: while latched, only `READ`, `STATUS`, `STOP`,
+`START` and `PREHEAT` are accepted (other commands return
+`ERR handler_failed:fault_condition_active`). Recovery:
+
+1. `PID;OFF` (or `OFF`) — unconditional un-latch, returns to `Idle`; or
+2. `START` / `PREHEAT` — treated as the operator's deliberate re-energize:
+   the latch is cleared and the new roast/preheat proceeds directly (Bug P3).
+
 ## 7. PID and roast-control commands
 
 LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and a limited set of legacy comma variants.
@@ -184,7 +192,7 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 - `PID;OFF`
 - `PID;SV;<temp>`
 - `PID;T;<kp>;<ki>;<kd>`
-- `PID;CHAN;<1-4>`
+- `PID;CHAN;<1-2>`
 - `PID;CT;<ms>`
 - `PID;LIMIT;<min>;<max>`
 - `PID,ON`
