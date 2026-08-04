@@ -298,6 +298,23 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Handshake acknowledgement for `UNITS` / `FILT` (and any other
+    /// startup command whose acknowledgement semantics are "empty line or
+    /// '#'-prefixed line").
+    ///
+    /// Artisan's ArduinoTC4 driver accepts a handshake response only if it is
+    /// empty or starts with `#` (comm.py: `if (not len(result) == 0 and not
+    /// result.startswith('#')): raise Exception(...)`). The previous `OK`
+    /// response failed that check and aborted the initialisation
+    /// (ArduinoIsInitialized stayed 0, so READ never worked). The reference
+    /// TC4 firmware answers `UNITS` with `# Changed units to C/F` and `FILT`
+    /// with silence — both satisfy the same `#`/empty contract.
+    pub fn format_handshake_ack() -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = buf.push_str("#OK");
+        buf
+    }
+
     pub fn format_err(code: u8, message: &str) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
         let _ = core::write!(&mut buf, "ERR {} {}", code, message);
@@ -884,6 +901,15 @@ mod tests {
         assert_eq!(ArtisanFormatter::format_chan_ack(1), "#1");
         assert_eq!(ArtisanFormatter::format_chan_ack(9999), "#9999");
         assert_eq!(ArtisanFormatter::format_chan_ack(0), "#0");
+    }
+
+    #[test]
+    fn test_format_handshake_ack() {
+        // Bug P-TC4: UNITS/FILT acks must satisfy Artisan's handshake check
+        // (`len == 0 or startswith('#')`) so the ArduinoTC4 initialisation
+        // completes instead of raising "could not set temperature unit".
+        assert_eq!(ArtisanFormatter::format_handshake_ack(), "#OK");
+        assert!(ArtisanFormatter::format_handshake_ack().starts_with('#'));
     }
 
     #[test]

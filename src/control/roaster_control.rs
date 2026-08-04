@@ -1350,7 +1350,14 @@ impl RoasterControl {
         let cmd = crate::config::RoasterCommand::SetUnits(is_fahrenheit);
         let result = self.forward_artisan_manual_command(cmd, current_time);
         if result.is_ok() {
-            self.send_text_response("OK");
+            // Bug P-TC4 (2026-08-04): the previous `OK` response failed
+            // Artisan's ArduinoTC4 handshake check, which only accepts an
+            // empty or '#'-prefixed line (`Arduino could not set temperature
+            // unit`). The reference TC4 firmware answers with
+            // `# Changed units to C/F`; reply with a '#'-prefixed ack so the
+            // initialisation completes and READ polling starts.
+            let ack = crate::output::artisan::ArtisanFormatter::format_handshake_ack();
+            self.send_text_response(ack.as_str());
         }
         result
     }
@@ -1360,8 +1367,13 @@ impl RoasterControl {
         // Record it on the status — the firmware applies its internal EMA
         // alpha, but the host's request is now observable.
         self.status.requested_filter = val;
-        self.send_text_response("OK");
-        debug!("Filt command received - sent OK");
+        // Bug P-TC4 (2026-08-04): same handshake fix as `handle_units` — the
+        // previous `OK` tripped Artisan's `Arduino could not set filters`
+        // check. The reference TC4 firmware is silent here; a '#'-prefixed
+        // ack satisfies the same `#`/empty contract.
+        let ack = crate::output::artisan::ArtisanFormatter::format_handshake_ack();
+        self.send_text_response(ack.as_str());
+        debug!("Filt command received - sent handshake ack");
         Ok(())
     }
 

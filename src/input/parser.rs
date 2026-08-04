@@ -151,6 +151,33 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         return Err(ParseError::UnknownCommand);
     }
 
+    // TC4 spec note 2 allows the parameter delimiter to be a comma, space,
+    // semicolon OR equals sign for *every* command. The `;`→` ` normalisation
+    // above covers the semicolon, but classic actuator syntax documented for
+    // aArtisan/firmware TC4 uses commas and equals: `OT1,75`, `IO3=50`,
+    // `DCFAN,40`. With only whitespace splitting those arrive as a single
+    // token ("OT1,75") and were rejected as `unknown_command`, silently
+    // killing Artisan slider/button configs that follow the documented
+    // syntax. Re-tokenise on [',','='] ONLY when the head of the first token
+    // names an actuator command — a global comma split would corrupt the
+    // comma-separated payloads of FILT (first-value extraction) and
+    // PROFILE/FANPROFILE (`t,temp` pairs), and the `PID,ON`/`PID,OFF`/
+    // `PID,SV,..` forms are dispatched from `cmd` below and must stay whole.
+    let parts = if parts[0].contains(',') || parts[0].contains('=') {
+        let head = parts[0].split([',', '=']).next().unwrap_or("");
+        let is_actuator = head.eq_ignore_ascii_case("OT1")
+            || head.eq_ignore_ascii_case("OT2")
+            || head.eq_ignore_ascii_case("IO3")
+            || head.eq_ignore_ascii_case("DCFAN");
+        if is_actuator {
+            trimmed.split([' ', ',', '=']).take(4).collect()
+        } else {
+            parts
+        }
+    } else {
+        parts
+    };
+
     let cmd = parts[0];
 
     if (cmd.eq_ignore_ascii_case("STATUS") || cmd.eq_ignore_ascii_case("STAT")) && parts.len() == 1
@@ -170,12 +197,32 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         Ok(ArtisanCommand::RunRegression)
     } else if cmd.eq_ignore_ascii_case("OT1") {
         if parts.len() == 2 {
-            let value = parse_percentage(parts[1])?;
-            Ok(ArtisanCommand::SetHeater(value))
+            // TC4 step commands: `OT1,up` / `OT1,down` move the heater duty
+            // by DUTY_STEP rather than setting an absolute value.
+            if parts[1].eq_ignore_ascii_case("up") {
+                Ok(ArtisanCommand::IncreaseHeater)
+            } else if parts[1].eq_ignore_ascii_case("down") {
+                Ok(ArtisanCommand::DecreaseHeater)
+            } else {
+                let value = parse_percentage(parts[1])?;
+                Ok(ArtisanCommand::SetHeater(value))
+            }
         } else {
             Err(ParseError::InvalidValue)
         }
     } else if cmd.eq_ignore_ascii_case("IO3") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
+            Ok(ArtisanCommand::SetFan(value))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("DCFAN") {
+        // TC4 DCFAN command: sets the fan PWM duty 0-100. The reference
+        // firmware additionally slews the duty at max 25 points/s to limit
+        // fan inrush on triac-driven Hottop roasters; LibreRoaster drives
+        // the fan with a 25 kHz LEDC PWM (no triac inrush), so the duty is
+        // applied immediately, same as IO3.
         if parts.len() == 2 {
             let value = parse_percentage(parts[1])?;
             Ok(ArtisanCommand::SetFan(value))
@@ -1400,6 +1447,141 @@ mod tests {
         assert_eq!(
             parse_artisan_command("IO3;50"),
             Ok(ArtisanCommand::SetFan(50))
+        );
+    }
+
+    // ── TC4 classic comma/equals delimiters (Bug P-TC4) ─────────────
+
+    /// Bug P-TC4: the TC4 spec (aArtisan serial commands, note 2) permits
+    /// comma, space, semicolon OR equals as the parameter delimiter for every
+    /// command. Artisan slider/button configs documented in guides use the
+    /// classic comma form (`OT1,{v}`, `IO3,{v}`). Previously only `;` was
+    /// normalised, so these were rejected as `unknown_command`.
+    #[test]
+    fn test_ot1_comma_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1,75"),
+            Ok(ArtisanCommand::SetHeater(75))
+        );
+    }
+
+    #[test]
+    fn test_ot1_equals_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1=50"),
+            Ok(ArtisanCommand::SetHeater(50))
+        );
+    }
+
+    #[test]
+    fn test_ot2_comma_parses_as_set_fan_speed() {
+        assert_eq!(
+            parse_artisan_command("OT2,60.5"),
+            Ok(ArtisanCommand::SetFanSpeed(61, false))
+        );
+    }
+
+    #[test]
+    fn test_io3_comma_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3,50"),
+            Ok(ArtisanCommand::SetFan(50))
+        );
+    }
+
+    #[test]
+    fn test_io3_equals_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3=30"),
+            Ok(ArtisanCommand::SetFan(30))
+        );
+    }
+
+    /// Bug P-TC4: `DCFAN,duty` is the TC4 fan command (added 13-Apr-2014 to
+    /// the aArtisan spec) and is implemented by the reference firmware.
+    /// Maps to the same fan path as IO3.
+    #[test]
+    fn test_dcfan_comma_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("DCFAN,40"),
+            Ok(ArtisanCommand::SetFan(40))
+        );
+    }
+
+    #[test]
+    fn test_dcfan_space_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("DCFAN 80"),
+            Ok(ArtisanCommand::SetFan(80))
+        );
+    }
+
+    #[test]
+    fn test_dcfan_out_of_range() {
+        assert_eq!(
+            parse_artisan_command("DCFAN,150"),
+            Err(ParseError::OutOfRange)
+        );
+    }
+
+    /// TC4 step commands `OT1,up` / `OT1,down` (spec: "OT1,up"/"OT1,down"
+    /// step the duty by DUTY_STEP).
+    #[test]
+    fn test_ot1_comma_up_parses_as_increase() {
+        assert_eq!(
+            parse_artisan_command("OT1,up"),
+            Ok(ArtisanCommand::IncreaseHeater)
+        );
+    }
+
+    #[test]
+    fn test_ot1_comma_down_parses_as_decrease() {
+        assert_eq!(
+            parse_artisan_command("OT1,down"),
+            Ok(ArtisanCommand::DecreaseHeater)
+        );
+    }
+
+    #[test]
+    fn test_ot1_comma_up_case_insensitive() {
+        assert_eq!(
+            parse_artisan_command("OT1,UP"),
+            Ok(ArtisanCommand::IncreaseHeater)
+        );
+    }
+
+    /// Bug P-TC4 regression: the comma re-tokenisation must NOT swallow the
+    /// legacy `PID,ON`/`PID,OFF`/`PID,SV,..` forms dispatched from `cmd`.
+    #[test]
+    fn test_pid_comma_forms_still_work_with_retokenise() {
+        assert_eq!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        );
+        assert_eq!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::Stop));
+        assert_eq!(
+            parse_artisan_command("PID,SV,150"),
+            Ok(ArtisanCommand::SetTargetTemp(150.0))
+        );
+    }
+
+    /// Bug P-TC4 regression: FILT's comma-separated payload must keep its
+    /// first-value extraction (no global comma splitting).
+    #[test]
+    fn test_filt_comma_payload_unaffected() {
+        assert_eq!(
+            parse_artisan_command("FILT;80,90,100,110"),
+            Ok(ArtisanCommand::Filt(80))
+        );
+    }
+
+    /// Bug P-TC4 regression: PROFILE `t,temp` pairs must stay intact (no
+    /// global comma splitting).
+    #[test]
+    fn test_profile_comma_pairs_unaffected() {
+        assert_eq!(
+            parse_artisan_command("PROFILE;0,180;120,200"),
+            Ok(ArtisanCommand::SetProfile)
         );
     }
 

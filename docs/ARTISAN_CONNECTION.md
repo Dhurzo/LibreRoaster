@@ -66,6 +66,11 @@ Artisan may send startup commands such as:
 
 LibreRoaster accepts these and responds with lightweight acknowledgements.
 
+> Handshake responses are `#`-prefixed (`#1200` for `CHAN`, `#OK` for
+> `UNITS`/`FILT`). This is deliberate: Artisan's ArduinoTC4 driver rejects
+> any non-`#` initialisation response with "Arduino could not set
+> temperature unit/filters" and never proceeds to `READ` polling.
+
 This means the connection model is forgiving: a terminal and a manually configured Artisan session can both talk to the device without a fragile startup contract.
 
 ## 6. Temperature scale synchronization
@@ -129,7 +134,7 @@ STATUS
 Expected behaviors:
 
 - `CHAN` returns `#1200`
-- `UNITS` returns `OK`
+- `UNITS` returns `#OK`
 - `READ` returns temperature-oriented CSV
 - `STATUS` returns the 20-field deep telemetry line
 
@@ -171,4 +176,4 @@ The right mental model is:
 
 **Artisan as complete ecosystem** → partial compatibility
 
-For a deeper, implementation-driven comparison against the official Artisan application and repository, see `ARTISAN_COMPATIBILITY_REPORT.md`.
+For a deeper, implementation-driven comparison against the official Artisan application and repository, see `PROTOCOL.md`.

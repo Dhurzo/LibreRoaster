@@ -48,16 +48,26 @@ CHAN;1200
 ### `UNITS;C` / `UNITS;F`
 
 - Purpose: select display scale for temperature output
-- Response: `OK`
+- Response: `#OK`
 
 This updates the display conversion used by `READ`, `STATUS`, and temperature-bearing PID/setpoint output.
+
+> The acknowledgement is `#`-prefixed (not `OK`) because Artisan's ArduinoTC4
+> driver only accepts empty or `#`-prefixed lines during its initialisation
+> handshake (`Arduino could not set temperature unit` otherwise, followed by
+> an infinite re-init where `READ` never works). The reference TC4 firmware
+> answers `# Changed units to C`/`# Changed units to F`.
 
 ### `FILT;<values>`
 
 - Purpose: compatibility acknowledgement for Artisan startup configuration
-- Response: `OK`
+- Response: `#OK`
 
 Current behavior is intentionally shallow: the firmware acknowledges the command and stores only the first parsed value as protocol state. It does not implement the richer semantics that a desktop application might assume from the filter name.
+
+> Same `#`-prefix handshake rationale as `UNITS` (`Arduino could not set
+> filters` otherwise). The reference TC4 firmware stays silent here; `#OK`
+> satisfies the same empty-or-`#` contract.
 
 ## 4. Polling responses
 
@@ -174,13 +184,32 @@ charge detection time, not a periodic line.
 
 ## 6. Manual actuator commands
 
-### `OT1 <0-100>` / `OT1;<0-100>`
+### Delimiter forms
 
-Sets heater power percentage. Accepts both space and semicolon delimiter (Artisan default).
+The TC4 serial spec (aArtisan "Serial Commands" note 2) allows the parameter
+delimiter to be a comma, space, semicolon or equals sign for **every**
+command. The firmware accepts **all four** for the manual actuator commands:
 
-### `OT2 <0-100>` / `OT2;<0-100>`
+```text
+OT1 75     OT1;75     OT1,75     OT1=75
+IO3 50     IO3;50     IO3,50     IO3=50
+```
 
-Sets fan speed with decimal input support. Accepts both delimiters.
+Configurations documented for Artisan sliders/buttons classically use the
+comma form (`OT1,{v}`, `IO3,{v}`); all are accepted.
+
+### `OT1 <0-100>` / `OT1;<0-100>` / `OT1,<0-100>` / `OT1=<0-100>`
+
+Sets heater power percentage. Accepts all four delimiter forms.
+
+### `OT1,up` / `OT1,down`
+
+TC4 step commands: move the heater duty by the internal step instead of
+setting an absolute value. Maps to the same actuator path as `UP`/`DOWN`.
+
+### `OT2 <0-100>` / `OT2;<0-100>` / `OT2,<0-100>` / `OT2=<0-100>`
+
+Sets fan speed with decimal input support. Accepts all four delimiter forms.
 
 Implementation behavior:
 
@@ -196,9 +225,19 @@ earlier drafts of this document claimed clamping cut the heater — that diverge
 the implementation in `roaster_control.rs::handle_set_fan_speed`, which keeps the
 heater unchanged by design.)
 
-### `IO3 <0-100>` / `IO3;<0-100>`
+### `IO3 <0-100>` / `IO3;<0-100>` / `IO3,<0-100>` / `IO3=<0-100>`
 
-Sets fan speed as an integer-oriented command path. Accepts both delimiters.
+Sets fan speed as an integer-oriented command path. Accepts all four delimiter forms.
+
+### `DCFAN <0-100>` / `DCFAN,<0-100>`
+
+TC4 fan command (added to the aArtisan spec 13-Apr-2014). Sets the fan duty
+0-100 and maps to the same actuator path as `IO3`. No response is emitted.
+
+> The reference TC4 firmware slews the duty at a maximum of 25 points/second
+> to limit fan inrush on triac-driven roasters (Hottop). LibreRoaster drives
+> the fan with a 25 kHz LEDC PWM (no triac inrush), so the duty is applied
+> immediately and the slew is intentionally not implemented.
 
 ### `UP` / `DOWN`
 
@@ -299,8 +338,10 @@ This is also a LibreRoaster-specific extension and should be treated as a debugg
 
 The formatter emits simple line-oriented acknowledgements and errors:
 
-- `OK`
-- `#<value>` for `CHAN`
+- `#<value>` for `CHAN` (e.g. `#1200`)
+- `#OK` for `UNITS` and `FILT` — `#`-prefixed because Artisan's ArduinoTC4
+  initialisation only accepts empty or `#`-prefixed handshake lines
+- `OK regression_started` for `REG` (on builds with the `regression` feature)
 - `ERR ...` for failures
 
 Handler-level failures are emitted as `ERR handler_failed <token>:<source>`
@@ -357,18 +398,24 @@ That is why the protocol should be understood as **session compatibility**, not 
 CHAN;1200
 #1200
 UNITS;C
-OK
+#OK
 FILT;70,70,70,70
-OK
+#OK
 READ
 0.0,185.3,201.4,0.0,0.0
 ```
 
+> The `#OK` acknowledgements for `UNITS`/`FILT` are required by Artisan's
+> handshake: it raises `Arduino could not set temperature unit`/`... filters`
+> on any non-`#` response and then re-initialises forever without ever
+> polling `READ`.
+
 ### PID-driven session
 
 Note that `PID;ON` and `PID;SV;...` are acknowledged **silently** — the
-firmware does not emit `OK` for them (only `UNITS`, `FILT` and `REG` produce
-acknowledgement lines). The wire transcript is:
+firmware does not emit an acknowledgement for them (only `UNITS`, `FILT`
+and `REG` produce acknowledgement lines: `#OK`, `#OK`, `OK regression_started`
+respectively). The wire transcript is:
 
 ```text
 PID;ON
