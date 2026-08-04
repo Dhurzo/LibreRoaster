@@ -26,12 +26,12 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 580 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
+| 631 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
 | PID control, profiles, safety interlocks | ✅ **Implemented — 11 critical bugs fixed (see below)** |
 
-> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (580 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (Fase 6)**.
+> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (631 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
 | Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
 | End-to-end roast with real Artisan | ❌ Not yet tested |
 | Real coffee roasted using LibreRoaster | ❌ Not yet |
@@ -63,8 +63,8 @@ The guide is **currently in progress** and will be published once validated. If 
 - **Control:** full PID with anti-windup, configurable channel (ET/BT), profile interpolation, preheat behavior
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
-- **Focused controllers:** TemperatureController, HeaterController, FanController, SafetyController (v5.4)
-- **Code coverage:** measured via `cargo-llvm-cov` — 71% line coverage on host test suite (target: ≥80% for production)
+- **Focused controllers:** SensorController, ActuatorController (heater + fan together), SafetyController, CommandDispatcher (v5.4)
+- **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (line-coverage target: ≥80% for production code)
 
 ---
 
@@ -108,16 +108,18 @@ The system is wired through a `ServiceContainer` (dependency injection). It owns
 
 `RoasterControl` is decomposed into four focused controllers (v5.4):
 
-- **TemperatureController** — sensor reads, validation, EMA filtering, rate-of-rise monitoring
-- **HeaterController** — SSR PWM with slew-rate limiting, cycle guard, heat-source cross-check
-- **FanController** — PWM fan with hardware fading, emergency full-speed override
+- **SensorController** — sensor reads, validation, EMA filtering, rate-of-rise monitoring
+- **ActuatorController** — heater + fan together: SSR PWM with slew-rate limiting, cycle guard, heat-source cross-check, fan PWM with emergency full-speed override
 - **SafetyController** — emergency flag management, safety policy evaluation
+- **CommandDispatcher** — command routing to the focused controllers
+
+> Note: `TemperatureController`/`HeaterController`/`FanController` were names used in the v5.4 planning documents; the implementation landed as the four controllers above. `FanController` exists only as the hardware LEDC fan driver in `src/hardware/fan.rs`.
 
 This is the central coordination point for the firmware. If you need to understand command flow or state ownership, start there.
 
 ### Control loop structure
 
-The control loop runs on a ~160 ms cadence (dominated by MAX31856 conversion time) and is internally instrumented in stages:
+The control loop runs on a 100 ms timer, but the real tick is ~310–330 ms because every tick waits on a MAX31856 one-shot conversion (210 ms). It is internally instrumented in stages:
 
 1. **command drain** with rate limiting,
 2. **sensor read** (MAX31856 one-shot conversion, EMA filter),
@@ -148,8 +150,8 @@ LibreRoaster implements a TC4-compatible serial interface with 20+ commands span
 - **`READ`** returns the TC4-style line `AMB,ET,BT,0.0,0.0` when PID is off (5 fields)
 - **`READ` with PID enabled** appends `heater,fan,SV` (8 fields)
 - **`STATUS` / `STAT`** returns a 20-field diagnostic line with temperature, actuator, watchdog, PID, latency, emergency flags, and temperature-scale state
-- **Continuous telemetry** streams `time,ET,BT,ROR,Gas` during active sessions
-- **Errors** return `ERR <code> <message>` format
+- **Continuous telemetry** streams `#<time>,ET,BT,ROR,Gas` (leading `#`, so clients can distinguish it from command responses) during active sessions; the spontaneous `#CHARGE dt=NN.N` event marks bean charge
+- **Errors** return `ERR <token>` lines (e.g. `ERR unknown_command unknown_command` for parse failures, `ERR handler_failed <token>:<source>` for handler failures)
 
 If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`.
 
@@ -183,7 +185,7 @@ These are not marketing notes. They are the design boundaries readers should und
 - **No persistence layer:** roast state, telemetry buffer, and profiles are RAM-only
 - **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests (under `test` feature)
 - **Command queue limits:** the main command channel is intentionally small and rate-limited
-- **Sensor timing pressure:** MAX31856 conversion time (~160 ms) dominates the control loop cadence; stale-data protection is critical
+- **Sensor timing pressure:** MAX31856 conversion wait (210 ms) dominates the control loop cadence (real tick ≈ 310–330 ms); stale-data protection is critical
 
 ---
 
@@ -199,7 +201,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **265 unit tests + ~139 integration tests** run on x86_64:
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **631 unit + integration tests** run on x86_64 (637 including doctests):
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test
@@ -207,16 +209,17 @@ cargo test --target x86_64-unknown-linux-gnu --features test
 
 ### CI pipeline
 
-GitHub Actions runs 6 parallel jobs on every push/PR to `develop` and `main`:
+GitHub Actions runs 7 parallel jobs on every push/PR to `develop` and `main`:
 
 | Job | Command |
 |-----|---------|
 | Format | `cargo fmt --all -- --check` |
-| Clippy | `cargo clippy --locked --all-targets` |
-| Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests` |
-| Regression tests | `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu` |
-| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --lcov` |
-| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` |
+| Clippy | `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` |
+| Clippy (ESP32-C3) | `cargo clippy --release --locked --target riscv32imc-unknown-none-elf --features embedded -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` |
+| Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` (plus doctests via `--doc`) |
+| Regression tests | `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` |
+| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
 
 ### Embedded build & flash
 
@@ -283,9 +286,7 @@ The main technical documents are:
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
 - **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
-- **`docs/decisions/`** — Architecture Decision Records (ADRs) for key design choices
 - **`docs/pinout.md`** — pin mapping reference
-- **`CHANGELOG.md`** — release history and notable changes per version
 - **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy
 - **`.github/dependabot.yml`** — automated dependency updates (Cargo weekly, Actions monthly)
 - **`.github/workflows/release.yml`** — release build and GitHub Release automation (tag `v*`)

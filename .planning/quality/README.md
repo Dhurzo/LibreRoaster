@@ -12,7 +12,7 @@ Run the complete quality baseline with a single command:
 
 ```bash
 # From repository root
-cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --locked --lib --tests --no-fail-fast
+cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 ```
 
 Alternatively, run each gate individually in order:
@@ -25,7 +25,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic
 
 # Gate 3: Tests
-cargo test --locked --lib --tests --no-fail-fast
+cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 ```
 
 ## Output Mode
@@ -38,7 +38,7 @@ The baseline enforces reproducibility through:
 
 1. **Locked dependencies** (`--locked` flag)
 2. **Fixed gate order** (fmt → clippy → test)
-3. **Explicit scope** (--lib --tests, avoiding host-incompatible targets)
+3. **Explicit host scope** (`--target x86_64-unknown-linux-gnu --features test`): host tests require the `test` feature to link (Embassy time driver)
 4. **Deterministic toolchain** (uses current stable toolchain)
 
 ## Post-Fix Workflow
@@ -55,9 +55,9 @@ After fixing failures:
 - **Policy Version:** See `baseline-policy.toml`
 - **Authority:** `.planning/quality/baseline-policy.toml`
 
-## Failure Output Format
+## Output Formats
 
-When failures occur, output includes:
+`quality-baseline.sh` runs the three cargo gates directly and prints their plain output (fmt/clippy/test). The tiered evaluator (`[GATE]`, `T1 BLOCK`, `VERDICT`) is a separate tool — `scripts/quality_baseline.py` — invoked by `scripts/quality-baseline-selfcheck.sh` against the fixtures in `tests/quality/fixtures/`:
 
 ```
 [GATE] [TIER] [BLOCKING/INFO] path/to/file.rs:LINE:COL - rule_id (policy: tier=TIER_NAME)

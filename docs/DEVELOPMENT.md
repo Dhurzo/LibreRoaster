@@ -1,6 +1,6 @@
 # LibreRoaster Development Guide
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-08-04
 
 This guide explains how to build, flash, test, and verify LibreRoaster without losing sight of the project’s two-runtime architecture: a real embedded firmware target and a host-side verification target.
 
@@ -45,9 +45,11 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 
 - **`embedded`** — enables the firmware binary target
 - **`std`** — enables standard-library-backed host behavior
-- **`test`** — enables host test support on top of `std`
+- **`instrumentation`** — enables telemetry/instrumentation hooks (pulled in by `test`)
+- **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
+- **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
-- **`regression`** — enables regression-specific mock support
+- **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
 
 ### Why `test` matters
 
@@ -100,8 +102,10 @@ Port names vary by platform, but the configuration model is the same.
 ### Fast library tests
 
 ```bash
-cargo test --lib --target x86_64-unknown-linux-gnu
+cargo test --lib --target x86_64-unknown-linux-gnu --features test
 ```
+
+> The `--features test` is **required**: without it, host tests fail at link time (`undefined symbol: _embassy_time_now`) because the host Embassy time driver only exists behind the `test` feature.
 
 This is useful for quick inner-loop development, but it does not cover the full host integration surface.
 
@@ -215,4 +219,4 @@ For non-trivial firmware changes, this is the safest sequence:
 - `PROTOCOL.md` for serial behavior
 - `HARDWARE.md` for the electrical/pin model
 - `ARTISAN_CONNECTION.md` for desktop-side setup
-- `INSTRUMENTATION_README.MD` for telemetry interpretation
+- `INSTRUMENTATION.md` for telemetry interpretation

@@ -106,17 +106,18 @@ Even if the chip boots into download mode, `espflash` can still connect and flas
 | GPIO9 at reset | Result |
 |----------------|--------|
 | HIGH ( ≈ 3.3V) | Boot from flash — normal operation |
-| LOW ( ≈ 0V or floating) | Download mode — chip waits for serial flash |
+| LOW ( ≈ 0V, driven low) | Download mode — chip waits for serial flash |
 
 ### Why it matters
 
-On a bare board with no pull-up or pull-down, GPIO9 is **floating** — a high-impedance input whose voltage depends on parasitic capacitance, leakage currents, and power-rail noise. The boot outcome is random.
+The ESP32-C3 has a **45 kΩ internal weak pull-up** on GPIO9: if the pin is left unconnected it latches HIGH and the chip boots from flash deterministically. A truly floating pin does **not** produce random boot outcomes.
 
-We saw this in our tests:
-- **USB test**: GPIO9 happened to float HIGH → `boot:0xc` → firmware ran ✅
-- **UART test**: GPIO9 happened to float LOW → `boot:0x4` → download mode ❌
+The real boot risk is an **external circuit driving GPIO9 LOW at reset** — most commonly:
 
-USB is **not** immune to this — it just happened to work during our tests because the pin floated HIGH at that moment.
+- a fan driver (MOSFET gate) that holds the line low during power-on,
+- a USB-to-serial auto-program circuit (e.g. CH9102 RTS → transistor) that asserts download mode at the wrong moment.
+
+The internal 45 kΩ pull-up cannot overcome a transistor pull-down, which is why those boards show consistent `boot:0x4 (DOWNLOAD)` — not random, but **deterministically blocked** from booting (see §4.1).
 
 ### The fix: 10kΩ pull-up to 3.3V
 
@@ -141,10 +142,10 @@ Official Espressif development boards already include a pull-up resistor on GPIO
 | **ESP32-C3-DevKit-RUST-1** | ✅ Built-in (module-level) | ❌ No |
 | **ESP32-C3-DevKit-RUST-2** | ✅ Built-in (module-level) | ❌ No |
 | **AI-C3** (AliExpress purple PCB, ESP32-C3-MINI-1 + CH9102) | ❌ CH9102 auto-program circuit pulls GPIO9 LOW via RTS | ✅ **10kΩ to 3.3V** |
-| **Bare ESP32-C3 module** (e.g. ESP32-C3-WROOM-02 on a custom PCB) | ❌ Floating | ✅ **10kΩ to 3.3V** |
-| **LibreRoaster (custom board)** | ❌ Floating (fan on GPIO9) | ✅ **10kΩ to 3.3V** |
+| **Bare ESP32-C3 module** (e.g. ESP32-C3-WROOM-02 on a custom PCB) | ⚠️ Relies on the internal 45 kΩ pull-up only | ✅ **10kΩ to 3.3V** (recommended) |
+| **LibreRoaster (custom board)** | ⚠️ Fan driver on GPIO9 must not pull low at reset | ✅ **10kΩ to 3.3V** (recommended) |
 
-**Why the difference?** Official dev boards use an ESP32-C3 module (WROOM, MINI) whose substrate PCB includes the GPIO9 pull-up. When you buy a bare module or design a custom board, that pull-up isn't present — the pin is floating at reset.
+**Why the difference?** Official dev boards use an ESP32-C3 module (WROOM, MINI) whose substrate PCB includes an additional GPIO9 pull-up. When you buy a bare module or design a custom board, that substrate pull-up isn't present — the pin then relies on the chip's internal 45 kΩ weak pull-up, which boots normally but is easier to overpower with external circuitry.
 
 **But some boards have a different problem — the CH9102 auto-program circuit.**
 

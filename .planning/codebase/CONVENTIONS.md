@@ -21,7 +21,8 @@
 
 **Source Files:**
 - Snake_case for files: `max31856.rs`, `pid_controller.rs`
-- Feature-specific: `abstractions_tests.rs` (test co-located with module)
+- Feature-specific: `fan_host.rs`, `ssr_stub.rs` (host-stub variants wired via `#[path]` in `src/hardware/mod.rs`)
+- Tests live as inline `#[cfg(test)] mod tests` co-located with the module (no separate `*_tests.rs` sources in `src/`)
 
 **Constants:**
 - SCREAMING_SNAKE_CASE for constants in `src/config/constants.rs`:
@@ -52,8 +53,8 @@
   ```
 
 **Traits:**
-- PascalCase: `PidController`, `OutputManager`, `OutputFormatter`
-- Descriptive purpose: `RoasterCommandHandler`, `SerialOutput`
+- PascalCase: `RoasterCommandHandler`, `OutputFormatter`, `SafetyPolicy`
+- Descriptive purpose: `HeatSourceDetector`, `LedcDutyReader`
 
 ### Functions & Methods
 
@@ -241,32 +242,42 @@ pub trait RoasterCommandHandler {
 }
 ```
 
-### Generic Associated Types
+### Output Formatting Traits
+
+The output layer defines a single formatting trait in `src/output/traits.rs`:
 
 ```rust
-pub trait OutputManager {
-    type Error;
-    
-    async fn process_status(&mut self, status: &crate::config::SystemStatus) 
-        -> Result<(), Self::Error>;
+pub trait OutputFormatter {
+    fn format(
+        &mut self,
+        status: &SystemStatus,
+    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError>;
 }
 ```
 
+Formatting is synchronous and heap-free: it renders a `SystemStatus` snapshot
+into a fixed-capacity `heapless::String` that the dual-output task then pushes
+onto the active transport. `ArtisanFormatter` is the production implementation
+(`src/output/artisan.rs`).
+
 ## Async/Await Patterns
 
-### Async Trait Methods
+### Async in Embassy Tasks
 
-Uses `#[allow(async_fn_in_trait)]` for compatibility:
+Async/await is used inside Embassy tasks (readers, control loop, dual output);
+the drivers they touch are synchronous. The watchdog feeder is a good example
+of the naming convention — despite the name, the call is synchronous:
+
 ```rust
-pub trait PrintScheduler {
-    #[allow(async_fn_in_trait)]
-    async fn should_print(&mut self) -> bool;
-}
+// src/safety/watchdog.rs
+pub fn feed_async(&mut self, bean_temp: f32) -> Result<(), WatchdogError> { ... }
+```
 
-pub trait SerialOutput {
-    #[allow(async_fn_in_trait)]
-    async fn print(&mut self, data: &str) -> Result<(), OutputError>;
-}
+The control loop feeds it once per tick through the `ServiceContainer`
+accessor closure:
+
+```rust
+ServiceContainer::with_watchdog(|feeder| feeder.feed_async(bean_temp))
 ```
 
 ### Embassy Integration
@@ -339,10 +350,16 @@ let app = AppBuilder::new()
     .with_real_ssr(static_ssr)
     .with_fan_control(static_fan)
     .with_temperature_sensors(bean_sensor, env_sensor)
-    .with_formatter(ArtisanFormatter::new())
     .build()
     .expect("Failed to build application");
 ```
+
+Notes:
+- `build()` returns an `Application` value used only to spawn the task graph;
+  it is not a services tree.
+- The builder wires transports/actuators/sensors only. The `ArtisanFormatter`
+  is not part of the builder: it is created in `TickState::new`
+  (`src/application/tasks.rs`).
 
 ## Cargo Configuration
 

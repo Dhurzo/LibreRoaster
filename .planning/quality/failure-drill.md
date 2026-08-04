@@ -57,45 +57,20 @@ Run the full baseline against actual source code:
 
 ### Expected Output Format
 
+`quality-baseline.sh` is a plain `set -euxo pipefail` script: it prints each gate command, runs them in order (fmt → clippy → test), and exits non-zero on the first failure. When everything passes it prints:
+
 ```
-==============================================
-  LibreRoaster Quality Baseline Runner
-==============================================
-Policy:     QG-POLICY
-Version:    1.0.0
-...
-
-[GATE] Format Check (cargo fmt --check)
-----------------------------------------------
-[PASS] fmt
-
-[GATE] Clippy Lint Check
-----------------------------------------------
-[PASS] clippy
-
-[GATE] Test Execution (cargo test)
-----------------------------------------------
-[PASS] test
-
-============================================================
- QUALITY BASELINE SUMMARY
-============================================================
-Policy:     QG-POLICY v1.0.0
-Tier 1 (Blocking):     0
-Tier 2 (Core):         0
-Tier 3 (Support):     0
-============================================================
-[QG-POLICY@1.0.0] VERDICT: PASS
-All Tier 1 (blocking) requirements satisfied.
-==============================================
-  FINAL VERDICT: PASS
-==============================================
-same input, same verdict - QG-POLICY v1.0.0
+Running cargo fmt --all -- --check...
+Running cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic...
+Running cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast...
+All quality checks passed.
 ```
 
-### Failure Output Format
+> The tiered banner output (`[GATE]`, `T1 BLOCK`, `VERDICT: PASS/FAIL`) shown in earlier editions of this document belongs to the **evaluator** (`scripts/quality_baseline.py`), which is exercised by `scripts/quality-baseline-selfcheck.sh` against fixtures — **not** by `quality-baseline.sh`. Keep the two tools separate when interpreting output.
 
-When failures occur, the output includes all findings before the final verdict:
+### Evaluator Failure Output (quality_baseline.py)
+
+When the evaluator runs (via `scripts/quality-baseline-selfcheck.sh`), it reports all findings before the final verdict:
 
 ```
 ============================================================
@@ -247,6 +222,6 @@ If all are unchanged and results differ, this is a bug — report it.
 
 ---
 
-**Policy Reference:** QG-POLICY v1.0.0  
+**Policy Reference:** QG-POLICY v1.1.0  
 **Authority:** `.planning/quality/baseline-policy.toml`  
 **Changelog:** `.planning/quality/ratchet-changelog.md`

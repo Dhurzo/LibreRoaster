@@ -47,4 +47,21 @@ This baseline establishes the quality contract for v5.0. Tiered enforcement allo
 
 ---
 
+## v1.1.0 (2026-08-04)
+
+**Status:** GATE COMMAND CORRECTION
+
+### Changes
+
+- `[gates.test]` command corrected to the working host-test invocation:
+  `cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`.
+  - The previous command (`cargo test --locked --lib --tests --no-fail-fast`) failed at link time on every run (`undefined symbol: _embassy_time_now`), because host tests need the `test` feature to provide the Embassy time driver.
+- `quality-baseline.sh` aligned with this policy: `cargo fmt --all -- --check`, clippy with `--all-targets` + the curated `-W` flags, and the corrected test command.
+
+### Tier Impact
+
+- No tier changes (T1/T2/T3 module mappings unchanged).
+
+---
+
 *For policy details, see `baseline-policy.toml`*

@@ -46,7 +46,7 @@ Assemble and verify one subsystem at a time. Each diagram isolates a single subs
 - Shared SPI2 bus: SCLK=GPIO6, MOSI=GPIO7, MISO=GPIO5
 - Individual chip selects: BT=GPIO4, ET=GPIO3
 - 1 MHz, Mode 1 (CPOL=0, CPHA=1), software CS (defaults HIGH)
-- FAULT/DRDY unconnected (polled via SPI with 160 ms wait)
+- FAULT/DRDY unconnected (polled via SPI with 210 ms conversion wait)
 
 ### 2. Fan / Motor — MOSFET PWM
 

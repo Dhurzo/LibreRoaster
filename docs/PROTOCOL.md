@@ -1,6 +1,6 @@
 # LibreRoaster Protocol Reference
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-08-04
 
 This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the firmware currently accepts and emits, how the session behaves, and where compatibility with the official Artisan application starts and stops.
 
@@ -81,6 +81,10 @@ Field meaning:
 4. unused channel placeholder
 5. unused channel placeholder
 
+> Note: the ambient field is a structural placeholder. There is no ambient
+> sensor in the hardware model, so the firmware always emits `0.0` on a live
+> device (the field is only populated in host test code).
+
 #### PID enabled
 
 When PID is enabled, the formatter appends actuator and setpoint information:
@@ -127,7 +131,7 @@ Field map:
 10. PID process variable
 11. PID manipulated variable
 12. PID integrator value
-13. PID derivative value
+13. PID derivative value (°C/min of the active display scale)
 14. Saturation flag
 15. Integrator clamp flag
 16. Derivative-available flag
@@ -137,6 +141,36 @@ Field map:
 20. Fault condition flag (`0` = normal, `1` = emergency fault active)
 
 `STATUS` is the right interface for anything that needs runtime health, not just roast temperatures.
+
+### Continuous telemetry
+
+During an active session the control loop also emits a spontaneous telemetry
+line once per control tick. It is always prefixed with `#` so clients can
+distinguish it from synchronous responses:
+
+```text
+#<time>,ET,BT,ROR,Gas
+```
+
+- `time`: elapsed seconds since the roast start (or boot outside a session)
+- `ET`, `BT`: environment and bean temperatures (display scale)
+- `ROR`: rate of rise, in °C/min of the active display scale
+- `Gas`: current heater output percentage
+
+Clients that only poll `READ` can ignore these lines; clients that stream
+must treat any line beginning with `#` as asynchronous.
+
+### `#CHARGE` event
+
+When the firmware detects the bean-charge event (a BT drop of more than
+`6.0 °C` within a ~3 s window), it emits a spontaneous event line:
+
+```text
+#CHARGE dt=NN.N
+```
+
+`dt` is the observed temperature drop. This is a one-shot event emitted at
+charge detection time, not a periodic line.
 
 ## 6. Manual actuator commands
 
@@ -178,9 +212,14 @@ Emergency stop path. Heater is cut and fan is forced to 100%.
 `START` and `PREHEAT` are accepted (other commands return
 `ERR handler_failed:fault_condition_active`). Recovery:
 
-1. `PID;OFF` (or `OFF`) — unconditional un-latch, returns to `Idle`; or
+1. `PID;OFF` — unconditional un-latch, returns to `Idle`; or
 2. `START` / `PREHEAT` — treated as the operator's deliberate re-energize:
    the latch is cleared and the new roast/preheat proceeds directly (Bug P3).
+
+> Note: a bare `OFF` token is **not** parsed by the firmware (only the
+> `PID;OFF` form is, in the PID subcommand parser). Earlier drafts of this
+> document listed `OFF` as a recovery command; the parser rejects it with
+> `ERR unknown_command`, so clients must send `PID;OFF`.
 
 ## 7. PID and roast-control commands
 
@@ -217,7 +256,9 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 - PID gains must parse as floats
 - semicolon PID gains reject negative values
 - PID cycle time rejects values below 10 ms
-- PID channel accepts `1..=4`
+- PID channel accepts `1..=2` (channel 1 = ET, channel 2 = BT; the
+  firmware has exactly two thermocouple channels, so `3`/`4` are rejected
+  with `ERR out_of_range`)
 
 The firmware stores temperatures internally in Celsius and converts only on output.
 
@@ -243,6 +284,11 @@ This is a live-control feature, not a file-format import layer. LibreRoaster doe
 
 Triggers the over-temperature regression workflow. This is a firmware diagnostic feature, not a standard Artisan roasting feature.
 
+Response:
+
+- on builds with the `regression` feature: `OK regression_started`
+- otherwise: `ERR regression_disabled`
+
 ### `#DUMP`
 
 Requests the roast ring-buffer dump.
@@ -264,6 +310,16 @@ handler_failed invalid_state:fault_condition_active`). Valid tokens:
 `hardware_error`, `emergency_shutdown`. The `:source` suffix is a
 diagnostic discriminator, not a stable contract — client code should not
 assume a rich structured error taxonomy.
+
+The wire can also carry these transport/scheduling-level `ERR` lines:
+
+- `ERR channel_full command_dropped` — the shared command channel was full; the command was dropped
+- `ERR rate_limited excess commands this tick` — more commands than the per-tick budget arrived
+- `ERR status_too_long` — a formatted response exceeded the output buffer
+- `ERR command_ignored_inactive_channel` — command arrived on a channel the firmware is not currently serving
+- `ERR buffer_overflow` — the transport byte buffer overflowed
+- `ERR regression_disabled` — `REG` sent on a build without the `regression` feature
+- `ERR OT2_CLAMPED fan=<n> heater_unchanged` — `OT2` value was clamped (see §6)
 
 ## 11. Protocol edge cases that matter
 
@@ -310,11 +366,13 @@ READ
 
 ### PID-driven session
 
+Note that `PID;ON` and `PID;SV;...` are acknowledged **silently** — the
+firmware does not emit `OK` for them (only `UNITS`, `FILT` and `REG` produce
+acknowledgement lines). The wire transcript is:
+
 ```text
 PID;ON
-OK
 PID;SV;210
-OK
 READ
 0.0,185.3,201.4,0.0,0.0,75.0,45.0,210.0
 ```
@@ -323,12 +381,17 @@ READ
 
 ```text
 STATUS
-120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-0.42,1,1,1,1250,5000,0
+120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-25.20,1,1,1,1250,5000,0,0
 ```
+
+The STATUS line always carries **20 fields**; the final field is the
+`FaultFlag` (`0` = normal, `1` = emergency fault active). Field 13
+(`DerivativeValue`) is expressed in °C/min (or °F/min in Fahrenheit mode) —
+the Artisan RoR convention — not °C/s.
 
 ## 14. Related documents
 
 - `ARCHITECTURE.md` for the task and ownership model behind the protocol
 - `ARTISAN_CONNECTION.md` for official Artisan configuration guidance
-- `INSTRUMENTATION_README.MD` for deep status-field interpretation
-- `ARTISAN_COMPATIBILITY_REPORT.md` for a broader compatibility assessment
+- `INSTRUMENTATION.md` for deep status-field interpretation
+- `TESTING.md` for the test layers that pin the wire format

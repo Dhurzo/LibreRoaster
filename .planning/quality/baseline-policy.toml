@@ -1,11 +1,11 @@
 # Quality Baseline Policy
-# Deterministic gate execution contract for LibreRoaster v5.0 quality gates
+# Deterministic gate execution contract for LibreRoaster quality gates
 
 [policy]
 # Unique identifier for this quality policy
 policy_id = "QG-POLICY"
 # Semantic version for ratchet governance
-policy_version = "1.0.0"
+policy_version = "1.1.0"
 
 # Gate execution order - must run in this exact sequence
 # Each gate must pass before proceeding to the next
@@ -33,12 +33,13 @@ lockfile_policy = "locked"
 
 [gates.test]
 # Test gate - unit and integration tests only
-# Note: Explicit scope avoids embedded-only targets that fail on host
-command = "cargo test --locked --lib --tests --no-fail-fast"
+# Note: explicit host target + `test` feature are required; without them the
+# host tests fail to link (undefined symbol: _embassy_time_now)
+command = "cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast"
 description = "Unit and integration test execution"
 lockfile_policy = "locked"
 
-# Test scope: host-safe only (--lib --tests, not --all-targets)
+# Test scope: host-safe only (explicit x86_64 target with the test feature)
 # This excludes doctests and embedded binary compilation
 [gate_settings.test]
 scope = "lib_and_tests"

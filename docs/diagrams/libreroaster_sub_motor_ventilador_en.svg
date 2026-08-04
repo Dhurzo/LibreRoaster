@@ -81,7 +81,7 @@
   <rect x="40" y="430" width="900" height="180" rx="6" fill="#fff" class="box"/>
   <text x="54" y="452" class="t" font-size="13">Assembly and boot notes</text>
   <text x="54" y="474" class="n">• Low-side switching: the MOSFET breaks the fan's negative; the (+) is always tied to 12 V.</text>
-  <text x="54" y="492" class="n">• ⚠ GPIO9 is a strapping pin (ULW). It MUST be HIGH at reset or the ESP32-C3 enters download mode and will NOT boot.</text>
+  <text x="54" y="492" class="n">• ⚠ GPIO9 is a strapping pin (boot mode select). It MUST be HIGH at reset or the ESP32-C3 enters download mode and will NOT boot.</text>
   <text x="54" y="510" class="n">  10 kΩ pull-up to 3.3 V on GPIO9 = mandatory. The gate pull-down uses 100 kΩ (weak) so it does not pull GPIO9 low at reset.</text>
   <text x="54" y="528" class="n">• Acceptable consequence: the fan may spin briefly at boot (harmless; what matters is that the heater does NOT).</text>
   <text x="54" y="546" class="n">• Always a flyback diode on the motor (inductive load): without it the reverse spike can destroy the GPIO via latch-up.</text>

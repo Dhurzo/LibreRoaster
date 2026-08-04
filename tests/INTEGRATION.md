@@ -189,7 +189,7 @@ Time  Script                          ESP32-C3 (firmware)
  2s   READ ─────────────────────────► AMB,ET,BT,0.0,0.0
  2s   OT1 0 / IO3 0 ───────────────► (set outputs, no response)
  3s   READ ─────────────────────────► (verify still valid)
- 3s   STATUS ───────────────────────► 19-field CSV
+ 3s   STATUS ───────────────────────► 20-field CSV
  4s   STOP ─────────────────────────► heater=0, fan=100%
  4s   READ ─────────────────────────► (verify heater=0 in response)
  5s   close port

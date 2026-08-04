@@ -16,12 +16,12 @@
   1. `cargo clippy --release --target riscv32imc-unknown-none-elf --features embedded -- -D warnings` exits 0.
   2. `cargo clippy --target x86_64-unknown-linux-gnu --features "std,test" -- -D warnings` exits 0.
   3. `cargo test --target x86_64-unknown-linux-gnu --features "std,test" --test ssr_scheduler` passes all 3 tests.
-  4. Full test suite (244 tests) still passes.
+  4. Full test suite still passes.
 **Plans**: 3 plans
 
 Plans:
 - [x] 110-01: Fix clippy issues in app_builder.rs (redundant closures, new_without_default, unwrap_or_default) — 13 lints
-- [x] 110-02: Fix clippy issues in hardware/ files (ledc_bus.rs, ssr_ledc.rs, fan.rs, conversion.rs, ssr.rs, usb_cdc/driver.rs) — 11 lints
+- [x] 110-02: Fix clippy issues in hardware/ files (ledc_bus.rs, ssr.rs, fan.rs, sensors/conversion.rs, usb_cdc/driver.rs) — 11 lints
 - [x] 110-03: Fix ssr_scheduler test (guard_rejects_commands_while_busy — wrong time expectation)
 
 ### Phase 111: RoasterControl Decomposition — Controller Extraction
@@ -29,17 +29,19 @@ Plans:
 **Depends on**: Phase 110
 **Requirements**: SRP-01, SRP-02, SRP-03
 **Success Criteria**:
-  1. New controller types exist: `TemperatureController`, `HeaterController`, `FanController`, `SafetyController`.
+  1. New controller types exist: `SensorController`, `ActuatorController`, `SafetyController`, `CommandDispatcher`.
   2. Each controller owns a bounded set of fields and methods from RoasterControl.
   3. The handler chain pattern is preserved for command dispatch.
   4. RoasterControl still works as a facade that delegates to controllers (backward-compatible).
   5. All existing tests pass without modification.
 **Plans**: 3 plans
 
+> Historical note: the v5.4 planning documents named these `TemperatureController`/`HeaterController`/`FanController`; the implementation landed as `SensorController` / `ActuatorController` (heater + fan together) / `SafetyController` / `CommandDispatcher`. The names below reflect what was actually shipped.
+
 Plans:
-- [x] 111-01: Extract TemperatureController (read_sensors, update_temperatures, is_temperature_valid, last_sensor_sample)
-- [x] 111-02: Extract HeaterController (apply_guarded_heater, update_guard_busy_ms, capture_ssr_monitor_metrics, busy_window_ms, last_desired_heater_output)
-- [x] 111-03: Extract FanController (get_fan_speed) + SafetyController (emergency_shutdown, mark_overtemp_regression_active, apply_safety_outcome)
+- [x] 111-01: Extract SensorController (read_sensors, update_temperatures, is_temperature_valid, last_sensor_sample)
+- [x] 111-02: Extract ActuatorController (heater + fan: apply_guarded_heater, update_guard_busy_ms, capture_ssr_monitor_metrics, busy_window_ms, last_desired_heater_output, fan speed)
+- [x] 111-03: Extract CommandDispatcher (command forwarding) + SafetyController (emergency_shutdown, mark_overtemp_regression_active, apply_safety_outcome)
 
 ### Phase 112: RoasterControl Integration — Call Site Migration
 **Goal**: Update all callers to use the new controller interfaces and remove the RoasterControl facade.
@@ -92,13 +94,13 @@ Plans:
 **Requirements**: VER-01, VER-02, VER-03, VER-04
 **Success Criteria**:
   1. ESP32 release build: zero errors, zero warnings.
-  2. All 244+ host tests pass.
+  2. All host tests pass (631 as of 2026-08-04).
   3. Host clippy: clean.
   4. ESP32 clippy: clean.
 **Plans**: 1 plan
 
 Plans:
-- [x] 115-01: Full verification — ESP32 build clean, 228 tests pass, clippy clean on both targets
+- [x] 115-01: Full verification — ESP32 build clean, 631 tests pass (2026-08-04), clippy clean on both targets
 
 ## Progress
 
@@ -115,3 +117,4 @@ Plans:
 
 *Roadmap created: 2026-04-22*
 *For milestone: v5.4 Architecture Decomposition & Quality Fixes*
+*Last updated: 2026-08-04 (controller names and test counts aligned with the shipped implementation)*

@@ -1,13 +1,13 @@
 # Instrumentation and Telemetry Guide
 
-**Last Updated:** 2026-04-29 (v5.3)
+**Last Updated:** 2026-08-04
 **Purpose:** Complete reference for LibreRoaster's instrumentation, telemetry, and safety monitoring capabilities.
 
 ---
 
 ## Overview
 
-LibreRoaster provides comprehensive instrumentation for safety monitoring, watchdog health, guard timeouts, regression testing, and PID controller internals. This telemetry is exposed through the `STATUS` command (19-field CSV) to enable automation and auditing of the roaster's operational health.
+LibreRoaster provides comprehensive instrumentation for safety monitoring, watchdog health, guard timeouts, regression testing, and PID controller internals. This telemetry is exposed through the `STATUS` command (20-field CSV) to enable automation and auditing of the roaster's operational health.
 
 **Key Documents:**
 - [PROTOCOL.md](PROTOCOL.md) - Complete Artisan command reference including STATUS format
@@ -39,7 +39,7 @@ ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeout
 | 10 | PV | f32 (°C) | Process Variable - current temperature used by PID |
 | 11 | MV | f32 (%) | Manipulated Variable - controller output before clamping |
 | 12 | IntegratorValue | f32 | PID integrator accumulation term |
-| 13 | DerivativeValue | f32 (°C/s) | PID derivative rate term |
+| 13 | DerivativeValue | f32 (°C/min) | PID derivative rate term, expressed in °C/min of the active display scale (°F/min in Fahrenheit mode) — the Artisan RoR convention |
 | 14 | SaturationFlag | bool (0/1) | PID output saturation active (wind‑up protection) |
 | 15 | IntegratorClampFlag | bool (0/1) | Integrator clamping is active |
 | 16 | DerivativeAvailableFlag | bool (0/1) | Derivative term is available (not inhibited) |
@@ -62,12 +62,17 @@ The watchdog ensures the control loop runs reliably. If the watchdog doesn't get
 
 Indicates whether the watchdog feed succeeded during the last control loop tick.
 
-- **Value `1`**: Watchdog was successfully fed in the last 100ms tick
+- **Value `1`**: Watchdog was successfully fed in the last control-loop tick
 - **Value `0`**: Watchdog feed failed or timed out
 
-**Implementation:** The control loop task calls `watchdog::feed()` every 100ms. If feed succeeds, `watchdog_feed_ok` is set to `true`. If feeding fails or times out, it's set to `false`.
+**Implementation:** The control loop task calls `WatchdogFeeder::feed_async(bean_temp)`
+once per control tick (through `ServiceContainer::with_watchdog`). The software
+watchdog timeout is 1000 ms, sized for the real tick cadence: the loop timer is
+100 ms but each tick also waits for a MAX31856 one-shot conversion (210 ms), so
+the observed cadence is ~310-330 ms. If feeding fails or times out,
+`watchdog_feed_ok` is set to `false`.
 
-**Code Reference:** `src/config/constants.rs` (SystemStatus::watchdog_feed_ok)
+**Code Reference:** `src/safety/watchdog.rs`, `src/application/tasks.rs`
 
 ---
 
@@ -98,12 +103,13 @@ The reason token explaining why the last watchdog feed failed. Returns `"none"` 
 | `"none"` | Watchdog is healthy, no failures occurred |
 | `"watchdog_init"` | Watchdog hardware initialization failed |
 | `"watchdog_unavailable"` | Watchdog service not yet registered |
-| `"watchdog_invalid_state"` | Feed failed due to invalid ESP-IDF state |
-| `"watchdog_invalid_arg"` | Feed failed due to invalid argument |
-| `"watchdog_feed_failed"` | Generic feed failure from ESP-IDF |
-| `"watchdog_feed_error"` | Fallback error for unknown feed failures |
+| `"watchdog_timeout"` | Feed missed the software timeout window |
 
-**Implementation:** When `watchdog_feed_ok` is `false`, this field is set to a descriptive token from the `WatchdogError::reason()` method. This enables auditors to understand *why* failures occurred, not just *that* they occurred.
+**Implementation:** When `watchdog_feed_ok` is `false`, this field is set to a
+token from the `WatchdogError::reason()` method. In practice the only live
+failure path emits `"watchdog_timeout"`; the other tokens are emitted at
+initialization failures. This enables auditors to understand *why* failures
+occurred, not just *that* they occurred.
 
 **Use Cases:**
 - Root cause analysis for watchdog failures
@@ -143,7 +149,14 @@ Total count of LEDC guard timeout events. This counter increments whenever the `
 
 ### 3. Regression Telemetry
 
-Over‑temperature regression testing is a safety validation feature that drives the system to 100% heater/fan output while monitoring temperature limits. This tests whether the safety systems (watchdog, emergency shutdown) operate correctly under stress.
+Over‑temperature regression testing is a safety validation feature. On builds
+with the `regression` feature, `REG` drives the heater and fan to 100% and then
+performs an immediate `emergency_shutdown` — it does **not** wait for or monitor
+temperatures up to 260 °C (the 260 °C over-temperature guard is a separate,
+always-on safety layer in the sensor path). The fixture catalogue is currently
+empty, so a real regression run replays zero fixtures and emits
+`SAFETY OT-REGRESSION-EMPTY no_fixtures`. On builds without the feature the
+regression task is a no-op stub and `REG` answers `ERR regression_disabled`.
 
 **Fields:**
 
@@ -151,16 +164,19 @@ Over‑temperature regression testing is a safety validation feature that drives
 
 Indicates whether an over‑temperature regression test sequence is currently active.
 
-- **Value `1`**: Regression test is running (heater/fan at 100%, monitoring temperatures)
+- **Value `1`**: Regression test is running (heater/fan at 100%, emergency shutdown requested)
 - **Value `0`**: Normal operation, no regression test in progress
 
-**Implementation:** The `REG` command triggers `request_regression()` which sets `overtemp_regression_active` to `true`. The regression task monitors temperatures and will emergency‑stop if limits are exceeded.
+**Implementation:** The `REG` command triggers `request_regression()` which sets
+`overtemp_regression_active` to `true`. The regression runner
+(`run_overtemp_regression`) then forces 100% output and immediately calls
+`emergency_shutdown("Over-temp regression")`.
 
-**Code Reference:** `src/control/roaster_refactored.rs` (request_regression method)
+**Code Reference:** `src/safety/regression.rs` (request_regression, run_overtemp_regression)
 
 **Safety Implications:**
 - Regression sequences should **only** be triggered in controlled test environments
-- System monitors temperature and will emergency‑stop at 260°C
+- The 260 °C emergency‑stop is enforced by the general over-temperature guard, not by the regression path
 - The `STATUS` command allows automation to verify `RegressionActive` is not stuck at `1`
 - Safety logging emits `SAFETY OT-REGRESSION` records for external monitoring
 
@@ -197,14 +213,15 @@ The current temperature measurement used as input to the PID controller (Process
 The controller output value before clamping to actuator limits.
 
 - **Units:** Percentage (0-100)
-- **Range:** May temporarily exceed 0-100 before clamping, but output is clamped to safe range
+- **Range:** The PID clamps internally (`mv.clamp(output_min, output_max)`) before
+  the value is stored, so the value on the wire is always within 0-100
 
 **Purpose:** The MV represents the PID's desired output. Before being sent to the SSR, the MV is:
 1. Clamped to the actuator's physical limits (0-100%)
 2. Applied with saturation detection
 3. Used as the final command value
 
-**Code Reference:** `src/control/pid.rs` (compute method, line ~154)
+**Code Reference:** `src/control/pid.rs` (compute_output method)
 
 ---
 
@@ -219,7 +236,7 @@ The accumulated integral term of the PID controller.
 
 **Clamping:** The integrator is clamped to prevent wind‑up (unbounded growth) when the actuator is saturated. See `IntegratorClampFlag` for clamping status.
 
-**Code Reference:** `src/control/pid.rs` (integrator field), line ~101
+**Code Reference:** `src/control/pid.rs` (integrator field)
 
 ---
 
@@ -227,8 +244,9 @@ The accumulated integral term of the PID controller.
 
 The rate of change of the temperature (derivative term).
 
-- **Units:** °C/second
-- **Calculation:** Difference between current and previous temperature samples
+- **Units:** °C/minute of the active display scale (°F/minute in Fahrenheit mode) — the Artisan RoR convention
+- **Calculation:** `derivative_rate * 60` (°C) or `derivative_rate * (9/5) * 60` (°F); e.g. a −0.42 °C/s rate appears on the wire as `-25.20`
+- **Source:** `SystemStatus::derivative_rate`
 
 **Purpose:** The derivative term provides predictive control. If the temperature is rising quickly, the derivative term anticipates the need to reduce heating, improving responsiveness.
 
@@ -249,7 +267,7 @@ Indicates whether the PID output is currently at the actuator limit (saturation)
 
 **Implementation:** The PID controller sets `saturation_active` to `true` when the MV is clamped to the output limit.
 
-**Code Reference:** `src/control/pid.rs` (saturation_active field), line ~149
+**Code Reference:** `src/control/pid.rs` (saturation_active field)
 
 ---
 
@@ -264,7 +282,7 @@ Indicates whether the integrator is currently being clamped to prevent wind‑up
 
 **Implementation:** When the output is saturated and the integrator would increase the error, the PID sets `integrator_clamped` to `true` instead of adding to the accumulator.
 
-**Code Reference:** `src/control/pid.rs` (integrator_clamped field), line ~137
+**Code Reference:** `src/control/pid.rs` (integrator_clamped field)
 
 ---
 
@@ -351,10 +369,11 @@ Track command latency over time:
 
 ```bash
 # Extract latency from STATUS response
-# Response: 120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-0.42,1,1,1,1250,5000,0
+# Response: 120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-25.20,1,1,1,1250,5000,0,0
 # CommandLatency is position 17 (1250)
 # MaxCommandLatency is position 18 (5000)
 # TempScale is position 19 (0=Celsius, 1=Fahrenheit)
+# FaultFlag is position 20 (0=normal, 1=emergency fault)
 ```
 
 Alert on:
@@ -377,7 +396,7 @@ PID internal state fields enable data‑driven tuning:
 ### Example STATUS Response
 
 ```
-120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-0.42,1,1,1,1250,5000,0
+120.3,150.5,75.0,50.0,1,0,none,0,0,150.5,88.5,37.1,-25.20,1,1,1,1250,5000,0,0
 ```
 
 ### Field Mapping
@@ -396,13 +415,14 @@ PID internal state fields enable data‑driven tuning:
 | PV | 150.5 | PID process variable (BT) |
 | MV | 88.5 | PID output before clamping |
 | IntegratorValue | 37.1 | Integral accumulator |
-| DerivativeValue | -0.42 | Temperature falling at 0.42°C/s |
+| DerivativeValue | -25.20 | Temperature falling at 0.42°C/s (−25.2 °C/min) |
 | SaturationFlag | 1 | Output at limit |
 | IntegratorClampFlag | 1 | Integrator clamped |
 | DerivativeAvailableFlag | 1 | Derivative valid |
 | CommandLatency | 1250 | Last command took 1.25ms |
 | MaxCommandLatency | 5000 | Worst‑case 5ms observed |
 | TempScale | 0 | Scale: 0=Celsius |
+| FaultFlag | 0 | No emergency fault |
 
 ---
 
@@ -415,28 +435,33 @@ PID internal state fields enable data‑driven tuning:
 
 ---
 
-*Last Updated: 2026-04-29*
+*Last Updated: 2026-08-04*
 
 ## TRACE Stream & Parser
 
-Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is emitted on the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle. The instrumentation sits in [`src/logging/traceability.rs`](src/logging/traceability.rs) and writes the strings through the shared `ServiceContainer` output channel.
+Every Artisan command that touches the queue is now tagged with a `TraceId` so engineers can follow the exact journey from the command entry point through the queue, actuator, telemetry emission, and guard/watchdog safety checks. Each TRACE line is emitted on the same host channel that services `STATUS`, so the `TraceId` stays attached to queue depth, actuator outputs, PID telemetry, and guard states for the entire lifecycle. The instrumentation sits in [`src/logging/traceability.rs`](../src/logging/traceability.rs) and writes the strings through the shared `ServiceContainer` output channel.
 
 ### TRACE event series & fields
 
-Lines follow the format `TRACE,<TraceId>,<event>,key=value,...`. The `cmd` field is produced with Rust's `Debug` formatter (e.g., `cmd=ReadStatus` or `cmd=ArtisanCommand::STATUS`), so the parser always knows which enum variant drove the event. The runtime emits the following events:
+Lines follow the format `TRACE,<TraceId>,<event>,key=value,...`. The `cmd` field is produced with Rust's `Debug` formatter (e.g., `cmd=ReadStatus` or `cmd=StatusReport` — the variant name only), so the parser always knows which enum variant drove the event. The runtime emits the following events:
 
-1. **`queue_enqueue`** – command entered the Artisan queue. Fields: `cmd`, `channel`, `depth`, `fallback`. When the queue overflow path reroutes a command the same data is emitted as `queue_fallback` with `fallback=1`; this makes retries immediately visible in the matrix.
-2. **`queue_dequeue`** – command removed for execution. The event repeats `cmd`, `channel`, and `depth` so the matrix shows both enqueue and dequeue depths.
-3. **`queue_fallback`** – emitted whenever the queue overflow handler resubmits a command. It uses the same fields as `queue_enqueue` but flags `fallback=1` so hosts can detect the fallback path without inspecting the control loop.
-4. **`actuation`** – SSR/fan outputs written before actuating the traced command. Fields: `cmd`, `channel`, `ssr`, `fan`, `latency_us`, `saturation_active`.
-5. **`telemetry`** – guard and watchdog telemetry snapshot taken while the command is running. Fields: `guard_timeout`, `guard_timeouts`, `watchdog`, plus optional `error_category`/`error_source` when an `AppError` is attached.
-6. **`guard`** – guard/watchdog reporting tied to the same `TraceId`. Fields mirror the telemetry event: `guard_timeout`, `guard_timeouts`, `watchdog`, optional `watchdog_failure`, and optional `error_category`/`error_source` metadata.
+1. **`queue_enqueue`** – command entered the Artisan queue. Fields: `cmd`, `channel`, `depth`, `fallback`. The `fallback` flag is always `0` today: the queue-overflow path drops the command (with a debug log) rather than resubmitting it.
+2. **`actuation`** – SSR/fan outputs written before actuating the traced command. Fields: `cmd`, `channel`, `ssr`, `fan`, `latency_us`, `saturation_active`.
+3. **`telemetry`** – guard and watchdog telemetry snapshot taken while the command is running. Fields: `guard_timeout`, `guard_timeouts`, `watchdog`, plus optional `error_category`/`error_source` when an `AppError` is attached.
+4. **`guard`** – guard/watchdog reporting tied to the same `TraceId`. Fields mirror the telemetry event: `guard_timeout`, `guard_timeouts`, `watchdog`, optional `watchdog_failure`, and optional `error_category`/`error_source` metadata.
+
+> Note: `queue_dequeue` and `queue_fallback` are **not** emitted by the current
+> firmware — there is no dequeue tracing and the overflow path drops instead of
+> resubmitting. Keep the matrix parser aligned with the four live events above.
 
 The queue fields drive the `QueueDepth` column in the regression matrix so you can clearly see whether a command hit the fallback path before it actuated.
 
 ### Sample TRACE entries
 
-Use this excerpt (taken from `logs/traceability/sample-trace.log`) to validate regression output formatting:
+The excerpt below is byte-compatible with the current formatters. Note that the
+`logs/traceability/sample-trace.log` file referenced by earlier versions of this
+guide is **not present in the repository** — generate the log from a real run
+(or from `tests/`) before pointing auditors at it:
 
 ```
 TRACE,1,queue_enqueue,cmd=ReadStatus,channel=Uart,depth=5,fallback=0
@@ -455,11 +480,15 @@ Run the host parser after every regression capture to rebuild the command → qu
 python scripts/traceability_matrix.py <trace.log>
 ```
 
-The script now understands the runtime names `queue_enqueue`, `queue_dequeue`, `queue_fallback`, `actuation`, `telemetry`, and `guard`, so it always produces the same column layout auditors expect. It also normalizes the Debug-formatted `cmd` field (e.g., `ReadStatus`) and shows `fallback=1` in the matrix whenever the queue overflow path retried a command. Point auditors to `logs/traceability/sample-trace.log` if their TRACE stream diverges so they can trace the difference to the firmware event that led to the regression outcome.
+The script understands the live runtime events `queue_enqueue`, `actuation`,
+`telemetry`, and `guard`, so it always produces the same column layout auditors
+expect. It also normalizes the Debug-formatted `cmd` field (e.g., `ReadStatus`).
+Generate the input log from a real capture — the sample log under `logs/` is not
+shipped in the repository.
 
 ### Safe-Shutdown Trace Replay
 
-InitError failures now emit guard events with `watchdog_failure=init_error_failure` plus the `error_category`/`error_source` metadata before the LED blink loop begins. Auditors can replay the new safe-shutdown path with `logs/traceability/sample-safe-shutdown.log`, which strings together queue/actuation/telemetry/guard lines carrying `error_category=initialization` and `error_source=hardware_init_failed`.
+InitError failures now emit guard events with `watchdog_failure=init_error_failure` plus the `error_category`/`error_source` metadata before the LED blink loop begins. Auditors can replay the safe-shutdown path from a capture that strings together queue/actuation/telemetry/guard lines carrying `error_category=initialization` and `error_source=hardware_init_failed`. (The `logs/traceability/sample-safe-shutdown.log` referenced by earlier versions of this guide is **not present in the repository** — the capture below must be produced first.)
 
 To capture and replay the safe-shutdown trace:
 
@@ -472,7 +501,7 @@ The regression test `scripts/test_traceability_matrix.py` now exercises this log
 
 ### Safe-Shutdown Replay Artifact
 
-Auditors need a single bundle that captures the log, the parsed matrix, and the guard metadata so the InitError trace can be shipped and replayed without hardware. The helper CLI collects these pieces into `safe-shutdown-replay.zip` under `logs/traceability`.
+Auditors need a single bundle that captures the log, the parsed matrix, and the guard metadata so the InitError trace can be shipped and replayed without hardware. The helper CLI collects these pieces into `safe-shutdown-replay.zip` under `logs/traceability` (the `logs/` directory is git-ignored and generated locally):
 
 ```bash
 python scripts/collect_safe_shutdown.py \

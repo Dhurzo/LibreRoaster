@@ -3,7 +3,7 @@
 **Purpose:** Mandatory verification before first power-on with real hardware.
 Complete every item in order. Do NOT skip steps.
 
-**Last updated:** 2026-05-28
+**Last updated:** 2026-08-04
 
 ---
 
@@ -15,15 +15,15 @@ Run these commands before touching hardware.
 # 1. Embedded build must compile clean (zero warnings)
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
-# 2. Host test suite (expect 3 pre-existing ROR mock-time failures in artisan_integration_test)
-cargo test --target x86_64-unknown-linux-gnu --features test
+# 2. Host test suite (expect all pass — 631 tests, 0 failures)
+cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 
 # 3. Format + clippy gate
 cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic
 ```
 
 - [ ] Embedded build: **zero errors, zero warnings**
-- [ ] Host tests: same failure count as baseline (3 ROR mock-time)
+- [ ] Host tests: **631 passed, 0 failed** (any failure = regression)
 - [ ] Clippy: clean
 
 ---
@@ -100,7 +100,7 @@ Verify wiring matches the **firmware pinout** (not any other document):
 
 2. Verify boot sequence in serial monitor:
 
-- [ ] See `LibreRoaster v5.1 starting...`
+- [ ] See `LibreRoaster v0.1 starting...`
 - [ ] See `Hardware initialized`
 - [ ] See `Sensors initialized (BT: GPIO4, ET: GPIO3)` (non-simulated build)
 - [ ] See `Hardware watchdog initialized (RTC WDT)`
@@ -128,11 +128,11 @@ Connect via USB CDC (`/dev/ttyACM0`) using a serial terminal or Artisan.
 Send `READ` and verify response:
 
 ```
-Expected: ET_temp,BT_temp,heater_pct,fan_pct
-Example:  23.5,24.1,0.0,0.0
+Expected: AMB,ET,BT,0.0,0.0   (PID off — 5 fields)
+Example:  0.0,23.5,24.1,0.0,0.0
 ```
 
-- [ ] `READ` returns 4 comma-separated values
+- [ ] `READ` returns 5 comma-separated values (AMB is a structural placeholder, always `0.0` in production)
 - [ ] ET and BT are reasonable ambient temps (18°C – 30°C)
 - [ ] Heater = 0.0, Fan = 0.0 (both off)
 
@@ -150,11 +150,10 @@ Example:  23.5,24.1,0.0,0.0
 
 Send `STATUS` and verify:
 
-- [ ] Returns 20-field CSV line
-- [ ] `watchdog_feed_ok=true`
-- [ ] `state=Idle`
-- [ ] `ssr_output=0.0`
-- [ ] `fan_output=0.0`
+- [ ] Returns a 20-field numeric CSV line (fields: ET,BT,Heater,Fan,WatchdogOK,...)
+- [ ] Field 5 `WatchdogOK` = `1`
+- [ ] Field 3 `Heater` = `0.0` and field 4 `Fan` = `0.0` (both off)
+- [ ] Field 19 `TempScale` = `0`, field 20 `FaultFlag` = `0`
 
 ---
 
@@ -207,7 +206,9 @@ STOP
 
 - [ ] After STOP: GPIO10 goes LOW (heater off)
 - [ ] Fan goes to 100% briefly then off (emergency behavior)
-- [ ] STATUS shows `state=EmergencyStop`
+- [ ] STATUS shows field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
+  (note: the run state itself is not part of the STATUS line — it is visible in the
+  serial log `info!` output; `STATUS` is a numeric 20-field CSV)
 
 ---
 
@@ -266,8 +267,8 @@ STOP
 
 - [ ] Heater cuts immediately
 - [ ] Fan goes to emergency speed
-- [ ] System enters `EmergencyStop` state
-- [ ] STATUS confirms `state=EmergencyStop`
+- [ ] System enters `EmergencyStop` state (visible in serial log)
+- [ ] STATUS confirms field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
 
 ---
 
@@ -275,14 +276,14 @@ STOP
 
 | Command | Effect | Expected Response |
 |---------|--------|-------------------|
-| `READ` | Poll temperatures | `ET,BT,0.0,0.0` |
+| `READ` | Poll temperatures | `AMB,ET,BT,0.0,0.0` (PID off; 8 fields with PID on) |
 | `STATUS` | Full diagnostics | 20-field CSV |
-| `IO3 50` | Fan to 50% | `OK` |
-| `IO3 0` | Fan off | `OK` |
-| `OT1 50` | Heater to 50% | `OK` |
-| `OT1 0` | Heater off | `OK` |
-| `STOP` | Emergency stop | `OK` |
-| `CHAN;1200` | Handshake | `OK` |
+| `IO3 50` | Fan to 50% | *(no response — silent)* |
+| `IO3 0` | Fan off | *(no response — silent)* |
+| `OT1 50` | Heater to 50% | *(no response — silent)* |
+| `OT1 0` | Heater off | *(no response — silent)* |
+| `STOP` | Emergency stop | *(no response — silent)* |
+| `CHAN;1200` | Handshake | `#1200` |
 | `UNITS;C` | Celsius mode | `OK` |
 | `FILT;70,70,70,70` | Filter config | `OK` |
 

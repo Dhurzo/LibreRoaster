@@ -1,6 +1,6 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-08-04
 
 This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
 
@@ -78,8 +78,10 @@ The hardware init code configures two low-speed LEDC timers:
 
 The firmware currently relies on these operational assumptions:
 
-- control-loop cadence around **100 ms**,
-- thermocouple read duration around **160 ms**,
+- control-loop period **100 ms** (`CONTROL_LOOP_PERIOD_MS`); the real tick is
+  **≈ 310–330 ms** because each tick also waits for the MAX31856 conversion
+  (`MAX31856_CONVERSION_TIME_MS = 210`),
+- MAX31856 one-shot conversion wait **210 ms** (datasheet 185 ms + margin),
 - watchdog feed interval **100 ms**,
 - hardware watchdog timeout **2 s**,
 - LEDC guard timeout **10 ms**,

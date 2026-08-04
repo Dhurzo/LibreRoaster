@@ -1,5 +1,7 @@
 # Testing — LibreRoaster
 
+**Last updated:** 2026-08-04
+
 This document describes every test layer in the project, what each covers, its current status, and how to run it.
 
 ---
@@ -19,7 +21,7 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** host-side test suite is fully green. The exact unit vs integration split shifts as tests are added; run `cargo test --features test --target x86_64-unknown-linux-gnu` for the live count, or see the CI badge at the top of `README.md`. There are **no pre-existing doctest failures** (earlier docs that claimed otherwise were stale). The embedded build compiles clean. An additional set of tests requires the `regression` feature flag (fault injection, MAX31856 fixture replay) and a subset are embedded-only (`target_arch = "riscv32"`).
+**Current status:** host-side test suite is fully green — **631 unit + integration tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 637 including doctests. The static source contains 464 `#[test]` items in `src/` and 212 in `tests/`; the difference from the 631 live count breaks down as: 17 file-level tests gated behind `--features regression` (`regression_status.rs`, `fault_injection_scenarios.rs`), 16 in `sensor_conversion.rs` that are likewise excluded in a non-regression run, and 12 double-counted because `tests/mock_usb_driver.rs` is both its own binary **and** a `mod mock_usb_driver` included in `tests/read_command_usb_test.rs` (their tests run in both binaries). There are **no pre-existing doctest failures**. An additional set of tests requires the `regression` feature flag (fault injection, regression snapshots) and a subset are embedded-only (`target_arch = "riscv32"`).
 
 > Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
@@ -31,32 +33,29 @@ These live inside the library crate, co-located with the code they test. They ve
 
 | Module | Tests | Focus | Status |
 |--------|-------|-------|--------|
-| `src/config/constants.rs` | ~5 | Configuration constants: pin assignments, timing values, protocol constants, feature flag validation | ✅ All pass |
-| `src/memory/constants.rs` | ~2 | Memory layout and allocation constants | ✅ All pass |
-| `src/hardware/fan.rs` | ~3 | Fan PWM control: duty cycle calculation, speed mapping | ✅ All pass |
-| `src/hardware/ssr.rs` | ~3 | SSR PWM: duty cycle, heat detection integration | ✅ All pass |
-| `src/hardware/init.rs` | ~2 | Hardware initialization sequence validation | ✅ All pass |
-| `src/hardware/mod.rs` | ~1 | Embedded-hal error trait compatibility | ✅ All pass |
-| `src/input/parser.rs` | ~30 | Artisan+ TC4 command parsing: CHAN, UNITS, FILT, OT1, OT2, UP, DOWN, STOP, READ, STATUS, PID subcommands, PROFILES, error handling, case insensitivity, edge cases | ✅ All pass |
-| `src/input/init_state.rs` | ~5 | Boot-time state machine: valid command sequencing during initialization, rejection of premature operational commands | ✅ All pass |
-| `src/input/multiplexer.rs` | ~10 | Output channel routing: active channel selection, USB vs UART switching, concurrent read/write isolation | ✅ All pass |
-| `src/control/pid.rs` | ~10 | PID controller arithmetic: proportional/integral/derivative terms, integrator clamping, output saturation, anti-windup | ✅ All pass |
-| `src/control/handlers/artisan.rs` | ~15 | Artisan manual command policy: heater/fan manual mode evaluation, guard conditions, clamp logic | ✅ All pass |
-| `src/control/handlers/temperature.rs` | ~10 | Temperature command handler: PID enable/disable, setpoint management, cycle time, output limits | ✅ All pass |
-| `src/control/handlers/safety.rs` | ~5 | Safety handler: emergency stop handling, fault condition propagation | ✅ All pass |
-| `src/control/handlers/system.rs` | ~3 | System command handler: status reporting, regression commands | ✅ All pass |
-| `src/output/artisan.rs` | ~15 | TC4/Artisan response formatting: READ lines, STATUS lines, error responses, CSV output | ✅ All pass |
-| `src/output/formatters/csv.rs` | ~5 | CSV field formatting: number normalization, NaN/Infinity handling | ✅ All pass |
-| `src/output/formatters/ror.rs` | ~7 | Rate-of-rise calculation: derivative filtering, history management, reset semantics | ✅ All pass |
-| `src/output/formatters/time.rs` | ~4 | Time formatting: seconds, milliseconds, large values, carry-over | ✅ All pass |
-| `src/application/tasks.rs` | ~5 | Task-level instrumentation: stage tracking, guard state transitions | ✅ All pass |
-| `src/application/stage_instrumentation.rs` | ~5 | Stage reporter: stage sequence validation, timing capture | ✅ All pass |
-| `src/application/service_container.rs` | ~5 | ServiceContainer: initialization, async sensor read error propagation | ✅ All pass |
-| `src/logging/traceability.rs` | ~10 | TRACE event formatting: queue depth, stage names, guard state, watchdog state serialization | ✅ All pass |
-| `src/logging/roast_logger.rs` | ~3 | Roast logger: start/stop/dump cycle, CSV event logging | ✅ All pass |
-| `src/error/app_error.rs` | ~5 | Error types: Display impl, error source propagation, conversion traits | ✅ All pass |
-| `src/hardware/max31856.rs` | ~10 | MAX31856 register math: raw temperature conversion (two's complement), fault register decoding, CRC | ✅ All pass |
-| `src/hardware/sensors/simulated.rs` | ~15 | Simulated temperature curves: interpolation, waypoints, curve presets, monotonicity, overtemp bounds | ✅ All pass |
+| `src/input/parser.rs` | 112 | Artisan+ TC4 command parsing: CHAN, UNITS, FILT, OT1, OT2, UP, DOWN, STOP, READ, STATUS, PID subcommands, PROFILES, error handling, case insensitivity | ✅ All pass |
+| `src/control/roaster_control.rs` | 61 | RoasterControl: command handling, safety transitions, charge detection, emergency latch, preheat | ✅ All pass |
+| `src/output/artisan.rs` | 30 | TC4/Artisan response formatting: READ lines, STATUS lines, error responses, CSV output | ✅ All pass |
+| `src/control/policies.rs` | 26 | Control policies: manual/PID arbitration, actuator guard conditions, heater/fan interlock | ✅ All pass |
+| `src/config/constants.rs` | 25 | Configuration constants: pin assignments, timing values, protocol constants, feature-gate validation | ✅ All pass |
+| `src/application/tasks.rs` | 25 | Task-level logic: control loop stages, command draining, rate limiting, telemetry emission | ✅ All pass |
+| `src/control/controllers/sensor.rs` | 24 | SensorController: sampling, EMA filtering, fault debounce, rate-of-rise, over-temperature guard | ✅ All pass |
+| `src/hardware/sensors/simulated.rs` | 18 | Simulated temperature curves: interpolation, waypoints, curve presets, noise, bounds | ✅ All pass |
+| `src/safety/watchdog.rs` | 16 | Watchdog: software feeding, timeout accounting, reason tokens, hardware RTC watchdog | ✅ All pass |
+| `src/control/pid.rs` | 15 | PID arithmetic: proportional/integral/derivative terms, integrator clamping, saturation, anti-windup | ✅ All pass |
+| `src/application/app_builder.rs` | 13 | AppBuilder: peripheral wiring, service container construction, task spawn verification | ✅ All pass |
+| `src/error/app_error.rs` | 10 | Error types: Display impl, error-source propagation, conversion traits | ✅ All pass |
+| `src/application/stage_instrumentation.rs` | 10 | Stage reporter: stage sequence validation, timing capture | ✅ All pass |
+| `src/control/handlers/*.rs` | 26 | Command handlers (safety 9, artisan 9, temperature 5, system 3): dispatch, manual actuation, PID, regression | ✅ All pass |
+| `src/logging/traceability.rs` | 8 | TRACE event formatting: queue depth, stage names, guard state, watchdog state serialization | ✅ All pass |
+| `src/logging/roast_logger.rs` | 7 | Roast logger: start/stop/dump cycle, CSV event logging | ✅ All pass |
+| `src/hardware/heat_presence.rs` | 6 | Heat-source detection state machine | ✅ All pass |
+| `src/input/multiplexer.rs` | 6 | Output channel routing: active channel selection, USB vs UART switching | ✅ All pass |
+| `src/output/formatters/*.rs` | 16 | CSV (6), time (5), ROR (5): number normalization, NaN/Infinity handling, time formatting | ✅ All pass |
+| `src/hardware/*.rs` (ssr, init, max31856, fan, mod) | 8 | SSR PWM, hardware init validation, MAX31856 register math, fan duty mapping | ✅ All pass |
+| `src/memory/constants.rs`, `src/host_time_driver.rs` | 2 | Memory/allocation constants; host Embassy time driver | ✅ All pass |
+
+**Totals:** 464 unit tests across 31 files in `src/`.
 
 ---
 
@@ -64,11 +63,11 @@ These live inside the library crate, co-located with the code they test. They ve
 
 Host-side integration tests that wire multiple modules together with mocked hardware. They verify end-to-end flows, state machine transitions, protocol correctness, and error handling.
 
-Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tests/e2e/`, `tests/concurrency/`, `tests/hardware/`) are included into the top-level test binaries via `#[path]` mod declarations. Their tests are counted within the top-level file totals below.
+All integration tests live as top-level files directly in `tests/` with mocked hardware. They wire multiple modules together to verify end-to-end flows, state machine transitions, protocol correctness, and error handling.
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| All integration test files | 133 | ✅ All pass |
+| All integration test files | 212 | ✅ All pass |
 
 ### 2.1 Protocol & Command Handling
 
@@ -77,24 +76,22 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 | `tests/artisan_integration_test.rs` | 11 | Complete Artisan+ protocol flow: parse → dispatch → format → response. Tests READ, OT1, IO3, START, STOP, CHAN, UNITS responses | ✅ All pass |
 | `tests/command_errors.rs` | 5 | Error propagation through command pipeline: invalid commands, parse errors, service container error mapping | ✅ All pass |
 | `tests/command_idempotence.rs` | 4 | Idempotency of start/stop: double-start, double-stop, stop-without-start, state consistency after repeated calls | ✅ All pass |
-| `tests/read_command_usb_test.rs` | 27 | READ command over USB CDC path: TC4 format (5-value, 8-value), Celsius/Fahrenheit, NaN handling, field ordering | ✅ All pass |
+| `tests/read_command_usb_test.rs` | 15 | READ command over USB CDC path: TC4 format (5-value, 8-value), Celsius/Fahrenheit, NaN handling, field ordering | ✅ All pass |
 
 ### 2.2 Roast Simulation
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
 | `tests/artisan_roast_simulation.rs` | 8 | Full-host roast simulation: handshake → preheat → profile load → charge detection → active roast → PID control → stop → cooldown. Uses simulated sensor curves with full state machine | ✅ All pass |
-| `tests/e2e/full_roast_cycle.rs` | 6 | End-to-end roast cycle: Start → Heat → Roast → Stop → Cool, including temperature curve following and state transitions (included via `#[path]` from the main test crate) | ✅ All pass |
-| `tests/roast_scenarios/` | — | Phase-specific scenario helpers: `heating_phase.rs`, `roasting_phase.rs`, `cooling_phase.rs` — temperature curve injection and state simulation. These are utility modules (no tests), consumed by e2e/safety/timing tests via `crate::` path. | ✅ All pass |
+| `tests/critical_path_tests.rs` | 44 | End-to-end critical flows: roast lifecycle, emergency stops, safety interlocks, protocol round-trips | ✅ All pass |
+| `tests/control_loop_integration.rs` | 16 | Control loop integration: stage ordering, command draining, telemetry emission under load | ✅ All pass |
+| `tests/roast_resilience_tests.rs` | 22 | Edge-case resilience: no-profile fallback, missing charge detection, invalid commands during roast, rapid start-stop cycles | ✅ All pass |
 
 ### 2.3 Safety & Fault Injection
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/safety/watchdog_integration.rs` | 5 | Watchdog integration: feed success/failure detection, timeout behavior, recovery after watchdog reset (included via `#[path]`) | ✅ All pass |
-| `tests/safety/overtemperature_protection.rs` | 7 | Overtemperature shutdown: threshold triggering (260°C), fault condition propagation, heater cutoff verification, recovery via STOP (included via `#[path]`) | ✅ All pass |
-| `tests/safety/ledc_guard.rs` | 3 | LEDC guard timeout: SSR cycle guard detection, timeout counting, guard state propagation to telemetry (included via `#[path]`) | ✅ All pass |
-| `tests/fault_injection_scenarios.rs` | 14 | Matrix-based fault injection (requires `--features regression`): watchdog failures, guard timeouts, communication errors. Captures SystemStatus and formats STATUS response for each scenario | ✅ All pass |
+| `tests/fault_injection_scenarios.rs` | 4 | Matrix-based fault injection (requires `--features regression`): watchdog failures, guard timeouts, communication errors. Captures SystemStatus and formats STATUS response for each scenario | ✅ All pass |
 | `tests/error_integration_tests.rs` | 5 | Cross-cutting error integration: error types through dispatch, safety handler error mapping, error recovery strategies | ✅ All pass |
 
 ### 2.4 Serial Communication
@@ -104,7 +101,6 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 | `tests/mock_uart.rs` | 7 | Mock UART driver: send/receive, buffer management, concurrent access from multiple tasks | ✅ All pass |
 | `tests/mock_uart_integration.rs` | 3 | UART integration with command processing: command parsing from UART bytes, response routing back through UART | ✅ All pass |
 | `tests/mock_usb_driver.rs` | 12 | Mock USB CDC driver: read/write endpoints, buffer management, connection state simulation, concurrent access | ✅ All pass |
-| `tests/transport_flood_test.rs` | 2 | Transport flood resistance: rapid command bursts through USB and UART paths, queue pressure handling, no message loss | ✅ All pass |
 | `tests/multiplexer_tests.rs` | 14 | Output multiplexer: active channel selection, concurrent USB+UART output, channel switching during active output, timeout behavior | ✅ All pass |
 | `tests/command_multiplexer_concurrency.rs` | 1 | Multiplexer command routing: concurrent command submission from multiple channels, ordering guarantees | ✅ All pass |
 
@@ -112,26 +108,22 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/sensor_conversion.rs` | 3 | Sensor temperature conversion: raw-to-celsius, fault register parsing, edge-case temperatures | ✅ All pass |
+| `tests/sensor_conversion.rs` | 16 | Sensor temperature conversion: raw-to-celsius, fault register parsing, edge-case temperatures (fixture rows require `--features regression`) | ✅ All pass |
 | `tests/concurrent_sensor_test.rs` | 1 | Concurrent sensor access: async sensor read under concurrent command processing | ✅ All pass |
 | `tests/fan_serialization.rs` | 6 | Fan state serialization: fan speed set/get through status, fan OutputFormatter integration | ✅ All pass |
-| `tests/ssr_monitor.rs` | 5 | SSR hardware monitor: heat source detection, availability state machine, fault detection | ✅ All pass |
-| `tests/ssr_scheduler.rs` | 14 | SSR scheduler: duty cycle timing, zero-crossing alignment, guard window enforcement | ✅ All pass |
-| `tests/roast_resilience_tests.rs` | 8 | Edge-case resilience: no-profile fallback, missing charge detection, invalid commands during roast, rapid start-stop cycles | ✅ All pass |
+| `tests/ssr_scheduler.rs` | 3 | SSR scheduler: duty cycle timing, cycle-guard window enforcement | ✅ All pass |
 
 ### 2.6 Performance & Concurrency
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/timing/control_loop_timing.rs` | 2 | Control loop timing analysis: stage duration budgets (SensorRead ~160ms, ControlUpdate ~10ms), 100ms cycle feasibility validation (included via `#[path]`) | ✅ All pass |
-| `tests/concurrency/dual_channel_stress.rs` | 2 | Dual USB+UART concurrency: simultaneous command injection from both channels, queue pressure handling (included via `#[path]`) | ✅ All pass |
 | `tests/control_loop_stage.rs` | 2 | Stage reporter sequence validation: correct ordering and transition counting through all control loop stages | ✅ All pass |
 
 ### 2.7 Regression
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/regression_status.rs` | 1 | Regression mode status reporting: formatting STATUS with regression active flag, compatibility with ArtisanFormatter | ✅ All pass |
+| `tests/regression_status.rs` | 13 | Regression mode status reporting: formatting STATUS with regression active flag, snapshot fixture replay (requires `--features regression`) | ✅ All pass |
 
 ---
 
@@ -164,10 +156,6 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 | `src/common/mod.rs` | In-source call-tracking stubs: `StubHeater`, `StubFan`, `StubThermometer` with operation history |
 | `src/hardware/test_mocks.rs` | In-source error-injection mocks: `MockThermometer`, `MockSsr`, `MockFan` |
 | `tests/common/mod.rs` | Shared test utilities: `build_test_control()`, `StubHeater`, `StubFan` for constructing a RoasterControl with mocked actuators |
-| `tests/fixtures/max31856_sequences.rs` | MAX31856 register read sequences for fixture-based regression testing |
-| `tests/hardware/mock_max31856.rs` | Mock MAX31856 SPI sensor for host-side thermocouple simulation (included via `#[path]`) |
-| `tests/hardware/mock_ssr.rs` | Mock SSR/heater for host-side actuator testing (included via `#[path]`) |
-| `tests/hardware/mock_fan.rs` | Mock fan for host-side actuator testing (included via `#[path]`) |
 
 ---
 
@@ -190,10 +178,10 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 | Long-duration stability | No soak test (>1 hour) with active PID | Memory leaks or timer drift may go undetected |
 | Real MAX31856 with thermocouple | Mock sensors only; real sensor noise/glitch patterns untested | Sensor fault recovery paths may be exercised only in simulation |
 | Concurrent UART + USB conflict | Dual-channel stress tests exist but don't test byte-level interleaving | Rare race conditions in byte-level framing may not be caught |
-| Feature-gated tests in CI | ~35 tests require `--features regression` (fault injection, sensor conversion, regression snapshots) — never run in CI | Regression in these paths may go undetected until manual regression run |
+| Feature-gated tests | 17 tests require `--features regression` (fault injection, sensor fixtures, regression snapshots) — covered by the dedicated CI `regression` job | Low: covered in CI |
 | Embedded-only tests | ~32 tests require `target_arch = "riscv32"` — never run in CI | USB CDC, SSR monitor, and instrumentation paths untested in automated CI |
 | Property-based testing | No `proptest` or `quickcheck` generators | Edge cases in PID math, sensor conversion, and protocol parsing may be missed |
-| Zero tests for safety modules | `src/safety/watchdog.rs`, `src/safety/regression.rs` | Safety watchdog logic and regression detection have no direct unit coverage |
+| Regression-runner unit coverage | `src/safety/regression.rs` has no direct unit tests; its behavior is exercised via `tests/regression_status.rs` and `tests/fault_injection_scenarios.rs` | Low (covered by integration) |
 | Flash memory / persistence | No storage layer exists yet | N/A for current milestone |
 
 ## 7. CI Integration
@@ -202,10 +190,12 @@ Integration test files in subdirectories (`tests/safety/`, `tests/timing/`, `tes
 |--------|--------|
 | CI platform | GitHub Actions (`.github/workflows/ci.yml`) |
 | Trigger | Push to `develop`/`main`, PR to `develop`/`main` |
-| Jobs | 4: `fmt`, `clippy`, `test`, `embedded-build` |
-| Host test command | `cargo test --features test --lib --tests --no-fail-fast` |
-| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` |
-| Regression tests | ❌ Not run (needs `--features regression`) |
+| Jobs | 7: `fmt`, `clippy`, `embedded-clippy`, `test` (+ doctests), `regression`, `coverage`, `embedded-build` |
+| Host test command | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` + `cargo test --target x86_64-unknown-linux-gnu --features test --doc` |
+| Clippy command | `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` (host) plus the same against `--target riscv32imc-unknown-none-elf --features embedded` (embedded job) |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
+| Regression tests | ✅ Run — `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` |
+| Code coverage | ✅ Run — `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
 | HIL tests | ❌ Not run (needs physical ESP32-C3) |
 | Embedded-only tests | ❌ Not run (needs `riscv32` target) |
 
@@ -221,9 +211,9 @@ cargo test --lib --target x86_64-unknown-linux-gnu --features test
 cargo test --target x86_64-unknown-linux-gnu --features test
 
 # Regression — fault injection scenarios (requires regression feature)
-cargo test --features regression --target x86_64-unknown-linux-gnu
+cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast
 
-# Quality baseline (fmt + clippy + test + embedded build)
+# Quality baseline (fmt + clippy + host tests)
 scripts/quality-baseline.sh
 
 # Regression checks (fault injection + max31856 fixtures)
@@ -278,7 +268,7 @@ With picocom running in Terminal A, use Terminal B to send commands:
 ```bash
 # Single-shot readings (work regardless of continuous output state)
 echo "READ"   > /dev/ttyACM0     # TC4-format reading (5 or 8 fields)
-echo "STATUS" > /dev/ttyACM0     # 19-field diagnostic line
+echo "STATUS" > /dev/ttyACM0     # 20-field diagnostic line
 
 # Enable continuous output and view simulated curves
 echo "SETTARGET 200" > /dev/ttyACM0  # Set PID target to 200°C
@@ -292,22 +282,22 @@ echo "IO3 75"  > /dev/ttyACM0   # Fan at 75%, enables continuous telemetry
 echo "STOP"    > /dev/ttyACM0   # Disable PID and continuous output
 ```
 
-After `START` or `OT1`, Terminal A (picocom) will show telemetry lines every ~100ms:
+After `START` or `OT1`, Terminal A (picocom) will show `#`-prefixed telemetry lines (timestamp in s since boot, at the real loop cadence of ~310-330 ms):
 
 ```
-120.0,180.5,150.3,3.2,0.0
-120.2,181.0,150.7,3.4,0.0
-120.4,181.4,151.2,3.1,0.0
+#120.0,180.5,150.3,3.2,0.0
+#120.2,181.0,150.7,3.4,0.0
+#120.4,181.4,151.2,3.1,0.0
 ```
 
-Fields: `time_s,ET,BT,ROR,heater_pct`.
+Fields: `#<time_s>,ET,BT,ROR,Gas`.
 
 ### 9.4 Command protocol details
 
 | Command | Args | Effect |
 |---------|------|--------|
 | `READ` | none | Returns single TC4 response (`AMB,ET,BT,...`) |
-| `STATUS` / `STAT` | none | Returns 19-field diagnostic line |
+| `STATUS` / `STAT` | none | Returns 20-field diagnostic line |
 | `CHAN;0` | channel number | Set Artisan channel (0=USB, 1=UART) |
 | `UNITS;C` / `UNITS;F` | temp scale | Set Celsius or Fahrenheit |
 | `SETTARGET 200` | target °C | Set PID target temperature |
@@ -346,6 +336,6 @@ This prints each phase: handshake → preheat → profile load → charge → ac
 |---------|-------|-----|
 | `ERR invalid_value empty_command` | Empty line sent (newline without content) | Normal when pressing Enter — harmless |
 | `ERR invalid_value unknown_command` | Command not recognized | Check command syntax (e.g., `START` not `START 200`) |
-| No telemetry after `START` | Continuous output was already off before START, or START failed silently | Send `READ` first to verify the device is responsive, then `STATUS` to check `pid_enabled` |
+| No telemetry after `START` | Continuous output was already off before START, or START failed silently | Send `READ` first to verify the device is responsive, then `READ` again to check whether PID is active (8-field vs 5-field response) |
 | `cr1_readback_mismatch` on boot | Real MAX31856 connected but not responding | Use `--features "embedded,simulated-sensors"` to skip MAX31856 init |
 | `/dev/ttyACM0: Dispositivo o recurso ocupado` | espflash monitor or another terminal holds the port | Kill the existing monitor, use picocom/screen instead, or type commands directly into the espflash monitor window |

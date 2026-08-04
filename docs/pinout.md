@@ -15,9 +15,9 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 | 5     | SPI MISO              | Input     | SPI (GPIO Matrix)   | Routed via GPIO Matrix because GPIO2 (native FSPIQ) is a strapping pin. |
 | 6     | SPI SCLK              | Output    | SPI (FSPICLK)       | Serial Clock — shared between both MAX31856 chips. |
 | 7     | SPI MOSI              | Output    | SPI (FSPID)         | Master Out Slave In — shared between both MAX31856 chips. |
-| 8     | Status LED            | Output    | Onboard indicator   | **Strapping pin.** Boot fails if pulled LOW. Use push-pull output, never open-drain. |
-| 9     | **Fan PWM**           | Output    | LEDC (25 kHz)       | **⚠️ CRITICAL STRAPPING PIN (ULW).** See warning below. |
-| 10    | SSR PWM               | Output    | LEDC (5 Hz zero-cross) | Heater control via Solid State Relay. |
+| 8     | Status LED            | Output    | Onboard indicator   | Push-pull output only, never open-drain. Not sampled for normal flash boot. |
+| 9     | **Fan PWM**           | Output    | LEDC (25 kHz)       | **⚠️ STRAPPING PIN (boot mode select).** Internal pull-up; see warning below. |
+| 10    | SSR PWM               | Output    | LEDC (5 Hz, zero-cross compatible) | Heater control via Solid State Relay. |
 | 20    | UART RX               | Input     | UART0               | Receives Artisan commands. Connect to CH341 TX. |
 | 21    | UART TX               | Output    | UART0               | Sends Artisan telemetry. Connect to CH341 RX. |
 | —     | USB D+ / D−           | Bidir     | USB Serial/JTAG     | Internal to ESP32-C3. Native USB CDC for Artisan (alternative to UART). No external pins. |
@@ -98,16 +98,17 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 
 ## Special Pin Warnings
 
-### ⚠️ GPIO9 — Fan PWM (Strapping Pin: ULW)
+### ⚠️ GPIO9 — Fan PWM (Strapping Pin: Boot Mode Select)
 
 **This is the most critical pin on the board.**
 
 | Property          | Value                        |
 |-------------------|------------------------------|
-| Strapping Role    | **ULW** (Upload/Log Wait)    |
+| Strapping Role    | **Boot mode / download select** (Espressif: GPIO9 = boot-mode selector; “ULW” is not a real ESP32-C3 function name) |
 | Boot Effect       | Pulled LOW → ESP32-C3 enters **download/bootstrap mode** |
 | Normal Operation  | LEDC PWM output (25 kHz) for fan speed control |
 | Risk              | If the fan driver circuit pulls GPIO9 low **during power-on reset**, the chip will not boot. |
+| Internal pull-up  | GPIO9 has a **45 kΩ internal weak pull-up**; left unconnected it latches HIGH and the chip boots normally. The external 10 kΩ pull-up below is a robustness measure, not a mandatory boot requirement. |
 
 **Required mitigations:**
 1. **External pull-up resistor (10 kΩ to 3.3V)** on the GPIO9 line — mandatory.
@@ -119,24 +120,27 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 ```bash
 cargo espflash monitor
 ```
-If you see "waiting for download" instead of "LibreRoaster v5.1 starting...", GPIO9 is being pulled low at boot.
+If you see "waiting for download" instead of "LibreRoaster v0.1 starting...", GPIO9 is being pulled low at boot.
 
 ---
 
-### ⚠️ GPIO8 — Status LED (Strapping Pin)
+### ⚠️ GPIO8 — Status LED (Not a Boot-Strapping Pin)
+
+GPIO8 is **not** sampled during normal flash boot — the boot mode control
+ignores it in SPI-boot mode, so a LOW level on GPIO8 cannot stop the firmware
+from running. It only matters in **download mode**, where the combination
+GPIO8=HIGH + GPIO9=LOW is used; GPIO8=0 + GPIO9=0 is invalid.
 
 | Property          | Value                        |
 |-------------------|------------------------------|
-| Strapping Role    | JTAG / Boot mode selection   |
-| Boot Effect       | Pulled LOW → chip enters **JTAG mode** |
+| Strapping Role    | None for normal flash boot (only the download-mode combo uses it) |
+| Boot Effect       | Ignored in SPI boot mode; no “JTAG gear mode” behavior exists on the C3 |
 | Normal Operation  | Output driving status LED    |
 
 **Required mitigation:**
 - Configure as **push-pull output** only. Never use open-drain.
 - The LED circuit must **not** pull this pin low during boot. If the LED is connected between GPIO8 and GND (with series resistor), this is safe because `Output::new()` drives HIGH after initialization.
 - If connecting an external transistor driver, ensure it is off (high-Z) during power-up.
-
-**Failure symptom:** ESP32-C3 enters JTAG mode on boot; firmware does not run.
 
 ---
 
@@ -210,13 +214,13 @@ SPI Bus (MAX31856 thermocouples)
 
 PWM Outputs (LEDC)
   GPIO9  ── Fan PWM  (25 kHz)  ⚠️ STRAPPING PIN
-  GPIO10 ── SSR 5 Hz (zero-cross)
+  GPIO10 ── SSR 5 Hz (zero-cross compatible)
 
 Feedback / Detection
   GPIO1  ── SSR heat detection (input, pull-up)
 
 Status
-  GPIO8  ── Status LED (output)  ⚠️ STRAPPING PIN
+  GPIO8  ── Status LED (output, push-pull) — not sampled for normal boot
 
 Communication
   GPIO20 ── UART RX (Artisan in)
@@ -428,8 +432,8 @@ While not lethal to the chip itself, misconfiguring strapping pins can make the 
 | Pin | Strapping Function | If Wrong at Boot |
 |-----|-------------------|------------------|
 | GPIO2 | VDD_SPI voltage | Flash operates at wrong voltage → CRC errors → no boot |
-| GPIO8 | JTAG enable | Chip enters JTAG mode → firmware never runs |
-| GPIO9 | Boot mode (ULW) | Chip enters download mode → waits for USB serial |
+| GPIO8 | None for normal boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW) | No effect on flash boot |
+| GPIO9 | Boot mode select | Chip enters download mode → waits for USB serial |
 
 **As covered in the GPIO9 section above** — always ensure proper pull states during reset.
 

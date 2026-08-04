@@ -1,10 +1,10 @@
-# LibreRoaster — Realistic Hardware Pinout v5.3
+# LibreRoaster — Realistic Hardware Pinout (aligned with firmware v0.1)
 # Board: ESP32-C3 (RISC-V, 160MHz, 400KB SRAM, 4MB Flash)
-# Sources: src/config/constants.rs, README.md, internalDoc/HARDWARE.md
-# Generated: 2026-04-28
+# Sources: src/config/constants.rs, docs/HARDWARE.md, docs/pinout.md
+# Last aligned: 2026-08-04
 
 board: esp32c3_devkit_m1
-title: "LibreRoaster v5.3 — Complete Wiring Diagram (ESP32-C3)"
+title: "LibreRoaster v0.1 — Complete Wiring Diagram (ESP32-C3)"
 
 devices:
   # ═══════════════════════════════════════════════════════════
@@ -34,30 +34,30 @@ devices:
     position: { x: 220, y: 250 }
     pins:
       # --- SPI Bus (shared between both MAX31856) ---
-      - { name: "GPIO7",  gpio: 7,  function: "SPI SCLK",  type: "output", note: "Clock — shared bus" }
-      - { name: "GPIO5",  gpio: 5,  function: "SPI MOSI",  type: "output", note: "Master Out — shared bus" }
-      - { name: "GPIO6",  gpio: 6,  function: "SPI MISO",  type: "input",  note: "Master In — shared bus" }
+      - { name: "GPIO6",  gpio: 6,  function: "SPI SCLK",  type: "output", note: "Clock — shared bus" }
+      - { name: "GPIO7",  gpio: 7,  function: "SPI MOSI",  type: "output", note: "Master Out — shared bus" }
+      - { name: "GPIO5",  gpio: 5,  function: "SPI MISO",  type: "input",  note: "Master In — shared bus (avoids GPIO2 FSPIQ strap)" }
 
       # --- MAX31856 Chip Selects (individual) ---
       - { name: "GPIO4",  gpio: 4,  function: "BT CS",     type: "output", note: "Bean Temp MAX31856 select" }
       - { name: "GPIO3",  gpio: 3,  function: "ET CS",     type: "output", note: "Env Temp MAX31856 select" }
 
       # --- Heater Control ---
-      - { name: "GPIO10", gpio: 10, function: "SSR PWM",   type: "output", note: "1Hz LEDC PWM — zero-cross SSR (safe, no-strapping)" }
+      - { name: "GPIO10", gpio: 10, function: "SSR PWM",   type: "output", note: "5Hz LEDC PWM — zero-cross compatible SSR (safe, no-strapping)" }
       - { name: "GPIO1",  gpio: 1,  function: "HEAT DETECT", type: "input", note: "SSR feedback — pull-up enabled, verifies heater current" }
 
       # --- Fan Control ---
-      - { name: "GPIO9",  gpio: 9,  function: "FAN PWM",   type: "output", note: "⚠️ STRAPPING PIN — 25kHz LEDC PWM, needs external pull-up" }
+      - { name: "GPIO9",  gpio: 9,  function: "FAN PWM",   type: "output", note: "⚠️ STRAPPING PIN (boot mode select) — 25kHz LEDC PWM; internal 45kΩ pull-up; external 10kΩ recommended" }
 
       # --- UART (Artisan Communication) ---
-      - { name: "GPIO20", gpio: 20, function: "UART TX",   type: "output", note: "→ Artisan PC (via USB-UART adapter)" }
-      - { name: "GPIO21", gpio: 21, function: "UART RX",   type: "input",  note: "← Artisan PC (via USB-UART adapter)" }
+      - { name: "GPIO20", gpio: 20, function: "UART RX",   type: "input",  note: "← Artisan PC (via USB-UART adapter)" }
+      - { name: "GPIO21", gpio: 21, function: "UART TX",   type: "output", note: "→ Artisan PC (via USB-UART adapter)" }
 
-      # --- Optional: Acoustic First-Crack Detector ---
-      - { name: "GPIO2",  gpio: 2,  function: "MIC ADC",   type: "adc",    note: "⚠️ STRAPPING PIN — analog microphone (optional, Welford RMS algorithm)" }
+      # --- Not used ---
+      - { name: "GPIO2",  gpio: 2,  function: "NOT USED",  type: "input",  note: "⚠️ STRAPPING PIN (VDD_SPI) — deliberately avoided by firmware; do not connect" }
 
       # --- Optional: Status LED ---
-      - { name: "GPIO8",  gpio: 8,  function: "LED",        type: "output", note: "⚠️ STRAPPING PIN — error blink indicator (3 shorts → pause)" }
+      - { name: "GPIO8",  gpio: 8,  function: "LED",        type: "output", note: "Push-pull output — NOT sampled for normal boot; error blink indicator" }
 
       # --- Power ---
       - { name: "3.3V",   voltage: "3.3V", note: "Regulated output — powers MAX31856 ×2, SSR logic" }
@@ -74,9 +74,9 @@ devices:
     position: { x: 20, y: 50 }
     pins:
       - { name: "CS",   gpio: 4,  note: "Chip Select → ESP32 GPIO4" }
-      - { name: "MOSI", gpio: 5,  note: "SPI MOSI → ESP32 GPIO5 (shared)" }
-      - { name: "MISO", gpio: 6,  note: "SPI MISO → ESP32 GPIO6 (shared)" }
-      - { name: "SCLK", gpio: 7,  note: "SPI Clock → ESP32 GPIO7 (shared)" }
+      - { name: "MOSI", gpio: 7,  note: "SPI MOSI → ESP32 GPIO7 (shared)" }
+      - { name: "MISO", gpio: 5,  note: "SPI MISO → ESP32 GPIO5 (shared)" }
+      - { name: "SCLK", gpio: 6,  note: "SPI Clock → ESP32 GPIO6 (shared)" }
       - { name: "VCC",  voltage: "3.3V", note: "Powered from ESP32-C3 3.3V rail" }
       - { name: "GND",  voltage: "GND",  note: "Common ground" }
       - { name: "T+",   label: "Type-K + (yellow)", note: "Thermocouple positive — inside drum, touching beans" }
@@ -91,9 +91,9 @@ devices:
     position: { x: 20, y: 180 }
     pins:
       - { name: "CS",   gpio: 3,  note: "Chip Select → ESP32 GPIO3" }
-      - { name: "MOSI", gpio: 5,  note: "SPI MOSI → ESP32 GPIO5 (shared)" }
-      - { name: "MISO", gpio: 6,  note: "SPI MISO → ESP32 GPIO6 (shared)" }
-      - { name: "SCLK", gpio: 7,  note: "SPI Clock → ESP32 GPIO7 (shared)" }
+      - { name: "MOSI", gpio: 7,  note: "SPI MOSI → ESP32 GPIO7 (shared)" }
+      - { name: "MISO", gpio: 5,  note: "SPI MISO → ESP32 GPIO5 (shared)" }
+      - { name: "SCLK", gpio: 6,  note: "SPI Clock → ESP32 GPIO6 (shared)" }
       - { name: "VCC",  voltage: "3.3V", note: "Powered from ESP32-C3 3.3V rail" }
       - { name: "GND",  voltage: "GND",  note: "Common ground" }
       - { name: "T+",   label: "Type-K + (yellow)", note: "Thermocouple positive — exhaust airflow" }
@@ -107,7 +107,7 @@ devices:
     label: "SSR-25DA (25A Zero-Cross Solid State Relay)"
     position: { x: 420, y: 50 }
     pins:
-      - { name: "DC+",   gpio: 10, note: "Control input (+) → ESP32 GPIO10 (1Hz PWM)" }
+      - { name: "DC+",   gpio: 10, note: "Control input (+) → ESP32 GPIO10 (5Hz PWM)" }
       - { name: "DC-",   voltage: "GND", note: "Control input (–) → ESP32 GND" }
       - { name: "AC-IN",  note: "⚠️ AC Live from mains (via terminal block)" }
       - { name: "AC-OUT", note: "⚠️ AC Live → Heating element" }
@@ -151,20 +151,21 @@ devices:
     label: "USB-UART Adapter (FTDI/CH340/CP2102)"
     position: { x: 420, y: 330 }
     pins:
-      - { name: "RX",  gpio: 20, note: "← ESP32 GPIO20 (UART TX)" }
-      - { name: "TX",  gpio: 21, note: "→ ESP32 GPIO21 (UART RX)" }
+      - { name: "RX",  gpio: 21, note: "← ESP32 GPIO21 (UART TX)" }
+      - { name: "TX",  gpio: 20, note: "→ ESP32 GPIO20 (UART RX)" }
       - { name: "VCC", voltage: "3.3V", note: "IMPORTANT: set to 3.3V logic level (NOT 5V!)" }
       - { name: "GND", voltage: "GND", note: "Common ground — MUST be connected" }
       - { name: "USB-A", note: "→ PC running Artisan" }
 
   # ═══════════════════════════════════════════════════════════
   # OPTIONAL: Acoustic Microphone (First-Crack Detector)
+  # NOT supported by current firmware (no ADC channel assigned — GPIO2 is avoided)
   # ═══════════════════════════════════════════════════════════
   - id: acoustic_mic
-    label: "Electret Microphone + Amplifier (MAX4466)"
+    label: "Electret Microphone + Amplifier (MAX4466) — not wired"
     position: { x: 20, y: 340 }
     pins:
-      - { name: "OUT", gpio: 2, note: "Analog output → ESP32 GPIO2 (ADC1 channel 2)" }
+      - { name: "OUT", note: "Analog output — NOT CONNECTED: no ADC input assigned by current firmware (GPIO2, the natural candidate, is avoided: VDD_SPI strap)" }
       - { name: "VCC", voltage: "3.3V", note: "Powered from ESP32 3.3V" }
       - { name: "GND", voltage: "GND", note: "Common ground" }
 
@@ -175,17 +176,17 @@ connections:
   # === SPI Bus (shared by both MAX31856) ===
   - from: { device: max31856_bt, pin: "SCLK" }
     to:   { device: max31856_et, pin: "SCLK" }
-    label: "SPI SCLK (GPIO7)"
+    label: "SPI SCLK (GPIO6)"
     color: "#2196F3"
 
   - from: { device: max31856_bt, pin: "MOSI" }
     to:   { device: max31856_et, pin: "MOSI" }
-    label: "SPI MOSI (GPIO5)"
+    label: "SPI MOSI (GPIO7)"
     color: "#4CAF50"
 
   - from: { device: max31856_bt, pin: "MISO" }
     to:   { device: max31856_et, pin: "MISO" }
-    label: "SPI MISO (GPIO6)"
+    label: "SPI MISO (GPIO5)"
     color: "#FF9800"
 
   # === 3.3V Power Bus ===
@@ -272,15 +273,15 @@ connections:
 # ANNOTATIONS & WARNINGS
 # ═══════════════════════════════════════════════════════════════
 annotations:
-  - text: "⚠️ STRAPPING PIN — GPIO9 is sampled at boot. Ensure fan MOSFET gate has 10kΩ pull-down to prevent floating HIGH during reset."
+  - text: "⚠️ STRAPPING PIN — GPIO9 is sampled at boot (boot mode select). The fan driver must be high-impedance at reset so it never forces GPIO9 LOW. Internal 45kΩ pull-up boots normally; external 10kΩ pull-up recommended for robustness."
     pins: [9]
     severity: warning
 
-  - text: "⚠️ STRAPPING PIN — GPIO2 is sampled at boot. Only use for analog microphone (high-impedance input, no DC bias issues)."
+  - text: "⚠️ GPIO2 (VDD_SPI) is a strapping pin — the firmware deliberately avoids it (SPI MISO is routed via GPIO5). Do not connect the optional microphone until a dedicated ADC input is assigned."
     pins: [2]
     severity: warning
 
-  - text: "⚠️ STRAPPING PIN — GPIO8 is sampled at boot. Safe: used as output LED (active low)."
+  - text: "✅ SAFE — GPIO8 is NOT sampled for normal SPI flash boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW matters). Use as push-pull LED output."
     pins: [8]
     severity: info
 
@@ -292,7 +293,7 @@ annotations:
     pins: [3, 4, 5, 6, 7]
     severity: info
 
-  - text: "SSR uses 1Hz PWM (zero-cross). Fan uses 25kHz (above audible range). Both use ESP32-C3 LEDC peripheral."
+  - text: "SSR uses 5Hz PWM (zero-cross compatible). Fan uses 25kHz (above audible range). Both use ESP32-C3 LEDC peripheral."
     pins: [9, 10]
     severity: info
 

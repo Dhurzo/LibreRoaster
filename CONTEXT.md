@@ -32,13 +32,13 @@ The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `Roa
 
 1. **USB reader** — gathers bytes from native USB CDC and parses commands
 2. **UART reader** — gathers bytes from UART0 and parses commands
-3. **Control loop** — drains commands, reads sensors, updates control, feeds watchdog, emits telemetry (~100 ms cadence)
+3. **Control loop** — drains commands, reads sensors, updates control, feeds watchdog, emits telemetry (100 ms timer; real tick ≈ 310–330 ms with the MAX31856 conversion wait)
 4. **Dual output** — routes formatted output to active transport
 5. **Regression** — handles over-temperature regression runs on embedded targets
 
-> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is a single command channel per transport, no intermediate queue-processor stage.
+> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is **one shared command channel** for both transports, no intermediate queue-processor stage. Each transport keeps only a byte-level event queue (a buffer, not a task).
 
-The system is wired through a `ServiceContainer` singleton that owns `RoasterControl` (async mutex), command/output channels, the command multiplexer, and watchdog feeder.
+The system is wired through a `ServiceContainer` singleton that owns `RoasterControl` (async mutex), the artisan input, and the watchdog feeder. The command/output channels and the command multiplexer are module-level `statics` that `ServiceContainer` exposes via accessors.
 
 ## Key Design Decisions
 
@@ -56,14 +56,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ Firmware compiles and flashes to ESP32-C3
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
-- ✅ Control loop cycles at ~160 ms
-- ✅ All host tests pass (443 as of 2026-08-03, including `ssr_scheduler` 3/3 — the previously reported "1 pre-existing failure" no longer exists)
+- ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
+- ✅ All host tests pass (**631 as of 2026-08-04** — lib + integration with `--features test`, 0 failures)
 
 **Recent architecture work (v5.4):**
-- RoasterControl decomposed into focused controllers (Temperature, Heater, Fan, Safety)
+- RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer DI migration (constructor injection instead of `static_cell` singleton)
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 244 host tests pass, ESP32 build warning-free
+- All 631 host tests pass, ESP32 build warning-free
 
 ## Known Constraints
 
@@ -72,7 +72,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - GPIO9 is a strapping pin — external fan must not force invalid boot state
 - SPI MISO routed through GPIO5 (not GPIO2) to avoid FSPIQ strap conflict
 - Command queue intentionally small and rate-limited
-- Sensor timing pressure: MAX31856 reads are slow relative to 100 ms PID cadence
+- Sensor timing pressure: MAX31856 conversion (210 ms) is slow relative to the 100 ms loop timer — the real tick is ≈ 310–330 ms
 
 ## Documentation Map
 
@@ -83,34 +83,34 @@ Read these in order depending on what you need to do:
 | Understand the full system | `docs/ARCHITECTURE.md` |
 | Add/modify a serial command | `docs/PROTOCOL.md` |
 | Change pin assignments or hardware init | `docs/HARDWARE.md` |
-| Fix a bug | Check `docs/CONTROL_BUG_AUDIT.md` if available, otherwise investigate source code |
+| Fix a bug | Investigate source code (current bug/risk notes live in code comments; see `docs/ARCHITECTURE.md` §13) |
 | Build, flash, test | `docs/DEVELOPMENT.md` |
 | Understand telemetry/STATUS fields | `docs/INSTRUMENTATION.md` |
 | Configure Artisan integration | `docs/ARTISAN_CONNECTION.md` |
 | Check compatibility boundaries | Review source code and test implementations |
-| Follow coding conventions | See `docs/CONVENTIONS.md` if available, otherwise follow Rust best practices |
+| Follow coding conventions | See `.planning/codebase/CONVENTIONS.md`, otherwise follow Rust best practices |
 | Run quality gates | `.planning/quality/README.md` |
 
 **Source layout:**
 - `src/main.rs` — Entry point (binary)
 - `src/lib.rs` — Library root (`no_std`)
-- `src/application/` — App orchestration, `AppBuilder`, `ServiceContainer`, Embassy tasks
+- `src/application/` — App orchestration, `AppBuilder`, `ServiceContainer`; contains 2 of the 5 Embassy tasks (control loop, dual output)
 - `src/control/` — `RoasterControl`, command handlers, PID, safety
-- `src/control/controllers/` — Focused controllers (Temperature, Heater, Fan, Safety)
+- `src/control/controllers/` — Focused controllers (Sensor, Actuator, Safety, Dispatch)
 - `src/control/handlers/` — Command handlers and artisans
 - `src/hardware/` — MAX31856, SSR, fan, UART, shared SPI
 - `src/hardware/sensors/` — Sensor implementations and conversions
-- `src/hardware/ssr/` — SSR control implementations
-- `src/hardware/uart/` — UART communication
-- `src/hardware/usb_cdc/` — USB CDC communication
+- `src/hardware/ssr.rs` + `ssr_stub.rs` — SSR control implementations (the `ssr/` subdirectory is empty)
+- `src/hardware/uart/` — UART communication (UART reader task)
+- `src/hardware/usb_cdc/` — USB CDC communication (USB reader task)
 - `src/input/` — Artisan command parser
-- `src/output/` — `ArtisanFormatter`, output manager, scheduler
+- `src/output/` — `ArtisanFormatter`, formatters, traits (the continuous-output state machine, `OutputController`, lives in `src/control/abstractions.rs`)
 - `src/output/formatters/` — Output formatting implementations
 - `src/config/` — Constants, `SystemStatus`, command enums
 - `src/error/` — `AppError` types
-- `src/logging/` — Logging infrastructure and telemetry
-- `src/memory/` — Memory management and ring buffers
-- `src/safety/` — Safety implementations and watchdogs
+- `src/logging/` — Logging infrastructure, telemetry, TRACE stream, roast ring buffer (`roast_logger.rs`)
+- `src/memory/` — Memory constants and strategy notes
+- `src/safety/` — Safety implementations, watchdogs, regression task
 - `src/common/` — Common utilities and shared functionality
 
 ## Quality Gates
@@ -131,4 +131,4 @@ cargo test --target x86_64-unknown-linux-gnu --features test
 
 ---
 
-*Last updated: 2026-05-11. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-08-04. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

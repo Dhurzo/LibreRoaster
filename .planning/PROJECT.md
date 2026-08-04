@@ -10,7 +10,9 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Current Milestone: v0.1 — First Working Version
 
-**Goal:** Firmware compiles, flashes onto ESP32-C3, and boots without panics. USB CDC responds to Artisan READ with TC4-format temperatures. Control loop runs continuously at ~160ms per cycle.
+> ✅ **v0.1 released 2026-04-30** and **v5.4 completed 2026-04-22** (architecture decomposition, ServiceContainer DI, clippy cleanup). Since then the V2-series / Bug B1-B36 / p1-p12 hardening arc (2026-07-22 → 08-03) shipped. For the current project state read `CONTEXT.md` (repo root).
+
+**Goal:** Firmware compiles, flashes onto ESP32-C3, and boots without panics. USB CDC responds to Artisan READ with TC4-format temperatures. Control loop runs continuously (100 ms timer; real tick ≈ 310-330 ms with the MAX31856 conversion wait).
 
 **Target outcomes:**
 - Firmware boots on ESP32-C3 hardware with no panics or watchdog resets
@@ -27,15 +29,14 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 - ✓ Artisan can read roaster telemetry over USB CDC serial protocol.
 - ✓ Firmware boots stably without panics or watchdog resets.
 - ✓ USB CDC uses async (non-blocking) I/O — executor not blocked.
-- ✓ All 7 embassy tasks spawn successfully (UART, USB, queue processors, dual output, control loop, regression).
-- ✓ Control loop cycles at ~160ms with stable SensorRead, ControlUpdate, LedcWrite, WatchdogFeed timing.
+- ✓ All 5 embassy tasks spawn successfully (UART reader, USB reader, dual output, control loop, regression).
+- ✓ Control loop ticks at ~310-330ms (100 ms timer + 210 ms MAX31856 conversion wait) with stable SensorRead, ControlUpdate, LedcWrite, WatchdogFeed timing.
 - ✓ x86_64 host builds and tests pass.
 
 ### Active
 
-- [ ] Connect thermocouple and verify temperature readings > 0.0°C
-- [ ] Test Artisan WRITE/OT1/OT2 commands for heater and fan control
-- [ ] Verify RTC WDT recovery under fault conditions
+- Connect thermocouples and verify real readings (hardware-validation milestone — needs a physical roaster)
+- End-to-end roast with real Artisan + heater/fan hardware (not yet validated on real hardware)
 
 ### Out of Scope
 
@@ -46,12 +47,12 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 
 ## Current State
 
-- v5.1 code quality review committed (0a43b46) with 12 improvements across 17 files
-- ESP32 build compiles clean (zero warnings with our changes)
-- 243/244 host tests pass (1 pre-existing failure in ssr_scheduler)
-- 24 pre-existing clippy issues identified across 7 files
-- RoasterControl has 28+ methods spanning 6 responsibilities (SRP violation)
-- ServiceContainer uses static_cell singleton with 6+ call sites (DIP violation)
+- ✅ v0.1 released (2026-04-30); v5.4 architecture decomposition completed (2026-04-22)
+- ✅ RoasterControl decomposed into SensorController / ActuatorController (heater + fan together) / SafetyController / CommandDispatcher
+- ✅ ServiceContainer uses constructor injection (single async-mutex slot; channels + multiplexer are module-level statics)
+- ✅ All 631 host tests pass (2026-08-04, `--features test`); clippy clean on both targets
+- ✅ V2-series / Bug B1-B36 / p1-p12 hardening arc shipped 2026-07-22 → 08-03
+- ⏳ Real-hardware validation (thermocouples, heater, fan, real Artisan) still pending
 
 ## Context
 
@@ -65,16 +66,16 @@ Artisan can read temperatures and control heater/fan during a roast session via 
 - **Scope**: Architectural refactoring only — no behavioral changes
 - **Delivery**: Code changes + passing tests + clean clippy on both targets
 - **Quality bar**: `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` must be warning-free
-- **Test bar**: All 244 tests must pass after each phase
+- **Test bar**: All host tests must pass after each phase (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`; 631 as of 2026-08-04)
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Decompose RoasterControl before ServiceContainer DI | DI depends on controller interfaces existing first | — Pending |
-| Fix clippy + test first (independent of architecture) | Quick wins that don't conflict with decomposition | — Pending |
-| Use trait objects for controller interfaces | Enables DI without changing Embassy task signatures | — Pending |
-| Preserve Artisan protocol byte-for-byte | Roaster must remain 100% Artisan+ compatible | — Pending |
+| Decompose RoasterControl before ServiceContainer DI | DI depends on controller interfaces existing first | ✅ Done (2026-04-22) |
+| Fix clippy + test first (independent of architecture) | Quick wins that don't conflict with decomposition | ✅ Done (2026-04-22) |
+| Use trait objects for controller interfaces | Enables DI without changing Embassy task signatures | ✅ Done (2026-04-22) |
+| Preserve Artisan protocol byte-for-byte | Roaster must remain 100% Artisan+ compatible | ✅ Done — responses verified identical |
 
 ## Evolution
 
@@ -94,4 +95,4 @@ Historical milestone write-ups available in `.planning/MILESTONES.md`.
 </details>
 
 ---
-*Last updated: 2026-04-22 after v5.4 milestone start*
+*Last updated: 2026-08-04 — status refreshed for the v0.1/v5.4/V2-arc reality*

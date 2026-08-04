@@ -1,6 +1,6 @@
 # Simulated Sensor Curves
 
-**Last updated:** 2026-05-18
+**Last updated:** 2026-08-04
 
 ## Overview
 
@@ -65,7 +65,7 @@ pub struct CurvePoint {
 }
 ```
 
-The generator **linearly interpolates** between consecutive waypoints to produce smooth temperature trajectories at the control-loop cadence (~10 Hz). Before the first waypoint, temperatures hold at that waypoint's values. After the last waypoint, they hold at the final values.
+The generator **linearly interpolates** between consecutive waypoints to produce smooth temperature trajectories at the control-loop cadence (~3 Hz: real tick ≈ 310–330 ms because every tick waits on the MAX31856 conversion). Before the first waypoint, temperatures hold at that waypoint's values. After the last waypoint, they hold at the final values.
 
 Maximum curve length: **32 waypoints** (heapless, no heap allocation).
 
@@ -161,7 +161,7 @@ The simulated sensor source produces valid, fault-free readings at every tick. T
 
 ## Host-side tests
 
-The simulated curve module includes 10 unit tests covering edge cases (empty curves, single-point curves, interpolation, boundary conditions, overflow). These run on the host target:
+The simulated curve module includes 18 unit tests covering edge cases (empty curves, single-point curves, interpolation, boundary conditions, overflow, noise). These run on the host target:
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test simulated

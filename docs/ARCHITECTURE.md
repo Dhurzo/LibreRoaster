@@ -1,6 +1,6 @@
 # LibreRoaster Architecture Guide
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-08-04
 
 This document describes the current firmware architecture of LibreRoaster from the implementation outward. It is written for engineers who need to reason about runtime behavior, ownership boundaries, timing, and the points where protocol handling meets real hardware.
 
@@ -43,24 +43,39 @@ It wires together:
 - heater abstraction,
 - fan abstraction,
 - sensor conversion hub,
-- the formatter,
-- the watchdog feeder,
 - the shared service container.
 
-The important architectural choice is that the builder creates a `RoasterControl` instance and then injects it into global runtime storage rather than returning a tree of independently owned services. That keeps task spawning simple, but it also means the `ServiceContainer` becomes the central ownership hub.
+The formatter is not built by `AppBuilder`: it is created later inside
+`TickState::new` (`MutableArtisanFormatter::new()`), which is what actually
+produces formatted output for the control loop.
+
+The important architectural choice is that the builder constructs the
+`RoasterControl` instance (composed of the focused controllers) and injects
+it into the `ServiceContainer` global storage, then returns a small
+`Application` handle used to spawn the task graph — rather than returning a
+tree of independently owned services. That keeps task spawning simple, but it
+also means the `ServiceContainer` becomes the central ownership hub.
 
 ### 3.2 ServiceContainer
 
-`ServiceContainer` is the process-wide service locator. It owns:
+`ServiceContainer` is the process-wide service locator. It owns exactly three
+fields:
 
 - `roaster`: async-mutex guarded control state,
-- `roaster_sync`: sync mirror for critical-section paths,
 - `artisan_input`,
-- `multiplexer`,
-- `watchdog_feeder`,
-- shared command and output channels.
+- `watchdog_feeder`.
 
-This dual-storage model is one of the architecture’s most important constraints. The firmware lazily migrates the control object from sync storage into async storage on startup so async tasks can become the steady-state owners. That keeps compatibility with older sync call sites, but it also creates a subtle “initialization handoff” phase that developers must understand before changing startup behavior.
+The command channel (`ARTISAN_CMD_CHANNEL`), the output channel, and the
+command multiplexer are module-level `static`s that the container accesses
+through accessor methods (`get_artisan_channel`, `get_output_channel`,
+`get_multiplexer`).
+
+> F5.2 refactor note: the previous **dual-slot design** — a sync
+> `Mutex<RefCell<Option<_>>>` mirror (`roaster_sync`) plus an async embassy
+> mutex, with a lazy “initialization handoff” migration on startup — was
+> **removed**. There is now a single async-mutex ownership slot, so no
+> sync/async handoff phase exists. `ServiceContainer::init_roaster` writes
+> directly into the one mutex via `try_lock()`.
 
 ## 4. Task graph
 
@@ -96,7 +111,7 @@ This keeps formatting and transport output decoupled from the control loop itsel
 
 ### Auxiliary runtime
 
-- **regression task**: handles explicit over-temperature regression execution when built for the embedded target
+- **regression task**: handles over-temperature regression execution when built for the embedded target **with the `regression` feature**. Without that feature (and on host), the task is a no-op stub that sleeps forever; the fixture catalogue is currently empty, so even a regression build replays zero fixtures and emits `SAFETY OT-REGRESSION-EMPTY no_fixtures`.
 
 ## 5. Command and telemetry data flow
 
@@ -104,7 +119,7 @@ The runtime data path is:
 
 1. Artisan sends text over USB CDC or UART.
 2. Reader tasks collect bytes until a command boundary is reached.
-3. Queue processors parse text into `ArtisanCommand` values.
+3. The reader task itself parses the text into `ArtisanCommand` values (F5.3 — there are no separate queue-processor tasks).
 4. Parsed commands enter the shared command channel.
 5. The control loop drains commands and calls `RoasterControl::process_artisan_command`.
 6. Some commands generate immediate formatted output.
@@ -132,7 +147,19 @@ That is why duplicate-response bugs have historically appeared around `STATUS`: 
 - safety transitions,
 - runtime status publication.
 
-The refactoring split responsibilities into controller submodules, but the architectural truth remains the same: `RoasterControl` is the single object where protocol intent becomes hardware behavior.
+The v5.4 refactoring split responsibilities into four controller submodules
+(`src/control/controllers/`):
+
+- **SensorController** — sensor sampling, validation, EMA filtering, per-channel fault debounce
+- **ActuatorController** — heater **and** fan actuation together (slew-rate limiting, cycle guard, heat-source cross-check)
+- **SafetyController** — emergency flag management, safety policy evaluation
+- **CommandDispatcher** — command routing
+
+(`FanController` exists only as the hardware LEDC fan driver in
+`src/hardware/fan.rs` — there is no `TemperatureController`,
+`HeaterController`, or `FanController` controller.)
+
+But the architectural truth remains the same: `RoasterControl` is the single object where protocol intent becomes hardware behavior.
 
 ### State model
 
@@ -212,16 +239,27 @@ Several timing constants define the system, but the implementation has important
 
 ### Nominal cadences
 
-- control loop target: 100 ms
-- watchdog feed cadence: 100 ms
+- control loop period: 100 ms timer (`CONTROL_LOOP_PERIOD_MS`)
+- watchdog feed cadence: 100 ms nominal
 - output interval: 1000 ms default
 - stale-reading timeout: 1000 ms
 
 ### Important reality
 
-The thermocouple read path is slower than the nominal PID cadence. The code compensates with stale-data protection and instrumentation, but this means developers must not assume the control loop is operating on fresh sensor data every 100 ms.
+The MAX31856 one-shot conversion dominates the real tick: each control-loop
+tick waits `MAX31856_CONVERSION_TIME_MS = 210` ms on top of the 100 ms timer,
+so the **actual cadence is ≈ 310–330 ms**
+(`CONTROL_LOOP_TICK_MS = CONTROL_LOOP_PERIOD_MS + MAX31856_CONVERSION_TIME_MS`).
+The `160 ms` figure sometimes quoted elsewhere is the sensor read interval
+(`TEMPERATURE_READ_INTERVAL_MS`), not the loop cycle.
 
-That timing mismatch is one of the defining technical constraints of the firmware.
+The code compensates with stale-data protection and instrumentation, but
+developers must not assume the control loop is operating on fresh sensor data
+every 100 ms.
+
+That timing mismatch is one of the defining technical constraints of the
+firmware — and the reason the software watchdog timeout is 1000 ms (several
+real ticks).
 
 ## 10. Safety architecture
 
@@ -271,7 +309,7 @@ That boundary is intentional. LibreRoaster is a device firmware endpoint, not a 
 
 The most important areas to treat carefully during future changes are:
 
-1. **sync/async dual ownership in `ServiceContainer`**
+1. **single async-mutex ownership in `ServiceContainer`** (one slot; channels and multiplexer are statics)
 2. **sensor-read duration relative to control cadence**
 3. **response emission split across control and output paths**
 4. **fixed-capacity output channels and buffers**
@@ -288,4 +326,4 @@ For a cold technical reader, the best order is:
 3. the hardware guide (`docs/HARDWARE.md`),
 4. the development guide (`docs/DEVELOPMENT.md`),
 5. the instrumentation guide (`docs/INSTRUMENTATION.md`),
-6. check source code for current bug/risk information (see `docs/CONTROL_BUG_AUDIT.md` if available).
+6. check `CONTEXT.md` (repo root) for current project state and source layout.
