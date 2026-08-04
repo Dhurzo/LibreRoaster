@@ -73,31 +73,39 @@ impl PreheatCurve {
     }
 }
 
-/// Roast curve: BT rise from charge (~100°C) to drop (~220°C) over 60 steps.
-/// Models a ~10-minute roast at ~2°C/sample ROR.
+/// Roast curve: BT from charge (150°C drum) through the charge dip
+/// (~102°C turnaround at 60s) to drop (~220°C) over 60 steps.
+///
+/// Models a ~10-minute medium roast (10s/step):
+/// - Charge dip into a preheated drum, turnaround at ~60s
+/// - Drying: ROR builds to its peak (~27°C/min) around 130-140°C
+/// - Maillard: ROR declines from ~24°C/min to ~9°C/min
+/// - First crack (~196°C) at ~400s ≈ 67% of the roast (typical 65-80%)
+/// - Development: ROR fades from ~9°C/min to ~3°C/min until drop
 struct RoastCurve;
 
 impl RoastCurve {
     fn temp_at(&self, step: usize) -> f32 {
         let temps: [f32; 61] = [
-            // Charge phase: temp drop then recovery
-            150.0, 130.0, 115.0, 108.0, 105.0, // 0-4: charge dip
-            // Drying phase: slow rise
-            108.0, 114.0, 122.0, 131.0, 140.0, // 5-9
-            // Maillard: medium ramp
-            148.0, 156.0, 163.0, 169.0, 174.0, // 10-14
-            // Development: steady rise
-            179.0, 183.0, 187.0, 190.0, 193.0, // 15-19
-            196.0, 198.0, 200.0, 202.0, 204.0, // 20-24
-            // Approaching target
-            206.0, 208.0, 210.0, 212.0, 214.0, // 25-29
-            216.0, 217.0, 218.0, 219.0, 220.0, // 30-34
-            // Stabilization at target
-            220.0, 220.0, 220.0, 219.0, 220.0, // 35-39
-            220.0, 221.0, 220.0, 220.0, 220.0, // 40-44
-            220.0, 220.0, 220.0, 219.0, 220.0, // 45-49
-            220.0, 220.0, 220.0, 220.0, 220.0, // 50-54
-            220.0, 220.0, 220.0, 220.0, 220.0, // 55-59
+            // Charge phase: beans dropped into preheated (150°C) drum —
+            // cold bean mass pulls BT down to the turnaround
+            150.0, 136.0, 124.0, 114.0, 108.0, // 0-4: charge dip
+            104.0, 102.5, // 5-6: turnaround at ~60s
+            // Drying phase: ROR builds to its peak (~27°C/min)
+            103.5, 105.5, 108.5, 112.0, // 7-10
+            116.0, 120.5, 125.0, 129.5, 133.0, // 11-15
+            137.5, 142.0, 146.5, 150.5, // 16-19
+            // Maillard phase: ROR declines (~24 → ~9°C/min)
+            154.5, 158.0, 161.5, 164.5, 167.5, // 20-24
+            170.0, 172.5, 175.0, 177.5, 179.5, // 25-29
+            181.5, 183.5, 185.0, 186.5, 188.0, // 30-34
+            189.5, 191.0, 192.5, 194.0, 195.5, // 35-39
+            // First crack (~196°C) at ~400s — development begins
+            196.5, 198.0, 199.5, 201.0, 202.5, // 40-44
+            204.0, 205.5, 207.0, 208.5, 210.0, // 45-49
+            211.5, 213.0, 214.5, 216.0, 217.0, // 50-54
+            // Development: ROR fades to ~3°C/min until drop at ~220°C
+            218.0, 219.0, 219.5, 219.8, 220.0, // 55-59
             220.0, // 60
         ];
         let idx = step.min(temps.len() - 1);
@@ -546,7 +554,7 @@ fn test_temperature_scale_switching_during_roast() {
     sim.send(ArtisanCommand::StartRoast);
     sim.run_roast_curve(5);
 
-    // At this point BT is ~114°C (from RoastCurve)
+    // At this point BT is ~108°C (from RoastCurve, charge-dip recovery)
     let s = sim.status();
     let bt_c = s.bean_temp;
     println!("   Current BT: {:.1}°C", bt_c);
