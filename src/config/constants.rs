@@ -136,6 +136,14 @@ pub const PROBE_STUCK_TARGET_MARGIN_C: f32 = 5.0;
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.
 pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
+/// Number of retry attempts to force the fan to 100 % during emergency
+/// shutdown / emergency stop.
+///
+/// Bug B-L / B-H (2026-08-04): the fan previously got a single attempt while
+/// the heater got `EMERGENCY_HEATER_OFF_RETRIES`. A failed fan write with a
+/// hot bean mass is the exact "no fan = unsafe to continue" condition, so
+/// cooling gets the same retry discipline as heater cut-off.
+pub const EMERGENCY_FAN_RETRIES: u8 = 3;
 
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
 pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;

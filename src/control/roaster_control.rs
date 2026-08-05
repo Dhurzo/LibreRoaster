@@ -345,15 +345,28 @@ impl RoasterControl {
         );
 
         if outcome.zero_ssr {
-            if let Err(e) = self.actuator.set_heater_power(0.0) {
-                log::error!("Safety outcome: heater off failed: {:?}", e);
+            // Bug B-E (2026-08-04): the previous single-shot log-only writes
+            // (`set_heater_power(0.0)` / `set_fan_raw(100.0)` with
+            // `log::error!` on failure and an unconditional
+            // `status.fan_output = 100.0`) silently left the heater possibly
+            // energised and let the telemetry claim full cooling. Use the
+            // shared retried force methods; `status.fan_output` is only
+            // published after a successful write, and a fan that cannot
+            // reach 100 % is "unsafe to continue" (same rule as
+            // `stop_streaming`), so it escalates to the caller.
+            //
+            // Note: this path is currently reachable only via
+            // `process_command` with a `RoasterCommand::EmergencyStop` /
+            // `ArtisanEmergencyStop` (the Artisan STOP token routes through
+            // `handle_emergency_stop`), but it must not silently fail if
+            // future code routes an emergency here.
+            self.actuator.force_heater_off(&mut self.status);
+            let fan_ok = self.actuator.force_fan_100(&mut self.status);
+            if !fan_ok {
+                return Err(RoasterError::HardwareError {
+                    source: Some("safety_outcome_fan_failed"),
+                });
             }
-            self.actuator.capture_ssr_monitor_metrics(&mut self.status);
-            // Also set fan to 100% for cooling during safety events
-            if let Err(e) = self.actuator.set_fan_raw(100.0) {
-                log::error!("Safety outcome: fan 100% failed: {:?}", e);
-            }
-            self.status.fan_output = 100.0;
         }
 
         if outcome.disable_pid {
@@ -1238,21 +1251,31 @@ impl RoasterControl {
         // Cut the heater directly and force the fan to 100% to cool the
         // hot bean mass. Fan persistence during the cooldown is enforced
         // in `update_control` (see fix #2), so this 100% is sticky.
-        // Bug R3 (2026-07-26): the previous `?` on the heater-off write
-        // skipped the fan write when the heater failed — the hot bean mass
-        // left without cooling during the most critical path. Cut heater and
-        // force fan independently.
-        if let Err(e) = self.actuator.set_heater_power(0.0) {
-            log::error!("Emergency stop: heater off failed: {:?}", e);
-        }
-        if let Err(e) = self.actuator.set_fan_raw(100.0) {
-            log::error!("Emergency stop: fan 100% failed: {:?}", e);
-        }
-        self.status.fan_output = 100.0;
+        //
+        // Bug B-H (2026-08-04): the previous single-attempt log-only
+        // writes (`set_heater_power(0.0)` / `set_fan_raw(100.0)` with an
+        // unconditional `status.fan_output = 100.0`) silently left the
+        // heater possibly energised and let the telemetry claim full
+        // cooling. Use the shared retried force methods; the fan failure
+        // escalates to an `Err` so the control loop emits an ERR to
+        // Artisan ("no fan means unsafe to continue", same rule as
+        // `stop_streaming`).
+        self.actuator.force_heater_off(&mut self.status);
+        let fan_ok = self.actuator.force_fan_100(&mut self.status);
 
         // Stop streaming the protocol output without touching the latch.
         self.dispatch.stop_streaming(&mut self.status);
         crate::logging::roast_logger::stop_roast();
+
+        if !fan_ok {
+            log::error!(
+                "Emergency stop: fan FAILED to reach 100% after {} retries — unsafe to continue",
+                crate::config::constants::EMERGENCY_FAN_RETRIES
+            );
+            return Err(RoasterError::HardwareError {
+                source: Some("emergency_stop_fan_failed"),
+            });
+        }
 
         info!("Artisan+ emergency stop - latched, heater off, fan 100% (recovery via StopRoast)");
         Ok(())
@@ -1764,8 +1787,12 @@ mod tests {
     use super::*;
     use crate::common::{StubFan, StubHeater};
     use crate::config::{ArtisanCommand, RoasterCommand, RoasterState};
+    use crate::control::traits::Fan;
     use crate::hardware::sensors::SensorConversionHub;
     use alloc::boxed::Box;
+    use alloc::sync::Arc;
+    use core::cell::RefCell;
+    use critical_section::Mutex;
     use embassy_time::Instant;
 
     fn make_control() -> RoasterControl {
@@ -2935,6 +2962,166 @@ mod tests {
                 && ctrl.charge_time.is_none()
                 && !ctrl.get_status().charge_detected,
             "P11: START must clear the charge-detection state for the next batch"
+        );
+    }
+
+    // ── B-L / B-H (2026-08-04): fan retry discipline in emergency paths ────
+
+    /// Shared per-instance attempt counter for `FlakyFan` (an `Arc` so the
+    /// test can read the count after the fan is moved into the control
+    /// object; a `critical_section::Mutex` keeps the fan `Send` as required
+    /// by `Box<dyn Fan + Send>`). Each test owns its own `Arc`, so tests
+    /// running in parallel never interfere.
+    type FanAttemptCounter = Arc<Mutex<RefCell<u8>>>;
+
+    fn new_fan_attempt_counter() -> FanAttemptCounter {
+        Arc::new(Mutex::new(RefCell::new(0)))
+    }
+
+    fn read_fan_attempts(counter: &FanAttemptCounter) -> u8 {
+        critical_section::with(|cs| *counter.borrow(cs).borrow())
+    }
+
+    /// Fan stub whose `emergency_set_speed` fails for the first
+    /// `fail_attempts` calls, then succeeds. Used to verify that the
+    /// emergency paths retry the fan instead of giving up after one attempt
+    /// (Bug B-L / B-H) and that `status.fan_output` is only published after a
+    /// successful write.
+    struct FlakyFan {
+        fail_attempts: u8,
+        attempts: FanAttemptCounter,
+        last_speed: RefCell<f32>,
+    }
+
+    impl FlakyFan {
+        fn new(fail_attempts: u8, attempts: FanAttemptCounter) -> Self {
+            Self {
+                fail_attempts,
+                attempts,
+                last_speed: RefCell::new(0.0),
+            }
+        }
+    }
+
+    impl Fan for FlakyFan {
+        fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError> {
+            *self.last_speed.borrow_mut() = duty;
+            Ok(())
+        }
+
+        fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError> {
+            let attempt = critical_section::with(|cs| {
+                let mut n = self.attempts.borrow(cs).borrow_mut();
+                *n = n.saturating_add(1);
+                *n
+            });
+            if attempt <= self.fail_attempts {
+                return Err(RoasterError::HardwareError {
+                    source: Some("flaky_fan"),
+                });
+            }
+            *self.last_speed.borrow_mut() = percentage;
+            Ok(())
+        }
+
+        fn get_speed(&self) -> f32 {
+            *self.last_speed.borrow()
+        }
+    }
+
+    fn make_control_with_fan(fan: Box<dyn Fan + Send>) -> RoasterControl {
+        let heater = Box::new(StubHeater::new());
+        RoasterControl::new(heater, fan, SensorConversionHub::new())
+            .expect("test control should build")
+    }
+
+    #[test]
+    fn emergency_shutdown_fan_retries_until_success() {
+        // Bug B-L: the fan used to get a single attempt while the heater got
+        // EMERGENCY_HEATER_OFF_RETRIES. A fan that fails twice and then
+        // succeeds must still end at 100 %.
+        let attempts = new_fan_attempt_counter();
+        let fan = Box::new(FlakyFan::new(2, attempts.clone()));
+        let mut ctrl = make_control_with_fan(fan);
+
+        let result = ctrl.emergency_shutdown("test");
+        assert!(matches!(
+            result,
+            Err(RoasterError::EmergencyShutdown { .. })
+        ));
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert_eq!(
+            read_fan_attempts(&attempts),
+            crate::config::constants::EMERGENCY_FAN_RETRIES,
+            "B-L: the fan must be retried EMERGENCY_FAN_RETRIES times"
+        );
+        assert!(
+            ctrl.get_status().fan_output == 100.0,
+            "B-L: fan retries must land at 100 % (fan_output = {})",
+            ctrl.get_status().fan_output
+        );
+    }
+
+    #[test]
+    fn emergency_shutdown_fan_total_failure_keeps_fan_output_honest() {
+        // Bug B-L: when the fan never accepts a write, `status.fan_output`
+        // must NOT claim 100 % (the previous code wrote it unconditionally).
+        let attempts = new_fan_attempt_counter();
+        let fan = Box::new(FlakyFan::new(u8::MAX, attempts.clone()));
+        let mut ctrl = make_control_with_fan(fan);
+
+        let result = ctrl.emergency_shutdown("test");
+        assert!(matches!(
+            result,
+            Err(RoasterError::EmergencyShutdown { .. })
+        ));
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert_eq!(
+            read_fan_attempts(&attempts),
+            crate::config::constants::EMERGENCY_FAN_RETRIES,
+            "B-L: the fan gets exactly EMERGENCY_FAN_RETRIES attempts before giving up"
+        );
+        assert_ne!(
+            ctrl.get_status().fan_output,
+            100.0,
+            "B-L: fan_output must reflect the physical state (fan never reached 100 %)"
+        );
+    }
+
+    #[test]
+    fn artisan_stop_fan_failure_returns_err() {
+        // Bug B-H: the Artisan STOP token path (`handle_emergency_stop`) must
+        // escalate when the fan cannot reach 100 % — the control loop then
+        // emits an ERR to Artisan instead of silently acknowledging.
+        let attempts = new_fan_attempt_counter();
+        let fan = Box::new(FlakyFan::new(u8::MAX, attempts.clone()));
+        let mut ctrl = make_control_with_fan(fan);
+
+        let result = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(result.is_err(), "B-H: fan failure must propagate as Err");
+        assert!(ctrl.safety().is_emergency_active());
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert_ne!(
+            ctrl.get_status().fan_output,
+            100.0,
+            "B-H: fan_output must not claim 100 % when the fan never moved"
+        );
+    }
+
+    #[test]
+    fn artisan_stop_fan_success_returns_ok() {
+        // Bug B-H: with a working fan the STOP path still acknowledges.
+        let fan = Box::new(StubFan::new());
+        let mut ctrl = make_control_with_fan(fan);
+
+        let result = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(result.is_ok());
+        assert!(ctrl.safety().is_emergency_active());
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert_eq!(
+            ctrl.get_status().fan_output,
+            100.0,
+            "B-H: successful fan write must publish 100 %"
         );
     }
 }

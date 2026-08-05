@@ -116,6 +116,58 @@ impl ActuatorController {
         Ok(())
     }
 
+    /// Force the heater to 0 % with `EMERGENCY_HEATER_OFF_RETRIES` attempts.
+    ///
+    /// Returns `true` if any attempt succeeded. On total failure the SSR
+    /// hardware status escalates to `Error` (the heater's physical state is
+    /// unknown, so the status must not claim availability).
+    ///
+    /// Bug B-L / B-H / B-E (2026-08-04): extracted from `emergency_shutdown`
+    /// so the retry discipline is shared by every emergency path (internal
+    /// traps, manual Artisan STOP, safety policy outcomes) instead of being
+    /// re-implemented with single-shot log-only writes.
+    pub fn force_heater_off(&mut self, status: &mut SystemStatus) -> bool {
+        let mut ok = false;
+        for attempt in 0..crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES {
+            if self.heater.set_power(0.0).is_ok() {
+                ok = true;
+                break;
+            }
+            log::warn!("EMERGENCY: Heater off attempt {} failed", attempt + 1);
+        }
+        if !ok {
+            log::error!(
+                "EMERGENCY: Heater FAILED to shut off after {} retries",
+                crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES
+            );
+            status.ssr_hardware_status = crate::config::constants::SsrHardwareStatus::Error;
+        }
+        self.capture_ssr_monitor_metrics(status);
+        ok
+    }
+
+    /// Force the fan to 100 % with `EMERGENCY_FAN_RETRIES` attempts.
+    ///
+    /// Returns `true` if any attempt succeeded. `status.fan_output` is only
+    /// written after a successful write, so the telemetry reflects the
+    /// physical state: the previous single-shot paths wrote
+    /// `fan_output = 100.0` unconditionally, letting the status claim full
+    /// cooling while the fan never moved.
+    pub fn force_fan_100(&mut self, status: &mut SystemStatus) -> bool {
+        for attempt in 0..crate::config::constants::EMERGENCY_FAN_RETRIES {
+            if self.fan.emergency_set_speed(100.0).is_ok() {
+                status.fan_output = 100.0;
+                return true;
+            }
+            log::warn!("EMERGENCY: Fan 100% attempt {} failed", attempt + 1);
+        }
+        log::error!(
+            "EMERGENCY: Fan FAILED to reach 100% after {} retries",
+            crate::config::constants::EMERGENCY_FAN_RETRIES
+        );
+        false
+    }
+
     pub fn emergency_shutdown(
         &mut self,
         reason: &str,
@@ -128,26 +180,13 @@ impl ActuatorController {
         self.slewing_output = 0.0;
         self.last_slew_update = None;
 
-        let mut heater_off_ok = false;
-        for attempt in 0..crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES {
-            if self.heater.set_power(0.0).is_ok() {
-                heater_off_ok = true;
-                break;
-            }
-            log::warn!("EMERGENCY: Heater off attempt {} failed", attempt + 1);
-        }
-        if !heater_off_ok {
-            log::error!(
-                "EMERGENCY: Heater FAILED to shut off after {} retries",
-                crate::config::constants::EMERGENCY_HEATER_OFF_RETRIES
-            );
-            status.ssr_hardware_status = crate::config::constants::SsrHardwareStatus::Error;
-        }
-        self.capture_ssr_monitor_metrics(status);
-        if let Err(e) = self.fan.emergency_set_speed(100.0) {
-            log::error!("EMERGENCY: Fan FAILED to reach 100%: {:?}", e);
-        }
-        status.fan_output = 100.0;
+        // Bug B-L (2026-08-04): the heater AND the fan are both retried now.
+        // Previously the heater got `EMERGENCY_HEATER_OFF_RETRIES` attempts
+        // while the fan got a single attempt with log-only error handling,
+        // and `status.fan_output = 100.0` was written even when the write
+        // failed. `force_fan_100` only publishes the value on success.
+        self.force_heater_off(status);
+        self.force_fan_100(status);
 
         Err(RoasterError::EmergencyShutdown {
             source: Some("emergency_shutdown"),

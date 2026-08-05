@@ -194,7 +194,21 @@ impl SensorController {
         }
         // else: status.env_temp keeps the last valid value (real hold).
 
-        self.last_temp_read = Some(current_time);
+        // Bug B-Q (2026-08-04): only mark the read as fresh when at least one
+        // channel delivered a clean sample. When BOTH channels are faulted the
+        // sample carried no new information (the V2-2 hold keeps the last
+        // valid temperature in `status.*_temp`), so refreshing
+        // `last_temp_read` here would make `update_control`'s staleness guard
+        // treat the held value as fresh and let the PID keep integrating
+        // against stale data — worst case at boot: PV stuck at 0.0 while the
+        // heater ramps toward 100 %. Freezing the timestamp sends the PID
+        // into the stale-hold branch (`is_stale`), which holds the last
+        // APPLIED output instead of ramping. A single-channel fault (e.g. the
+        // supported BT-only config with ET unplugged) still refreshes the
+        // timestamp because the other channel is usable.
+        if !(bean_fault.has_fault() && env_fault.has_fault()) {
+            self.last_temp_read = Some(current_time);
+        }
 
         // Only check overtemp against valid sensors (ignore faulted ones).
         // A faulted channel did not overwrite status.*_temp above, so this
@@ -869,5 +883,58 @@ mod tests {
             ctrl.apply_fault_debounce(true, false, &mut status);
         }
         assert!(status.fault_condition);
+    }
+
+    // ── Bug B-Q (2026-08-04): a fully-faulted read must not refresh the ────
+    // ── freshness timestamp (`last_temp_read`) ─────────────────────────────
+
+    #[test]
+    fn both_channels_faulted_does_not_refresh_last_temp_read() {
+        // Bug B-Q: when BOTH channels are faulted the sample carries no new
+        // information (V2-2 hold keeps the last valid temperature). Refreshing
+        // `last_temp_read` made `update_control`'s staleness guard treat the
+        // held value as fresh, letting the PID integrate against stale data —
+        // worst case at boot: PV stuck at 0.0 with the heater ramping toward
+        // 100 %. The timestamp must stay frozen so the PID enters the
+        // stale-hold branch instead.
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let no_fault = SensorFault::default();
+        let bean_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+        let env_fault = SensorFault {
+            fault_detected: true,
+            ..SensorFault::default()
+        };
+
+        // Seed a clean reading — this establishes `last_temp_read`.
+        let t0 = embassy_time::Instant::from_millis(1_000);
+        ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, t0, &mut status)
+            .expect("seed clean reading");
+        assert_eq!(ctrl.last_temp_read(), Some(t0));
+
+        // A fully-faulted read at t1 must NOT move the timestamp.
+        let t1 = embassy_time::Instant::from_millis(2_000);
+        ctrl.update_temperatures(999.0, 888.0, bean_fault, env_fault, t1, &mut status)
+            .expect("faulted read is not an error");
+        assert_eq!(
+            ctrl.last_temp_read(),
+            Some(t0),
+            "B-Q: a fully-faulted read must not refresh last_temp_read"
+        );
+
+        // A single clean channel (BT-only config with ET unplugged) still
+        // refreshes the timestamp — the remaining channel is usable.
+        let t2 = embassy_time::Instant::from_millis(3_000);
+        ctrl.update_temperatures(151.0, 888.0, no_fault, env_fault, t2, &mut status)
+            .expect("partially-faulted read is not an error");
+        assert_eq!(
+            ctrl.last_temp_read(),
+            Some(t2),
+            "B-Q: a partially-faulted read (one clean channel) must refresh the timestamp"
+        );
     }
 }
