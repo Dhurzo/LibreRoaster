@@ -39,6 +39,17 @@ impl ActuatorController {
         reject_on_busy: bool,
         status: &mut SystemStatus,
     ) -> Result<f32, RoasterError> {
+        // Bug S5 (2026-08-05): NaN/±Inf must never reach the clamp/slew/status
+        // logic. `NaN.clamp(0.0, 100.0)` passes NaN through, the slew computes
+        // NaN, and `status.ssr_output = NaN` disarms the comms-idle and
+        // MAX_ROAST_TIME backstops (`NaN > 0.0 == false`). Rejecting with an
+        // Err is fail-safe: the control loop escalates to emergency shutdown,
+        // and a command path surfaces `ERR handler_failed`.
+        if !desired.is_finite() {
+            return Err(RoasterError::InvalidState {
+                source: Some("non_finite_heater_output"),
+            });
+        }
         let clamped = desired.clamp(0.0, 100.0);
         self.update_guard_busy_ms(now, status);
 
@@ -175,7 +186,12 @@ impl ActuatorController {
     ) -> Result<(), RoasterError> {
         error!("Emergency shutdown: {}", reason);
         status.state = crate::config::constants::RoasterState::Error;
-        status.ssr_output = 0.0;
+        // Bug S7 (2026-08-05): `ssr_output` is NOT zeroed unconditionally
+        // anymore. If the heater is physically stuck ON (`force_heater_off`
+        // failed every attempt), telemetry must not claim 0 % — the honest
+        // signal is `ssr_hardware_status = Error`. `ssr_output` only drops to
+        // 0 once the off-write actually succeeds (here, or via the next
+        // control-tick `apply_guarded_heater(0.0)` off-branch).
         status.ssr_cycle_guard_busy_until_ms = 0;
         self.slewing_output = 0.0;
         self.last_slew_update = None;
@@ -185,8 +201,26 @@ impl ActuatorController {
         // while the fan got a single attempt with log-only error handling,
         // and `status.fan_output = 100.0` was written even when the write
         // failed. `force_fan_100` only publishes the value on success.
-        self.force_heater_off(status);
-        self.force_fan_100(status);
+        let heater_off_ok = self.force_heater_off(status);
+        if heater_off_ok {
+            status.ssr_output = 0.0;
+        }
+        let fan_ok = self.force_fan_100(status);
+
+        // Bug S4 (2026-08-05): internal-trap emergencies (overtemp, NaN, RoR,
+        // watchdog) used to absorb a total fan failure silently — the caller
+        // only ever saw `EmergencyShutdown`. Same rule as `stop_streaming` and
+        // the command paths (B-E / B-H): no fan at 100 % means unsafe to
+        // continue, so escalate with the fan-failure variant.
+        if !fan_ok {
+            log::error!(
+                "EMERGENCY: Fan FAILED to reach 100% after {} retries — unsafe to continue",
+                crate::config::constants::EMERGENCY_FAN_RETRIES
+            );
+            return Err(RoasterError::HardwareError {
+                source: Some("emergency_fan_failed"),
+            });
+        }
 
         Err(RoasterError::EmergencyShutdown {
             source: Some("emergency_shutdown"),
@@ -253,6 +287,62 @@ impl ActuatorController {
             busy_until.duration_since(now).as_millis()
         } else {
             0
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod proptest_tests {
+        #![allow(clippy::unwrap_used)]
+
+        use super::*;
+        use crate::common::{StubFan, StubHeater};
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Fase 3 (BUG-CATCH-PLAN.md): hostile but FINITE `desired`
+            /// outputs (huge magnitudes, f32::MAX, subnormals, negatives,
+            /// ±0.0) must never poison `status.ssr_output`. The NaN boundary
+            /// is documented by the S5 reproduction test
+            /// (`safety_repro_tests.rs`, currently fails — NaN propagates and
+            /// disarms the comms-idle / MAX_ROAST_TIME backstops because
+            /// `NaN > 0.0 == false`). Every finite input class must clamp
+            /// into [0, 100] and stay finite.
+            #[test]
+            fn guarded_heater_output_stays_finite_and_clamped(
+                desired in prop_oneof![
+                    Just(f32::MAX),
+                    Just(f32::MIN_POSITIVE),
+                    Just(f32::MIN_POSITIVE * 0.5),
+                    Just(-0.0),
+                    Just(0.0),
+                    Just(100.0),
+                    -1e30f32..1e30,
+                ]
+            ) {
+                let mut act = ActuatorController::new(
+                    Box::new(StubHeater::new()),
+                    Box::new(StubFan::new()),
+                );
+                let mut status = SystemStatus::default();
+                let now = Instant::from_millis(1_000);
+
+                let result = act.apply_guarded_heater(desired, now, false, &mut status);
+                assert!(result.is_ok(), "finite desired must be accepted, got {result:?}");
+                assert!(
+                    status.ssr_output.is_finite(),
+                    "S5-class: ssr_output must stay finite, got {:?}",
+                    status.ssr_output
+                );
+                assert!(
+                    (0.0..=100.0).contains(&status.ssr_output),
+                    "ssr_output must clamp into [0,100], got {:?}",
+                    status.ssr_output
+                );
+            }
         }
     }
 }

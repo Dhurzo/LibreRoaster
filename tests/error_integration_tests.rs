@@ -1,3 +1,6 @@
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use libreroaster::control::traits::{Fan, Heater, Thermometer};
 use libreroaster::control::RoasterError;
 use libreroaster::error::app_error::{AppError, CommunicationError, InitError};

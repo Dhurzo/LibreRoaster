@@ -35,8 +35,18 @@ mod software_watchdog {
     use core::sync::atomic::Ordering;
     use portable_atomic::AtomicU64;
 
+    /// Sentinel meaning "never fed yet". `u64::MAX` on purpose: the previous
+    /// sentinel was `0`, but a feed landing in the first millisecond of the
+    /// time driver's baseline (real `Instant::now()` = 0 ms — always the case
+    /// in host tests, theoretically possible after a boot that feeds before
+    /// the counter advances) was stored as `0` and became indistinguishable
+    /// from "never fed", making `is_alive()` return `true` forever (Bug S9,
+    /// 2026-08-05). A real ms timestamp can never reach `u64::MAX`, so the
+    /// sentinel is unambiguous.
+    const NEVER_FED: u64 = u64::MAX;
+
     /// Timestamp of last successful feed in milliseconds
-    static LAST_FEED_MS: AtomicU64 = AtomicU64::new(0);
+    static LAST_FEED_MS: AtomicU64 = AtomicU64::new(NEVER_FED);
     // Bug audit 2026-08-02: the previous 500 ms assumed a ~100 ms loop
     // cadence ("5 missed ticks"). The real cadence is one tick per
     // MAX31856 conversion wait (210 ms) + 100 ms timer + overhead ≈ 330 ms,
@@ -53,7 +63,7 @@ mod software_watchdog {
 
     impl WatchdogFeeder {
         pub fn initialize() -> Result<Self, WatchdogError> {
-            LAST_FEED_MS.store(0, Ordering::SeqCst);
+            LAST_FEED_MS.store(NEVER_FED, Ordering::SeqCst);
             Ok(Self { last_failure: None })
         }
 
@@ -75,7 +85,11 @@ mod software_watchdog {
             // out-of-order pair NEVER panics; if `now - last` is 0 the
             // timeout branch is taken conservatively (correct: a clock that
             // wrapped is unreliable).
-            if last > 0 && now.saturating_sub(last) > WATCHDOG_TIMEOUT_MS {
+            // Bug S9: the `last > 0` guard (which skipped the gap check for
+            // "never fed") is replaced by the unambiguous `NEVER_FED`
+            // sentinel, so a genuine first-millisecond feed is checked like
+            // any other.
+            if last != NEVER_FED && now.saturating_sub(last) > WATCHDOG_TIMEOUT_MS {
                 self.last_failure = Some("watchdog_timeout");
                 return Err(WatchdogError::FeedFailed("watchdog_timeout"));
             }
@@ -90,7 +104,7 @@ mod software_watchdog {
         pub fn is_alive(&self) -> bool {
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
-            last == 0 || now.saturating_sub(last) <= WATCHDOG_TIMEOUT_MS
+            last == NEVER_FED || now.saturating_sub(last) <= WATCHDOG_TIMEOUT_MS
         }
     }
 }

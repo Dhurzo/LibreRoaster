@@ -47,13 +47,24 @@ impl UartTxDriver {
     }
 
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UartError> {
-        Write::write(&mut self.tx, data)
-            .await
-            .map_err(|_| UartError::TransmissionError)?;
-        Write::flush(&mut self.tx)
-            .await
-            .map_err(|_| UartError::TransmissionError)?;
-        Ok(())
+        // Bug S8 (2026-08-05): symmetric with the USB CDC driver (Bug A2).
+        // `Write::write`/`Write::flush` on the async UART can stall if the
+        // peripheral wedges; with no timeout the `dual_output_task` froze
+        // forever holding the TX mutex, killing ALL output (including the
+        // UART fallback during a USB session). Bound each phase at 50 ms and
+        // treat a timeout as a dropped line — the next telemetry tick carries
+        // fresh data anyway.
+        use embassy_time::{with_timeout, Duration};
+        match with_timeout(Duration::from_millis(50), Write::write(&mut self.tx, data)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return Err(UartError::TransmissionError),
+            Err(_timeout) => return Err(UartError::TransmissionError),
+        }
+        match with_timeout(Duration::from_millis(50), Write::flush(&mut self.tx)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(_)) => Err(UartError::TransmissionError),
+            Err(_timeout) => Err(UartError::TransmissionError),
+        }
     }
 }
 

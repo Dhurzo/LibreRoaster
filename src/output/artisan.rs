@@ -89,10 +89,20 @@ impl ArtisanFormatter {
     }
 
     fn normalize_read_value(value: f32) -> f32 {
-        if value.is_finite() {
-            value
+        if !value.is_finite() {
+            return 0.0;
+        }
+        // Bug S10 (2026-08-05): a huge but FINITE value (e.g. `f32::MAX`,
+        // ~40 chars as `{:.1}`) used to pass through untouched and get
+        // truncated mid-digit by the heapless READ buffer, corrupting the
+        // CSV token Artisan must parse (counterexample: `...,-`). Telemetry
+        // fields (temperatures, duties) never legitimately exceed ±1000 —
+        // clamp into a magnitude that always fits, so the wire format stays
+        // well-formed no matter what state the status carries.
+        if value.abs() > 1000.0 {
+            value.clamp(-1000.0, 1000.0)
         } else {
-            0.0
+            value
         }
     }
 }
@@ -618,6 +628,7 @@ mod tests {
     use crate::config::{
         RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings,
     };
+    use proptest::prelude::*;
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
@@ -1263,5 +1274,75 @@ mod tests {
             "RoR must advance on a clean ramp (per-slice bug froze it): {}",
             last_ror
         );
+    }
+
+    proptest! {
+        /// Fase 3 (BUG-CATCH-PLAN.md): formatting a `SystemStatus` whose
+        /// numeric fields carry NaN / ±Inf / huge / negative values must
+        /// never panic and must never emit a literal "NaN" / "inf" token
+        /// that could corrupt Artisan's numeric parsing of the READ line.
+        ///
+        /// S10 (DEFENSIVO, FIX 2026-08-05): pre-fix this property FAILED on
+        /// huge-but-finite values. `normalize_read_value` mapped only
+        /// non-finite values to 0.0; a huge finite value (e.g. f32::MAX)
+        /// formatted to ~40 chars and the fixed-size
+        /// `HeaplessString<REPORT_BUFFER_SIZE>` TRUNCATED mid-number,
+        /// producing a corrupt line (counterexample: "0.0,42404414...0,-"
+        /// where the bare "-" is a truncated negative). Artisan cannot parse
+        /// such a line. Post-fix: `normalize_read_value` clamps finite values
+        /// to ±1000.0, so every emitted token stays short and parseable —
+        /// this property now runs green as part of the suite.
+        #[test]
+        fn format_read_never_panics_with_hostile_status(
+            bean_temp in hostile_f32(),
+            env_temp in hostile_f32(),
+            pv in hostile_f32(),
+            target_temp in hostile_f32(),
+            derivative_rate in hostile_f32(),
+            ssr_output in hostile_f32(),
+            fan_output in hostile_f32(),
+        ) {
+            let status = SystemStatus {
+                bean_temp,
+                env_temp,
+                pv,
+                target_temp,
+                derivative_rate,
+                ssr_output,
+                fan_output,
+                ..SystemStatus::default()
+            };
+            let formatted = ArtisanFormatter::format_read_response_full(&status);
+            let text: &str = formatted.as_str();
+            assert!(!text.is_empty(), "READ response must not be empty");
+            // The formatted line must not contain unparseable float tokens
+            // (the formatter's `normalize_read_value` maps non-finite to 0.0
+            // and clamps huge finites to ±1000 — S10; this property proves NO
+            // field bypasses that sanitization).
+            for token in text.split([',', ' ', '\n', '\r']) {
+                if token.is_empty() || token.starts_with('#') {
+                    continue;
+                }
+                let parsed = token.parse::<f32>();
+                assert!(
+                    parsed.is_ok(),
+                    "READ line must not carry an unparseable token, got {token:?} in {text:?}"
+                );
+            }
+        }
+    }
+
+    fn hostile_f32() -> impl proptest::strategy::Strategy<Value = f32> {
+        use proptest::prelude::*;
+        prop_oneof![
+            any::<f32>(),
+            Just(f32::NAN),
+            Just(f32::INFINITY),
+            Just(f32::NEG_INFINITY),
+            Just(f32::MAX),
+            Just(f32::MIN),
+            Just(f32::MIN_POSITIVE),
+            -1e30f32..1e30,
+        ]
     }
 }

@@ -55,16 +55,35 @@ El sistema funciona de punta a punta en un escenario real (Artisan + USB CDC / U
 
 ## 3. Hallazgos ABIERTOS (mejoras defensivas, no bloqueantes)
 
-### EC-A1 — Diff Bug P-TC4 sin commitear ⚠️ (bloqueador de proceso)
-- **Archivo**: working tree, rama `develop` (último commit 475581b)
-- **Archivos afectados**: `docs/ARTISAN_CONNECTION.md`, `docs/PROTOCOL.md`, `src/control/roaster_control.rs`, `src/input/parser.rs`, `src/output/artisan.rs`
-- **Causa**: la corrección del handshake (`#OK` para UNITS/FILT, delimitadores `,`/`=`/`DCFAN`) no está commiteada. Un build desde checkout limpio (CI, otro PC) fallaría el handshake de Artisan (`Arduino could not set temperature unit`) y READ nunca funcionaría.
-- **Solución**: commitear los 5 archivos.
+### EC-A1 — Diff Bug P-TC4 sin commitear ⚠️ ~~(bloqueador de proceso)~~ → **RESUELTO (2026-08-05)**
+- ~~**Archivo**: working tree, rama `develop` (último commit 475581b)~~
+- **Estado**: la corrección del handshake (`#OK` para UNITS/FILT, delimitadores `,`/`=`/`DCFAN`) está commiteada en `47e4942` ("fix(protocol): Artisan ArduinoTC4 handshake compatibility"). Verificado en la Fase 0 de BUG-CATCH-PLAN.md: HEAD = `52b6bdf` contiene el fix y el build de HEAD responde `#OK`. No queda diff pendiente.
 
-### EC-A2 — UART TX sin timeout (asimetría con USB)
+---
+
+## 3b. Hallazgos de la auditoría de seguridad (BUG-CATCH-PLAN.md, 2026-08-05)
+
+Resultado de las fases 0–4 (baseline, repros estáticos, inyección mid-roast, proptests, harness de invariantes N=1000). Cada hallazgo tuvo test de reproducción (rojo pre-fix) y **todos los corregibles se arreglaron el 2026-08-05** (verde post-fix). Severidades según el triaje del plan: BLOQUEANTE / CRÍTICO-SEGURIDAD / OPERATIVO / LATENTE.
+
+| # | Severidad | Hallazgo | Reproducción | Estado |
+|---|---|---|---|---|
+| **S1** | CRÍTICO-SEGURIDAD | Manual mode sin supervisión con sonda muerta finita (TC corto lee 0.0 °C válido, sin fault bit): overtemp/RoR/staleness no disparan; probe-stuck solo armaba con heater ≥50 %; comms-idle neutralizado por el polling READ de Artisan. OT1 <50 % con sonda muerta = heater a ciegas hasta MAX_ROAST_TIME (30 min). El harness I6 lo exponía en **165/1000 roasts aleatorios** | `dead_probe_manual_roast_now_trips_probe_stuck` (verifica la emergencia post-fix); harness I6: **0/1000** | ✅ **RESUELTO**: detector probe-stuck armado a cualquier duty > 0 (roaster_control.rs) |
+| **S2** | Diseño (registrar decisión) | START/PREHEAT/OFF están whitelisted durante fault_condition y desarman el latch de emergencia (re-energización posible vía serial tras un overtemp real). Decisión documentada del firmware: confiar en el operador (Bug P3) | `s2_serial_start_clears_latched_emergency_and_reenergizes` | **Mantener** (decisión de diseño, ver SAFETY_BUGS.md §4) |
+| **S3** | OPERATIVO | `PID;CT` aceptaba u32 sin cota: `PID;CT 4294967295` congela el throttle del PID → heater mantiene el último output sin regulación | `s3_pid_cycle_time_huge_freezes_regulation` | ✅ **RESUELTO**: cota 10..=60_000 ms en parser.rs |
+| **S4** | OPERATIVO | Emergencias por trampa interna absorbían el fallo total del fan en silencio: `force_fan_100` falla, el Err era solo `EmergencyShutdown` | `s4_internal_trap_absorbs_fan_failure` + test in-crate `emergency_shutdown_fan_total_failure_keeps_fan_output_honest` | ✅ **RESUELTO**: `Err(HardwareError(emergency_fan_failed))` (actuator.rs) |
+| **S5** | LATENTE | `apply_guarded_heater(NaN)` aceptaba NaN → `ssr_output = NaN` → comms-idle y MAX_ROAST_TIME inertes (`NaN > 0.0 == false`) | `s5_nan_input_poisons_ssr_output_and_disarms_backstops` (des-ignorado, VERDE) | ✅ **RESUELTO**: guard `!desired.is_finite()` → Err (actuator.rs) |
+| **S6** | OPERATIVO (bajo) | `OT2 0` con heater on: el path de comando escribía fan 0 % sin el floor FAN_MIN_SAFETY_PCT (~330 ms + fade) | `s6_ot2_zero_bypasses_fan_floor_until_next_tick` (espera floor inmediato, VERDE) | ✅ **RESUELTO**: floor aplicado en `apply_policy_outcome` (roaster_control.rs) |
+| **S7** | Telemetría (menor) | `ssr_output = 0.0` incondicional en emergency aunque el SSR pueda estar atascado on | T1 `heater_write_failure_mid_roast_escalates_to_latched_emergency` (espera `ssr_output > 0` + status Error) | ✅ **RESUELTO**: `ssr_output` solo se zeroea si `force_heater_off` OK (actuator.rs) |
+| **S8** | OPERATIVO (EC-A2) | UART TX sin timeout (asimetría con USB): un `flush()` colgado congelaría todo el output | — (driver riscv32-only) | ✅ **RESUELTO**: timeout 50+50 ms en `UartTxDriver::write_bytes` (uart/driver.rs) |
+| **S9** | LATENTE (LOW) | Sentinel del SW watchdog: `LAST_FEED_MS == 0` es a la vez "nunca alimentado" y timestamp real → un feed en t=0 desarma el timeout para siempre | `software_watchdog_times_out_after_missed_feeds` | ✅ **RESUELTO**: sentinel `NEVER_FED = u64::MAX` (watchdog.rs) |
+| **S10** | LATENTE | `normalize_read_value` solo mapeaba no-finitos a 0.0; un finito enorme trunca el buffer READ a mitad de número → token corrupto ("-") | `src/output/artisan.rs::format_read_never_panics_with_hostile_status` (des-ignorado, VERDE) | ✅ **RESUELTO**: clamp ±1000 en `normalize_read_value` (artisan.rs) |
+
+**Veredicto del bug hunt**: 674 tests host verdes (0 fallos, 0 ignored), clippy estricto limpio, build embedded OK. Ningún bug BLOQUEANTE abierto. **Los 10 hallazgos corregibles (S1, S3–S10) están RESUELTOS con test de reproducción verde**; S2 se mantiene como decisión de diseño. La re-verificación post-fix (harness 1000 roasts + suite completa) no introdujo nuevos bugs. Detalle, fixes y decisiones en `docs/SAFETY_BUGS.md`.
+
+### EC-A2 — UART TX sin timeout (asimetría con USB) — ✅ RESUELTO (S8, 2026-08-05)
 - **Evidencia**: `src/hardware/uart/driver.rs:49-58` (`write_bytes` sin `with_timeout`) vs `src/hardware/usb_cdc/driver.rs:70-89` (timeout 50+20 ms, Bug A2).
 - **Riesgo**: bajo en la práctica — el FIFO TX UART se vacía por hardware a 115200 baud sin depender del host. Un fallo del driver que cuelgue `flush()` congelaría `dual_output_task` y con él todo el output.
-- **Solución sugerida**: `with_timeout(50 ms)` simétrico en `UartTxDriver::write_bytes`.
+- **Fix aplicado**: `with_timeout(50 ms)` en write + `with_timeout(50 ms)` en flush dentro de `UartTxDriver::write_bytes` → `UartError::TransmissionError` a tiempo (simétrico al USB).
 
 ### EC-A3 — Drops silenciosos del canal de salida bajo carga
 - **Evidencia**: `src/application/service_container.rs:48-49` (canal 16 slots); todos los productores usan `try_send` (`src/application/tasks.rs:316, 333, 263`; `src/control/roaster_control.rs:1616-1627`); drenaje 4 msgs/5 ms (`tasks.rs:1090-1121`, Bug E2).

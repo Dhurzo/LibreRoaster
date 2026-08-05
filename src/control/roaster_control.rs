@@ -323,6 +323,22 @@ impl RoasterControl {
                 .get_output_manager_mut()
                 .enable_continuous_output();
 
+            // Bug S6 (2026-08-05): the `FAN_MIN_SAFETY_PCT` interlock floor
+            // used to live only in the control tick, so an `OT2 0` (or any
+            // slider move below 20 %) while the heater was on wrote 0 %
+            // airflow immediately and the floor re-asserted one tick later
+            // (~330 ms + up to ~1.1 s hardware fade). Enforce the same floor
+            // here, on the command path, whenever the heater is energized.
+            // The tick-level floor remains as a second line of defense.
+            let mut fan = fan;
+            if self.status.ssr_output > 0.0 && fan < FAN_MIN_SAFETY_PCT {
+                warn!(
+                    "SAFETY FAN-FLOOR: heater at {:.1}% with fan command {:.1}% — raising fan to minimum {:.0}%",
+                    self.status.ssr_output, fan, FAN_MIN_SAFETY_PCT
+                );
+                fan = FAN_MIN_SAFETY_PCT;
+            }
+
             self.actuator.set_fan_speed(fan, &mut self.status)?;
             // Bug C (2026-08-03): commit `manual_fan` only after the write
             // succeeded — a failed fan write must not leave the handler state
@@ -914,13 +930,22 @@ impl RoasterControl {
         // BT nearly flat BY DESIGN, and at a cold ambient / big drum the
         // equilibrium duty can exceed 50 % — a healthy steady state must not
         // trip. Manual mode (no PID target) stays fully armed.
+        //
+        // Bug S1 (2026-08-05): the arm gate used to require
+        // `ssr_output >= PROBE_STUCK_HEATER_MIN_PCT` (50 %). A dead probe in
+        // manual mode at lower duty (e.g. `OT1 30`) therefore ran the heater
+        // blind with NO supervision until MAX_ROAST_TIME (30 min): overtemp,
+        // RoR, staleness and NaN all ignore a valid-but-frozen 0 °C reading,
+        // and Artisan's READ polling keeps comms-idle from ever firing. Arm
+        // the detector at ANY positive duty. Trade-off (accepted, fail-safe):
+        // a manual session holding BT flat < 1 °C for 2 min at low power can
+        // now trip a recoverable emergency (STOP → OFF) — physically unlikely
+        // while heat is being applied, and strictly safer than an unguarded
+        // heater.
         let probe_bt = self.status.bean_temp;
         let near_target = self.status.pid_enabled
             && (self.status.target_temp - probe_bt).abs() <= PROBE_STUCK_TARGET_MARGIN_C;
-        if self.status.ssr_output >= PROBE_STUCK_HEATER_MIN_PCT
-            && probe_bt.is_finite()
-            && !near_target
-        {
+        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && !near_target {
             match self.probe_stuck_last_bt {
                 None => {
                     self.probe_stuck_last_bt = Some(probe_bt);
@@ -937,8 +962,8 @@ impl RoasterControl {
                             >= PROBE_STUCK_TIMEOUT_SECS
                         {
                             warn!(
-                                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s at ≥{:.0}% heater — emergency",
-                                probe_bt, PROBE_STUCK_TIMEOUT_SECS, PROBE_STUCK_HEATER_MIN_PCT
+                                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — emergency",
+                                probe_bt, PROBE_STUCK_TIMEOUT_SECS
                             );
                             self.emergency_shutdown("Probe stuck")?;
                         }
@@ -3066,15 +3091,24 @@ mod tests {
     fn emergency_shutdown_fan_total_failure_keeps_fan_output_honest() {
         // Bug B-L: when the fan never accepts a write, `status.fan_output`
         // must NOT claim 100 % (the previous code wrote it unconditionally).
+        // Bug S4 (2026-08-05): a total fan failure during an internal trap is
+        // no longer absorbed — `emergency_shutdown` escalates as
+        // `HardwareError(emergency_fan_failed)` so the control loop surfaces
+        // an ERR to Artisan ("no fan means unsafe to continue").
         let attempts = new_fan_attempt_counter();
         let fan = Box::new(FlakyFan::new(u8::MAX, attempts.clone()));
         let mut ctrl = make_control_with_fan(fan);
 
         let result = ctrl.emergency_shutdown("test");
-        assert!(matches!(
-            result,
-            Err(RoasterError::EmergencyShutdown { .. })
-        ));
+        assert!(
+            matches!(
+                result,
+                Err(RoasterError::HardwareError {
+                    source: Some("emergency_fan_failed")
+                })
+            ),
+            "S4: a total fan failure must escalate as HardwareError(emergency_fan_failed), got {result:?}"
+        );
         assert_eq!(ctrl.get_state(), RoasterState::Error);
         assert_eq!(
             read_fan_attempts(&attempts),

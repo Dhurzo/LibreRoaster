@@ -427,6 +427,55 @@ mod tests {
             assert!(pid.set_target(0.0).is_ok());
             assert!(pid.set_target(-50.0).is_ok());
         }
+
+        // e) Fase 3 (BUG-CATCH-PLAN.md): hostile but FINITE inputs (huge
+        // magnitudes, f32::MAX, subnormals, negative) must always produce a
+        // finite output clamped into [output_min, output_max]. The NaN-input
+        // boundary is documented separately (`nan_current_temp_produces_nan`,
+        // unit test below): NaN propagates NaN out of the PID, and the
+        // controller layer must reject it (NaN PV → emergency, roaster_
+        // control.rs:679-682). This property proves every OTHER input class
+        // cannot unclamp or poison the output.
+        #[test]
+        fn pid_output_finite_and_clamped_for_hostile_finite_inputs(
+            kp in 0.5f32..5.0,
+            ki in 0.1f32..0.5,
+            kd in 0.01f32..0.1,
+            target in prop_oneof![
+                Just(f32::MAX),
+                Just(f32::MIN_POSITIVE),
+                Just(f32::MIN_POSITIVE * 0.5),
+                -1e30f32..1e30,
+            ],
+            temp in prop_oneof![
+                Just(f32::MAX),
+                Just(f32::MIN_POSITIVE),
+                Just(f32::MIN_POSITIVE * 0.5),
+                Just(-0.0),
+                -1e30f32..1e30,
+            ],
+            output_min in 0.0f32..50.0,
+            output_max in 50.0f32..100.0,
+            timestamp in 0u32..10000
+        ) {
+            let mut pid = CoffeeRoasterPid::with_gains(kp, ki, kd);
+            pid.set_output_limits(output_min, output_max);
+            pid.enable();
+            // Out-of-range targets are rejected upstream (handler validates
+            // 50..=300 °C); if this PID rejects it too, the contract holds
+            // (the property only applies to accepted targets).
+            if pid.set_target(target).is_ok() {
+                let output = pid.compute_output(temp, timestamp);
+                assert!(
+                    output.is_finite(),
+                    "PID output must stay finite for finite inputs, got {output:?}"
+                );
+                assert!(
+                    output >= output_min && output <= output_max,
+                    "PID output must be clamped to [output_min, output_max], got {output:?}"
+                );
+            }
+        }
     }
 
     #[test]

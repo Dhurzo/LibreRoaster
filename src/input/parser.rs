@@ -395,7 +395,14 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<u32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            if ms < 10 {
+            // Bug S3 (2026-08-05): the cycle time was previously bounded only
+            // below (10 ms). `PID;CT;4294967295` froze the PID throttle — the
+            // `cycle_ms` never elapsed, so `update_pid_control` held the last
+            // applied heater output indefinitely (regulation silently dead,
+            // backstopped only by the 30-min cap / comms-idle). Cap at 60 s:
+            // anything slower is a configuration error, and a PID that only
+            // updates once a minute has no regulatory value.
+            if !(10..=60_000).contains(&ms) {
                 return Err(ParseError::OutOfRange);
             }
             Ok(ArtisanCommand::SetPidCycleTime(ms))
@@ -660,6 +667,57 @@ mod tests {
                 let (input, _expected_command) = command_table[index as usize % command_table.len()];
                 let result = super::parse_artisan_command(input);
                 assert!(matches!(result, Ok(_expected_command)));
+            }
+        }
+
+        proptest! {
+            /// Fase 3 (BUG-CATCH-PLAN.md): hostile byte soup (NUL, non-UTF8,
+            /// control chars, delimiters, huge numbers) must never panic the
+            /// parser, and any actuator command that DOES parse must carry a
+            /// clamped value (<= 100). A parse of garbage into
+            /// `SetHeater > 100` would be a safety bug (unexpected heat).
+            #[test]
+            fn hostile_bytes_never_panic_and_never_unclamp(
+                bytes in prop::collection::vec(any::<u8>(), 0..300)
+            ) {
+                // Production transport converts bytes with `from_utf8` and
+                // rejects invalid UTF-8 (Err InvalidValue); the lossy
+                // conversion here is a SUPERSET of what reaches the parser,
+                // so it exercises every byte sequence the wire can deliver.
+                let input = String::from_utf8_lossy(&bytes);
+                if let Ok(cmd) = super::parse_artisan_command(&input) {
+                    match cmd {
+                        ArtisanCommand::SetHeater(v) => {
+                            assert!(v <= 100, "SetHeater must clamp to 100, got {v}")
+                        }
+                        ArtisanCommand::SetFan(v) => {
+                            assert!(v <= 100, "SetFan must clamp to 100, got {v}")
+                        }
+                        ArtisanCommand::SetFanSpeed(v, _) => {
+                            assert!(v <= 100, "SetFanSpeed must clamp to 100, got {v}")
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            /// A NUL byte embedded anywhere in a command must not forge or
+            /// alter it: token matching is exact (`eq_ignore_ascii_case` on
+            /// whole tokens), so `OT1\0 75` is `unknown_command`, and
+            /// `SETTARGET 200\0` fails the numeric parse.
+            #[test]
+            fn nul_byte_cannot_forge_or_alter_commands(nul_pos in 0usize..7) {
+                let base = b"OT1 75";
+                let mut buf = Vec::with_capacity(base.len() + 1);
+                buf.extend_from_slice(&base[..nul_pos]);
+                buf.push(0);
+                buf.extend_from_slice(&base[nul_pos..]);
+                let input = String::from_utf8_lossy(&buf);
+                let result = super::parse_artisan_command(&input);
+                assert!(
+                    result.is_err(),
+                    "NUL must never produce a valid command: {input:?} → {result:?}"
+                );
             }
         }
     }

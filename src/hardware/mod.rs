@@ -29,6 +29,11 @@ pub mod ssr;
 
 pub mod error_counters;
 pub mod static_sync;
+// Fase 2 (BUG-CATCH-PLAN.md): the mocks use `alloc::sync::Arc` +
+// `critical_section::Mutex`, which require `target_has_atomic = "ptr"` —
+// unavailable on riscv32imc (no atomic extension). Nothing outside the test
+// surface references the mocks, so gate the module to host test builds.
+#[cfg(any(test, feature = "test"))]
 pub mod test_mocks;
 pub mod transport_tasks;
 pub mod uart;

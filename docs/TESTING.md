@@ -21,7 +21,7 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** host-side test suite is fully green — **631 unit + integration tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 637 including doctests. The static source contains 464 `#[test]` items in `src/` and 212 in `tests/`; the difference from the 631 live count breaks down as: 17 file-level tests gated behind `--features regression` (`regression_status.rs`, `fault_injection_scenarios.rs`), 16 in `sensor_conversion.rs` that are likewise excluded in a non-regression run, and 12 double-counted because `tests/mock_usb_driver.rs` is both its own binary **and** a `mod mock_usb_driver` included in `tests/read_command_usb_test.rs` (their tests run in both binaries). There are **no pre-existing doctest failures**. An additional set of tests requires the `regression` feature flag (fault injection, regression snapshots) and a subset are embedded-only (`target_arch = "riscv32"`).
+**Current status:** host-side test suite is fully green — **672 unit + integration tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-05, tras BUG-CATCH-PLAN.md fases 0-4). Includes the safety hunt suites: `safety_repro_tests.rs` (S1-S6 repros, S5 `#[ignore]` rojo), `safety_injection_midroast_tests.rs` (6), `safety_invariant_harness.rs` (3, N=1000 roasts aleatorios), `transport_tasks.rs` in-crate byte-drip tests (3), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
 
 > Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
@@ -91,7 +91,8 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/fault_injection_scenarios.rs` | 4 | Matrix-based fault injection (requires `--features regression`): watchdog failures, guard timeouts, communication errors. Captures SystemStatus and formats STATUS response for each scenario | ✅ All pass |
+| `tests/fault_injection_scenarios.rs` | 4 | Overtemp/emergency-latch/STOP-recovery fault injection (requires `--features regression`). Note: watchdog-timeout and mid-roast hardware faults live in `tests/safety_injection_midroast_tests.rs` (see below) | ✅ All pass |
+| `tests/safety_injection_midroast_tests.rs` | 6 | Mid-roast fault injection (requires `--features test`): heater-write failure (Bug B escalation), fan-write failure, sensor disconnect (F4.11 debounce → NaN → latched emergency), **software watchdog timeout** (watchdog.rs:78-81, formerly untested), interleaved USB/UART routing, SSR-not-available gating | ✅ All pass |
 | `tests/error_integration_tests.rs` | 5 | Cross-cutting error integration: error types through dispatch, safety handler error mapping, error recovery strategies | ✅ All pass |
 
 ### 2.4 Serial Communication
@@ -177,10 +178,10 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 | E2E serial over real hardware | No automated CI for HIL tests (requires physical ESP32-C3) | Firmware changes may break serial protocol without detection until manual test |
 | Long-duration stability | No soak test (>1 hour) with active PID | Memory leaks or timer drift may go undetected |
 | Real MAX31856 with thermocouple | Mock sensors only; real sensor noise/glitch patterns untested | Sensor fault recovery paths may be exercised only in simulation |
-| Concurrent UART + USB conflict | Dual-channel stress tests exist but don't test byte-level interleaving | Rare race conditions in byte-level framing may not be caught |
+| Concurrent UART + USB conflict | Dual-channel stress tests exist; byte-level drip for a single channel is covered in-crate (`transport_tasks.rs` T-B1/T-B2); **byte-level interleaving of two channels in flight remains untested** (command-level interleave covered by `safety_injection_midroast_tests.rs` T5) | Rare race conditions in byte-level framing between two live transports may not be caught |
 | Feature-gated tests | 17 tests require `--features regression` (fault injection, sensor fixtures, regression snapshots) — covered by the dedicated CI `regression` job | Low: covered in CI |
 | Embedded-only tests | ~32 tests require `target_arch = "riscv32"` — never run in CI | USB CDC, SSR monitor, and instrumentation paths untested in automated CI |
-| Property-based testing | No `proptest` or `quickcheck` generators | Edge cases in PID math, sensor conversion, and protocol parsing may be missed |
+| Property-based testing | Proptest exists and is green: `src/input/parser.rs` (hostile bytes/NUL), `src/control/pid.rs`, `src/control/controllers/actuator.rs`, `src/hardware/sensors/simulated.rs`, `src/output/artisan.rs` (hostile SystemStatus — documents the S10 truncation repro as `#[ignore]`). No cargo-fuzz yet | Edge cases in PID math, sensor conversion, and protocol parsing are now covered; fuzzing over the wire format remains future work |
 | Regression-runner unit coverage | `src/safety/regression.rs` has no direct unit tests; its behavior is exercised via `tests/regression_status.rs` and `tests/fault_injection_scenarios.rs` | Low (covered by integration) |
 | Flash memory / persistence | No storage layer exists yet | N/A for current milestone |
 

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a8e6c375fe9f0d0960e7033f53bf413a1011ec854bbc43c4c9445afd238f0d19 # shrinks to bean_temp = -3.4028235e38, env_temp = 4.2404414e29, pv = 0.0, target_temp = 0.0, derivative_rate = 0.0, ssr_output = 0.0, fan_output = 0.0

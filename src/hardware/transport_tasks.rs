@@ -516,3 +516,179 @@ pub async fn run_writer_task<TX: TxSink>(
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::application::service_container::ServiceContainer;
+    use crate::common::{StubFan, StubHeater};
+    use crate::config::ArtisanCommand;
+    use crate::control::RoasterControl;
+    use crate::hardware::sensors::SensorConversionHub;
+    use crate::input::ArtisanInput;
+    use futures::executor::block_on;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that touch the global `ServiceContainer` so
+    /// parallel execution cannot interleave channels across tests.
+    static CONTAINER_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn init_container() {
+        let _guard = CONTAINER_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        let roaster = RoasterControl::new(
+            Box::new(StubHeater::new()),
+            Box::new(StubFan::new()),
+            SensorConversionHub::new(),
+        )
+        .expect("RoasterControl should build");
+        ServiceContainer::init_roaster(roaster);
+        ServiceContainer::init_artisan_input(ArtisanInput::new().expect("input should build"));
+        ServiceContainer::init_multiplexer();
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+        while ServiceContainer::get_output_channel().try_receive().is_ok() {}
+    }
+
+    fn test_config() -> TransportConfig {
+        TransportConfig {
+            name: "test",
+            channel: CommChannel::Uart,
+            ..TransportConfig::default()
+        }
+    }
+
+    /// Bug-hunt T-B1: byte-level accumulation across pushes (the production
+    /// event queue, which the legacy `process_command_data` helpers do NOT
+    /// provide — they drop unterminated fragments between calls).
+    #[test]
+    fn event_queue_accumulates_byte_drip_and_handles_crlf() {
+        let state = TransportRxState::new();
+        state.init();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Drip "OT1 75\r\n" one byte at a time, as a slow host would.
+        for &b in b"OT1 75\r\n" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+        assert!(event_queue_has_terminator(&state.event_queue));
+
+        let first = extract_line_from_event_queue(&state.event_queue);
+        assert_eq!(
+            first.as_deref(),
+            Some(b"OT1 75".as_slice()),
+            "bytes must accumulate across pushes into one command"
+        );
+        // The bare LF (trailing byte of CRLF) is consumed, not parsed
+        // (Bug B11 semantics).
+        assert!(
+            extract_line_from_event_queue(&state.event_queue).is_none(),
+            "bare LF must extract as None"
+        );
+        assert!(!event_queue_has_terminator(&state.event_queue));
+        assert!(!overflow.triggered);
+    }
+
+    /// Bug-hunt T-B2: a byte-dripped command parses and dispatches through
+    /// the PRODUCTION pipeline (event queue → extract → parse → multiplexer
+    /// → artisan channel).
+    #[test]
+    fn byte_drip_command_parsed_end_to_end() {
+        init_container();
+
+        let state = TransportRxState::new();
+        state.init();
+        let config = test_config();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Partial command without terminator across pushes.
+        for &b in b"OT1 7" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+        assert!(!event_queue_has_terminator(&state.event_queue));
+        for &b in b"5\r" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+
+        let channel = ServiceContainer::get_artisan_channel();
+        let mut cmds = alloc::vec::Vec::new();
+        while let Ok(traced) = channel.try_receive() {
+            cmds.push(traced.command);
+        }
+        assert_eq!(
+            cmds,
+            alloc::vec![ArtisanCommand::SetHeater(75)],
+            "dripped command must arrive intact"
+        );
+    }
+
+    /// Bug-hunt T-B3: a queue overflow must flush the partial command and
+    /// emit `ERR buffer_overflow`; a valid command arriving AFTER the
+    /// overflow is the trailing fragment and must NOT execute (EC-01, in the
+    /// production path).
+    #[test]
+    fn queue_overflow_flushes_and_blocks_stale_command() {
+        init_container();
+
+        let state = TransportRxState::new();
+        state.init();
+        let config = test_config();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Activate the UART session with a valid command first so parse
+        // errors have a route to the output channel.
+        push_to_event_queue(&state.event_queue, b"READ\r", &mut overflow);
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+
+        // Flood 300 bytes without a terminator: queue clears + overflow latch.
+        let junk = [b'X'; 300];
+        push_to_event_queue(&state.event_queue, &junk, &mut overflow);
+        assert!(overflow.triggered, "overflow must be latched");
+        assert!(!event_queue_has_terminator(&state.event_queue));
+
+        // A valid command after the flood is the trailing fragment.
+        push_to_event_queue(&state.event_queue, b"OT1 50\r", &mut overflow);
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+
+        let output = ServiceContainer::get_output_channel();
+        let mut lines = alloc::vec::Vec::new();
+        while let Ok(line) = output.try_receive() {
+            lines.push(line.as_str().to_string());
+        }
+        assert!(
+            lines.iter().any(|l| l.starts_with("ERR buffer_overflow")),
+            "overflow must surface as ERR buffer_overflow, got {:?}",
+            lines
+        );
+
+        assert!(
+            ServiceContainer::get_artisan_channel()
+                .try_receive()
+                .is_err(),
+            "the post-overflow fragment must never execute"
+        );
+    }
+}

@@ -545,6 +545,81 @@ impl SimulatedSensorSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Fase 3 (BUG-CATCH-PLAN.md): ANY waypoint set — including
+        /// degenerate curves (empty, single point, coincident times =
+        /// zero-range, unsorted times, huge values) — must answer
+        /// `temperatures_at` without panicking, always returning a FINITE
+        /// pair, and (for non-empty curves) a pair inside the authored
+        /// temperature envelope. Zero-range waypoints were a real bug
+        /// (C4b); this property keeps the interpolation total.
+        #[test]
+        fn temperatures_at_never_panics_and_stays_bounded(
+            times in prop::collection::vec(0u32..86_400, 0..16),
+            bean_temps in prop::collection::vec(-50f32..400.0, 0..16),
+            env_temps in prop::collection::vec(-50f32..400.0, 0..16),
+            elapsed in 0u32..86_400,
+        ) {
+            let mut curve = RoastCurve::new();
+            for i in 0..times.len() {
+                let bean = bean_temps[i % bean_temps.len().max(1)];
+                let env = env_temps[i % env_temps.len().max(1)];
+                curve.add_point(CurvePoint {
+                    time_secs: times[i],
+                    bean_temp: bean,
+                    env_temp: env,
+                });
+            }
+
+            let (bt, et) = curve.temperatures_at(elapsed);
+            assert!(
+                bt.is_finite() && et.is_finite(),
+                "temperatures_at must return finite pairs, got ({bt:?}, {et:?})"
+            );
+
+            if !times.is_empty() {
+                let (min_bt, max_bt) = envelope(&bean_temps);
+                let (min_et, max_et) = envelope(&env_temps);
+                assert!(
+                    (min_bt..=max_bt).contains(&bt) && (min_et..=max_et).contains(&et),
+                    "interpolated temps must stay inside the authored envelope, \
+                     got ({bt}, {et}) for envelope BT[{min_bt},{max_bt}] ET[{min_et},{max_et}]"
+                );
+            }
+        }
+
+        /// Fase 3: a curve built only from coincident times (all points at
+        /// t=0, the degenerate zero-range case) must still answer finitely
+        /// at any elapsed time.
+        #[test]
+        fn all_coincident_waypoints_never_panic(
+            temps in prop::collection::vec(-50f32..400.0, 1..16),
+            elapsed in 0u32..86_400,
+        ) {
+            let mut curve = RoastCurve::new();
+            for t in &temps {
+                curve.add_point(CurvePoint {
+                    time_secs: 0,
+                    bean_temp: *t,
+                    env_temp: *t,
+                });
+            }
+            let (bt, et) = curve.temperatures_at(elapsed);
+            assert!(bt.is_finite() && et.is_finite());
+        }
+    }
+
+    fn envelope(values: &[f32]) -> (f32, f32) {
+        let mut min = f32::MAX;
+        let mut max = f32::MIN;
+        for v in values {
+            min = min.min(*v);
+            max = max.max(*v);
+        }
+        (min, max)
+    }
 
     #[test]
     fn empty_curve_returns_zeros() {
