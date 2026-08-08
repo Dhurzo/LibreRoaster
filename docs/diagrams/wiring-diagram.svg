@@ -22,7 +22,7 @@
 
   <rect x="0" y="0" width="1320" height="1000" fill="#f7f7f9"/>
   <text x="660" y="28" text-anchor="middle" class="title" font-size="20">LibreRoaster — Wiring diagram (ESP32-C3) — VERIFIED against the code</text>
-  <text x="660" y="48" text-anchor="middle" class="net" font-size="12">Mapping derived from src/config/constants.rs + src/hardware/init.rs (enforced by assert_eq! at boot). SCLK=GPIO6 · MOSI=GPIO7 · MISO=GPIO5 · SSR=1 Hz (zero-cross)</text>
+  <text x="660" y="48" text-anchor="middle" class="net" font-size="12">Mapping derived from src/config/constants.rs + src/hardware/init.rs (enforced by assert_eq! at boot). SCLK=GPIO6 · MOSI=GPIO7 · MISO=GPIO5 · SSR=5 Hz (zero-cross)</text>
 
   <!-- ===================== ESP32-C3 (center) ===================== -->
   <rect x="520" y="300" width="280" height="380" rx="8" class="chip"/>
@@ -53,7 +53,7 @@
 
   <!-- ===================== MAX31856 BT (top-left) ===================== -->
   <rect x="60" y="80" width="230" height="130" rx="6" fill="#e8f0ff" class="box"/>
-  <text x="175" y="100" text-anchor="middle" class="title" font-size="13">MAX31856 #1 — BT (beans)</text>
+  <text x="175" y="100" text-anchor="middle" class="title" font-size="13">MAX31856 #2 — BT (beans)</text>
   <g text-anchor="start">
     <text x="72" y="122" class="pin">SCK ← GPIO6</text>
     <text x="72" y="140" class="pin">SDI ← GPIO7 (MOSI)</text>
@@ -69,7 +69,7 @@
 
   <!-- ===================== MAX31856 ET (mid-left) ===================== -->
   <rect x="60" y="300" width="230" height="130" rx="6" fill="#e8f0ff" class="box"/>
-  <text x="175" y="320" text-anchor="middle" class="title" font-size="13">MAX31856 #2 — ET (exhaust)</text>
+  <text x="175" y="320" text-anchor="middle" class="title" font-size="13">MAX31856 #1 — ET (exhaust)</text>
   <g text-anchor="start">
     <text x="72" y="342" class="pin">SCK ← GPIO6</text>
     <text x="72" y="360" class="pin">SDI ← GPIO7 (MOSI)</text>
@@ -105,7 +105,7 @@
   <!-- SSR -->
   <rect x="918" y="100" width="160" height="100" rx="6" fill="#fff" class="box"/>
   <text x="998" y="120" text-anchor="middle" class="title" font-size="12">SSR (zero-cross)</text>
-  <text x="998" y="137" text-anchor="middle" class="net">DC+ ← GPIO10 (1 Hz)</text>
+  <text x="998" y="137" text-anchor="middle" class="net">DC+ ← GPIO10 (5 Hz)</text>
   <text x="998" y="152" text-anchor="middle" class="net">DC− ← GND</text>
   <text x="998" y="170" text-anchor="middle" class="net">AC-IN ← L (fuse)</text>
   <text x="998" y="185" text-anchor="middle" class="net">AC-OUT → heater</text>
@@ -118,7 +118,7 @@
   <text x="1190" y="172" text-anchor="middle" class="net">N ← Neutral</text>
   <text x="1190" y="188" text-anchor="middle" class="net">PE → chassis ⚠</text>
 
-  <text x="1095" y="222" text-anchor="middle" class="warn" font-size="10">✅ 1 Hz zero-cross control — compatible with any zero-cross SSR</text>
+  <text x="1095" y="222" text-anchor="middle" class="warn" font-size="10">✅ 5 Hz zero-cross control — compatible with any zero-cross SSR</text>
   <text x="1095" y="258" text-anchor="middle" class="warn" font-size="10">Recommended: independent HW thermal cutoff in series, not CPU-dependent</text>
   <text x="1095" y="274" text-anchor="middle" class="warn" font-size="10">(see audit THERM-1/THERM-2)</text>
 
@@ -141,10 +141,10 @@
   <rect x="900" y="420" width="200" height="120" rx="6" fill="#fff" class="box"/>
   <text x="1000" y="440" text-anchor="middle" class="title" font-size="12">Fan driver</text>
   <text x="1000" y="458" text-anchor="middle" class="net">logic-level MOSFET (IRLZ44N)</text>
-  <text x="1000" y="474" text-anchor="middle" class="net">Gate ← GPIO9 via 100 Ω–1 kΩ</text>
+  <text x="1000" y="474" text-anchor="middle" class="net">Gate ← GPIO9 via 1 kΩ</text>
   <text x="1000" y="490" text-anchor="middle" class="net">Drain → Fan(−) · Source→GND</text>
   <text x="1000" y="508" text-anchor="middle" class="warn" font-size="9.5">⚠ 10 kΩ pull-up GPIO9→3V3 (boot)</text>
-  <text x="1000" y="523" text-anchor="middle" class="warn" font-size="9.5">10 kΩ pull-down gate→GND · flyback on motor</text>
+  <text x="1000" y="523" text-anchor="middle" class="warn" font-size="9.5">100 kΩ weak pull-down gate→GND · flyback on motor</text>
 
   <rect x="1130" y="420" width="150" height="60" rx="6" fill="#fff3e0" class="box"/>
   <text x="1205" y="442" text-anchor="middle" class="title" font-size="12">DC fan</text>

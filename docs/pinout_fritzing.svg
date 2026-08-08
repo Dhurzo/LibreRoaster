@@ -1,0 +1,281 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1560" font-family="Helvetica, Arial, sans-serif">
+<rect width="1600" height="1560" fill="#f6f1e6"/>
+<text x="60" y="44" font-size="20" font-weight="700" fill="#0f172a">LibreRoaster — Wiring diagram (Fritzing style)</text>
+<text x="60" y="64" font-size="11" fill="#475569">ESP32-C3 coffee roaster · same pinout &amp; circuit as docs/pinout.svg</text>
+<rect x="1030" y="50" width="520" height="150" rx="10" fill="#fbf8f1" stroke="#e3d9c3" stroke-width="1.5"/>
+<text x="1045" y="72" font-size="9.5" fill="#334155"><tspan font-weight="700" fill="#0f172a">Color key</tspan></text>
+<text x="1045" y="88" font-size="9.5" fill="#334155">teal: SPI bus · dk-teal: chip select (CS)</text>
+<text x="1045" y="104" font-size="9.5" fill="#334155">amber: heat detect · orange: fan 25 kHz · red: SSR 5 Hz</text>
+<text x="1045" y="120" font-size="9.5" fill="#334155">blue: LED · violet: UART · gray: GPIO2 (unused)</text>
+<text x="1045" y="136" font-size="9.5" fill="#334155">red/black: power (3.3 V / GND) · thick: mains</text>
+<text x="1045" y="152" font-size="9.5" fill="#334155">SPI 1 MHz · mode 1 (CPOL=0, CPHA=1) · UART 115200</text>
+<text x="1045" y="168" font-size="9.5" fill="#334155">USB CDC (native USB) = alternative to UART</text>
+  <text x="1045" y="184" font-size="9.5" fill="#334155">fan chain: 1 kΩ series · 10 kΩ → 3.3 V · 100 kΩ weak pull-down</text>
+<text x="60" y="1532" font-size="10.5" fill="#b91c1c">⚠ GPIO9 strapping pin — 10 kΩ pull-up to 3.3 V keeps boot OK · ⚠ GPIO2 = VDD_SPI strap — do not connect anything</text>
+<text x="60" y="1548" font-size="10.5" fill="#b91c1c">⚠ SSR &amp; heater are MAINS — isolate, fuse, disconnect before wiring · 3.3 V logic only on GPIOs (max 3.6 V)</text>
+<rect x="90" y="180" width="310" height="1010" rx="10" fill="#1f2937" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="180" y="150" width="120" height="30" rx="4" fill="#475569" stroke="#334155" stroke-width="1.5"/>
+<text x="240" y="169" text-anchor="middle" font-size="8.5" fill="#cbd5e1">USB-C</text>
+<rect x="130" y="300" width="180" height="150" rx="8" fill="#334155" stroke="#475569" stroke-width="1"/>
+<text x="150" y="215" font-size="15" font-weight="700" fill="#f8fafc">ESP32-C3</text>
+<text x="150" y="231" font-size="9" fill="#94a3b8">dev board — C3 (RISC-V)</text>
+<text x="150" y="480" font-size="8.5" fill="#94a3b8">USB CDC (native) — Artisan alt.</text>
+<rect x="398" y="189" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="196" text-anchor="end" font-size="9" fill="#f8fafc">GPIO1</text>
+<text x="384" y="209" text-anchor="end" font-size="7.5" fill="#94a3b8">heat det</text>
+<rect x="398" y="257" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="264" text-anchor="end" font-size="9" fill="#f8fafc">GPIO2</text>
+<text x="384" y="277" text-anchor="end" font-size="7.5" fill="#94a3b8">unused</text>
+<rect x="398" y="325" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="332" text-anchor="end" font-size="9" fill="#f8fafc">GPIO3</text>
+<text x="384" y="345" text-anchor="end" font-size="7.5" fill="#94a3b8">ET CS</text>
+<rect x="398" y="393" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="400" text-anchor="end" font-size="9" fill="#f8fafc">GPIO4</text>
+<text x="384" y="413" text-anchor="end" font-size="7.5" fill="#94a3b8">BT CS</text>
+<rect x="398" y="461" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="468" text-anchor="end" font-size="9" fill="#f8fafc">GPIO5</text>
+<text x="384" y="481" text-anchor="end" font-size="7.5" fill="#94a3b8">MISO</text>
+<rect x="398" y="529" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="536" text-anchor="end" font-size="9" fill="#f8fafc">GPIO6</text>
+<text x="384" y="549" text-anchor="end" font-size="7.5" fill="#94a3b8">SCLK</text>
+<rect x="398" y="597" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="604" text-anchor="end" font-size="9" fill="#f8fafc">GPIO7</text>
+<text x="384" y="617" text-anchor="end" font-size="7.5" fill="#94a3b8">MOSI</text>
+<rect x="398" y="665" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="672" text-anchor="end" font-size="9" fill="#f8fafc">GPIO8</text>
+<text x="384" y="685" text-anchor="end" font-size="7.5" fill="#94a3b8">LED</text>
+<rect x="398" y="733" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="740" text-anchor="end" font-size="9" fill="#f8fafc">GPIO9</text>
+<text x="384" y="753" text-anchor="end" font-size="7.5" fill="#94a3b8">fan PWM</text>
+<rect x="398" y="801" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="808" text-anchor="end" font-size="9" fill="#f8fafc">GPIO10</text>
+<text x="384" y="821" text-anchor="end" font-size="7.5" fill="#94a3b8">SSR</text>
+<rect x="398" y="869" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="876" text-anchor="end" font-size="9" fill="#f8fafc">GPIO20</text>
+<text x="384" y="889" text-anchor="end" font-size="7.5" fill="#94a3b8">UART RX</text>
+<rect x="398" y="937" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="944" text-anchor="end" font-size="9" fill="#f8fafc">GPIO21</text>
+<text x="384" y="957" text-anchor="end" font-size="7.5" fill="#94a3b8">UART TX</text>
+<rect x="398" y="1005" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="1012" text-anchor="end" font-size="9" fill="#f8fafc">3V3</text>
+<text x="384" y="1025" text-anchor="end" font-size="7.5" fill="#94a3b8">+3.3 V</text>
+<rect x="398" y="1073" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="1080" text-anchor="end" font-size="9" fill="#f8fafc">GND</text>
+<text x="384" y="1093" text-anchor="end" font-size="7.5" fill="#94a3b8">0 V</text>
+<rect x="398" y="1141" width="16" height="16" rx="3" fill="#eab308" stroke="#a16207" stroke-width="1"/>
+<text x="384" y="1148" text-anchor="end" font-size="9" fill="#f8fafc">5V</text>
+<text x="384" y="1161" text-anchor="end" font-size="7.5" fill="#94a3b8">+5 V USB</text>
+<g stroke-linecap="round" stroke-linejoin="round">
+<path d="M 414 197 H 470 V 225 H 1198" fill="none" stroke="#d97706" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 333 H 482 V 380 H 1051" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 401 H 494 V 690 H 536 M 548 690 H 984 M 996 690 H 1004 M 1016 690 H 1024 M 1036 690 H 1051" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 537 H 488 M 500 537 H 518 V 420 H 990" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 605 H 488 M 500 605 H 530 V 460 H 984 M 996 460 H 1010" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 469 H 488 M 500 469 H 506 V 500 H 512 M 524 500 H 524 M 536 500 H 984 M 996 500 H 1004 M 1016 500 H 1030" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 673 H 488 M 500 673 H 542 V 1360 H 572 M 584 1360 H 584 M 596 1360 H 596 M 608 1360 H 1056" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 741 H 536 M 548 741 H 554 V 1210 H 572 M 584 1210 H 584 M 596 1210 H 596 M 608 1210 H 1056" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 809 H 536 M 548 809 H 548 M 560 809 H 566 V 950 H 572 M 584 950 H 584 M 596 950 H 1056" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 877 H 536 M 548 877 H 548 M 560 877 H 560 M 572 877 H 578 V 1430 H 584 M 596 1430 H 596 M 608 1430 H 1451" fill="none" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 945 H 536 M 548 945 H 548 M 560 945 H 560 M 572 945 H 572 M 584 945 H 590 V 1450 H 596 M 608 1450 H 1451" fill="none" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 1149 H 536 M 548 1149 H 548 M 560 1149 H 572 M 584 1149 H 584 M 596 1149 H 602 V 1470 H 1451" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 1013 H 460" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 1081 H 460" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 414 265 H 460" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 990 420 V 730" fill="none" stroke="#0d9488" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1010 460 V 770" fill="none" stroke="#0d9488" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1030 500 V 810" fill="none" stroke="#0d9488" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 990 420 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1010 460 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1030 500 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 990 730 H 1004 M 1016 730 H 1024 M 1036 730 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1010 770 H 1024 M 1036 770 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1030 810 H 1055" fill="none" stroke="#0d9488" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1202 260 H 1240" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1098 260 H 1055" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1098 225 V 300" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<path d="M 1060 975 H 1025" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1480 960 V 1040 H 1130 V 1062" fill="none" stroke="#dc2626" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1480 990 V 1050 H 1300 V 1062" fill="none" stroke="#374151" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1100 570 V 600" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1160 570 V 600" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1100 880 V 910" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1160 880 V 910" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1056 1210 H 1090" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1090 1150 H 1214 M 1226 1150 H 1274 M 1286 1150 H 1290" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1290 1150 V 1125 H 1205 V 1130" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1290 1150 H 1310 V 1110" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1310 1110 H 1340" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1290 1150 V 1160 H 1280 V 1300" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1235 1135 H 1280 V 1160" fill="none" stroke="#0f172a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1220 1140 V 1170 H 1240 V 1310 H 1330 V 1285" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1330 1207 V 1160" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1330 1207 H 1390" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1390 1265 V 1285 H 1330" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1056 1360 H 1081" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1125 1360 H 1187" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1213 1380 V 1402" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1460 480 H 1502" fill="none" stroke="#eab308" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1460 510 H 1502" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1460 790 H 1502" fill="none" stroke="#eab308" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1460 820 H 1502" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1455 1490 H 1500" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<circle cx="990" cy="420" r="3.5" fill="#0d9488"/>
+<circle cx="1010" cy="460" r="3.5" fill="#0d9488"/>
+<circle cx="1030" cy="500" r="3.5" fill="#0d9488"/>
+<circle cx="990" cy="730" r="3.5" fill="#0d9488"/>
+<circle cx="1010" cy="770" r="3.5" fill="#0d9488"/>
+<circle cx="1030" cy="810" r="3.5" fill="#0d9488"/>
+<circle cx="1290" cy="1150" r="3.5" fill="#ea580c"/>
+<circle cx="1330" cy="1285" r="3.5" fill="#ea580c"/>
+<circle cx="1330" cy="1207" r="3.5" fill="#dc2626"/>
+<rect x="1080" y="1150" width="20" height="60" fill="#dcb98a" stroke="#a98a5f" stroke-width="1"/>
+<rect x="1080" y="1165" width="20" height="6" fill="#3f2d20"/>
+<rect x="1080" y="1180" width="20" height="6" fill="#3f2d20"/>
+<rect x="1080" y="1195" width="20" height="6" fill="#3f2d20"/>
+<rect x="1300" y="1110" width="20" height="40" fill="#dcb98a" stroke="#a98a5f" stroke-width="1"/>
+<rect x="1303" y="1110" width="4" height="40" fill="#3f2d20"/>
+<rect x="1309" y="1110" width="4" height="40" fill="#3f2d20"/>
+<rect x="1270" y="1180" width="20" height="40" fill="#dcb98a" stroke="#a98a5f" stroke-width="1"/>
+<rect x="1273" y="1180" width="4" height="40" fill="#3f2d20"/>
+<rect x="1279" y="1180" width="4" height="40" fill="#3f2d20"/>
+<text x="1112" y="1166" font-size="8.5" fill="#334155">1 kΩ</text>
+<text x="1305" y="1102" text-anchor="end" font-size="8.5" fill="#334155">10 kΩ → 3.3 V</text>
+<rect x="1190" y="1140" width="55" height="70" rx="3" fill="#1f2937" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="1245" y="1145" width="16" height="60" fill="#cbd5e1" stroke="#94a3b8" stroke-width="1"/>
+<text x="1217" y="1178" text-anchor="middle" font-size="7.5" fill="#e2e8f0">N-MOSFET</text>
+<path d="M 1205 1130 V 1140" stroke="#94a3b8" stroke-width="2" fill="none"/>
+<text x="1205" y="1118" text-anchor="middle" font-size="7.5" fill="#334155">G</text>
+<path d="M 1220 1130 V 1140" stroke="#94a3b8" stroke-width="2" fill="none"/>
+<text x="1220" y="1118" text-anchor="middle" font-size="7.5" fill="#334155">D</text>
+<path d="M 1235 1130 V 1140" stroke="#94a3b8" stroke-width="2" fill="none"/>
+<text x="1235" y="1118" text-anchor="middle" font-size="7.5" fill="#334155">S</text>
+<circle cx="1330" cy="1245" r="38" fill="#cbd5e1" stroke="#334155" stroke-width="2.5"/>
+<ellipse cx="1330" cy="1232" rx="8" ry="14" fill="#64748b"/>
+<ellipse cx="1330" cy="1258" rx="8" ry="14" fill="#64748b"/>
+<ellipse cx="1312" cy="1245" rx="14" ry="8" fill="#64748b"/>
+<ellipse cx="1348" cy="1245" rx="14" ry="8" fill="#64748b"/>
+<circle cx="1330" cy="1245" r="6" fill="#334155"/>
+<text x="1265" y="1215" text-anchor="middle" font-size="9" fill="#334155">FAN</text>
+  <text x="1265" y="1230" text-anchor="middle" font-size="8.5" fill="#334155">25 kHz</text>
+<text x="1340" y="1170" font-size="8.5" fill="#b91c1c">+12 V ext.</text>
+<rect x="1390" y="1215" width="10" height="50" fill="#1f2937"/>
+<rect x="1390" y="1215" width="10" height="10" fill="#cbd5e1"/>
+<text x="1406" y="1242" font-size="8" fill="#334155">1N4007</text>
+<rect x="1085" y="1350" width="40" height="20" fill="#dcb98a" stroke="#a98a5f" stroke-width="1"/>
+<rect x="1090" y="1350" width="4" height="20" fill="#3f2d20"/>
+<rect x="1096" y="1350" width="4" height="20" fill="#3f2d20"/>
+<rect x="1102" y="1350" width="4" height="20" fill="#3f2d20"/>
+<path d="M 1187 1360 V 1384" stroke="#94a3b8" stroke-width="2" fill="none"/>
+<path d="M 1213 1360 V 1380" stroke="#94a3b8" stroke-width="2" fill="none"/>
+<circle cx="1200" cy="1360" r="13" fill="#ef4444" stroke="#b91c1c" stroke-width="1.5"/>
+<ellipse cx="1196" cy="1355" rx="4" ry="6" fill="#fca5a5"/>
+<text x="1170" y="1412" font-size="8.5" fill="#334155">STATUS LED</text>
+<rect x="1060" y="930" width="420" height="80" rx="4" fill="#1f2937" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="1060" y="914" width="420" height="3" fill="#64748b"/>
+<rect x="1060" y="920" width="420" height="3" fill="#64748b"/>
+<rect x="1060" y="926" width="420" height="3" fill="#64748b"/>
+<text x="1072" y="952" font-size="10" font-weight="700" fill="#f8fafc">SSR — 5 Hz zero-cross</text>
+<text x="1072" y="968" font-size="8.5" fill="#94a3b8">3–32 V DC in · AC out</text>
+<circle cx="1060" cy="950" r="4.5" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+<circle cx="1060" cy="975" r="4.5" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<circle cx="1480" cy="960" r="4.5" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+<text x="1474" y="964" text-anchor="end" font-size="8" fill="#f8fafc">L</text>
+<circle cx="1480" cy="990" r="4.5" fill="#ffffff" stroke="#374151" stroke-width="2"/>
+<text x="1474" y="994" text-anchor="end" font-size="8" fill="#f8fafc">N</text>
+<text x="1072" y="1030" font-size="9.5" fill="#dc2626">⚠ mains — isolated &amp; fused</text>
+<rect x="1120" y="1060" width="240" height="60" rx="6" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+<path d="M 1140 1092 L 1152 1078 L 1164 1092 L 1176 1078 L 1188 1092 L 1200 1078 L 1212 1092 L 1224 1078 L 1236 1092 L 1248 1078 L 1260 1092 L 1272 1078 L 1284 1092 L 1296 1078 L 1308 1092 L 1320 1078 L 1332 1092 L 1344 1078 L 1356 1092 H 1362" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linecap="round"/>
+<text x="1240" y="1104" text-anchor="middle" font-size="9.5" font-weight="700" fill="#9a3412">AC heater element</text>
+<rect x="1100" y="205" width="100" height="70" rx="4" fill="#1f2937" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="1096" cy="225" r="3" fill="#e2e8f0"/>
+<circle cx="1096" cy="260" r="3" fill="#e2e8f0"/>
+<circle cx="1204" cy="225" r="3" fill="#e2e8f0"/>
+<circle cx="1204" cy="260" r="3" fill="#e2e8f0"/>
+<text x="1092" y="229" text-anchor="end" font-size="7.5" fill="#94a3b8">A</text>
+<text x="1092" y="264" text-anchor="end" font-size="7.5" fill="#94a3b8">K</text>
+<text x="1208" y="229" font-size="7.5" fill="#94a3b8">C</text>
+<text x="1208" y="264" font-size="7.5" fill="#94a3b8">E</text>
+<text x="1072" y="198" font-size="10.5" font-weight="700" fill="#92400e">SSR feedback — optocoupler</text>
+<text x="1072" y="285" font-size="9.5" fill="#334155">reads LOW when SSR conducts (heater ON)</text>
+<text x="1072" y="300" font-size="9.5" fill="#334155">internal pull-up — no external R</text>
+<text x="1072" y="315" font-size="9.5" fill="#dc2626">3.3 V logic only — mains isolated</text>
+<rect x="1060" y="330" width="420" height="240" rx="6" fill="#1e3a8a" stroke="#1e40af" stroke-width="1.5"/>
+<text x="1072" y="352" font-size="11" font-weight="700" fill="#f8fafc">MAX31856 #1 — ET (environment)</text>
+<text x="1072" y="368" font-size="8.5" fill="#93c5fd">thermocouple amplifier breakout</text>
+<rect x="1180" y="400" width="120" height="80" rx="2" fill="#0f172a"/>
+<text x="1240" y="447" text-anchor="middle" font-size="8" fill="#94a3b8">MAX31856</text>
+<circle cx="1055" cy="380" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="384" font-size="8.5" fill="#f8fafc">CS</text>
+<circle cx="1055" cy="420" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="424" font-size="8.5" fill="#f8fafc">SCK</text>
+<circle cx="1055" cy="460" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="464" font-size="8.5" fill="#f8fafc">SDI</text>
+<circle cx="1055" cy="500" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="504" font-size="8.5" fill="#f8fafc">SDO</text>
+<circle cx="1100" cy="570" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1100" y="562" text-anchor="middle" font-size="8" fill="#f8fafc">3V3</text>
+<circle cx="1160" cy="570" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1160" y="562" text-anchor="middle" font-size="8" fill="#f8fafc">GND</text>
+<circle cx="1460" cy="480" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1474" y="484" text-anchor="end" font-size="8" fill="#f8fafc">T+</text>
+<circle cx="1460" cy="510" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1474" y="514" text-anchor="end" font-size="8" fill="#f8fafc">T−</text>
+<rect x="1502" y="466" width="56" height="60" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+<text x="1530" y="492" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">ET</text>
+<text x="1530" y="506" text-anchor="middle" font-size="8" fill="#92400e">probe</text>
+<text x="1072" y="596" font-size="8.5" fill="#334155">Type-K: yellow = +, red = −</text>
+<rect x="1060" y="640" width="420" height="240" rx="6" fill="#1e3a8a" stroke="#1e40af" stroke-width="1.5"/>
+<text x="1072" y="662" font-size="11" font-weight="700" fill="#f8fafc">MAX31856 #2 — BT (bean)</text>
+<text x="1072" y="678" font-size="8.5" fill="#93c5fd">thermocouple amplifier breakout</text>
+<rect x="1180" y="710" width="120" height="80" rx="2" fill="#0f172a"/>
+<text x="1240" y="757" text-anchor="middle" font-size="8" fill="#94a3b8">MAX31856</text>
+<circle cx="1055" cy="690" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="694" font-size="8.5" fill="#f8fafc">CS</text>
+<circle cx="1055" cy="730" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="734" font-size="8.5" fill="#f8fafc">SCK</text>
+<circle cx="1055" cy="770" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="774" font-size="8.5" fill="#f8fafc">SDI</text>
+<circle cx="1055" cy="810" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1068" y="814" font-size="8.5" fill="#f8fafc">SDO</text>
+<circle cx="1100" cy="880" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1100" y="872" text-anchor="middle" font-size="8" fill="#f8fafc">3V3</text>
+<circle cx="1160" cy="880" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1160" y="872" text-anchor="middle" font-size="8" fill="#f8fafc">GND</text>
+<circle cx="1460" cy="790" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1474" y="794" text-anchor="end" font-size="8" fill="#f8fafc">T+</text>
+<circle cx="1460" cy="820" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1474" y="824" text-anchor="end" font-size="8" fill="#f8fafc">T−</text>
+<rect x="1502" y="776" width="56" height="60" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+<text x="1530" y="802" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">BT</text>
+<text x="1530" y="816" text-anchor="middle" font-size="8" fill="#92400e">probe</text>
+<rect x="1300" y="1410" width="160" height="105" rx="6" fill="#1d4ed8" stroke="#1e40af" stroke-width="1.5"/>
+<rect x="1250" y="1428" width="50" height="39" rx="3" fill="#cbd5e1" stroke="#94a3b8" stroke-width="1.5"/>
+<rect x="1262" y="1438" width="10" height="8" fill="#64748b"/>
+<rect x="1262" y="1452" width="10" height="8" fill="#64748b"/>
+<text x="1312" y="1432" font-size="11" font-weight="700" fill="#f8fafc">CH341</text>
+<text x="1312" y="1448" font-size="8.5" fill="#bfdbfe">USB→UART</text>
+<text x="1312" y="1470" font-size="8.5" fill="#bfdbfe">5 V typ. — verify!</text>
+<circle cx="1455" cy="1430" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1445" y="1434" text-anchor="end" font-size="7.5" fill="#f8fafc">TXD</text>
+<circle cx="1455" cy="1450" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1445" y="1454" text-anchor="end" font-size="7.5" fill="#f8fafc">RXD</text>
+<circle cx="1455" cy="1470" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1445" y="1474" text-anchor="end" font-size="7.5" fill="#f8fafc">VCC</text>
+<circle cx="1455" cy="1490" r="4" fill="#ffffff" stroke="#eab308" stroke-width="1.5"/>
+<text x="1445" y="1494" text-anchor="end" font-size="7.5" fill="#f8fafc">GND</text>
+<text x="452" y="1009" font-size="8" fill="#b91c1c">+3.3 V</text>
+<text x="452" y="1077" font-size="8" fill="#0f172a">GND</text>
+<text x="455" y="261" font-size="8" fill="#64748b">NOT USED (strap)</text>
+<text x="1243" y="264" font-size="8" fill="#0f172a">GND</text>
+<text x="1058" y="264" font-size="8" fill="#0f172a">GND</text>
+<text x="1028" y="979" font-size="8" fill="#0f172a">GND</text>
+<text x="1105" y="596" font-size="8" fill="#b91c1c">+3.3 V</text>
+<text x="1165" y="596" font-size="8" fill="#0f172a">GND</text>
+<text x="1105" y="906" font-size="8" fill="#b91c1c">+3.3 V</text>
+<text x="1165" y="906" font-size="8" fill="#0f172a">GND</text>
+<text x="1283" y="1313" font-size="8" fill="#0f172a">GND</text>
+<text x="1258" y="1183" font-size="8" fill="#0f172a">GND</text>
+<text x="1503" y="1494" font-size="8" fill="#0f172a">GND</text>
+<text x="1102" y="314" font-size="8" fill="#92400e">SSR sense (isolated)</text>
+</svg>

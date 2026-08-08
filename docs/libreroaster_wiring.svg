@@ -67,7 +67,7 @@
 
     <rect x="10" y="72" width="160" height="18" rx="3" fill="#fef3c7"/>
     <text x="15" y="85" class="pin">3.3V</text>
-    <text x="45" y="85" class="pin-func">Regulated out → MAX31856 ×2, SSR, Mic</text>
+    <text x="45" y="85" class="pin-func">Regulated out → MAX31856 ×2, SSR</text>
 
     <rect x="10" y="94" width="160" height="18" rx="3" fill="#e5e7eb"/>
     <text x="15" y="107" class="pin">GND</text>
@@ -77,32 +77,32 @@
 
     <!-- SPI Bus (shared) -->
     <rect x="10" y="125" width="160" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="137" class="pin">GPIO7</text>
+    <text x="15" y="137" class="pin">GPIO6</text>
     <text x="60" y="137" class="pin-func">SPI SCLK — shared bus</text>
 
     <rect x="10" y="145" width="160" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="157" class="pin">GPIO5</text>
+    <text x="15" y="157" class="pin">GPIO7</text>
     <text x="60" y="157" class="pin-func">SPI MOSI — shared bus</text>
 
     <rect x="10" y="165" width="160" height="16" rx="3" fill="#eff6ff"/>
-    <text x="15" y="177" class="pin">GPIO6</text>
+    <text x="15" y="177" class="pin">GPIO5</text>
     <text x="60" y="177" class="pin-func">SPI MISO — shared bus</text>
 
     <!-- Chip Selects -->
     <rect x="10" y="190" width="160" height="16" rx="3" fill="#e0e7ff"/>
     <text x="15" y="202" class="pin">GPIO4</text>
-    <text x="60" y="202" class="pin-func">BT CS → MAX31856 #1</text>
+    <text x="60" y="202" class="pin-func">BT CS → MAX31856 #2</text>
 
     <rect x="10" y="210" width="160" height="16" rx="3" fill="#e0e7ff"/>
     <text x="15" y="222" class="pin">GPIO3</text>
-    <text x="60" y="222" class="pin-func">ET CS → MAX31856 #2</text>
+    <text x="60" y="222" class="pin-func">ET CS → MAX31856 #1</text>
 
     <line x1="10" y1="238" x2="170" y2="238" stroke="#e2e8f0"/>
 
     <!-- Heater Control -->
     <rect x="10" y="243" width="160" height="16" rx="3" fill="#fce7f3"/>
     <text x="15" y="255" class="pin">GPIO10</text>
-    <text x="60" y="255" class="pin-func">SSR PWM 1Hz (zero-cross)</text>
+    <text x="60" y="255" class="pin-func">SSR PWM 5 Hz (zero-cross)</text>
     <text x="15" y="267" class="pin-warn">✅ SAFE — no-strapping pin</text>
 
     <rect x="10" y="275" width="160" height="16" rx="3" fill="#fce7f3"/>
@@ -116,17 +116,17 @@
     <rect x="10" y="315" width="160" height="16" rx="3" fill="#f3e5f5"/>
     <text x="15" y="327" class="pin">GPIO9</text>
     <text x="60" y="327" class="pin-func">FAN PWM 25kHz</text>
-    <text x="15" y="339" class="pin-warn">⚠️ STRAPPING — external 10kΩ pull-down!</text>
+    <text x="15" y="339" class="pin-warn">⚠️ STRAPPING — external 10kΩ pull-up to 3.3V!</text>
 
     <line x1="10" y1="350" x2="170" y2="350" stroke="#e2e8f0"/>
 
     <!-- UART -->
     <rect x="10" y="355" width="160" height="16" rx="3" fill="#ecfdf5"/>
-    <text x="15" y="367" class="pin">GPIO20</text>
+    <text x="15" y="367" class="pin">GPIO21</text>
     <text x="60" y="367" class="pin-func">UART TX → to Artisan</text>
 
     <rect x="10" y="375" width="160" height="16" rx="3" fill="#ecfdf5"/>
-    <text x="15" y="387" class="pin">GPIO21</text>
+    <text x="15" y="387" class="pin">GPIO20</text>
     <text x="60" y="387" class="pin-func">UART RX ← from Artisan</text>
 
     <line x1="10" y1="400" x2="170" y2="400" stroke="#e2e8f0"/>
@@ -159,11 +159,11 @@
   </g>
 
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
-  <!-- MAX31856 #1 — BEAN TEMPERATURE (Top-Left) -->
+  <!-- MAX31856 #2 — BEAN TEMPERATURE (Top-Left) -->
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
   <g transform="translate(30, 80)">
     <rect x="0" y="0" width="170" height="220" class="box"/>
-    <text x="85" y="20" text-anchor="middle" class="box-label">MAX31856 #1</text>
+    <text x="85" y="20" text-anchor="middle" class="box-label">MAX31856 #2</text>
     <text x="85" y="34" text-anchor="middle" class="box-sublabel">Bean Temperature (BT)</text>
     <line x1="10" y1="42" x2="160" y2="42" stroke="#e2e8f0"/>
 
@@ -192,11 +192,11 @@
   </g>
 
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
-  <!-- MAX31856 #2 — ENVIRONMENT TEMPERATURE (Mid-Left) -->
+  <!-- MAX31856 #1 — ENVIRONMENT TEMPERATURE (Mid-Left) -->
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
   <g transform="translate(30, 330)">
     <rect x="0" y="0" width="170" height="220" class="box"/>
-    <text x="85" y="20" text-anchor="middle" class="box-label">MAX31856 #2</text>
+    <text x="85" y="20" text-anchor="middle" class="box-label">MAX31856 #1</text>
     <text x="85" y="34" text-anchor="middle" class="box-sublabel">Environment Temp (ET)</text>
     <line x1="10" y1="42" x2="160" y2="42" stroke="#e2e8f0"/>
 
@@ -248,7 +248,7 @@
     <text x="15" y="147" class="pin-warn">⚠️ Switched Live — check wiring rating</text>
 
     <rect x="10" y="154" width="180" height="16" rx="3" fill="#fce7f3"/>
-    <text x="15" y="167" class="pin">COM (feedback) → GPIO1</text>
+    <text x="15" y="167" class="pin">sense (CT/opto) → GPIO1</text>
   </g>
 
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
@@ -295,14 +295,14 @@
   <g transform="translate(460, 300)">
     <rect x="0" y="0" width="200" height="140" class="box"/>
     <text x="100" y="20" text-anchor="middle" class="box-label">MOSFET Driver</text>
-    <text x="100" y="34" text-anchor="middle" class="box-sublabel">IRF520 / IRLZ44N</text>
+    <text x="100" y="34" text-anchor="middle" class="box-sublabel">IRLZ44N (logic-level)</text>
     <line x1="10" y1="42" x2="190" y2="42" stroke="#e2e8f0"/>
 
     <rect x="10" y="48" width="180" height="16" rx="3" fill="#f3e5f5"/>
-    <text x="15" y="61" class="pin">GATE ← GPIO9 (+ 100Ω series)</text>
+    <text x="15" y="61" class="pin">GATE ← GPIO9 (+ 1kΩ series)</text>
 
     <rect x="10" y="68" width="180" height="16" rx="3" fill="#e5e7eb"/>
-    <text x="15" y="81" class="pin">10kΩ GATE-GND pull-down ⚠️</text>
+    <text x="15" y="81" class="pin">100kΩ GATE-GND weak pull-down ⚠️</text>
     <text x="15" y="93" class="pin-warn">(prevents floating during boot)</text>
 
     <rect x="10" y="100" width="180" height="16" rx="3" fill="#f3e5f5"/>
@@ -351,10 +351,10 @@
     <line x1="10" y1="42" x2="190" y2="42" stroke="#e2e8f0"/>
 
     <rect x="10" y="48" width="180" height="16" rx="3" fill="#ecfdf5"/>
-    <text x="15" y="61" class="pin">RX ← ESP32 GPIO20 (UART TX)</text>
+    <text x="15" y="61" class="pin">RX ← ESP32 GPIO21 (UART TX)</text>
 
     <rect x="10" y="68" width="180" height="16" rx="3" fill="#ecfdf5"/>
-    <text x="15" y="81" class="pin">TX → ESP32 GPIO21 (UART RX)</text>
+    <text x="15" y="81" class="pin">TX → ESP32 GPIO20 (UART RX)</text>
 
     <rect x="10" y="88" width="180" height="16" rx="3" fill="#fee2e2"/>
     <text x="15" y="101" class="pin">VCC → 3.3V ⚠️ CRITICAL</text>
@@ -365,7 +365,7 @@
   <!-- WIRES / CONNECTIONS -->
   <!-- ════════════════════════════════════════════════════════════════════════════════════════ -->
 
-  <!-- === SPI BUS (shared — MAX31856 #1 to ESP32-C3) === -->
+  <!-- === SPI BUS (shared — both MAX31856 to ESP32-C3) === -->
   <!-- SCLK -->   <line class="w-spi" x1="200" y1="188" x2="230" y2="202"/>
   <!-- MOSI -->   <line class="w-spi" x1="200" y1="149" x2="230" y2="222"/>
   <!-- MISO -->   <line class="w-spi" x1="200" y1="169" x2="230" y2="242"/>
@@ -384,7 +384,7 @@
 
   <!-- === SSR CONTROL (GPIO10 to SSR) === -->
   <line class="w-pwm" x1="410" y1="323" x2="460" y2="129"/>
-  <text x="420" y="315" class="wire-label">GPIO10 SSR PWM 1Hz</text>
+  <text x="420" y="315" class="wire-label">GPIO10 SSR PWM 5 Hz</text>
 
   <!-- === SSR COMPONENT INTERNAL (feedback) === -->
   <line class="w-signal" x1="460" y1="235" x2="410" y2="355"/>
@@ -396,9 +396,9 @@
 
   <!-- === UART (ESP32 to Adapter) === -->
   <line class="w-uart" x1="410" y1="436" x2="460" y2="529"/>
-  <text x="420" y="440" class="wire-label">GPIO20 TX → Adapter RX</text>
+  <text x="420" y="440" class="wire-label">GPIO21 TX → Adapter RX</text>
   <line class="w-uart" x1="410" y1="456" x2="460" y2="549"/>
-  <text x="420" y="460" class="wire-label">GPIO21 RX ← Adapter TX</text>
+  <text x="420" y="460" class="wire-label">GPIO20 RX ← Adapter TX</text>
 
   <!-- === AC MAINS to SSR === -->
   <line class="w-ac-l" x1="700" y1="279" x2="660" y2="171"/>
@@ -442,12 +442,12 @@
     <text x="15" y="118" class="note">mains earth ground. Safety requirement.</text>
 
     <text x="15" y="143" class="warn-badge">⚠️ GPIO9 is a strapping pin</text>
-    <text x="15" y="157" class="note">Sampled at boot. 10kΩ pull-down on FET</text>
-    <text x="15" y="171" class="note">gate to prevent floating HIGH during ESP</text>
-    <text x="15" y="185" class="note">reset. See ESP32-C3 datasheet §Strapping.</text>
+    <text x="15" y="157" class="note">Sampled at boot: 10kΩ pull-up GPIO9→3.3V</text>
+    <text x="15" y="171" class="note">is CRITICAL to boot; 100kΩ weak</text>
+    <text x="15" y="185" class="note">gate pull-down keeps fan OFF. See datasheet.</text>
 
     <text x="15" y="210" class="warn-badge">⚠️ GPIO2 is a strapping pin</text>
-    <text x="15" y="224" class="note">Safe for analog mic (high-impedance).</text>
+    <text x="15" y="224" class="note">VDD_SPI strap — leave unconnected.</text>
     <text x="15" y="238" class="note">Do NOT drive GPIO2 LOW at boot.</text>
 
     <text x="15" y="263" class="warn-badge">⚠️ GPIO8 is a strapping pin</text>

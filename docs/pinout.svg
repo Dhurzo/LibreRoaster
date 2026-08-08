@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1620" width="1600" height="1620" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>LibreRoaster — ESP32-C3 Pinout &amp; Assembly Diagram</title>
+  <desc>Wiring diagram for the LibreRoaster coffee roaster firmware on ESP32-C3. All pins verified against src/config/constants.rs, src/hardware/init.rs, docs/HARDWARE.md and docs/pinout.md.</desc>
+
+  <!-- ============ DEFS ============ -->
+  <defs>
+    <marker id="arrTeal"   viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0d9488"/></marker>
+    <marker id="arrDkTeal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/></marker>
+    <marker id="arrOrange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ea580c"/></marker>
+    <marker id="arrRed"    viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/></marker>
+    <marker id="arrAmber"  viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d97706"/></marker>
+    <marker id="arrBlue"   viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/></marker>
+    <marker id="arrViolet" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/></marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="1620" fill="#ffffff"/>
+
+  <!-- ============ TITLE ============ -->
+  <text x="800" y="34" text-anchor="middle" font-size="26" font-weight="700" fill="#0f172a">LibreRoaster — ESP32-C3 Pinout &amp; Assembly Diagram</text>
+  <text x="800" y="56" text-anchor="middle" font-size="13" fill="#475569">All pins verified against firmware source · docs/HARDWARE.md · docs/pinout.md · ESP32-C3 (RISC-V)</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="500" y="110" width="550" height="80" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="515" y="127" font-size="11.5" font-weight="700" fill="#334155">LEGEND</text>
+  <line x1="515" y1="136" x2="541" y2="136" stroke="#0d9488" stroke-width="3"/>
+  <text x="547" y="140" font-size="11" fill="#1e293b">SPI bus</text>
+  <line x1="645" y1="136" x2="671" y2="136" stroke="#0f766e" stroke-width="3"/>
+  <text x="677" y="140" font-size="11" fill="#1e293b">Chip selects</text>
+  <line x1="775" y1="136" x2="801" y2="136" stroke="#ea580c" stroke-width="3"/>
+  <text x="807" y="140" font-size="11" fill="#1e293b">Fan PWM</text>
+  <line x1="905" y1="136" x2="931" y2="136" stroke="#dc2626" stroke-width="3"/>
+  <text x="937" y="140" font-size="11" fill="#1e293b">SSR</text>
+  <line x1="515" y1="171" x2="541" y2="171" stroke="#d97706" stroke-width="3"/>
+  <text x="547" y="175" font-size="11" fill="#1e293b">Heat detect</text>
+  <line x1="645" y1="171" x2="671" y2="171" stroke="#2563eb" stroke-width="3"/>
+  <text x="677" y="175" font-size="11" fill="#1e293b">Status LED</text>
+  <line x1="775" y1="171" x2="801" y2="171" stroke="#7c3aed" stroke-width="3"/>
+  <text x="807" y="175" font-size="11" fill="#1e293b">UART0</text>
+  <line x1="905" y1="171" x2="931" y2="171" stroke="#64748b" stroke-width="3"/>
+  <text x="937" y="175" font-size="11" fill="#1e293b">Power</text>
+
+  <!-- ============ ESP32-C3 BOARD ============ -->
+  <rect x="60" y="100" width="360" height="1100" rx="14" fill="#f8fafc" stroke="#334155" stroke-width="2"/>
+  <text x="80" y="130" font-size="16" font-weight="700" fill="#0f172a">ESP32-C3</text>
+  <text x="80" y="147" font-size="10.5" fill="#64748b">dev board or bare module</text>
+
+  <!-- power dashed feed wires (drawn under pin rows) -->
+  <path d="M 80 1013 H 30 V 1365 H 60" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <path d="M 80 1081 H 30 V 1405 H 60" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <path d="M 80 1149 H 30 V 1445 H 60" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="5 4"/>
+
+  <!-- pin rows: (y, number, signal, note, stripe, text color) -->
+  <!-- GPIO1 -->
+  <rect x="80" y="170" width="320" height="54" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <rect x="80" y="170" width="16" height="54" rx="8" fill="#d97706"/>
+  <text x="100" y="198" font-size="13" font-weight="700" fill="#0f172a">GPIO1</text>
+  <text x="185" y="190" font-size="12.5" font-weight="700" fill="#b45309">HEAT DETECTION</text>
+  <text x="185" y="210" font-size="10" fill="#475569">input · internal pull-up · LOW = SSR ON</text>
+  <!-- GPIO2 -->
+  <rect x="80" y="238" width="320" height="54" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="80" y="238" width="16" height="54" rx="8" fill="#94a3b8"/>
+  <text x="100" y="266" font-size="13" font-weight="700" fill="#94a3b8">GPIO2</text>
+  <text x="185" y="258" font-size="12.5" font-weight="700" fill="#64748b">⚠ NOT USED</text>
+  <text x="185" y="278" font-size="10" fill="#94a3b8">VDD_SPI strap — never connect</text>
+  <!-- GPIO3 -->
+  <rect x="80" y="306" width="320" height="54" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.5"/>
+  <rect x="80" y="306" width="16" height="54" rx="8" fill="#0f766e"/>
+  <text x="100" y="334" font-size="13" font-weight="700" fill="#0f172a">GPIO3</text>
+  <text x="185" y="326" font-size="12.5" font-weight="700" fill="#0f766e">ET CHIP SELECT</text>
+  <text x="185" y="346" font-size="10" fill="#475569">MAX31856 #1 (environment)</text>
+  <!-- GPIO4 -->
+  <rect x="80" y="374" width="320" height="54" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.5"/>
+  <rect x="80" y="374" width="16" height="54" rx="8" fill="#0f766e"/>
+  <text x="100" y="402" font-size="13" font-weight="700" fill="#0f172a">GPIO4</text>
+  <text x="185" y="394" font-size="12.5" font-weight="700" fill="#0f766e">BT CHIP SELECT</text>
+  <text x="185" y="414" font-size="10" fill="#475569">MAX31856 #2 (bean)</text>
+  <!-- GPIO5 -->
+  <rect x="80" y="442" width="320" height="54" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <rect x="80" y="442" width="16" height="54" rx="8" fill="#0d9488"/>
+  <text x="100" y="470" font-size="13" font-weight="700" fill="#0f172a">GPIO5</text>
+  <text x="185" y="462" font-size="12.5" font-weight="700" fill="#0f766e">SPI MISO</text>
+  <text x="185" y="482" font-size="10" fill="#475569">via GPIO matrix (GPIO2 avoided)</text>
+  <!-- GPIO6 -->
+  <rect x="80" y="510" width="320" height="54" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <rect x="80" y="510" width="16" height="54" rx="8" fill="#0d9488"/>
+  <text x="100" y="538" font-size="13" font-weight="700" fill="#0f172a">GPIO6</text>
+  <text x="185" y="530" font-size="12.5" font-weight="700" fill="#0f766e">SPI SCLK</text>
+  <text x="185" y="550" font-size="10" fill="#475569">shared bus · 1 MHz</text>
+  <!-- GPIO7 -->
+  <rect x="80" y="578" width="320" height="54" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <rect x="80" y="578" width="16" height="54" rx="8" fill="#0d9488"/>
+  <text x="100" y="606" font-size="13" font-weight="700" fill="#0f172a">GPIO7</text>
+  <text x="185" y="598" font-size="12.5" font-weight="700" fill="#0f766e">SPI MOSI</text>
+  <text x="185" y="618" font-size="10" fill="#475569">shared bus</text>
+  <!-- GPIO8 -->
+  <rect x="80" y="646" width="320" height="54" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="80" y="646" width="16" height="54" rx="8" fill="#2563eb"/>
+  <text x="100" y="674" font-size="13" font-weight="700" fill="#0f172a">GPIO8</text>
+  <text x="185" y="666" font-size="12.5" font-weight="700" fill="#1d4ed8">STATUS LED</text>
+  <text x="185" y="686" font-size="10" fill="#475569">push-pull out · 330 Ω series</text>
+  <!-- GPIO9 -->
+  <rect x="80" y="714" width="320" height="54" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <rect x="80" y="714" width="16" height="54" rx="8" fill="#ea580c"/>
+  <text x="100" y="742" font-size="13" font-weight="700" fill="#0f172a">GPIO9</text>
+  <text x="185" y="734" font-size="12.5" font-weight="700" fill="#c2410c">⚠ FAN PWM · 25 kHz</text>
+  <text x="185" y="754" font-size="10" font-weight="600" fill="#dc2626">STRAP — 10 kΩ pull-up → 3.3 V mandatory</text>
+  <!-- GPIO10 -->
+  <rect x="80" y="782" width="320" height="54" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <rect x="80" y="782" width="16" height="54" rx="8" fill="#dc2626"/>
+  <text x="100" y="810" font-size="13" font-weight="700" fill="#0f172a">GPIO10</text>
+  <text x="185" y="802" font-size="12.5" font-weight="700" fill="#b91c1c">SSR PWM · 5 Hz</text>
+  <text x="185" y="822" font-size="10" fill="#475569">zero-cross SSR · 14-bit LEDC</text>
+  <!-- GPIO20 -->
+  <rect x="80" y="850" width="320" height="54" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <rect x="80" y="850" width="16" height="54" rx="8" fill="#7c3aed"/>
+  <text x="100" y="878" font-size="13" font-weight="700" fill="#0f172a">GPIO20</text>
+  <text x="185" y="870" font-size="12.5" font-weight="700" fill="#6d28d9">UART0 RX</text>
+  <text x="185" y="890" font-size="10" fill="#475569">from CH341 TX · 3.3 V only</text>
+  <!-- GPIO21 -->
+  <rect x="80" y="918" width="320" height="54" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <rect x="80" y="918" width="16" height="54" rx="8" fill="#7c3aed"/>
+  <text x="100" y="946" font-size="13" font-weight="700" fill="#0f172a">GPIO21</text>
+  <text x="185" y="938" font-size="12.5" font-weight="700" fill="#6d28d9">UART0 TX</text>
+  <text x="185" y="958" font-size="10" fill="#475569">to CH341 RX</text>
+  <!-- 3V3 -->
+  <rect x="80" y="986" width="320" height="54" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="80" y="986" width="16" height="54" rx="8" fill="#64748b"/>
+  <text x="100" y="1014" font-size="13" font-weight="700" fill="#0f172a">3V3</text>
+  <text x="185" y="1006" font-size="12.5" font-weight="700" fill="#334155">3.3 V RAIL</text>
+  <text x="185" y="1026" font-size="10" fill="#475569">decouple 100 µF + 0.1 µF</text>
+  <!-- GND -->
+  <rect x="80" y="1054" width="320" height="54" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="80" y="1054" width="16" height="54" rx="8" fill="#64748b"/>
+  <text x="100" y="1082" font-size="13" font-weight="700" fill="#0f172a">GND</text>
+  <text x="185" y="1074" font-size="12.5" font-weight="700" fill="#334155">GROUND</text>
+  <text x="185" y="1094" font-size="10" fill="#475569">common to all stages</text>
+  <!-- 5V -->
+  <rect x="80" y="1122" width="320" height="54" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="80" y="1122" width="16" height="54" rx="8" fill="#64748b"/>
+  <text x="100" y="1150" font-size="13" font-weight="700" fill="#0f172a">5V</text>
+  <text x="185" y="1142" font-size="12.5" font-weight="700" fill="#334155">5V / VIN</text>
+  <text x="185" y="1162" font-size="10" fill="#475569">USB or LDO input</text>
+
+  <text x="80" y="1192" font-size="10" font-weight="600" fill="#dc2626">⚠ straps: GPIO2 · GPIO8 · GPIO9 — see notes</text>
+
+  <!-- USB note -->
+  <rect x="60" y="1215" width="360" height="84" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="72" y="1237" font-size="11.5" font-weight="700" fill="#1d4ed8">NATIVE USB — USB-Serial/JTAG</text>
+  <text x="72" y="1257" font-size="10.5" fill="#334155">D+/D− internal — no external pins</text>
+  <text x="72" y="1275" font-size="10.5" fill="#334155">Artisan ⇄ /dev/ttyACM0 — no adapter</text>
+  <text x="72" y="1292" font-size="10" fill="#64748b">115200 CDC · alternative to UART0</text>
+
+  <!-- ============ WIRES (crossings = 12px gap on horizontal wire) ============ -->
+
+  <!-- SPI CS: GPIO3 -> MAX1 CS (dark teal) -->
+  <path d="M 420 333 H 450 V 390 H 1100" fill="none" stroke="#0f766e" stroke-width="2.5"/>
+  <!-- SPI CS: GPIO4 -> MAX2 CS (dark teal); gaps over GPIO8 vertical + rail bundle -->
+  <path d="M 420 401 H 450 V 680 H 993 M 1007 680 H 1028 M 1082 680 H 1100" fill="none" stroke="#0f766e" stroke-width="2.5"/>
+
+  <!-- SPI bus: GPIO5 MISO -> rail -->
+  <path d="M 420 469 H 443 M 457 469 H 1028 M 1042 469 H 1048 M 1062 469 H 1075" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <!-- SPI bus: GPIO6 SCLK -> rail (stops at SCLK rail x=1035) -->
+  <path d="M 420 537 H 443 M 457 537 H 1035" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <!-- SPI bus: GPIO7 MOSI -> rail (crosses only SCLK rail) -->
+  <path d="M 420 605 H 443 M 457 605 H 1028 M 1042 605 H 1055" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+
+  <!-- shared rails -->
+  <path d="M 1035 425 V 715" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1055 460 V 750" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1075 469 V 785" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+
+  <!-- MAX1 stubs -->
+  <path d="M 1035 425 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1055 460 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1075 495 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <!-- MAX2 stubs (gaps over neighbouring rails) -->
+  <path d="M 1035 715 H 1048 M 1062 715 H 1068 M 1082 715 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1055 750 H 1068 M 1082 750 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+  <path d="M 1075 785 H 1100" fill="none" stroke="#0d9488" stroke-width="2.5"/>
+
+  <!-- junction dots (true connections) -->
+  <circle cx="1035" cy="537" r="3.5" fill="#0d9488"/>
+  <circle cx="1055" cy="605" r="3.5" fill="#0d9488"/>
+  <circle cx="1075" cy="469" r="3.5" fill="#0d9488"/>
+
+  <!-- SPI bus labels -->
+  <text x="1055" y="418" text-anchor="middle" font-size="11" font-style="italic" fill="#0f766e">shared SPI bus · 1 MHz · mode 1 (CPOL=0, CPHA=1)</text>
+  <text x="1035" y="810" text-anchor="middle" font-size="10" fill="#64748b">SCLK</text>
+  <text x="1055" y="810" text-anchor="middle" font-size="10" fill="#64748b">MOSI</text>
+  <text x="1075" y="810" text-anchor="middle" font-size="10" fill="#64748b">MISO</text>
+
+  <!-- GPIO1 -> heat detection (amber, ends at module edge) -->
+  <path d="M 420 197 H 1100" fill="none" stroke="#d97706" stroke-width="2.5"/>
+
+  <!-- GPIO9 -> fan stage (orange); gap over GPIO8 vertical -->
+  <path d="M 420 741 H 993 M 1007 741 H 1010 V 1090 H 1100" fill="none" stroke="#ea580c" stroke-width="2.5" marker-end="url(#arrOrange)"/>
+
+  <!-- GPIO10 -> SSR (red); single gap over GPIO8 + GPIO9 verticals -->
+  <path d="M 420 809 H 993 M 1017 809 H 1020 V 930 H 1100" fill="none" stroke="#dc2626" stroke-width="2.5" marker-end="url(#arrRed)"/>
+
+  <!-- GPIO8 -> LED (blue); gap over CS_BT vertical -->
+  <path d="M 420 673 H 443 M 457 673 H 1000 V 1290 H 1100" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+
+  <!-- GPIO20 / GPIO21 -> UART (violet) -->
+  <path d="M 420 877 H 970 V 1395 H 1100" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrViolet)"/>
+  <path d="M 420 945 H 950 V 1425 H 1100" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrViolet)"/>
+
+  <!-- ============ HEAT DETECTION ============ -->
+  <rect x="1100" y="150" width="430" height="150" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+  <rect x="1100" y="150" width="430" height="26" rx="10" fill="#fef3c7"/>
+  <rect x="1100" y="168" width="430" height="8" fill="#fef3c7"/>
+  <text x="1112" y="168" font-size="12.5" font-weight="700" fill="#92400e">HEAT DETECTION — GPIO1 (SSR feedback)</text>
+  <rect x="1170" y="177" width="110" height="40" rx="6" fill="#ffffff" stroke="#d97706" stroke-width="1.5"/>
+  <text x="1178" y="190" font-size="9.5" fill="#92400e">optocoupler</text>
+  <text x="1178" y="206" font-size="9.5" fill="#92400e">output</text>
+  <path d="M 1100 197 H 1166" fill="none" stroke="#d97706" stroke-width="2.5" marker-end="url(#arrAmber)"/>
+  <circle cx="1170" cy="197" r="3.5" fill="#d97706"/>
+  <path d="M 1225 217 V 240" fill="none" stroke="#d97706" stroke-width="2"/>
+  <line x1="1205" y1="240" x2="1245" y2="240" stroke="#d97706" stroke-width="2"/>
+  <line x1="1215" y1="244" x2="1235" y2="244" stroke="#d97706" stroke-width="2"/>
+  <line x1="1220" y1="248" x2="1230" y2="248" stroke="#d97706" stroke-width="2"/>
+  <text x="1250" y="244" font-size="9" fill="#64748b">GND</text>
+  <text x="1310" y="185" font-size="10" fill="#334155">LOW = SSR conducting (heater ON)</text>
+  <text x="1310" y="205" font-size="10" fill="#334155">internal pull-up — no external R</text>
+  <text x="1310" y="225" font-size="10" font-weight="600" fill="#dc2626">3.3 V logic only — mains isolated</text>
+  <text x="1310" y="245" font-size="10" fill="#334155">opto: collector→GPIO1, emitter→GND</text>
+  <text x="1310" y="265" font-size="10" fill="#334155">open-collector: direct wire OK</text>
+
+  <!-- ============ MAX31856 #1 (ET) ============ -->
+  <rect x="1100" y="350" width="430" height="190" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="2"/>
+  <rect x="1100" y="350" width="430" height="26" rx="10" fill="#ccfbf1"/>
+  <rect x="1100" y="368" width="430" height="8" fill="#ccfbf1"/>
+  <text x="1112" y="368" font-size="12.5" font-weight="700" fill="#0f766e">MAX31856 #1 — ET (environment)</text>
+  <circle cx="1100" cy="390" r="4.5" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <circle cx="1100" cy="425" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="1100" cy="460" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="1100" cy="495" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <text x="1112" y="394" font-size="10" font-weight="700" fill="#0f766e">CS</text>
+  <text x="1112" y="429" font-size="10" fill="#0f766e">SCK</text>
+  <text x="1112" y="464" font-size="10" fill="#0f766e">SDI</text>
+  <text x="1112" y="499" font-size="10" fill="#0f766e">SDO</text>
+  <text x="1112" y="522" font-size="10" fill="#334155">SPI 1 MHz · mode 1 (CPOL=0, CPHA=1)</text>
+  <text x="1112" y="538" font-size="10" fill="#475569">one-shot conversion ≈ 210 ms · 50 Hz filter</text>
+  <path d="M 1150 540 V 560" fill="none" stroke="#64748b" stroke-width="1.5"/>
+
+  <!-- ============ TC ET ============ -->
+  <rect x="1100" y="560" width="430" height="40" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1315" y="585" text-anchor="middle" font-size="11" fill="#334155">TYPE-K TC — ET probe · yellow (+), red (−)</text>
+
+  <!-- ============ MAX31856 #2 (BT) ============ -->
+  <rect x="1100" y="640" width="430" height="190" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="2"/>
+  <rect x="1100" y="640" width="430" height="26" rx="10" fill="#ccfbf1"/>
+  <rect x="1100" y="658" width="430" height="8" fill="#ccfbf1"/>
+  <text x="1112" y="658" font-size="12.5" font-weight="700" fill="#0f766e">MAX31856 #2 — BT (bean)</text>
+  <circle cx="1100" cy="680" r="4.5" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <circle cx="1100" cy="715" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="1100" cy="750" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="1100" cy="785" r="4.5" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <text x="1112" y="684" font-size="10" font-weight="700" fill="#0f766e">CS</text>
+  <text x="1112" y="719" font-size="10" fill="#0f766e">SCK</text>
+  <text x="1112" y="754" font-size="10" fill="#0f766e">SDI</text>
+  <text x="1112" y="789" font-size="10" fill="#0f766e">SDO</text>
+  <text x="1112" y="812" font-size="10" fill="#475569">one-shot conversion ≈ 210 ms · 50 Hz filter</text>
+  <path d="M 1150 830 V 850" fill="none" stroke="#64748b" stroke-width="1.5"/>
+
+  <!-- ============ TC BT ============ -->
+  <rect x="1100" y="850" width="430" height="40" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1315" y="875" text-anchor="middle" font-size="11" fill="#334155">TYPE-K TC — BT probe · yellow (+), red (−)</text>
+
+  <!-- ============ SSR ============ -->
+  <rect x="1100" y="920" width="430" height="110" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <rect x="1100" y="920" width="430" height="26" rx="10" fill="#fee2e2"/>
+  <rect x="1100" y="938" width="430" height="8" fill="#fee2e2"/>
+  <text x="1112" y="938" font-size="12.5" font-weight="700" fill="#b91c1c">SSR — HEATER · 5 Hz zero-cross</text>
+  <path d="M 1100 930 H 1145 V 975 H 1150" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+  <rect x="1150" y="945" width="120" height="60" rx="6" fill="#ffffff" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="1158" y="964" font-size="10" font-weight="700" fill="#b91c1c">SSR-25DA</text>
+  <text x="1158" y="978" font-size="9.5" fill="#475569">zero-cross</text>
+  <text x="1158" y="992" font-size="9" fill="#475569">control 3–32 V DC</text>
+  <path d="M 1270 975 H 1330" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+  <rect x="1330" y="945" width="170" height="60" rx="6" fill="#ffffff" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="1338" y="966" font-size="10.5" font-weight="700" fill="#b91c1c">HEATER</text>
+  <text x="1338" y="982" font-size="10" fill="#dc2626">120/230 VAC ⚡</text>
+  <text x="1338" y="996" font-size="9" fill="#475569">mains — isolated</text>
+  <text x="1110" y="1018" font-size="10" font-weight="600" fill="#dc2626">SSR switches mains L · disconnect before wiring</text>
+
+  <!-- ============ FAN STAGE ============ -->
+  <rect x="1100" y="1050" width="430" height="180" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <rect x="1100" y="1050" width="430" height="26" rx="10" fill="#ffedd5"/>
+  <rect x="1100" y="1068" width="430" height="8" fill="#ffedd5"/>
+  <text x="1112" y="1068" font-size="12.5" font-weight="700" fill="#c2410c">FAN STAGE — GPIO9 · 25 kHz PWM ⚠ STRAP</text>
+  <path d="M 1100 1095 H 1120" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+  <path d="M 1120 1095 V 1080" fill="none" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="1127" y="1084" font-size="9" fill="#c2410c">10 kΩ → 3.3 V (boot pull-up)</text>
+  <rect x="1130" y="1091" width="24" height="8" rx="2" fill="#ffffff" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="1132" y="1109" font-size="9" fill="#475569">1 kΩ</text>
+  <path d="M 1154 1095 H 1180" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+  <path d="M 1170 1095 V 1130" fill="none" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="1177" y="1124" font-size="9" fill="#c2410c">10 kΩ → GND</text>
+  <rect x="1180" y="1077" width="70" height="36" rx="4" fill="#ffffff" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="1188" y="1096" font-size="9.5" font-weight="700" fill="#c2410c">N-MOSFET</text>
+  <path d="M 1250 1095 H 1300" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+  <rect x="1300" y="1077" width="80" height="36" rx="4" fill="#ffffff" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="1308" y="1093" font-size="9.5" font-weight="700" fill="#c2410c">12 V FAN</text>
+  <text x="1308" y="1107" font-size="9" fill="#475569">M</text>
+  <path d="M 1380 1095 H 1400" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+  <line x1="1400" y1="1095" x2="1440" y2="1095" stroke="#ea580c" stroke-width="2"/>
+  <line x1="1410" y1="1099" x2="1430" y2="1099" stroke="#ea580c" stroke-width="2"/>
+  <line x1="1415" y1="1103" x2="1425" y2="1103" stroke="#ea580c" stroke-width="2"/>
+  <path d="M 1340 1113 V 1130" fill="none" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="1334,1130 1346,1130 1340,1138" fill="#64748b"/>
+  <line x1="1336" y1="1142" x2="1344" y2="1142" stroke="#64748b" stroke-width="1.5"/>
+  <text x="1352" y="1134" font-size="9" fill="#475569">1N4007 flyback</text>
+  <text x="1112" y="1172" font-size="10" font-weight="600" fill="#dc2626">strap pin: 10 kΩ pull-up keeps boot HIGH</text>
+  <text x="1112" y="1188" font-size="9.5" fill="#475569">series 1 kΩ + gate pull-down 100 kΩ weak (fan OFF at boot)</text>
+
+  <!-- ============ STATUS LED ============ -->
+  <rect x="1100" y="1250" width="430" height="60" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <rect x="1100" y="1250" width="430" height="22" rx="10" fill="#dbeafe"/>
+  <rect x="1100" y="1264" width="430" height="8" fill="#dbeafe"/>
+  <text x="1112" y="1266" font-size="11.5" font-weight="700" fill="#1d4ed8">STATUS LED — GPIO8 · push-pull</text>
+  <path d="M 1100 1290 H 1150" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  <rect x="1150" y="1286" width="24" height="8" rx="2" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="1152" y="1282" font-size="9" fill="#475569">330 Ω</text>
+  <path d="M 1174 1290 H 1190" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  <polygon points="1190,1284 1190,1296 1210,1290" fill="#2563eb"/>
+  <line x1="1212" y1="1286" x2="1212" y2="1294" stroke="#2563eb" stroke-width="2.5"/>
+  <path d="M 1212 1290 H 1260" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  <line x1="1240" y1="1290" x2="1280" y2="1290" stroke="#2563eb" stroke-width="2"/>
+  <line x1="1250" y1="1294" x2="1270" y2="1294" stroke="#2563eb" stroke-width="2"/>
+  <line x1="1255" y1="1298" x2="1265" y2="1298" stroke="#2563eb" stroke-width="2"/>
+  <text x="1286" y="1294" font-size="9" fill="#64748b">GND</text>
+
+  <!-- ============ UART0 ============ -->
+  <rect x="1100" y="1340" width="430" height="126" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+  <rect x="1100" y="1340" width="430" height="26" rx="10" fill="#ede9fe"/>
+  <rect x="1100" y="1358" width="430" height="8" fill="#ede9fe"/>
+  <text x="1112" y="1358" font-size="12.5" font-weight="700" fill="#6d28d9">UART0 — Artisan · 115200 baud</text>
+  <path d="M 1100 1395 H 1240" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
+  <path d="M 1100 1425 H 1240" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
+  <polygon points="1108,1391 1108,1399 1100,1395" fill="#7c3aed"/>
+  <polygon points="1236,1421 1236,1429 1244,1425" fill="#7c3aed"/>
+  <text x="1150" y="1391" text-anchor="middle" font-size="9.5" fill="#6d28d9">CH341 TX → ESP RX</text>
+  <text x="1150" y="1421" text-anchor="middle" font-size="9.5" fill="#6d28d9">ESP TX → CH341 RX</text>
+  <rect x="1240" y="1380" width="190" height="70" rx="6" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="1248" y="1404" font-size="10.5" font-weight="700" fill="#6d28d9">CH341 USB-UART</text>
+  <text x="1248" y="1420" font-size="9.5" fill="#475569">adapter</text>
+  <text x="1112" y="1456" font-size="10" font-weight="600" fill="#dc2626">⚠ 5 V CH341 clones damage GPIO20/21 — 3.3 V only</text>
+
+  <!-- ============ POWER & SAFETY PANEL ============ -->
+  <rect x="60" y="1310" width="360" height="242" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+  <text x="72" y="1330" font-size="11.5" font-weight="700" fill="#334155">POWER &amp; SAFETY NOTES</text>
+  <circle cx="60" cy="1365" r="3" fill="#64748b"/>
+  <circle cx="60" cy="1405" r="3" fill="#64748b"/>
+  <circle cx="60" cy="1445" r="3" fill="#64748b"/>
+  <text x="80" y="1369" font-size="10.5" fill="#334155">3V3 — 3.3 V ±5 %; decouple 100 µF + 0.1 µF</text>
+  <text x="80" y="1409" font-size="10.5" fill="#334155">GND — common to all stages</text>
+  <text x="80" y="1449" font-size="10.5" fill="#334155">5V/VIN — USB 5 V or regulated input</text>
+  <text x="80" y="1484" font-size="10.5" fill="#334155">Mains side (SSR/heater): isolated — disconnect first</text>
+  <text x="80" y="1514" font-size="10.5" fill="#334155">Never exceed 3.6 V on any GPIO</text>
+  <text x="80" y="1544" font-size="10.5" fill="#334155">Back-powering: 10 kΩ series on external signals</text>
+
+  <!-- ============ FOOTER ============ -->
+  <text x="800" y="1582" text-anchor="middle" font-size="10" fill="#64748b">Generated 2026-08-08 · triple-verified (firmware asserts · docs cross-ref · ESP32-C3 TRM) · LibreRoaster v0.1 · printable at 1600×1620</text>
+</svg>

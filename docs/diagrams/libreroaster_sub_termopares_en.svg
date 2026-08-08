@@ -28,7 +28,7 @@
 
   <!-- MAX31856 BT (top right) -->
   <rect x="690" y="80" width="230" height="240" rx="6" fill="#e8f0ff" class="box"/>
-  <text x="805" y="100" text-anchor="middle" class="t" font-size="13">MAX31856 #1 — BT</text>
+  <text x="805" y="100" text-anchor="middle" class="t" font-size="13">MAX31856 #2 — BT</text>
   <g text-anchor="start">
     <circle cx="690" cy="130" r="4" fill="#2196F3"/><text x="700" y="134" class="p">SCK  ← GPIO6</text>
     <circle cx="690" cy="154" r="4" fill="#4CAF50"/><text x="700" y="158" class="p">SDI  ← GPIO7 (MOSI)</text>
@@ -48,7 +48,7 @@
 
   <!-- MAX31856 ET (bottom right) -->
   <rect x="690" y="400" width="230" height="220" rx="6" fill="#e8f0ff" class="box"/>
-  <text x="805" y="420" text-anchor="middle" class="t" font-size="13">MAX31856 #2 — ET</text>
+  <text x="805" y="420" text-anchor="middle" class="t" font-size="13">MAX31856 #1 — ET</text>
   <g text-anchor="start">
     <circle cx="690" cy="448" r="4" fill="#2196F3"/><text x="700" y="452" class="p">SCK  ← GPIO6</text>
     <circle cx="690" cy="470" r="4" fill="#4CAF50"/><text x="700" y="474" class="p">SDI  ← GPIO7 (MOSI)</text>
@@ -84,7 +84,7 @@
   <text x="54" y="492" class="n">• Individual CS: GPIO4=BT, GPIO3=ET.</text>
   <text x="54" y="510" class="n">• ESP MOSI→SDI ; ESP MISO←SDO (do not cross).</text>
   <text x="54" y="528" class="n">• Firmware does NOT use FAULT/DRDY (polls over SPI,</text>
-  <text x="54" y="544" class="n">  fixed 160 ms wait). Leave them unconnected.</text>
+  <text x="54" y="544" class="n">  fixed 210 ms wait). Leave them unconnected.</text>
   <text x="54" y="562" class="n">• Type K: yellow=+, red=−. Polarity matters.</text>
   <text x="54" y="580" class="n">• Do not swap BT↔ET probes (electrically valid,</text>
   <text x="54" y="596" class="n">  but control misbehaves — see HARDWARE.md).</text>

@@ -11,7 +11,7 @@
   </style></defs>
   <rect width="1040" height="760" fill="#f7f7f9"/>
   <text x="520" y="30" text-anchor="middle" class="t" font-size="18">Subsystem 3 — SSR + HEATER (heat control) — ⚠ AC MAINS</text>
-  <text x="520" y="50" text-anchor="middle" class="n">GPIO10 · LEDC Ch1 / Timer0 · 1 Hz (SSR_CONTROL_CYCLE_HZ=1) zero-cross · detection via GPIO1</text>
+  <text x="520" y="50" text-anchor="middle" class="n">GPIO10 · LEDC Ch1 / Timer0 · 5 Hz (SSR_CONTROL_CYCLE_HZ=5) zero-cross · detection via GPIO1</text>
 
   <!-- ============ LOW VOLTAGE CONTROL SIDE ============ -->
   <rect x="40" y="90" width="170" height="150" rx="8" class="chip"/>
@@ -44,7 +44,7 @@
   <text x="532" y="214" class="p">2 · DC−  ← GND</text>
   <text x="532" y="240" class="p">3 · AC-IN  ← L (fuse)</text>
   <text x="532" y="260" class="p">4 · AC-OUT → heater</text>
-  <text x="532" y="286" class="w">✅ 1 Hz zero-cross compatible</text>
+  <text x="532" y="286" class="w">✅ 5 Hz zero-cross compatible</text>
   <line x1="450" y1="150" x2="520" y2="190" class="wire" stroke="#D32F2F"/>
   <line x1="252" y1="222" x2="252" y2="300" class="wire" stroke="#999"/>
   <polyline class="wire" stroke="#999" points="252,300 470,300 470,210 520,210"/>
@@ -93,7 +93,7 @@
   <rect x="500" y="450" width="510" height="240" rx="6" fill="#fff" class="box"/>
   <text x="514" y="472" class="t" font-size="13">Safety and critical notes</text>
   <text x="514" y="494" class="n">• The SSR switches the live (L), not neutral. Fuse + terminal block on the AC input.</text>
-  <text x="514" y="512" class="w">• ✅ 1 Hz time-proportioning control — compatible with zero-cross SSRs (SSR-25DA, etc.)</text>
+  <text x="514" y="512" class="w">• ✅ 5 Hz time-proportioning control — compatible with zero-cross SSRs (SSR-25DA, etc.)</text>
   <text x="514" y="566" class="w">• HW thermal cutoff (klixon/thermal fuse) in SERIES with the heater,</text>
   <text x="514" y="582" class="w">   independent of the CPU (mitigates audit findings THERM-1/THERM-2).</text>
   <text x="514" y="604" class="n">• Heatsink on the SSR (≈1 W per A). At 10 A it dissipates ~10–15 W.</text>

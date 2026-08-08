@@ -257,7 +257,7 @@ NOT USED (avoid connecting anything)
 
 ### Fan Driver Compatibility
 - If using a MOSFET to drive the fan, ensure the gate has a pull-down resistor (to keep fan OFF during ESP32-C3 boot) BUT the GPIO9 line itself must be pulled UP.
-- **Solution:** Add both a pull-up (10 kΩ to 3.3V) on the GPIO9 line **and** a pull-down (10 kΩ to GND) on the MOSFET gate side, separated by a series resistor (1 kΩ) from GPIO9 to the gate.
+- **Solution:** Add both a pull-up (10 kΩ to 3.3V) on the GPIO9 line **and** a **weak** pull-down (100 kΩ to GND) on the MOSFET gate side, separated by a series resistor (1 kΩ) from GPIO9 to the gate.
 
 ```
         ┌──────────────────────┐
@@ -268,6 +268,8 @@ GPIO9 ──┤ 1kΩ                 │──── MOSFET Gate
         │ └─────/\/\/\/── GND  │  (pull-down keeps fan OFF during boot)
         └──────────────────────┘
 ```
+
+- **Why 100 kΩ (weak):** a 10 kΩ gate pull-down would load the GPIO9 strap divider down to ≈1.9 V — below the ≈2.5 V boot threshold; 100 kΩ keeps GPIO9 ≈3.0 V at reset while still holding the gate near GND.
 
 ### Thermocouple Polarity
 - Type-K thermocouples are polarity-sensitive. Reversing leads produces inverted (negative) temperature readings.
