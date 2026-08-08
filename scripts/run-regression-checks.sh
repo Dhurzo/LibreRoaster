@@ -22,10 +22,16 @@ tests="command_idempotence command_multiplexer_concurrency artisan_integration_t
 for test in $tests; do
   case $test in
     artisan_integration_test)
-      CMD="cargo test --test $test --features regression"
+      # Regression fixtures need the `regression` feature.
+      # All four suites are gated on `feature = "test"` (see the
+      # `#![cfg(all(test, feature = "test", ...))]` header in each test
+      # file); without it they compile to 0 tests and the pipe goes
+      # silently green. `--target` matches quality-baseline.sh so the
+      # host Embassy time driver is linked.
+      CMD="cargo test --test $test --features test,regression --target x86_64-unknown-linux-gnu"
       ;;
     *)
-      CMD="cargo test --test $test"
+      CMD="cargo test --test $test --features test --target x86_64-unknown-linux-gnu"
       ;;
   esac
   log_test "$test" sh -c "$CMD"

@@ -564,8 +564,19 @@ mod tests {
         ) {
             let mut curve = RoastCurve::new();
             for i in 0..times.len() {
-                let bean = bean_temps[i % bean_temps.len().max(1)];
-                let env = env_temps[i % env_temps.len().max(1)];
+                // The temp vectors are independent generators: either may be
+                // empty while `times` is not. Indexing with
+                // `i % len.max(1)` was an out-of-bounds panic for len == 0
+                // (caught by the CI regression job); fall back to 0.0 for
+                // missing temps instead.
+                let bean = bean_temps
+                    .get(i % bean_temps.len().max(1))
+                    .copied()
+                    .unwrap_or(0.0);
+                let env = env_temps
+                    .get(i % env_temps.len().max(1))
+                    .copied()
+                    .unwrap_or(0.0);
                 curve.add_point(CurvePoint {
                     time_secs: times[i],
                     bean_temp: bean,
@@ -579,7 +590,9 @@ mod tests {
                 "temperatures_at must return finite pairs, got ({bt:?}, {et:?})"
             );
 
-            if !times.is_empty() {
+            // Envelope check only makes sense when both temp vectors are
+            // non-empty: `envelope(&[])` is (MAX, MIN), an empty range.
+            if !times.is_empty() && !bean_temps.is_empty() && !env_temps.is_empty() {
                 let (min_bt, max_bt) = envelope(&bean_temps);
                 let (min_et, max_et) = envelope(&env_temps);
                 assert!(
