@@ -237,7 +237,7 @@ impl SensorController {
         let mut has_valid_rate = false;
 
         if let (Some(prev_pv), Some(prev_time)) = (self.last_pv_sample, self.last_pv_sample_time) {
-            let duration = current_time.duration_since(prev_time);
+            let duration = current_time.saturating_duration_since(prev_time);
             let dt_secs = duration.as_micros() as f32 * 1e-6;
             if dt_secs > 0.0 {
                 let delta_temp = current_pv - prev_pv;
@@ -295,6 +295,12 @@ impl SensorController {
                 ROR_EXCEEDED_CONSECUTIVE_LIMIT
             );
             if self.pv_ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+                // Bug M10 (2026-08-10): reset the debounce counter before
+                // firing, exactly like `check_bt_rate` does. Without this the
+                // counter stayed pinned at the limit through the latched
+                // period and the recovery, so the NEXT roast tripped on a
+                // SINGLE tick above the threshold — no 3-sample confirmation.
+                self.pv_ror_exceeded_count = 0;
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("rate_of_rise_exceeded"),
                 });

@@ -371,12 +371,21 @@ fn s5_nan_input_poisons_ssr_output_and_disarms_backstops() {
 #[test]
 fn s6_ot2_zero_bypasses_fan_floor_until_next_tick() {
     let mut ctrl = make_control();
+    // Bug fix (2026-08-10): the host time driver has 1 µs tick resolution —
+    // consecutive `Instant::now()` calls can return the SAME tick, which
+    // zeroes the slew limiter's dt (`actual_output = slewing + 50·dt = 0`)
+    // and leaves `ssr_output == 0.0` — the clamp gate below would then see
+    // "heater off" and skip the fan floor, making this test flaky depending
+    // on scheduler timing. Advance the clock explicitly so every tick and
+    // command sees dt > 0.
     let t0 = Instant::now();
     tick(&mut ctrl, 25.0, 30.0, t0);
 
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(50))
         .expect("OT1 50");
-    let t1 = Instant::now();
+    // +500 ms: slew applies (dt > 0) and the SSR cycle guard (100 ms) is
+    // open again, so this tick physically applies the heater.
+    let t1 = t0 + Duration::from_millis(500);
     tick(&mut ctrl, 25.0, 30.0, t1);
     assert_eq!(
         ctrl.get_status().fan_output,
@@ -400,7 +409,7 @@ fn s6_ot2_zero_bypasses_fan_floor_until_next_tick() {
     );
 
     // The floor also re-asserts on the next control tick (idempotent).
-    let t2 = Instant::now();
+    let t2 = t1 + Duration::from_millis(500);
     tick(&mut ctrl, 25.0, 30.0, t2);
     assert_eq!(
         ctrl.get_status().fan_output,

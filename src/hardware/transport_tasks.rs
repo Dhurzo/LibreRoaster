@@ -2,8 +2,8 @@
 //!
 //! This module provides a unified implementation of the receive/parse/enqueue
 //! logic that was previously duplicated between `uart/tasks.rs` and
-//! `usb_cdc/tasks.rs`. Each transport implements the `RxSource` and `TxSink`
-//! traits, and the generic functions handle the rest. Transport-specific
+//! `usb_cdc/tasks.rs`. Each transport implements the `RxSource` trait, and
+//! the generic functions handle the rest. Transport-specific
 //! modules provide non-generic `#[embassy_executor::task]` wrappers.
 //!
 //! F5.3: Command path simplified — reader task pushes parsed commands directly
@@ -19,17 +19,12 @@ use crate::logging::traceability::{trace_command_enqueue, TracedCommand, TRACE_E
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::pipe::Pipe;
 use embassy_time::{Duration, Timer};
 use heapless::{Deque, String, Vec};
 use log::debug;
 
 /// Size of the event queue for buffering incoming bytes before parsing.
 pub const EVENT_QUEUE_SIZE: usize = 256;
-
-/// Size of the command pipe for the writer task (UART only; USB CDC writes
-/// directly via the output channel).
-pub const COMMAND_PIPE_SIZE: usize = 256;
 
 /// Trait for transport receive half.
 #[allow(async_fn_in_trait)]
@@ -40,15 +35,6 @@ pub trait RxSource {
     async fn read_bytes(buffer: &mut [u8]) -> Result<usize, Self::Error>;
 }
 
-/// Trait for transport transmit half.
-#[allow(async_fn_in_trait)]
-pub trait TxSink {
-    type Error: core::fmt::Debug;
-
-    /// Write bytes to the transport.
-    async fn write_bytes(data: &[u8]) -> Result<(), Self::Error>;
-}
-
 /// Configuration for a transport task set.
 #[derive(Clone, Copy)]
 pub struct TransportConfig {
@@ -56,10 +42,6 @@ pub struct TransportConfig {
     pub name: &'static str,
     /// Channel identifier for multiplexer routing.
     pub channel: CommChannel,
-    /// Size of the event queue (bytes).
-    pub event_queue_size: usize,
-    /// Size of the command pipe for writer task.
-    pub command_pipe_size: usize,
     /// Initial delay before reader task starts polling (ms).
     pub reader_start_delay_ms: u64,
     /// Initial delay before writer task starts (ms).
@@ -73,8 +55,6 @@ impl Default for TransportConfig {
         Self {
             name: "transport",
             channel: CommChannel::None,
-            event_queue_size: EVENT_QUEUE_SIZE,
-            command_pipe_size: COMMAND_PIPE_SIZE,
             reader_start_delay_ms: 10,
             writer_start_delay_ms: 20,
             reader_poll_interval_ms: 10,
@@ -86,29 +66,18 @@ impl Default for TransportConfig {
 pub struct TransportRxState {
     pub event_queue:
         BlockingMutex<CriticalSectionRawMutex, RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>>,
-    pub command_pipe: BlockingMutex<
-        CriticalSectionRawMutex,
-        RefCell<Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>>>,
-    >,
 }
 
 impl TransportRxState {
     pub const fn new() -> Self {
         Self {
             event_queue: BlockingMutex::new(RefCell::new(None)),
-            command_pipe: BlockingMutex::new(RefCell::new(None)),
         }
     }
 
     pub fn init(&self) {
         self.event_queue
             .lock(|cell| *cell.borrow_mut() = Some(Deque::new()));
-        self.command_pipe
-            .lock(|cell| *cell.borrow_mut() = Some(Pipe::new()));
-    }
-
-    fn take_pipe(&self) -> Option<Pipe<CriticalSectionRawMutex, COMMAND_PIPE_SIZE>> {
-        self.command_pipe.lock(|cell| cell.borrow_mut().take())
     }
 }
 
@@ -140,10 +109,34 @@ pub(crate) fn push_to_event_queue(
     event_queue.lock(|cell| {
         if let Some(queue) = cell.borrow_mut().as_mut() {
             for &byte in data {
+                // Bug M3 (2026-08-10): while discarding, consume the bytes
+                // of the corrupted line WITHOUT enqueueing them. When its
+                // terminator arrives, push it so `process_event_queue`'s
+                // terminator-only branch emits the `buffer_overflow` ERR and
+                // consumes the latch — a subsequent CLEAN command is then
+                // accepted instead of being wrongly attributed to the
+                // overflow and dropped (previously a `STOP`/`EmergencyStop`
+                // right after a garbage burst was silently lost).
+                if overflow.discarding {
+                    if byte == 0x0D || byte == 0x0A {
+                        overflow.discarding = false;
+                        let _ = queue.push_back(byte);
+                    }
+                    continue;
+                }
                 if queue.len() >= EVENT_QUEUE_SIZE {
                     // Drop the entire pending partial command.
                     queue.clear();
                     overflow.triggered = true;
+                    if byte == 0x0D || byte == 0x0A {
+                        // The overflow byte closes a line: keep it so the
+                        // terminator-only extraction reports the overflow.
+                        let _ = queue.push_back(byte);
+                    } else {
+                        // Mid-line overflow: discard until the terminator.
+                        overflow.discarding = true;
+                    }
+                    continue;
                 }
                 let _ = queue.push_back(byte);
             }
@@ -157,6 +150,11 @@ pub(crate) fn push_to_event_queue(
 #[derive(Default)]
 pub struct EventQueueOverflow {
     pub triggered: bool,
+    /// Bug M3 (2026-08-10): while true, `push_to_event_queue` consumes
+    /// incoming bytes without enqueueing them until the corrupted line's
+    /// terminator arrives, so the first clean command after a flush is NOT
+    /// discarded along with the garbage.
+    pub discarding: bool,
 }
 
 /// Bug P7 (2026-08-03): decide whether a read error on `channel` should be
@@ -483,36 +481,6 @@ pub async fn run_reader_task<RX: RxSource>(
 
         if !buffer_was_full {
             Timer::after(reader_poll_interval).await;
-        }
-    }
-}
-
-/// Generic writer task implementation (for transports that use a command pipe, like UART).
-///
-/// Reads from the command pipe and writes to the transport.
-pub async fn run_writer_task<TX: TxSink>(
-    _tx: TX,
-    state: &'static TransportRxState,
-    config: &'static TransportConfig,
-) {
-    let writer_start_delay = Duration::from_millis(config.writer_start_delay_ms);
-    let pipe = state.take_pipe();
-
-    let Some(pipe) = pipe else {
-        log::warn!("{} writer task: command pipe not initialized", config.name);
-        return;
-    };
-
-    let mut wbuf = [0u8; COMMAND_PIPE_SIZE];
-
-    Timer::after(writer_start_delay).await;
-
-    loop {
-        let len = pipe.read(&mut wbuf).await;
-        if len > 0 {
-            if let Err(e) = TX::write_bytes(&wbuf[..len]).await {
-                log::warn!("{} write error: {:?}", config.name, e);
-            }
         }
     }
 }

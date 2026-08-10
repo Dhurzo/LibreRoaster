@@ -41,6 +41,12 @@ fn tick_now(ctrl: &mut RoasterControl, bt: f32, et: f32) -> f32 {
     ctrl.update_control(now).expect("update")
 }
 
+/// Single tick at an explicit instant (for deterministic clock advancement).
+fn tick_now_at(ctrl: &mut RoasterControl, bt: f32, et: f32, now: Instant) -> f32 {
+    ctrl.update_temperatures(bt, et, now).expect("temps");
+    ctrl.update_control(now).expect("update")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. CHARGE DETECTION RESET BETWEEN ROASTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -937,10 +943,20 @@ fn set_pid_gains_keeps_pid_enabled() {
     let _guard = acquire_lock();
     let mut ctrl = build_control();
 
-    tick_now(&mut ctrl, 25.0, 30.0);
+    // Bug fix (2026-08-10): `tick_now` uses REAL wall-clock time and the host
+    // time driver has 1 µs resolution, so two consecutive ticks can share a
+    // tick (slew dt == 0 → applied output 0) and `update_pid_control` only
+    // recomputes once `pid_cycle_time_ms` (100 ms) has elapsed since the last
+    // computation. Both effects made the final `mv > 0` assert flaky depending
+    // on scheduler timing. Drive the clock explicitly (+200 ms per tick) so
+    // the slew always advances and the PID cycle gate is deterministically
+    // open.
+    let t0 = Instant::now();
+    tick_now_at(&mut ctrl, 25.0, 30.0, t0);
     ctrl.process_artisan_command(ArtisanCommand::StartRoast)
         .expect("start");
-    tick_now(&mut ctrl, 180.0, 200.0);
+    let t1 = t0 + Duration::from_millis(200);
+    tick_now_at(&mut ctrl, 180.0, 200.0, t1);
 
     assert!(ctrl.get_status().pid_enabled, "PID on after START");
 
@@ -960,7 +976,8 @@ fn set_pid_gains_keeps_pid_enabled() {
     // produce a positive MV (prove it's actually still computing, not a 0-V stub).
     ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(230.0))
         .expect("target");
-    tick_now(&mut ctrl, 180.0, 200.0);
+    let t2 = t1 + Duration::from_millis(200);
+    tick_now_at(&mut ctrl, 180.0, 200.0, t2);
     // MV reflects the controller's desired output (see status.mv doc comment).
     assert!(
         ctrl.get_status().mv > 0.0,

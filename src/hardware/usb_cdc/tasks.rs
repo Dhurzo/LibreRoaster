@@ -1,7 +1,6 @@
 use crate::application::service_container::ServiceContainer;
 use crate::hardware::transport_tasks::{
-    run_reader_task, RxSource, TransportConfig, TransportRxState, COMMAND_PIPE_SIZE,
-    EVENT_QUEUE_SIZE,
+    run_reader_task, RxSource, TransportConfig, TransportRxState,
 };
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
@@ -10,10 +9,6 @@ use heapless::{String, Vec};
 use log::debug;
 
 use super::driver;
-
-// USB CDC-specific constants (re-exported for compatibility)
-pub const USB_COMMAND_PIPE_SIZE: usize = COMMAND_PIPE_SIZE;
-pub const USB_EVENT_QUEUE_SIZE: usize = EVENT_QUEUE_SIZE;
 
 /// USB CDC-specific RxSource implementation.
 pub struct UsbCdcRx;
@@ -30,8 +25,6 @@ impl RxSource for UsbCdcRx {
 static USB_CONFIG: TransportConfig = TransportConfig {
     name: "USB",
     channel: CommChannel::Usb,
-    event_queue_size: USB_EVENT_QUEUE_SIZE,
-    command_pipe_size: USB_COMMAND_PIPE_SIZE,
     reader_start_delay_ms: 100, // USB CDC needs more time to enumerate
     writer_start_delay_ms: 20,
     reader_poll_interval_ms: 10,

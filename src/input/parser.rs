@@ -2,18 +2,30 @@ use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
 use core::cell::RefCell;
 use critical_section::Mutex;
 
-static PARSED_PROFILE: Mutex<RefCell<Option<RoastProfile>>> = Mutex::new(RefCell::new(None));
+/// Bug L9 (2026-08-10): the previous single-slot
+/// `Mutex<RefCell<Option<RoastProfile>>>` let a burst of two PROFILE lines
+/// overwrite the first profile before the control loop drained the channel —
+/// `SetProfile` then applied the SECOND profile twice (or the first was a
+/// no-op). A small FIFO (capacity 4) preserves bursts in order; overflow
+/// drops the oldest, keeping the newest command.
+static PARSED_PROFILE: Mutex<RefCell<heapless::Deque<RoastProfile, 4>>> =
+    Mutex::new(RefCell::new(heapless::Deque::new()));
 
 /// Store a parsed profile for the command handler to consume.
 pub fn store_profile(profile: RoastProfile) {
     critical_section::with(|cs| {
-        *PARSED_PROFILE.borrow(cs).borrow_mut() = Some(profile);
+        let mut slot = PARSED_PROFILE.borrow(cs).borrow_mut();
+        if slot.len() >= 4 {
+            let _ = slot.pop_front();
+        }
+        let _ = slot.push_back(profile);
     });
 }
 
-/// Consume the stored profile, returning it and clearing the slot.
+/// Consume the oldest stored profile, returning it and removing it from the
+/// queue.
 pub fn take_profile() -> Option<RoastProfile> {
-    critical_section::with(|cs| PARSED_PROFILE.borrow(cs).borrow_mut().take())
+    critical_section::with(|cs| PARSED_PROFILE.borrow(cs).borrow_mut().pop_front())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,9 +155,12 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         }
     }
 
-    // Operational commands: parse the normalised command by spaces. take(4)
-    // prevents heapless::Vec overflow on garbage input (>4 tokens).
-    let parts: heapless::Vec<&str, 4> = trimmed.split_whitespace().take(4).collect();
+    // Operational commands: parse the normalised command by spaces. take(5)
+    // prevents heapless::Vec overflow on garbage input (>5 tokens).
+    // Bug L8 (2026-08-10): `take(4)` truncated a 5-token line
+    // (`PIDGAIN 1 2 3 junk`) to exactly 4 parts, so PIDGAIN's `len() == 4`
+    // arity check could not see the trailing junk and accepted it.
+    let parts: heapless::Vec<&str, 5> = trimmed.split_whitespace().take(5).collect();
 
     if parts.is_empty() {
         return Err(ParseError::UnknownCommand);
@@ -312,7 +327,18 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
     // Accept both ';' and ' ' as segment delimiters: the caller pre-normalises
     // ';' to ' ' for some paths, so we split on either to stay robust under
     // both `PID;SV;250` and `PID SV 250` style inputs.
-    let parts: heapless::Vec<&str, 8> = args.split([';', ' ']).take(8).collect();
+    // Bug M11 (2026-08-10): the caller normalises EVERY ';' to a space, so a
+    // legal spaced form like `PID; SV; 250` arrived as `PID  SV  250` — the
+    // un-filtered split produced empty segments and `parts[1]` was "" for
+    // `SV`/`CHAN`/`CT`, rejecting a TC4-legal command (`PROTOCOL.md`:
+    // comma/space/semicolon/equals are all legal separators "for every
+    // command"). Mirror `parse_profile_args` and skip empty segments.
+    let parts: heapless::Vec<&str, 8> = args
+        .split([';', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .take(8)
+        .collect();
     if parts.is_empty() {
         return Err(ParseError::InvalidValue);
     }
@@ -321,7 +347,10 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
         "ON" => Ok(ArtisanCommand::StartRoast),
         "OFF" => Ok(ArtisanCommand::Stop),
         "SV" => {
-            if parts.len() < 2 {
+            // Bug L8 (2026-08-10): exact arity — `PID;SV;250;junk` used to
+            // parse OK because only `len() < 2` was checked and the junk in
+            // `parts[3]` was silently ignored.
+            if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
             let target = parts[1]
@@ -370,7 +399,8 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
         }
         "CHAN" => {
-            if parts.len() < 2 {
+            // Bug L8 (2026-08-10): exact arity, same as SV.
+            if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
             let ch = parts[1]
@@ -388,7 +418,8 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             Ok(ArtisanCommand::SetPidChannel(ch))
         }
         "CT" => {
-            if parts.len() < 2 {
+            // Bug L8 (2026-08-10): exact arity, same as SV.
+            if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
             let ms = parts[1]
@@ -408,7 +439,9 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             Ok(ArtisanCommand::SetPidCycleTime(ms))
         }
         "LIMIT" => {
-            if parts.len() < 3 {
+            // Bug L8 (2026-08-10): exact arity — `PID;LIMIT;0;100;junk` must
+            // be rejected, not partially applied.
+            if parts.len() != 3 {
                 return Err(ParseError::InvalidValue);
             }
             let min = parts[1]
@@ -582,12 +615,22 @@ fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     Ok(ArtisanCommand::SetFanProfile)
 }
 
-static PARSED_FAN_PROFILE: Mutex<RefCell<Option<FanProfile>>> = Mutex::new(RefCell::new(None));
+/// Bug L9 (2026-08-10): FIFO queue for FANPROFILE, same rationale as
+/// `PARSED_PROFILE` (a burst of two FANPROFILE lines must not overwrite the
+/// first before the control loop drains it).
+static PARSED_FAN_PROFILE: Mutex<RefCell<heapless::Deque<FanProfile, 4>>> =
+    Mutex::new(RefCell::new(heapless::Deque::new()));
 pub fn fan_profile_store(profile: FanProfile) {
-    critical_section::with(|cs| *PARSED_FAN_PROFILE.borrow(cs).borrow_mut() = Some(profile));
+    critical_section::with(|cs| {
+        let mut slot = PARSED_FAN_PROFILE.borrow(cs).borrow_mut();
+        if slot.len() >= 4 {
+            let _ = slot.pop_front();
+        }
+        let _ = slot.push_back(profile);
+    });
 }
 pub fn fan_profile_take() -> Option<FanProfile> {
-    critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().take())
+    critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
 }
 
 #[cfg(test)]

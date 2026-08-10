@@ -79,7 +79,7 @@ mod target_impl {
             // would remain there unattended. We must NOT continue the
             // regression in that state. Capture the shutdown result and, on
             // failure, emit a SAFETY error and abort before replaying any
-            // fixtures or feeding the watchdog for another 500ms.
+            // fixtures or feeding the watchdog again.
             let shutdown_failed = ServiceContainer::with_roaster_async(|roaster| {
                 roaster.mark_overtemp_regression_active(true);
                 if let Err(err) = roaster.process_artisan_command(ArtisanCommand::SetHeater(100)) {
@@ -133,10 +133,12 @@ mod target_impl {
                 return;
             }
 
-            // Bug #4: feed the watchdog for 400ms instead of 500ms. The
-            // software watchdog timeout is 500ms (watchdog.rs:40), so feeding
-            // for exactly 500ms leaves no margin for scheduler jitter. 400ms
-            // guarantees the last feed lands well inside the window.
+            // Bug #4: feed the watchdog for 400 ms. The software watchdog
+            // timeout is 1000 ms (`WATCHDOG_TIMEOUT_MS` in watchdog.rs — Bug
+            // audit 2026-08-02 raised it from 500 ms to cover three real
+            // ~330 ms ticks), so 400 ms leaves a comfortable margin for
+            // scheduler jitter. Bug L17 (2026-08-10): the previous comment
+            // still quoted the stale 500 ms timeout.
             self.keep_feeding_watchdog(Duration::from_millis(400)).await;
 
             for fixture in fixture_catalog::canonical_fixtures() {
@@ -206,7 +208,7 @@ mod target_impl {
             let status = self.build_status_from_sample(sample, fixture);
             self.emit_status_line(&status, fixture);
 
-            self.keep_feeding_watchdog(Duration::from_millis(WATCHDOG_FEED_INTERVAL_MS as u64))
+            self.keep_feeding_watchdog(Duration::from_millis(WATCHDOG_FEED_INTERVAL_MS))
                 .await;
         }
 
@@ -259,7 +261,7 @@ mod target_impl {
         async fn keep_feeding_watchdog(&mut self, duration: Duration) {
             let start = Instant::now();
 
-            while Instant::now().duration_since(start) < duration {
+            while Instant::now().saturating_duration_since(start) < duration {
                 if let Err(err) = ServiceContainer::get_instance()
                     .with_watchdog(|watchdog| watchdog.feed_async(0.0))
                 {

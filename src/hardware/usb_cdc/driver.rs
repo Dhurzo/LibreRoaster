@@ -67,15 +67,29 @@ impl UsbCdcTxDriver {
         // already carries a fresh sample, and the roaster cannot be allowed to
         // depend on a reader being present at all times.
         use embedded_io_async::Write;
+        // Bug L6 (2026-08-10): the write is PARTIAL by contract and the
+        // previous `Write::write` + `Ok(Ok(_))` discarded the byte count, so
+        // a line longer than the FIFO space was silently truncated mid-line.
+        // Use `write_all` to loop until the whole line is queued; on a
+        // timeout some bytes may already have reached the host, so terminate
+        // the partial line best-effort — otherwise the host parser would
+        // concatenate its tail with the next line's head.
         match with_timeout(
             EmbassyDuration::from_millis(50),
-            Write::write(&mut self.usb, data),
+            Write::write_all(&mut self.usb, data),
         )
         .await
         {
-            Ok(Ok(_)) => {}
+            Ok(Ok(())) => {}
             Ok(Err(_)) => return Err(UsbCdcError::TransmissionError),
-            Err(_timeout) => return Err(UsbCdcError::TransmissionError),
+            Err(_timeout) => {
+                let _ = with_timeout(
+                    EmbassyDuration::from_millis(10),
+                    Write::write_all(&mut self.usb, b"\r\n"),
+                )
+                .await;
+                return Err(UsbCdcError::TransmissionError);
+            }
         }
         match with_timeout(
             EmbassyDuration::from_millis(20),

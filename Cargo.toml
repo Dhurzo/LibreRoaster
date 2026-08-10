@@ -23,6 +23,16 @@ path = "examples/hil_ssr.rs"
 name = "hil_gpio"
 path = "examples/hil_gpio.rs"
 
+[[example]]
+name = "gpio_roast_test"
+path = "examples/gpio_roast_test.rs"
+# Bug L4 (2026-08-10): the example imports
+# `libreroaster::hardware::sensors::simulated`, which only exists with the
+# `simulated-sensors` feature. Without `required-features`, `cargo build
+# --examples --target riscv32` failed with E0433; the gate makes cargo skip
+# the example (with a warning) instead of breaking the whole target build.
+required-features = ["simulated-sensors"]
+
 [features]
 default = []
 std = ["embedded-hal-02"]

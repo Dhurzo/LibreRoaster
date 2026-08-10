@@ -126,10 +126,13 @@ impl RoasterControl {
             | Err(RoasterError::TemperatureOutOfRange {
                 source: Some("temperature_out_of_valid_range"),
             }) => {
-                self.emergency_shutdown("Temperature exceeds valid range")?;
-                Err(RoasterError::TemperatureOutOfRange {
-                    source: Some("overtemp_detected"),
-                })
+                // Bug L2 (2026-08-10): `emergency_shutdown` ALWAYS returns an
+                // Err (`actuator.emergency_shutdown` never returns Ok), so the
+                // trailing `Err(TemperatureOutOfRange{...overtemp_detected})`
+                // after the `?` was unreachable dead code. Return the actual
+                // error — the callers (tasks / ServiceContainer) match on the
+                // variant generically, so nothing downstream changes.
+                self.emergency_shutdown("Temperature exceeds valid range")
             }
             other => other,
         }
@@ -283,16 +286,44 @@ impl RoasterControl {
             // M10: hardware-first discipline. The software state mutations
             // (`pid_enabled = false`, `artisan_control = true`,
             // `manual_heater = heater`) commit ONLY if `apply_guarded_heater`
-            // accepts the write — a `ssr_cycle_busy` rejection now returns
-            // an Err with the state still pointing at the previous value,
-            // so the next tick retries the same value (no silent drop, no
-            // fan-out-of-phase state). `ArtisanCommandHandler::evaluate`
-            // already wrote `self.manual_heater` (handler-local state); it
-            // no longer calls `apply_to_status(status)` for heater commands.
-            // The pid/artisan_control/continuous-output commits live here,
+            // accepts the write. `ArtisanCommandHandler::evaluate` already
+            // wrote `self.manual_heater` (handler-local state); it no longer
+            // calls `apply_to_status(status)` for heater commands. The
+            // pid/artisan_control/continuous-output commits live here,
             // post-write.
-            self.actuator
-                .apply_guarded_heater(heater, current_time, true, &mut self.status)?;
+            match self
+                .actuator
+                .apply_guarded_heater(heater, current_time, true, &mut self.status)
+            {
+                Ok(_) => {}
+                // Bug H2 (2026-08-10): a `ssr_cycle_busy` rejection used to
+                // propagate an Err — the command had already been consumed
+                // from the channel, so it was LOST (the previous comment
+                // claimed "the next tick retries the same value", but nothing
+                // re-issued it; 6 control ticks later the heater still ran at
+                // the old power, worst case a lost REDUCTION). Adopt the
+                // value as the manual setpoint instead: the next control tick
+                // applies it via the non-rejecting path (`reject_on_busy =
+                // false`), so the operator's command always lands within one
+                // guard window.
+                Err(RoasterError::InvalidState {
+                    source: Some("ssr_cycle_busy"),
+                }) => {
+                    warn!(
+                        "SSR guard busy — adopting heater {:.1}% as manual setpoint (applied next window)",
+                        heater
+                    );
+                    self.dispatch.commit_manual_heater(heater);
+                    self.dispatch.disable_pid();
+                    self.status.pid_enabled = false;
+                    self.status.artisan_control = true;
+                    self.dispatch
+                        .get_output_manager_mut()
+                        .enable_continuous_output();
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            }
 
             // Hardware accepted the write — commit the rest of the policy.
             // Bug C (2026-08-03): `manual_heater` is committed here too, ONLY
@@ -510,7 +541,7 @@ impl RoasterControl {
 
     pub fn update_control(&mut self, current_time: Instant) -> Result<f32, RoasterError> {
         if let Some(last_read) = self.sensor.last_temp_read() {
-            if current_time.duration_since(last_read)
+            if current_time.saturating_duration_since(last_read)
                 > Duration::from_millis(TEMP_VALIDITY_TIMEOUT_MS as u64)
             {
                 warn!("Temperature sensor timeout detected");
@@ -518,11 +549,25 @@ impl RoasterControl {
             }
         }
 
-        // Re-detect heat source periodically (throttled to ~1s by ActuatorController).
+        // Re-detect heat source periodically (per-tick, bug H7 — the
+        // ~1 s throttle was removed from ActuatorController so the debounce
+        // phase-separation argument in heat_presence.rs holds).
         // This ensures a mid-roast SSR or wiring fault is detected, not just boot-time.
         self.actuator.periodic_health_check(current_time);
 
-        self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+        // Bug M9 (2026-08-10): `force_heater_off` writes the honest signal
+        // "heater did NOT turn off" into `status.ssr_hardware_status = Error`
+        // when every retry failed — but this line unconditionally overwrote
+        // it from the driver on the next tick, and the driver never reports
+        // Error for that cause, so the marker lived less than one tick.
+        // Preserve the marker while the emergency is armed; once it clears,
+        // the driver value (re)applies.
+        let hw = self.actuator.get_ssr_hardware_status();
+        if self.status.ssr_hardware_status != SsrHardwareStatus::Error
+            || !self.safety.is_emergency_active()
+        {
+            self.status.ssr_hardware_status = hw;
+        }
 
         // C5: Comms idle timeout — no command from Artisan for > COMMS_IDLE_TIMEOUT_MS.
         // Bug V2-16c: gate by *physical condition* (heater energized OR an active
@@ -789,7 +834,7 @@ impl RoasterControl {
                 // Sensor reads take ~160ms (TEMPERATURE_READ_INTERVAL_MS), PID runs at 100ms
                 // (PID_SAMPLE_TIME_MS). Skip PID if data is stale to avoid computing on old readings.
                 let is_stale = if let Some(last_read) = self.sensor.last_temp_read() {
-                    current_time.duration_since(last_read) > Duration::from_millis(500)
+                    current_time.saturating_duration_since(last_read) > Duration::from_millis(500)
                 // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
                 } else {
                     // Bug NEW-5 (2026-07-26): "never read" was treated as
@@ -882,7 +927,7 @@ impl RoasterControl {
         let fan_output = if self.safety.is_emergency_active() || self.cooling_active {
             100.0
         } else if let (Some(ref fp), Some(start)) = (&self.fan_profile, self.profile_start_time) {
-            let elapsed = current_time.duration_since(start).as_secs() as u32;
+            let elapsed = current_time.saturating_duration_since(start).as_secs() as u32;
             fp.target_at(elapsed).map(|s| s as f32).unwrap_or(20.0)
         } else {
             self.dispatch.artisan_manual_fan()
@@ -943,9 +988,23 @@ impl RoasterControl {
         // while heat is being applied, and strictly safer than an unguarded
         // heater.
         let probe_bt = self.status.bean_temp;
-        let near_target = self.status.pid_enabled
-            && (self.status.target_temp - probe_bt).abs() <= PROBE_STUCK_TARGET_MARGIN_C;
-        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && !near_target {
+        // Bug H1 (2026-08-10): the arm gate used to compare BT against the
+        // setpoint directly. With `PID;CHAN;1` the PID regulates ET
+        // (`status.pv = env_temp`) and BT legitimately lives tens of degrees
+        // below the target, flat — `near_target` was always false and a
+        // HEALTHY BT (varying < PROBE_STUCK_VARIATION_C while ET converged)
+        // tripped a spurious latched "Probe stuck" emergency at 120 s. The
+        // rest of the loop was already migrated to `status.pv` for this exact
+        // reason (Bug L11 / Bug F arms below). Gate the detector on the
+        // REGULATED variable: the stuck-probe signature is a flat PV far
+        // from the target the loop is chasing. When PID controls ET
+        // (pid_channel == 1), the detector disarms entirely — a BT flat
+        // while ET is regulated is a telemetry concern, not a control
+        // hazard, and BT may legitimately sit far below the setpoint.
+        let regulating = self.status.pid_enabled
+            && ((self.status.target_temp - self.status.pv).abs() <= PROBE_STUCK_TARGET_MARGIN_C
+                || self.status.pid_channel == 1);
+        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && !regulating {
             match self.probe_stuck_last_bt {
                 None => {
                     self.probe_stuck_last_bt = Some(probe_bt);
@@ -1156,9 +1215,18 @@ impl RoasterControl {
             // `charge_detected = true`, so the `!charge_detected` gate never
             // re-fired `#CHARGE` on the next batch. Clearing here makes START
             // idempotent for every path into a new roast.
+            // Bug M8 (2026-08-10): the history deque and its sampling divider
+            // were NOT cleared (stop_streaming resets all five fields; this
+            // path only three). In the PREHEAT → START cadence the deque
+            // still held the previous batch's pre-charge BT (~205 °C), so the
+            // first samples of batch 2 compared fresh BT against the old
+            // batch's values and fired a FALSE `#CHARGE` (no grain dropped),
+            // also disabling the real detection for the rest of the batch.
             self.charge_detected = false;
             self.charge_time = None;
             self.status.charge_detected = false;
+            self.bt_charge_history.clear();
+            self.charge_history_tick_div = 0;
             // Bug P6 (2026-08-03): reset the manual heat-session clock on
             // START. The 30-minute MAX_ROAST_TIME budget then anchors to
             // `profile_start_time` (set below) — preheat time (which can
@@ -1697,7 +1765,7 @@ impl RoasterControl {
         // the throttle at "due" and burn CPU).
         let cycle_ms = self.status.pid_cycle_time_ms.max(10) as u64;
         let should_update = if let Some(last_update) = self.last_pid_update {
-            current_time.duration_since(last_update)
+            current_time.saturating_duration_since(last_update)
                 >= embassy_time::Duration::from_millis(cycle_ms)
         } else {
             true
@@ -1713,7 +1781,7 @@ impl RoasterControl {
             if let (Some(ref profile), Some(start)) =
                 (&self.active_profile, self.profile_start_time)
             {
-                let elapsed = current_time.duration_since(start).as_secs() as u32;
+                let elapsed = current_time.saturating_duration_since(start).as_secs() as u32;
                 if let Some(new_target) = profile.target_at(elapsed) {
                     if (new_target - self.status.target_temp).abs() > 0.5 {
                         self.status.target_temp = new_target;

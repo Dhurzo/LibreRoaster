@@ -23,7 +23,10 @@ pub use driver::{UartRxDriver, UartTxDriver};
 // re-exports.
 pub use tasks::{process_command_data, send_response, send_stream, uart_reader_task};
 
-pub use crate::hardware::transport_tasks::{COMMAND_PIPE_SIZE, EVENT_QUEUE_SIZE};
+// Bug L18 (2026-08-10): `COMMAND_PIPE_SIZE` was removed together with the
+// never-spawned `run_writer_task` and its pipe.
+#[allow(unused_imports)]
+pub use crate::hardware::transport_tasks::EVENT_QUEUE_SIZE;
 
 pub const UART_BAUD_RATE: u32 = 115200;
 

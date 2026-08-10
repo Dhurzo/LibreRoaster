@@ -218,6 +218,21 @@ impl SsrControlBase {
             // Duty too low for the pin to be informative — and a low-power
             // stretch must not accumulate toward NotDetected.
             self.heat_absent_count = 0;
+            // Bug H5 (2026-08-10): the latch was terminal. `Available` could
+            // ONLY be re-written here on a `HeatDetected` outcome, which
+            // requires passing the duty-observability gate — but while the
+            // status is not `Available`, the control loop forces the output
+            // to 0 % every tick (roaster_control.rs), which is below the
+            // gate, so the pin was never read again and the heater stayed
+            // dead until power cycle. A single LOW sample is trustworthy
+            // evidence of current flow at ANY duty (the PWM OFF window can
+            // only produce HIGH), so honour it here as a re-detection.
+            if self.hardware_status != SsrHardwareStatus::Available
+                && matches!(read_pin(), Ok(true))
+            {
+                info!("Heat source re-detected at low duty - clearing latch");
+                self.hardware_status = SsrHardwareStatus::Available;
+            }
             return Ok(());
         }
 
@@ -484,14 +499,22 @@ where
                 source: "set_duty_failed",
             })?;
 
+        // Bug H6 (2026-08-10): record the commanded duty BEFORE the readback
+        // verification. `set_duty_raw` succeeded — the duty IS in the LEDC.
+        // If only the re-read fails (DUTY_R lag / mismatch after retry), the
+        // `?` below used to skip this assignment, leaving `current_duty`
+        // stale: telemetry reported a false duty and the observability gate
+        // + heat cross-check evaluated safety against a duty the hardware is
+        // not applying. The cache must track the commanded value, not the
+        // verification outcome.
+        self.base.current_duty = ledc_duty;
+
         monitor_ledc_after_set(
             &mut self.pwm_channel,
             ledc_duty,
             &mut self.base.retry_count,
             &mut self.base.last_duty_delta_ticks,
         )?;
-
-        self.base.current_duty = ledc_duty;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",
@@ -590,14 +613,17 @@ where
                 source: "set_duty_failed",
             })?;
 
+        // Bug H6 (2026-08-10): record the commanded duty BEFORE the readback
+        // verification — the write reached the LEDC; a failed re-read must
+        // not leave the duty cache stale (see SsrControl::set_percentage).
+        self.base.current_duty = ledc_duty;
+
         monitor_ledc_after_set(
             &mut self.pwm_channel,
             ledc_duty,
             &mut self.base.retry_count,
             &mut self.base.last_duty_delta_ticks,
         )?;
-
-        self.base.current_duty = ledc_duty;
 
         debug!(
             "SSR set to {:.1}% (duty {}), heat available: {}",

@@ -155,8 +155,9 @@ Field map:
 ### Continuous telemetry
 
 During an active session the control loop also emits a spontaneous telemetry
-line once per control tick. It is always prefixed with `#` so clients can
-distinguish it from synchronous responses:
+line once per second (`DEFAULT_OUTPUT_INTERVAL_MS`), not once per control
+tick (the real tick is ~310–330 ms). It is always prefixed with `#` so
+clients can distinguish it from synchronous responses:
 
 ```text
 #<time>,ET,BT,ROR,Gas

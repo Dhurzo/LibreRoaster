@@ -61,7 +61,7 @@ impl StageTracker {
     }
 
     fn elapsed(&self) -> Duration {
-        Instant::now().duration_since(self.tick_start)
+        Instant::now().saturating_duration_since(self.tick_start)
     }
 
     fn clear(&mut self) {
@@ -232,6 +232,25 @@ fn report_stage_with_failure(
 
 async fn drain_commands(tick_state: &mut TickState) {
     let cmd_channel = ServiceContainer::get_artisan_channel();
+    // Bug L14 (2026-08-10): wire the multiplexer's 60 s idle failover into
+    // the control loop. `is_idle`/`reset` were previously only exercised by
+    // tests; the arrival-based reset inside `on_command_received` only fired
+    // when a NEW command arrived, so a dead session kept the active channel
+    // latched and the dual-output task kept writing (and timing out at 50 ms
+    // per line) to a vanished host. This releases the channel after
+    // `IDLE_TIMEOUT_SECS` of silence; the next command on either wire
+    // re-activates it. On the host test build the mocked `Instant` reports
+    // zero elapsed time, so the check is inert there (never idle once a
+    // command was seen; a fresh `None` mux resets to `None` — a no-op).
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            if mux.is_idle() {
+                mux.reset();
+            }
+        }
+    });
     // Bug B26: the previous comment claimed a fallback pattern that does NOT
     // exist — when the artisan channel is full, `try_send` in
     // `transport_tasks::handle_parsed_command` returns Err, and the only
@@ -952,7 +971,8 @@ fn finalize_tick(
 /// sequence: drain commands → read sensors → error checks → control update →
 /// LEDC write → watchdog feed → telemetry emit → finalize.
 ///
-/// Does NOT include the `Timer::after(100ms)` — that's the caller's responsibility.
+/// Does NOT include the `Timer::after(CONTROL_LOOP_PERIOD_MS)` — that's the
+/// caller's responsibility.
 async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputChannel) {
     let tick_start = Instant::now();
     tick_state.stage_tracker.start_tick(tick_start);
@@ -1050,7 +1070,15 @@ pub async fn control_loop_task() {
 
     loop {
         control_loop_tick(&mut tick_state, output_channel).await;
-        Timer::after(Duration::from_millis(100)).await;
+        // Bug L10 (2026-08-10): reference the constant instead of the raw
+        // literal — `CHARGE_SAMPLE_TICK_DIV` derives from
+        // `CONTROL_LOOP_TICK_MS = CONTROL_LOOP_PERIOD_MS + …`, so a constant
+        // change silently shifted the charge window while the loop kept the
+        // stale `100` here.
+        Timer::after(Duration::from_millis(
+            crate::config::constants::CONTROL_LOOP_PERIOD_MS as u64,
+        ))
+        .await;
     }
 }
 

@@ -59,7 +59,7 @@ impl LedcGuard {
                 return Ok(LedcGuardToken { guard: self });
             }
 
-            if Instant::now().duration_since(start) >= timeout {
+            if Instant::now().saturating_duration_since(start) >= timeout {
                 record_timeout(channel_name);
                 return Err(LedcGuardError {
                     channel: channel_name,

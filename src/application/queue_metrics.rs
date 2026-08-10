@@ -26,6 +26,18 @@ impl QueueProcessorMetrics {
         }
     }
 
+    /// Bug L11 (2026-08-10): the metrics were write-only — no getter or
+    /// emitter existed, so the backlog was unobservable. Snapshot the three
+    /// counters so STATUS/telemetry consumers (or future instrumentation)
+    /// can read them without a wire-format change.
+    pub fn snapshot(&self) -> (usize, usize, usize) {
+        (
+            self.queue_depth.load(Ordering::Relaxed),
+            self.max_depth.load(Ordering::Relaxed),
+            self.backlog_events.load(Ordering::Relaxed),
+        )
+    }
+
     fn record_depth(&self, depth: usize) {
         self.queue_depth.store(depth, Ordering::Relaxed);
         let current_max = self.max_depth.load(Ordering::Relaxed);
@@ -56,4 +68,10 @@ pub static QUEUE_PROCESSOR_METRICS: QueueProcessorMetrics = QueueProcessorMetric
 
 pub fn record_queue_depth(depth: usize) {
     QUEUE_PROCESSOR_METRICS.record_depth(depth);
+}
+
+/// Bug L11 (2026-08-10): observable snapshot of the queue metrics
+/// `(queue_depth, max_depth, backlog_events)`.
+pub fn queue_metrics_snapshot() -> (usize, usize, usize) {
+    QUEUE_PROCESSOR_METRICS.snapshot()
 }

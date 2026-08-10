@@ -81,22 +81,42 @@ impl<'a> LedcBus<'a> {
         Ok(result)
     }
 
-    fn read_register(&self, entry: &ChannelEntry<'a>) -> u16 {
+    /// Read the LIVE duty from DUTY_R — the value the hardware is currently
+    /// applying on the wire. Read-only register tracking the actual output
+    /// duty (esp32c3 PAC: `ch(n).duty_r().read().duty_r().bits()`, 19 bits).
+    ///
+    /// Bug RHC-2 (2026-07-26): the fade consumer must use THIS register — the
+    /// config DUTY register already holds the fade's END target mid-fade, so
+    /// a fade restarted from the config register would jump to the old target
+    /// (surge). DUTY_R reflects where the hardware actually is.
+    ///
+    /// Audit 2026-08-10 (C1): this is the WRONG register for verifying a
+    /// freshly-written duty. A DUTY+DUTY_START+PARA_UP write does not take
+    /// effect on DUTY_R until the next PWM period (200 ms at 5 Hz), so an
+    /// immediate readback sees the previous duty and fails the tolerance
+    /// check. Write verification must use `read_config_register` (DUTY),
+    /// which `set_duty_hw` updates synchronously. Keep the two reads
+    /// separate: `live_duty()` → DUTY_R, `read_duty_ticks()` → DUTY.
+    fn read_live_register(&self, entry: &ChannelEntry<'a>) -> u16 {
         let regs = unsafe { &*LEDC::ptr() };
-        // Bug RHC-2 (2026-07-26): read the LIVE duty from DUTY_R — the value
-        // the hardware is currently applying on the wire — not the config DUTY
-        // register, which only mirrors the last value written. During a fade
-        // the config register already holds the fade's END target, so
-        // consumers of this read (fan fade decision, SSR heat-source
-        // detection) saw the target instead of the real output. DUTY_R is a
-        // read-only register tracking the actual output duty (esp32c3 PAC
-        // 0.32.2: `ch(n).duty_r().read().duty_r().bits()`, 19 bits).
         let raw = regs
             .ch(entry.number as usize)
             .duty_r()
             .read()
             .duty_r()
             .bits();
+        (raw >> 4) as u16
+    }
+
+    /// Read the CONFIG DUTY register — the last value written by
+    /// `set_duty_hw` (synchronous, no PWM-period lag). This is the register
+    /// a post-write verification must compare against: `set_duty_hw` writes
+    /// DUTY before arming the update, so a mismatch here means the write
+    /// itself failed, not that the new duty has not been applied to the wire
+    /// yet (the DUTY_R lag case, bug C1 2026-08-10).
+    fn read_config_register(&self, entry: &ChannelEntry<'a>) -> u16 {
+        let regs = unsafe { &*LEDC::ptr() };
+        let raw = regs.ch(entry.number as usize).duty().read().duty().bits();
         (raw >> 4) as u16
     }
 
@@ -151,7 +171,13 @@ impl<'a> LedcChannelHandle<'a> {
                 // adopts the per-channel direct path. Convert with the same
                 // formula `start_duty_fade` uses so the cache stays unit-
                 // consistent across all three write APIs.
-                let ticks = ((duty as u32 * self.max_duty() + 50) / 100) as u16;
+                // Bug L7 (2026-08-10): scale over `duty_range()` = 2^bits —
+                // the exact range esp-hal's `set_duty` uses
+                // (`duty_range = 2u32.pow(duty_exp); duty_value =
+                // (duty_range * duty_pct) / 100`, no rounding). The previous
+                // `max_duty()` (2^bits − 1) cached ticks on a scale the
+                // register never holds (1/256 off-by-one on the 8-bit fan).
+                let ticks = ((duty as u32 * self.duty_range()) / 100) as u16;
                 self.bus.store_duty(entry, ticks);
                 Ok(())
             }
@@ -200,7 +226,9 @@ impl<'a> LedcChannelHandle<'a> {
                 // the cache with mixed units. Subsequent fade-vs-direct
                 // decisions then compared ticks against percent (the 12-tick
                 // threshold is 0.7 °C-equivalent of percent — random).
-                let ticks = ((end_duty as u32 * self.max_duty() + 50) / 100) as u16;
+                // Bug L7 (2026-08-10): same 2^bits scale fix as `set_duty` —
+                // the fade's end-state register holds `duty_range * pct / 100`.
+                let ticks = ((end_duty as u32 * self.duty_range()) / 100) as u16;
                 self.bus.store_duty(entry, ticks);
                 Ok(())
             }
@@ -226,6 +254,17 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
+    /// The duty RANGE esp-hal's `ChannelIFace::set_duty` scales percentages
+    /// over: `2^bits` (not `2^bits − 1`). `max_duty()` reports the largest
+    /// representable tick for display; `duty_range()` is the divisor used by
+    /// the hardware when converting a percentage — Bug L7 (2026-08-10).
+    fn duty_range(&self) -> u32 {
+        match self.role {
+            ChannelRole::Fan => 1u32 << crate::config::constants::FAN_PWM_RESOLUTION,
+            ChannelRole::Ssr => 1u32 << crate::config::constants::SSR_PWM_RESOLUTION,
+        }
+    }
+
     pub fn applied_duty(&self) -> u16 {
         self.entry().duty.get()
     }
@@ -237,7 +276,7 @@ impl<'a> LedcChannelHandle<'a> {
     /// ramping to the new one (surge). DUTY_R reflects the actual output,
     /// so a fade restarted mid-fade continues from where the hardware is.
     pub fn live_duty(&self) -> u16 {
-        self.bus.read_register(self.entry())
+        self.bus.read_live_register(self.entry())
     }
 
     pub fn applied_percent(&self) -> f32 {
@@ -247,8 +286,18 @@ impl<'a> LedcChannelHandle<'a> {
 }
 
 impl<'a> LedcDutyReader for LedcChannelHandle<'a> {
+    /// Read the CONFIG DUTY register (synchronous with the last write).
+    ///
+    /// Bug C1 (2026-08-10): this used to read DUTY_R (the applied/live duty),
+    /// which lags a fresh write by up to one PWM period (200 ms at 5 Hz SSR).
+    /// `monitor_ledc_after_set` verifies a write microseconds after issuing
+    /// it, so a correct write was misread as the PREVIOUS duty and escalated
+    /// to `emergency_shutdown("Heater control failure")`. `set_duty_hw`
+    /// updates DUTY synchronously, so the config register is the correct
+    /// readback target for write verification. Consumers that need the wire
+    /// value (fan fade restart) use `live_duty()` (DUTY_R) instead.
     fn read_duty_ticks(&self) -> u16 {
-        self.bus.read_register(self.entry())
+        self.bus.read_config_register(self.entry())
     }
 
     fn set_duty_raw(&self, duty: u16) -> Result<(), DutyWriteError> {

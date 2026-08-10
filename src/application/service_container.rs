@@ -43,8 +43,10 @@ pub struct ServiceContainer {
 // START — typically 10-15 lines) used to overrun it, dropping the TAIL of the
 // burst (which is where START, or a mid-burst STOP/EmergencyStop, lands).
 // Doubling the buffer keeps a full burst resident across one tick window.
-// It also makes `MAX_COMMANDS_PER_TICK` (8) reachable in `drain_commands`,
-// activating the previously-dead rate-limit branch and its emergency bypass.
+// Bug H3 (2026-08-10): `MAX_COMMANDS_PER_TICK` now EQUALS this size, so the
+// tick rate-limit branch is intentionally inert — the bounded channel itself
+// caps the work per tick, and the old 8-command budget silently discarded
+// the 9th..16th commands of a burst.
 pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 16;
 pub const ARTISAN_OUTPUT_CHANNEL_SIZE: usize = 16;
 static ARTISAN_CMD_CHANNEL: Channel<
@@ -311,7 +313,12 @@ impl core::fmt::Display for ContainerError {
 
 #[cfg(any(test, feature = "async-lock-depth-metrics"))]
 mod async_lock_depth {
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    // Bug H4 (2026-08-10): `core::sync::atomic` RMW ops (fetch_add/max/sub)
+    // require the A extension — absent on riscv32imc (ESP32-C3), so the
+    // `--features embedded,async-lock-depth-metrics` build failed with E0599
+    // and CI never caught it. Use `portable_atomic` like the rest of the
+    // firmware (watchdog.rs, traceability.rs).
+    use portable_atomic::{AtomicUsize, Ordering};
 
     static ASYNC_LOCK_DEPTH_CURRENT: AtomicUsize = AtomicUsize::new(0);
     static ASYNC_LOCK_DEPTH_MAX: AtomicUsize = AtomicUsize::new(0);

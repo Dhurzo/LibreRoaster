@@ -14,8 +14,15 @@ const SAMPLE_CAPACITY: usize = 128;
 /// Header written at the start of a dump.
 const CSV_HEADER: &str = "time_s,bt,et,heater,fan,target,ror";
 // F3.6 (Gap #1): aggregate dump buffer. Was 4096 (truncated long roasts);
-// bumped to 8192 so a full 256-sample ring (~32 KB worst case) is unlikely to
-// fit, but typical 10-15 min roasts at 1 Hz fit comfortably with headroom.
+// bumped to 8192. Bug M13 (2026-08-10): the previous comment claimed "typical
+// 10-15 min roasts at 1 Hz fit comfortably" — they do NOT: the ring holds
+// LOG_CAPACITY = 256 samples ≈ 256 s ≈ 4.3 min at 1 Hz, and the dump buffer
+// fits ~227 rows (~33-36 B each) ≈ 3.8 min, discarding the OLDEST rows
+// (charge, dry-end, first crack) on a mid-roast reconnect. A 15 min ring
+// would need ~43 KB of RAM (beyond the 72 KB heap), so this documents the
+// real envelope: a reconnect dump covers the last ~4 min. If longer coverage
+// is needed, lower the log cadence (e.g. one sample every 4 s → ~17 min at
+// the same footprint).
 // Per-row truncation still happens in `handle_dump_log` via `TRACE_EVENT_MAX_LEN`.
 pub const DUMP_BUFFER_SIZE: usize = 8192;
 

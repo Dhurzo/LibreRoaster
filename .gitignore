@@ -82,3 +82,6 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+
+# Regression run logs (transient artifacts)
+/logs

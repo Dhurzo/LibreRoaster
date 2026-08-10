@@ -67,8 +67,12 @@ pub const SSR_DUTY_TOLERANCE_TICKS: u16 = 128;
 pub const SSR_MIN_DUTY_TICKS: u16 = 820;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
-pub const MAX_SAFE_TEMP: f32 = 250.0;
-pub const MIN_TEMP: f32 = 0.0;
+// Bug M7 (2026-08-10): `MAX_SAFE_TEMP`/`MIN_TEMP` were dead — nothing
+// applied them, and the REAL control-target range was a hand-written literal
+// in `is_valid_target_temp` (below). A "maximum safe temperature" constant
+// that no code enforces is worse than none: removed. `MAX_TEMP` now feeds
+// `MAX_TARGET_TEMP`, so editing it actually changes what SETTARGET/PREHEAT/
+// PROFILE accept.
 pub const MAX_TEMP: f32 = 300.0;
 pub const MIN_VALID_TEMP: f32 = -50.0;
 pub const MAX_VALID_TEMP: f32 = 350.0;
@@ -82,11 +86,13 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 /// MAX31856 one-shot conversion wait at 50 Hz notch filter, in milliseconds.
 ///
 /// The datasheet specifies up to 185 ms for a 50 Hz-filtered conversion. We
-/// add a small margin (190 ms) to ensure the conversion-complete bit is set
-/// before we read the result registers. Bug #B1: the previous wait used
+/// add a margin (25 ms) to ensure the conversion-complete bit is set before
+/// we read the result registers. Bug #B1: the previous wait used
 /// `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which is shorter than 50 Hz
 /// conversion time — meaning each read could silently return the *previous*
 /// conversion's temperature (stale data with no error indication).
+// Bug L17 (2026-08-10): the comment claimed a "190 ms" margin for years
+// while the constant is 210 ms — updated to describe the actual value.
 pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
@@ -152,8 +158,30 @@ pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
 pub const MAX_CONSECUTIVE_SENSOR_ERRORS: u8 = 5;
 
 /// Control loop is expected to feed the Task Watchdog at this cadence.
-pub const WATCHDOG_FEED_INTERVAL_MS: u64 = 100;
-pub const HW_WATCHDOG_TIMEOUT_SECS: u32 = 2;
+///
+/// Bug M6 (2026-08-10): used to claim `100` (the loop-timer period), but the
+/// real cadence is `CONTROL_LOOP_TICK_MS` — one tick additionally waits
+/// `MAX31856_CONVERSION_TIME_MS` for the sensor conversion. The compile-time
+/// margin assertion below must bound the REAL cadence, or a future change to
+/// the conversion time (it has happened once) could reset the chip every tick
+/// with nothing flagging it.
+pub const WATCHDOG_FEED_INTERVAL_MS: u64 = CONTROL_LOOP_TICK_MS as u64;
+/// HW RWDT stage-0 hold in RC_SLOW_CLK cycles, as programmed by
+/// `safety::watchdog::init` (single source of truth — was a local literal).
+pub const HW_WATCHDOG_STAGE0_CYCLES: u32 = 300_000;
+/// RC slow clock frequency in Hz (ESP32-C3 internal ~136 kHz oscillator).
+pub const RC_SLOW_CLK_HZ: u32 = 136_000;
+/// Nominal RWDT stage-0 timeout in ms (no efuse `wdt_delay_sel` shift).
+/// ≈ 300000 / 136000 s ≈ 2206 ms. The efuse shift (×2..×16) can only
+/// SHORTEN the real timeout, so it is deliberately excluded from the margin
+/// check — the assertion guards the longest case, which is the one that can
+/// mask a runaway loop.
+pub const HW_WATCHDOG_TIMEOUT_MS: u64 =
+    HW_WATCHDOG_STAGE0_CYCLES as u64 * 1000 / RC_SLOW_CLK_HZ as u64;
+const _: () = assert!(
+    WATCHDOG_FEED_INTERVAL_MS * 2 < HW_WATCHDOG_TIMEOUT_MS,
+    "the tick must leave >=2x margin before the RWDT resets the chip"
+);
 pub const LEDC_GUARD_TIMEOUT_MS: u64 = 10;
 /// Maximum idle time (ms) without any Artisan command before emergency shutdown.
 /// During active roasting, Artisan sends periodic STATUS queries (~1s interval),
@@ -200,7 +228,15 @@ pub enum ArtisanCommand {
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
-pub const MAX_COMMANDS_PER_TICK: usize = 8;
+// Bug H3 (2026-08-10): the rate limiter in `drain_commands` DISCARDED
+// commands beyond this budget (`try_receive` already removed them from the
+// channel, then `continue` dropped them) — a burst of 12 commands with a
+// `START` at position 12 silently lost the START. The bounded channel
+// (ARTISAN_CMD_CHANNEL_SIZE = 16) already caps the work per tick; the extra
+// budget only bought silent loss. Equalise so every command the channel can
+// hold is also processed in the same tick (the emergency bypass stays).
+pub const MAX_COMMANDS_PER_TICK: usize =
+    crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
 // Bug M2 (2026-07-25): the previous `20.0` was unreachable with a real BT
 // probe (verified by simulation: a TC4-style drop is 2–3 °C/s, ≈ 6–9 °C in
 // the 3 s sampling window). Drop the threshold to a probe-attainable value
@@ -263,14 +299,25 @@ pub const MAX_ROAST_TIME_SECS: u32 = 1800;
 
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
+/// Lower bound of the valid control-target range (°C).
+/// Bug M7 (2026-08-10): extracted from the hand-written literal in
+/// `is_valid_target_temp` so the applied range is a named constant.
+pub const MIN_TARGET_TEMP: f32 = 50.0;
+/// Upper bound of the valid control-target range (°C) — derived from
+/// `MAX_TEMP` so editing the documented limit actually changes what
+/// SETTARGET/PREHEAT/PROFILE accept (the old literal stayed 300 even after
+/// lowering `MAX_TEMP`, leaving the "safety" edit half-done).
+pub const MAX_TARGET_TEMP: f32 = MAX_TEMP;
+
 /// Returns true if the given temperature is a valid control target.
-/// Uses 50..=300°C as the operational range to match parser constraints
-/// (PROFILE, SETTARGET, PREHEAT all require 50-300°C).
-/// Note: This does NOT clamp to MAX_SAFE_TEMP — the safety layer
-/// (OVERTEMP_THRESHOLD) handles emergency cutoff above 260°C.
-/// Artisan users may intentionally target above 250°C for dark roasts.
+/// Uses `MIN_TARGET_TEMP..=MAX_TARGET_TEMP` (50..=300°C) as the operational
+/// range to match parser constraints (PROFILE, SETTARGET, PREHEAT all
+/// require 50-300°C).
+/// Note: This does NOT clamp to a safe ceiling — the safety layer
+/// (OVERTEMP_THRESHOLD) handles emergency cutoff above 260°C. Artisan users
+/// may intentionally target above 250°C for dark roasts.
 pub fn is_valid_target_temp(temp: f32) -> bool {
-    temp.is_finite() && (50.0..=300.0).contains(&temp)
+    temp.is_finite() && (MIN_TARGET_TEMP..=MAX_TARGET_TEMP).contains(&temp)
 }
 
 /// A single setpoint in a roast profile: at time_secs → target temperature °C.
@@ -619,13 +666,20 @@ mod tests {
     #[test]
     fn safety_thresholds_are_sane() {
         const _: () = {
-            assert!(MAX_SAFE_TEMP < OVERTEMP_THRESHOLD);
             assert!(OVERTEMP_THRESHOLD <= MAX_TEMP);
             assert!(MAX_TEMP > DEFAULT_TARGET_TEMP);
+            assert!(MAX_TARGET_TEMP == MAX_TEMP);
+            assert!(MIN_TARGET_TEMP < MAX_TARGET_TEMP);
             assert!(MAX_BT_RATE_OF_RISE > 0.0);
             assert!(MAX_ROAST_TIME_SECS > 0);
         };
-        assert!(WATCHDOG_FEED_INTERVAL_MS < HW_WATCHDOG_TIMEOUT_SECS as u64 * 1000);
+        // Bug M6 (2026-08-10): the feed interval and the HW timeout are now
+        // the REAL values (tick cadence vs programmed RWDT hold), so this
+        // assertion can actually fail — a tick longer than half the RWDT
+        // timeout would reset the chip before the loop re-feeds it.
+        const {
+            assert!(WATCHDOG_FEED_INTERVAL_MS * 2 < HW_WATCHDOG_TIMEOUT_MS);
+        }
     }
 }
 

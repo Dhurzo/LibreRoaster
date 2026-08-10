@@ -13,10 +13,12 @@ fn main() {
 
 fn linker_be_nice() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        let kind = &args[1];
-        let what = &args[2];
-
+    // Bug L5 (2026-08-10): the previous guard `args.len() > 1` only proved
+    // `args[1]` exists; when cargo invokes the error-handling script with a
+    // single argument (the kind) `args[2]` panicked with index out of bounds
+    // on the very error path this script exists to diagnose. Bind through the
+    // slice pattern so both arms are guaranteed to exist.
+    if let [_, kind, what, ..] = args.as_slice() {
         match kind.as_str() {
             "undefined-symbol" => match what.as_str() {
                 what if what.starts_with("_defmt_") => {

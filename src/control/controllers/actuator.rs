@@ -14,7 +14,6 @@ pub struct ActuatorController {
     fan: Box<dyn Fan + Send>,
     ssr_guard: SsrCycleGuard,
     last_desired_output: f32,
-    last_health_check: Option<Instant>,
     slewing_output: f32,
     last_slew_update: Option<Instant>,
 }
@@ -26,7 +25,6 @@ impl ActuatorController {
             fan,
             ssr_guard: SsrCycleGuard::new(),
             last_desired_output: 0.0,
-            last_health_check: None,
             slewing_output: 0.0,
             last_slew_update: None,
         }
@@ -72,7 +70,8 @@ impl ActuatorController {
                     let mut actual_output = self.slewing_output;
 
                     if let Some(last_update) = self.last_slew_update {
-                        let dt_secs = now.duration_since(last_update).as_micros() as f32 * 1e-6;
+                        let dt_secs =
+                            now.saturating_duration_since(last_update).as_micros() as f32 * 1e-6;
 
                         if dt_secs > 0.0 {
                             let max_step = SSR_SLEW_RATE_PER_SEC * dt_secs;
@@ -153,6 +152,17 @@ impl ActuatorController {
             );
             status.ssr_hardware_status = crate::config::constants::SsrHardwareStatus::Error;
         }
+        // Bug L1 (2026-08-10): resync the slew limiter. `force_heater_off`
+        // writes 0 % straight through the SSR driver, bypassing
+        // `apply_guarded_heater`'s off-branch (which is what normally resets
+        // `slewing_output`). If a STOP and an `OT1` land in the same command
+        // drain with no zero-output control tick in between, the limiter
+        // would otherwise start the next ramp from the stale pre-stop value.
+        // With `last_slew_update = None` the next `apply_guarded_heater`
+        // applies the commanded value directly — same semantics as
+        // `emergency_shutdown` below.
+        self.slewing_output = 0.0;
+        self.last_slew_update = None;
         self.capture_ssr_monitor_metrics(status);
         ok
     }
@@ -269,22 +279,22 @@ impl ActuatorController {
     }
 
     pub fn periodic_health_check(&mut self, now: Instant) {
-        let due = match self.last_health_check {
-            Some(last) => (now - last).as_millis() >= 1000,
-            None => true,
-        };
-        if due {
-            self.last_health_check = Some(now);
-            // Convert Embassy Instant to ms so the heater impl can apply its
-            // own rate-limiting against real wall-clock time (not fake ticks).
-            let current_time_ms = now.as_millis() as u32;
-            self.heater.periodic_health_check(current_time_ms);
-        }
+        // Bug H7 (2026-08-10): the 1000 ms gate was removed — it quantized
+        // the sampling to 4 ticks (1240 ms real cadence → 40 ms of PWM phase
+        // separation at 5 Hz), which broke the aliasing-proof argument that
+        // `heat_presence`'s debounce relies on (consecutive samples must be
+        // one control-loop tick apart, ~330 ms → ~130 ms of phase separation,
+        // provably in the (100, 200) ms band). The heater impl no longer
+        // rate-limits internally (bug audit 2026-08-02 in ssr.rs), so the
+        // gate here was the only residual throttle. A GPIO read per tick is
+        // negligible; this restores the documented cadence.
+        let current_time_ms = now.as_millis() as u32;
+        self.heater.periodic_health_check(current_time_ms);
     }
 
     fn busy_window_ms(now: Instant, busy_until: Instant) -> u64 {
         if busy_until > now {
-            busy_until.duration_since(now).as_millis()
+            busy_until.saturating_duration_since(now).as_millis()
         } else {
             0
         }

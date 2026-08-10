@@ -188,8 +188,10 @@ mod hw_watchdog {
     /// peripherals and the flash boot loader.
     pub fn init() {
         const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
-        // RTC_SLOW_CLK ≈ 136 kHz  →  ~2.2 s nominal = 300 000 cycles
-        const WDT_STAGE0_HOLD_NOMINAL: u32 = 300_000;
+        // RTC_SLOW_CLK ≈ 136 kHz → ~2.2 s nominal = 300 000 cycles.
+        // Bug M6 (2026-08-10): shared with config::constants so the margin
+        // assertion there bounds the value actually programmed here.
+        const WDT_STAGE0_HOLD_NOMINAL: u32 = crate::config::constants::HW_WATCHDOG_STAGE0_CYCLES;
         // 7 ≈ 3.2 µs reset pulse — mirror esp-hal defaults so the WD timeout
         // reliably latches the system into reset instead of producing a
         // 100 ns blip that peripherals can ignore.
@@ -230,8 +232,17 @@ mod hw_watchdog {
                 .bits(WDT_RESET_PULSE_LEN)
                 .wdt_cpu_reset_length()
                 .bits(WDT_RESET_PULSE_LEN)
+                // Bug M4 (2026-08-10): the TRM (§12.2.2.4) and BOTH vendor HALs
+                // clear `wdt_flashboot_mod_en` after boot, before configuring
+                // the RWDT in software: esp-hal writes `.bit(false)`
+                // (rtc_cntl/mod.rs) and ESP-IDF's `rtc_wdt_disable` does
+                // `REG_CLR_BIT(..., RTC_CNTL_WDT_FLASHBOOT_MOD_EN)`. The
+                // previous `set_bit()` kept a second enable path (flashboot
+                // mode) active in the one safety net of the roast; it adds
+                // nothing (`wdt_en` already arms the watchdog) and diverges
+                // from the documented boot sequence.
                 .wdt_flashboot_mod_en()
-                .set_bit()
+                .clear_bit()
         });
 
         rtc_cntl

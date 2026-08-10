@@ -54,9 +54,16 @@ impl UartTxDriver {
         // UART fallback during a USB session). Bound each phase at 50 ms and
         // treat a timeout as a dropped line — the next telemetry tick carries
         // fresh data anyway.
+        //
+        // Bug M2 (2026-08-10): `Write::write` is a PARTIAL write by contract
+        // (esp-hal writes `min(128 - fifo_count, len)` bytes and returns the
+        // count). The old `Ok(Ok(_)) => {}` discarded that count, silently
+        // truncating any line longer than the FIFO space free (a wide STATUS,
+        // a `#DUMP` row, a long `ERR`). Use `write_all`, which loops until
+        // the whole buffer is out.
         use embassy_time::{with_timeout, Duration};
-        match with_timeout(Duration::from_millis(50), Write::write(&mut self.tx, data)).await {
-            Ok(Ok(_)) => {}
+        match with_timeout(Duration::from_millis(50), self.tx.write_all(data)).await {
+            Ok(Ok(())) => {}
             Ok(Err(_)) => return Err(UartError::TransmissionError),
             Err(_timeout) => return Err(UartError::TransmissionError),
         }

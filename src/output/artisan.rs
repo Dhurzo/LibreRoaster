@@ -23,45 +23,33 @@
 //
 // ## Memory Usage
 //
-// - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (5 samples)
-// - `REPORT_BUFFER_SIZE`: Temperature report formatting (32 chars)
-// - `TIME_FORMAT_SIZE`: Time formatting (8 chars)
+// Bug L13 (2026-08-10): these doc values had drifted from the real
+// constants (5→10, 32→64, 8→16).
+// - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (10 samples)
+// - `REPORT_BUFFER_SIZE`: Temperature report formatting (64 chars)
+// - `TIME_FORMAT_SIZE`: Time formatting (16 chars)
 use crate::config::SystemStatus;
 use crate::memory::{
     BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, RESPONSE_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES,
     TIME_FORMAT_SIZE,
 };
-use crate::output::formatters::{CsvFormatter, RorCalculator, TimeFormatter};
-use crate::output::traits::{OutputError, OutputFormatter};
+use crate::output::traits::OutputError;
 use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
 
-#[derive(Clone)]
-pub struct ArtisanFormatter {
-    start_time: Instant,
-    ror_calculator: RorCalculator,
-}
-
-impl Default for ArtisanFormatter {
-    fn default() -> Self {
-        Self {
-            start_time: Instant::now(),
-            ror_calculator: RorCalculator::new(),
-        }
-    }
-}
+/// Namespace for the shared Artisan wire-formatting helpers used by
+/// `MutableArtisanFormatter` and the READ/STATUS response paths.
+///
+/// Bug M12 (2026-08-10): this type used to also implement `OutputFormatter`
+/// with a stateful, timestamp-less RoR (divergent from production: ignored
+/// `UNITS;F` and emitted raw °C/s without the ×60 scaling — wiring it back
+/// up would have reintroduced two already-fixed bugs). Production has always
+/// used `MutableArtisanFormatter`; the dead impl and `RorCalculator` are
+/// gone.
+pub struct ArtisanFormatter;
 
 impl ArtisanFormatter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn reset(&mut self) {
-        self.start_time = Instant::now();
-        self.ror_calculator.reset();
-    }
-
     fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
         let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
         let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
@@ -105,45 +93,7 @@ impl ArtisanFormatter {
             value
         }
     }
-}
 
-impl OutputFormatter for ArtisanFormatter {
-    fn format(
-        &mut self,
-        status: &SystemStatus,
-    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
-        // L3: read the clock ONCE per `format()` call. Two separate
-        // `start_time.elapsed()` calls can straddle a millisecond rollover
-        // (e.g. `as_secs()` sees 12 then `as_millis()%1000` sees 13), making
-        // the artisan line disagree with itself (`12,1500` vs `12,1401`).
-        // Cheap and trivially safe.
-        let elapsed = self.start_time.elapsed();
-        let elapsed_secs = elapsed.as_secs();
-        let elapsed_ms = elapsed.as_millis() % 1000;
-
-        let et = status.env_temp;
-        let bt = status.bean_temp;
-        let gas = status.ssr_output;
-
-        let ror = self.ror_calculator.calculate_ror(bt);
-        let time_str = TimeFormatter::format_time(elapsed_secs, elapsed_ms);
-        let line = CsvFormatter::format_artisan_line(&time_str, et, bt, ror, gas);
-
-        // Bug #7: prefix the spontaneous continuous-telemetry line with '#'
-        // so a line-oriented client can distinguish it from a `READ` response.
-        // The `READ` handler emits via `format_read_response_full`, which has
-        // a different field layout (8 fields starting with AMB) and starts
-        // with a digit; this `#` prefix on continuous telemetry lets the
-        // peer multiplex both sources on the same byte stream. Empirically
-        // Artisan tolerates a leading '#' on telemetry lines.
-        let mut prefixed = HeaplessString::<REPORT_BUFFER_SIZE>::new();
-        let _ = prefixed.push('#');
-        let _ = prefixed.push_str(&line);
-        Ok(prefixed)
-    }
-}
-
-impl ArtisanFormatter {
     #[deprecated = "Use format_read_response_full() instead"]
     pub fn format_read_response(
         status: &SystemStatus,
@@ -166,11 +116,12 @@ impl ArtisanFormatter {
     }
 
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
-        let amb = Self::normalize_read_value(
-            status
-                .temperature_settings
-                .convert_to_display(status.ambient_temp),
-        );
+        // Bug L15 (2026-08-10): `ambient_temp` is an always-0.0 placeholder on
+        // this firmware (no ambient probe). Sending it through
+        // `convert_to_display` emitted `32.0` (0 °C in °F) in Fahrenheit mode —
+        // a phantom reading on the wire. Emit the raw value so AMB stays 0.0
+        // in both scales, matching PROTOCOL §4.
+        let amb = Self::normalize_read_value(status.ambient_temp);
         let et = Self::normalize_read_value(
             status
                 .temperature_settings
@@ -421,12 +372,22 @@ impl MutableArtisanFormatter {
         let bt_c = status.bean_temp;
         let ror = self.calculate_ror(bt_c, Instant::now());
 
-        // Convert temperatures for display
-        let et = status
-            .temperature_settings
-            .convert_to_display(status.env_temp);
-        let bt_display = status.temperature_settings.convert_to_display(bt_c);
-        let gas = status.ssr_output; // SSR output as gas control
+        // Convert temperatures for display.
+        // Bug M1 (2026-08-10): every field goes through `normalize_read_value`
+        // — the READ and STATUS paths already did, but the continuous stream
+        // did not, so a faulted ET (supported config: ET unplugged → NaN
+        // after debounce) put a literal "NaN" on the wire every second while
+        // a READ on the same cable reported 0.0: two protocol surfaces
+        // disagreeing about the same failure.
+        let et = ArtisanFormatter::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt_display = ArtisanFormatter::normalize_read_value(
+            status.temperature_settings.convert_to_display(bt_c),
+        );
+        let gas = ArtisanFormatter::normalize_read_value(status.ssr_output); // SSR output as gas control
 
         // M8: emit continuous-stream RoR in degrees-per-minute of the
         // active display scale (Artisan convention). Internally `ror` is the
@@ -440,6 +401,7 @@ impl MutableArtisanFormatter {
         } else {
             ror * 60.0
         };
+        let ror_display = ArtisanFormatter::normalize_read_value(ror_display);
 
         let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
         let line =
@@ -612,7 +574,8 @@ impl MutableArtisanFormatter {
         // `last_filtered_ror` (kept by B12's outlier-skip path) this would
         // approximately halve the reported RoR for any roast > 1 s. Use a
         // single `as_millis()` reading divided by 1000 to get the real span.
-        let time_elapsed_secs = (last_ts.duration_since(first_ts).as_millis() as f32) / 1000.0;
+        let time_elapsed_secs =
+            (last_ts.saturating_duration_since(first_ts).as_millis() as f32) / 1000.0;
         if time_elapsed_secs > 0.0 {
             (last_bt - first_bt) / time_elapsed_secs
         } else {
@@ -808,7 +771,10 @@ mod tests {
 
     #[test]
     fn test_format_csv_output() {
-        let mut formatter = ArtisanFormatter::new();
+        // Bug M12 (2026-08-10): this used the removed stateful
+        // `ArtisanFormatter` (dead impl); repointed to the production
+        // `MutableArtisanFormatter`, which emits the same wire shape.
+        let mut formatter = MutableArtisanFormatter::new();
         let status = create_test_status();
 
         let result = formatter.format(&status);
@@ -971,14 +937,18 @@ mod tests {
         assert_eq!(parts[3], "0.0", "CHAN3 placeholder");
         assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
 
-        // Test Fahrenheit conversion
+        // Test Fahrenheit conversion: ET/BT convert to °F; AMB stays raw.
+        // Bug L15 (2026-08-10): `ambient_temp` is an always-0.0 placeholder
+        // (no ambient probe on this firmware), so converting 0 °C to 32 °F
+        // emitted a phantom reading on the wire. AMB is emitted raw in both
+        // scales (PROTOCOL §4: absent channel = 0.0).
         status
             .temperature_settings
             .set_scale(TemperatureScale::Fahrenheit);
         let response_f = ArtisanFormatter::format_read_response_full(&status);
         let parts_f: Vec<&str> = response_f.split(',').collect();
         // 25.0°C = 77.0°F, 125.5°C = 257.9°F, 155.7°C = 312.3°F
-        assert_eq!(parts_f[0], "77.0", "AMB converted to Fahrenheit");
+        assert_eq!(parts_f[0], "25.0", "AMB emitted raw, not °F-converted");
         assert_eq!(parts_f[1], "257.9", "ET converted to Fahrenheit");
         assert_eq!(parts_f[2], "312.3", "BT converted to Fahrenheit");
         assert_eq!(parts_f[3], "0.0", "CHAN3 unchanged");

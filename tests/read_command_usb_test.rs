@@ -210,7 +210,10 @@ fn test_tc4_read_respects_fahrenheit() {
     let parts: Vec<&str> = response.split(',').collect();
 
     assert_eq!(parts.len(), 5);
-    assert_eq!(parts[0], "77.0", "AMB in °F");
+    // Bug L15 (2026-08-10): AMB is emitted raw (no °F conversion) — the
+    // firmware has no ambient probe and `ambient_temp` is an always-0.0
+    // placeholder; converting 0 °C to 32 °F emitted a phantom reading.
+    assert_eq!(parts[0], "25.0", "AMB raw (no °F conversion)");
     assert_eq!(parts[1], "257.9", "ET in °F");
     assert_eq!(parts[2], "312.3", "BT in °F");
     assert_eq!(parts[3], "0.0");

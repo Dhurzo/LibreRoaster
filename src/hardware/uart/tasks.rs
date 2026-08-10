@@ -1,8 +1,7 @@
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::hardware::transport_tasks::{
-    run_reader_task, RxSource, TransportConfig, TransportRxState, COMMAND_PIPE_SIZE,
-    EVENT_QUEUE_SIZE,
+    run_reader_task, RxSource, TransportConfig, TransportRxState,
 };
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
@@ -23,18 +22,17 @@ impl RxSource for UartRx {
     }
 }
 
-// L8: `UartTx` was removed together with the unused `uart_writer_task`.
-// Output goes through `dual_output_task` via the shared output channel,
-// so leaving a second writer on the pipe is a recipe for interleaved
-// lines. The embedded driver `uart_write_bytes` is still re-exported in
-// case a future transport wants it directly.
+// L8: `UartTx` and `run_writer_task` were removed together (Bug L18,
+// 2026-08-10: the generic writer task and its command pipe were never
+// spawned — static RAM only). Output goes through `dual_output_task` via
+// the shared output channel, so leaving a second writer on the pipe is a
+// recipe for interleaved lines. The embedded driver `uart_write_bytes` is
+// still re-exported in case a future transport wants it directly.
 
 /// UART transport configuration.
 static UART_CONFIG: TransportConfig = TransportConfig {
     name: "UART",
     channel: CommChannel::Uart,
-    event_queue_size: EVENT_QUEUE_SIZE,
-    command_pipe_size: COMMAND_PIPE_SIZE,
     reader_start_delay_ms: 10,
     writer_start_delay_ms: 20,
     reader_poll_interval_ms: 10,
@@ -75,14 +73,30 @@ pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
 }
 
 /// Process command data directly (legacy compatibility, mainly for tests).
+///
+/// Bug L18 (2026-08-10): this used to `return` after the FIRST line
+/// terminator, silently dropping every later command in the buffer. It now
+/// processes each complete line in `data` in order; a trailing unterminated
+/// fragment is dropped (matching the event-queue path's behaviour), and a
+/// bare terminator still surfaces as an `EmptyCommand` parse error exactly
+/// once per empty line.
 pub fn process_command_data(data: &[u8]) {
     // For test compatibility, we process directly without the event queue
     const COMMAND_BUFFER_SIZE: usize = 256;
     let mut command = Vec::<u8, COMMAND_BUFFER_SIZE>::new();
+    let mut processed_any = false;
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
-            handle_command_data_internal(&command);
-            return;
+            // A line is due when it holds bytes, or when this is the very
+            // first terminator of the buffer (bare `\r` = empty command).
+            // A terminator right after a completed line (the `\n` of a
+            // CRLF pair) must NOT emit a second EmptyCommand error.
+            if !command.is_empty() || !processed_any {
+                handle_command_data_internal(&command);
+                processed_any = true;
+                command.clear();
+            }
+            continue;
         }
         if command.push(byte).is_err() {
             send_parse_error_internal(ParseError::CommandTooLong);
