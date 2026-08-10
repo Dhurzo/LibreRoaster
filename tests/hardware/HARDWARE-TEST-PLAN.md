@@ -182,6 +182,21 @@ Validates LEDC PWM peripheral configuration for heater control. **Heater is NEVE
 | 3 | LEDC timer config verification | 5 Hz frequency confirmed |
 | 4 | Multiple init calls (idempotency) | No error, consistent state |
 
+#### `hil_c1` — DUTY_R Latency / Write-Verification (5 tests) — **DRIVES GPIO10 NON-ZERO**
+
+Bench measurement closing audit finding C1 (2026-08-10): verifies the register
+semantics the fix relies on, at production SSR configuration (Timer0, 14-bit, 5 Hz,
+Channel1, GPIO10). **⚠️ Disconnect SSR/load power before running** — the channel
+carries non-zero duty; it is left at 0 % on completion.
+
+| Test | Description | Expected Result |
+|------|-------------|-----------------|
+| 1 | Init LEDC exactly like production (14-bit, 5 Hz) | Channel configured |
+| 2 | Config DUTY readback at +1 ms after a 50 % write | Matches commanded ticks (synchronous) |
+| 3 | DUTY_R at +1 ms / +250 ms after a 30 % write | Converges at +250 ms; +1 ms may lag (reported) |
+| 4 | Ramp 1 % → 60 % verified via config-DUTY readback | Both steps OK (pre-fix path failed > 0.8 %) |
+| 5 | Safe shutdown: 0 % write, config + DUTY_R converged | Channel left at 0 % |
+
 #### `hil_fan` — Fan LEDC Duty Sweep and Readback (7 tests)
 
 Validates LEDC PWM peripheral for fan control across the full range.

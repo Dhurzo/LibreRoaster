@@ -1,0 +1,30 @@
+{
+  "run_id": "FAN-02-20260810T205200Z",
+  "scenario_id": "FAN-02",
+  "manifest_entry": {
+    "id": "FAN-02",
+    "category": "Fan",
+    "tier": 1,
+    "description": "IO3 50 sets fan to ~50%, STATUS confirms",
+    "command_sequence": "IO3 0; IO3 50; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "fan",
+      "heater",
+      "guard_timeouts"
+    ],
+    "golden_output": "tests/hardware/goldens/FAN-02.csv",
+    "metadata": {
+      "expected_fan": 50.0,
+      "fan_duty_tolerance_pct": 5.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 0.0,
+  "run_directory": "tests/hardware/runs/FAN-02/20260810T205200Z",
+  "started_at": "2026-08-10T20:52:00.309277",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

@@ -1,0 +1,30 @@
+{
+  "run_id": "GPIO-02-20260810T205319Z",
+  "scenario_id": "GPIO-02",
+  "manifest_entry": {
+    "id": "GPIO-02",
+    "category": "GPIO",
+    "tier": 1,
+    "description": "GPIO state consistency - multiple STATUS queries return consistent data",
+    "command_sequence": "STATUS; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "heater",
+      "fan",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/GPIO-02.csv",
+    "metadata": {
+      "consistency_samples": 3,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 362.0,
+  "run_directory": "tests/hardware/runs/GPIO-02/20260810T205319Z",
+  "started_at": "2026-08-10T20:53:19.015392",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

@@ -20,6 +20,10 @@ name = "hil_ssr"
 path = "examples/hil_ssr.rs"
 
 [[example]]
+name = "hil_c1"
+path = "examples/hil_c1.rs"
+
+[[example]]
 name = "hil_gpio"
 path = "examples/hil_gpio.rs"
 

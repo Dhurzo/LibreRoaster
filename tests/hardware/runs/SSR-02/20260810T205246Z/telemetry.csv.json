@@ -1,0 +1,29 @@
+{
+  "run_id": "SSR-02-20260810T205246Z",
+  "scenario_id": "SSR-02",
+  "manifest_entry": {
+    "id": "SSR-02",
+    "category": "SSR",
+    "tier": 1,
+    "description": "SSR initialization verification - heater remains 0 after boot and STATUS query",
+    "command_sequence": "STATUS; OT1 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "heater",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/SSR-02.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 362.0,
+  "run_directory": "tests/hardware/runs/SSR-02/20260810T205246Z",
+  "started_at": "2026-08-10T20:52:46.053397",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

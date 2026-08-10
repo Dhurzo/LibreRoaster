@@ -29,7 +29,7 @@ from hardware_test_helpers import (
 )
 
 TARGET = 'riscv32imc-unknown-none-elf'
-EXAMPLES = ['hil_tc', 'hil_ssr', 'hil_fan', 'hil_gpio']
+EXAMPLES = ['hil_tc', 'hil_ssr', 'hil_c1', 'hil_fan', 'hil_gpio']
 BAUD = 115200
 SUITE_COMPLETE_PREFIX = 'TESTSUITE:COMPLETE'
 BUILD_ARTIFACT_DIR = os.path.join('target', TARGET, 'release', 'examples')

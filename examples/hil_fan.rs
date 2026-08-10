@@ -149,11 +149,11 @@ fn main() -> ! {
     // FAN-RAW-04: 50% → tick 128
     duty_test!("fan_raw_04_duty_50", 50, 128, 2);
 
-    // FAN-RAW-05: 75% → tick 191
-    duty_test!("fan_raw_05_duty_75", 75, 191, 2);
+    // FAN-RAW-05: 75% → tick 192 (256 * 75 / 100)
+    duty_test!("fan_raw_05_duty_75", 75, 192, 2);
 
-    // FAN-RAW-06: 100% → tick 255
-    duty_test!("fan_raw_06_duty_100", 100, 255, 2);
+    // FAN-RAW-06: 100% → tick 256 (256 * 100 / 100)
+    duty_test!("fan_raw_06_duty_100", 100, 256, 2);
 
     // FAN-RAW-07: safe shutdown
     {

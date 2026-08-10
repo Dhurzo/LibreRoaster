@@ -51,7 +51,7 @@ def is_hardware_scenario(scenario_id):
 
 
 def send_and_read(ser, command, timeout=3.0):
-    """Send command and read protocol response, filtering log/echo lines."""
+    """Send command and read protocol response, filtering log/echo/telemetry lines."""
     ser.write(f"{command}\r\n".encode('utf-8'))
     ser.flush()
     deadline = time.time() + timeout
@@ -62,9 +62,12 @@ def send_and_read(ser, command, timeout=3.0):
                 line = raw_line.strip('\r').strip()
                 if not line:
                     continue
+                # Filter out log/ansi/telemetry lines
                 if line.startswith('[') or line.startswith('\x1b'):
                     continue
                 if line.startswith('INFO') or line.startswith('WARN'):
+                    continue
+                if line.startswith('#'):  # Filter continuous telemetry lines
                     continue
                 return line
         time.sleep(0.05)

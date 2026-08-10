@@ -1,0 +1,30 @@
+{
+  "run_id": "SSR-01-20260810T205235Z",
+  "scenario_id": "SSR-01",
+  "manifest_entry": {
+    "id": "SSR-01",
+    "category": "SSR",
+    "tier": 1,
+    "description": "OT1 0 sets heater to 0%, STATUS confirms heater=0 and LEDC initialized",
+    "command_sequence": "OT1 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "heater",
+      "fan",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/SSR-01.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 362.0,
+  "run_directory": "tests/hardware/runs/SSR-01/20260810T205235Z",
+  "started_at": "2026-08-10T20:52:35.409290",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

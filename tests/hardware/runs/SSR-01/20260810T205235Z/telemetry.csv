@@ -1,0 +1,2 @@
+timestamp,et,bt,heater,fan,watchdog_flag,failure_count,failure_reason,guard_timeouts,regression_flag,pv,mv,integrator_value,derivative_value,saturation_flag,integrator_clamp_flag,derivative_available_flag,command_latency_us,max_command_latency_us
+2026-08-10T20:52:39.712353,156.2,126.2,0.0,0.0,1,0,none,0,0,126.2,0.0,0.0,41.36,0,0,1,58,362

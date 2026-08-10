@@ -174,10 +174,10 @@ impl<'a> LedcChannelHandle<'a> {
                 // Bug L7 (2026-08-10): scale over `duty_range()` = 2^bits —
                 // the exact range esp-hal's `set_duty` uses
                 // (`duty_range = 2u32.pow(duty_exp); duty_value =
-                // (duty_range * duty_pct) / 100`, no rounding). The previous
-                // `max_duty()` (2^bits − 1) cached ticks on a scale the
-                // register never holds (1/256 off-by-one on the 8-bit fan).
-                let ticks = ((duty as u32 * self.duty_range()) / 100) as u16;
+                // (duty_range * duty_pct) / 100`, no rounding). The register
+                // max is `2^bits - 1` (max_duty()), so cap at that to avoid
+                // the 1/256 off-by-one on the 8-bit fan at 100%.
+                let ticks = ((duty as u32 * self.duty_range()) / 100).min(self.max_duty()) as u16;
                 self.bus.store_duty(entry, ticks);
                 Ok(())
             }
@@ -228,7 +228,9 @@ impl<'a> LedcChannelHandle<'a> {
                 // threshold is 0.7 °C-equivalent of percent — random).
                 // Bug L7 (2026-08-10): same 2^bits scale fix as `set_duty` —
                 // the fade's end-state register holds `duty_range * pct / 100`.
-                let ticks = ((end_duty as u32 * self.duty_range()) / 100) as u16;
+                // Cap at max_duty() to avoid 1/256 off-by-one on 8-bit fan.
+                let ticks =
+                    ((end_duty as u32 * self.duty_range()) / 100).min(self.max_duty()) as u16;
                 self.bus.store_duty(entry, ticks);
                 Ok(())
             }

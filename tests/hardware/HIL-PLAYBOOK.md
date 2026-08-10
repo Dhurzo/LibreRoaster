@@ -132,6 +132,7 @@ Available test firmware:
 |---------|-------|--------|
 | `hil_tc` | 6 tests (SPI bus, raw voltage, registers, conversion) | Read-only |
 | `hil_ssr` | 4 tests (LEDC init, zero-duty readback) | SAFE ONLY (no heater) |
+| `hil_c1` | 5 tests (DUTY_R latency, config-DUTY sync, ramp verify) | **NON-ZERO duty on GPIO10 — disconnect SSR power** |
 | `hil_fan` | 7 tests (LEDC init, duty sweep 0-100%, frequency) | Safe |
 | `hil_gpio` | 3 tests (pull-up, readback, consistency) | Safe |
 
