@@ -12,7 +12,7 @@ extern crate std;
 
 use libreroaster::hardware::sensors::conversion::MAX31856_LSB;
 use libreroaster::hardware::sensors::conversion::{
-    convert_raw_temp, FixtureReading, SensorConversionHub, SensorFault, SensorSample,
+    convert_raw_temp, FixtureReading, SensorConversionHub,
 };
 
 /// Helper to convert 3-byte ADC array to u32
@@ -194,6 +194,12 @@ mod hub_integration {
         // MAX31856 has no such bit — that name came from the older MAX6675).
         // The previous test asserted `short_to_gnd` here, blessing the bug in
         // conversion.rs. We now assert the correctly-mapped `tc_low`.
+        //
+        // Audit CI (2026-08-11): the `!sample.env_fault.short_to_gnd` negative
+        // assert was removed — the field is `#[deprecated]` (it does not exist
+        // on the MAX31856) and is unconditionally `false` by construction in
+        // `SensorFault::decode` (conversion.rs). The behavior it guarded is
+        // the mapping correction itself, which `tc_low` + `has_fault` pin here.
         let fixture = make_fixture([0x09, 0x60, 0x00], 0x00, [0x06, 0x40, 0x00], 0x04);
 
         let mut hub = SensorConversionHub::new();
@@ -204,10 +210,6 @@ mod hub_integration {
 
         // Env fault should be detected via the correctly-mapped bit
         assert!(sample.env_fault.tc_low);
-        assert!(
-            !sample.env_fault.short_to_gnd,
-            "MAX31856 has no short_to_gnd bit"
-        );
         assert!(sample.env_fault.has_fault());
     }
 
