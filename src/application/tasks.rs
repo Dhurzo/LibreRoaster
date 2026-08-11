@@ -6,6 +6,7 @@ use crate::application::stage_instrumentation::GuardState;
 use crate::application::stage_instrumentation::{StageName, StageReporter, WatchdogState};
 use crate::config::SystemStatus;
 use crate::error::AppError;
+use crate::hardware::error_counters::try_send_output;
 use crate::hardware::ledc_guard;
 use crate::input::multiplexer::CommChannel;
 use crate::logging::traceability::{
@@ -165,7 +166,7 @@ fn report_stage_instrumentation(
     if let Some(report) =
         stage_reporter.report_simple(stage_name, elapsed_ms, guard_state, watchdog_state)
     {
-        let _ = output_channel.try_send(report);
+        try_send_output(output_channel, report);
     }
 }
 
@@ -210,7 +211,7 @@ fn report_stage_with_failure(
         watchdog_state,
         failure_marker,
     ) {
-        let _ = output_channel.try_send(report);
+        try_send_output(output_channel, report);
     }
 }
 
@@ -263,26 +264,15 @@ async fn drain_commands(tick_state: &mut TickState) {
     // commands when STOP/EmergencyStop arrives) is documented but out of
     // scope for this audit — touch only when adding pre-emptive priority
     // support.
-    let mut cmds_this_tick: usize = 0;
+    // Audit M-X2 (2026-08-11): the per-tick rate-limit branch
+    // (`cmds_this_tick > MAX_COMMANDS_PER_TICK` → `ERR rate_limited`) was
+    // unreachable: `MAX_COMMANDS_PER_TICK == ARTISAN_CMD_CHANNEL_SIZE == 16`
+    // (constants.rs), so a 16-slot channel can never deliver 17 commands in
+    // one tick. Real backpressure is the channel capacity itself, surfaced to
+    // the host as `ERR channel_full command_dropped` in transport_tasks.rs.
+    // The misleading branch was removed; do NOT re-add unless the constant is
+    // lowered below the channel size first.
     while let Ok(traced_command) = cmd_channel.try_receive() {
-        cmds_this_tick = cmds_this_tick.saturating_add(1);
-        let is_emergency = matches!(
-            &traced_command.command,
-            crate::config::ArtisanCommand::Stop | crate::config::ArtisanCommand::EmergencyStop
-        );
-        if cmds_this_tick > crate::config::MAX_COMMANDS_PER_TICK && !is_emergency {
-            warn!(
-                "Command rate limit exceeded — {} commands this tick, skipping remaining",
-                cmds_this_tick
-            );
-            // Emit ERR so Artisan sees an explicit error rather than silent drop.
-            let output_channel = ServiceContainer::get_output_channel();
-            let mut msg =
-                heapless::String::<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>::new();
-            let _ = msg.push_str("ERR rate_limited excess commands this tick");
-            let _ = output_channel.try_send(msg);
-            continue;
-        }
         if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
             // Bug M9 (2026-07-26): the previous `continue` here skipped the
             // normal dispatch, so REG produced NO output — Artisan had zero
@@ -332,13 +322,13 @@ async fn drain_commands(tick_state: &mut TickState) {
                             if let Ok(line) =
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
                             {
-                                let _ = output_channel.try_send(line);
+                                try_send_output(output_channel, line);
                             } else {
                                 // Emit ERR so Artisan sees explicit error rather than
                                 // a silent truncation.
                                 let mut msg = heapless::String::<TRACE_EVENT_MAX_LEN>::new();
                                 let _ = msg.push_str("ERR status_too_long");
-                                let _ = output_channel.try_send(msg);
+                                try_send_output(output_channel, msg);
                             }
                         } else if let crate::config::ArtisanCommand::ReadStatus =
                             traced_command.command
@@ -349,11 +339,11 @@ async fn drain_commands(tick_state: &mut TickState) {
                             if let Ok(line) =
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
                             {
-                                let _ = output_channel.try_send(line);
+                                try_send_output(output_channel, line);
                             } else {
                                 let mut msg = heapless::String::<TRACE_EVENT_MAX_LEN>::new();
                                 let _ = msg.push_str("ERR status_too_long");
-                                let _ = output_channel.try_send(msg);
+                                try_send_output(output_channel, msg);
                             }
                         }
                     }
@@ -402,15 +392,28 @@ async fn read_sensors(
     );
 
     if tick_state.sensor_err.is_none() {
+        // Audit MR-3 (2026-08-11): snapshot BT/ET with a SINGLE
+        // `with_roaster_async` acquisition BEFORE the debug! macro. The
+        // previous form put `ServiceContainer::read_bean_temperature().await`
+        // and `…::read_env_temperature().await` directly in the macro args,
+        // which (a) expanded to TWO extra async-mutex lock acquisitions per
+        // tick (a 210 ms-worth of lock churn in an already lock-heavy tick),
+        // and (b) instrumented the system by distorting the very timing the
+        // Diagnostic/`instrumentation` build exists to measure. The macro
+        // gate makes this a no-op at the production `Warn` filter, but the
+        // `.await`-in-args trap is a latent hazard for future maintainers.
+        let (bt, et) = match ServiceContainer::with_roaster_async(|roaster| {
+            let status = roaster.get_status();
+            (status.bean_temp, status.env_temp)
+        })
+        .await
+        {
+            Ok(temps) => temps,
+            Err(_) => (0.0, 0.0),
+        };
         debug!(
             "stage=SensorRead elapsed={}ms Sensors: BT: {:.1}°C, ET: {:.1}°C",
-            sensor_elapsed_ms,
-            ServiceContainer::read_bean_temperature()
-                .await
-                .unwrap_or(0.0),
-            ServiceContainer::read_env_temperature()
-                .await
-                .unwrap_or(0.0)
+            sensor_elapsed_ms, bt, et
         );
     } else {
         warn!(
@@ -584,7 +587,7 @@ fn handle_watchdog_failure(
     if previous_watchdog_failure != Some(reason) {
         let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
         let _ = write!(safety, "SAFETY WATCHDOG {}", reason);
-        let _ = output_channel.try_send(safety);
+        try_send_output(output_channel, safety);
     }
     let _ = status;
     if needs_emergency {
@@ -653,7 +656,7 @@ async fn feed_watchdog_stage(
             if guard_timeout_happened {
                 let mut guard_msg = String::<TRACE_EVENT_MAX_LEN>::new();
                 let _ = guard_msg.push_str("SAFETY LEDC-GUARD timeout");
-                let _ = output_channel.try_send(guard_msg);
+                try_send_output(output_channel, guard_msg);
             }
 
             WatchdogSnapshot {
@@ -847,7 +850,7 @@ async fn emit_telemetry_stage(
                 Ok(formatted_line) => {
                     if let Ok(s) = String::<TRACE_EVENT_MAX_LEN>::try_from(formatted_line.as_str())
                     {
-                        let _ = output_channel.try_send(s);
+                        try_send_output(output_channel, s);
                     }
                 }
                 Err(e) => {
@@ -872,11 +875,22 @@ async fn emit_telemetry_stage(
             .ok()
             .flatten();
         let Some(row) = row_opt else { break };
-        if output_channel.try_send(row.clone()).is_ok() {
+        // Audit H-5 (2026-08-11): dump rows are `String<DUMP_ROW_CAPACITY=128>`
+        // (roast_logger.rs) while the output channel messages are
+        // `String<TRACE_EVENT_MAX_LEN=256>` — widen here. Infallible by
+        // construction (128 < 256); the else arm is defensive only.
+        let Ok(msg) = String::<TRACE_EVENT_MAX_LEN>::try_from(row.as_str()) else {
+            let _ =
+                ServiceContainer::with_roaster_async(|roaster| roaster.push_dump_row_front(row))
+                    .await;
+            break;
+        };
+        if try_send_output(output_channel, msg) {
             continue;
         }
-        // Channel full — re-push the row to the FRONT so the next tick emits
-        // it again (FIFO order preserved).
+        // Channel full — the counter was bumped by try_send_output; re-push
+        // the row to the FRONT so the next tick emits it again (FIFO order
+        // preserved; the row itself is not lost, only delayed).
         let _ =
             ServiceContainer::with_roaster_async(|roaster| roaster.push_dump_row_front(row)).await;
         break;
@@ -1097,7 +1111,7 @@ fn send_handler_error(
     if let Some(source) = error.source() {
         let _ = core::write!(&mut message, ":{}", source);
     }
-    let _ = output_channel.try_send(message);
+    try_send_output(output_channel, message);
 }
 
 /// Process one message from the output channel.
@@ -1135,12 +1149,34 @@ async fn dual_output_tick(output_channel: &OutputChannel) {
         });
 
         if let Some(bytes) = data_to_write {
+            // Audit H-1 (2026-08-11): write failures used to vanish (`let _`).
+            // The message is already dequeued — no retry is possible — but the
+            // failure must now be counted (per transport) and logged (bounded:
+            // one warn! per failed write, at most one per 5 ms tick, and only
+            // while a transport is genuinely failing). The counters are
+            // exposed via `hardware::error_counters`.
             match channel {
                 CommChannel::Usb => {
-                    let _ = crate::hardware::usb_cdc::driver::usb_cdc_write_bytes(&bytes).await;
+                    if let Err(e) =
+                        crate::hardware::usb_cdc::driver::usb_cdc_write_bytes(&bytes).await
+                    {
+                        crate::hardware::error_counters::increment_usb_write_failure();
+                        warn!(
+                            "USB output write failed: {:?} ({:?} total)",
+                            e,
+                            crate::hardware::error_counters::usb_write_failure_count()
+                        );
+                    }
                 }
                 CommChannel::Uart => {
-                    let _ = crate::hardware::uart::driver::uart_write_bytes(&bytes).await;
+                    if let Err(e) = crate::hardware::uart::driver::uart_write_bytes(&bytes).await {
+                        crate::hardware::error_counters::increment_uart_write_failure();
+                        warn!(
+                            "UART output write failed: {:?} ({:?} total)",
+                            e,
+                            crate::hardware::error_counters::uart_write_failure_count()
+                        );
+                    }
                 }
                 CommChannel::None => {}
             }
@@ -1160,8 +1196,12 @@ pub async fn dual_output_task() {
     }
 }
 
-fn append_crlf(payload: &str) -> heapless::Vec<u8, 1024> {
-    let mut bytes = heapless::Vec::<u8, 1024>::new();
+fn append_crlf(payload: &str) -> heapless::Vec<u8, 300> {
+    // Audit M-R4 (2026-08-11): the output channel carries at most
+    // `String<TRACE_EVENT_MAX_LEN=256>` messages, so payload + CRLF is
+    // ≤ 258 bytes. The previous `Vec<u8, 1024>` burned 4× the needed stack
+    // per message (up to 4 KB churn per output tick on the task stack).
+    let mut bytes = heapless::Vec::<u8, 300>::new();
     if bytes.extend_from_slice(payload.as_bytes()).is_ok() {
         let _ = bytes.extend_from_slice(b"\r\n");
     }
@@ -1484,6 +1524,82 @@ mod tests {
         );
     }
 
+    // ── L3: full pipeline with simulated sensors (wall clock) ──────────
+    // Audit L3 (2026-08-11): exercises the REAL control-loop pipeline on
+    // host — `control_loop_tick` with a `SensorConversionHub` backed by
+    // `SimulatedSensorSource` (advances by wall clock), READ commands
+    // flowing in through the artisan channel and TC4 responses out through
+    // the output channel. Gated behind `simulated-sensors`; the embedded
+    // 210 ms MAX31856 wait does not exist on this path, so ticks are fast
+    // and real time drives the curve. This is a smoke run (short window of
+    // the default medium roast curve), not a full roast — the full roast is
+    // covered deterministically at L1 in tests/full_roast_verification.rs.
+    #[cfg(all(test, feature = "simulated-sensors", not(target_arch = "riscv32")))]
+    #[test]
+    fn control_loop_tick_simulated_sensors_full_pipeline() {
+        let _guard = acquire_test_lock();
+        let roaster = build_test_roaster();
+        init_container_with_roaster(roaster);
+        // The real boot wires the watchdog feeder (app_builder.rs); the
+        // container helper does not — without it the second tick would trip
+        // the 2-consecutive-failures emergency on `WatchdogUninitialized`.
+        ServiceContainer::get_instance()
+            .init_watchdog(crate::safety::watchdog::WatchdogFeeder::initialize().expect("wd"));
+        drain_all_channels();
+
+        let mut tick_state = TickState::new();
+        let output_channel = ServiceContainer::get_output_channel();
+
+        let mut read_responses: usize = 0;
+        for tick in 0..40u32 {
+            if tick % 5 == 0 {
+                // Artisan polls READ every ~250 ms simulated.
+                let traced = crate::logging::traceability::TracedCommand {
+                    command: crate::config::ArtisanCommand::ReadStatus,
+                    trace_id: crate::logging::traceability::TraceId::next(),
+                    channel: crate::input::multiplexer::CommChannel::None,
+                };
+                let _ = ServiceContainer::get_artisan_channel().try_send(traced);
+            }
+
+            block_on(async {
+                control_loop_tick(&mut tick_state, output_channel).await;
+            });
+
+            // Drain everything (STAGE reports + protocol responses).
+            while let Ok(msg) = output_channel.try_receive() {
+                if msg.contains(',') && msg.split(',').count() >= 5 {
+                    read_responses += 1;
+                }
+            }
+
+            // Real sleep so the simulated source's wall clock advances.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        // ~2 s of wall clock → the default curve ramps 25 → ~29 °C.
+        let status =
+            block_on(async { ServiceContainer::with_roaster_async(|r| r.get_status()).await })
+                .expect("roaster initialized");
+        assert!(
+            status.bean_temp > 26.0 && status.bean_temp < 80.0,
+            "simulated BT must advance along the ramp after ~2 s, got {:.1}",
+            status.bean_temp
+        );
+        assert!(
+            !status.fault_condition
+                && status.ssr_hardware_status != crate::config::constants::SsrHardwareStatus::Error,
+            "no fault may develop in the pipeline smoke run (fault={}, state={:?})",
+            status.fault_condition,
+            status.state
+        );
+        assert!(
+            read_responses >= 4,
+            "READ commands must produce TC4 responses through the pipeline, got {}",
+            read_responses
+        );
+    }
+
     #[test]
     fn control_loop_tick_processes_read_command() {
         let _guard = acquire_test_lock();
@@ -1778,7 +1894,7 @@ mod tests {
         // Send 3 messages
         for i in 0..3u8 {
             let msg = heapless::String::try_from(alloc::format!("MSG{}", i).as_str()).unwrap();
-            let _ = output_channel.try_send(msg);
+            try_send_output(output_channel, msg);
         }
 
         // Process all 3 with separate ticks

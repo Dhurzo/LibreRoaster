@@ -153,15 +153,24 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
 
                 // Bug C (2026-08-03): the `self.manual_fan` mutation moved to
                 // `commit_manual_fan` in `apply_policy_outcome` (post-write).
+                // Audit MA-8 (2026-08-11): the `outcome.apply_to_status(status)`
+                // that used to live here (writing `status.fan_output` BEFORE
+                // the hardware write) is REMOVED for full parity with the
+                // heater branch (M10 discipline). It had two defects:
+                //   1. On a fan-write failure (`set_fan_speed` → Err), the
+                //      status claimed the new value while the hardware never
+                //      received it — the exact "state ahead of hardware" bug
+                //      class Bug C fixed for the heater.
+                //   2. It wrote the UN-floored value: an `OT2 0` with the
+                //      heater energized briefly claimed 0 % before the
+                //      `FAN_MIN_SAFETY_PCT` floor in `apply_policy_outcome`
+                //      re-clamped it.
+                // `status.fan_output` is now published ONLY by
+                // `ActuatorController::set_fan_speed` (success) with the
+                // floor applied, and `commit_manual_fan` commits the
+                // handler-local value post-write — single writer, same as
+                // the heater side.
                 let outcome = ManualPolicyOutcome::fan(value as f32);
-                // M10(b): same hardware-first discipline as heater, but a
-                // fan write cannot currently be guarded by the heater's
-                // `ssr_cycle_busy` mechanism (independent LEDC channel,
-                // no busy window). To preserve the contract the heater side
-                // commits here, the fan write in `apply_policy_outcome`
-                // (RoasterControl) commits state up-front; the comment there
-                // documents this asymmetry.
-                outcome.apply_to_status(status);
 
                 info!("Artisan+ manual fan set to: {}%", value);
                 outcome

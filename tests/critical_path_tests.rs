@@ -123,9 +123,22 @@ fn max_roast_time_triggers_emergency_shutdown() {
         .expect("temps");
     let _ = ctrl.update_control(far_future);
 
+    // Audit MT-1 (2026-08-11): the previous
+    // `is_emergency_active() || fault_condition` assert was tautological —
+    // `emergency_shutdown()` latches *both* facts atomically, so the OR
+    // added no discriminating power and a *different* emergency (e.g. a
+    // plain stale-sensor trip masking a broken MAX_ROAST_TIME gate) would
+    // have passed silently. The strong form requires both: the latched
+    // emergency AND the Error state (`emergency_shutdown` always sets
+    // both). This deliberately-constructed `far_future` tick genuinely
+    // trips overlapping backstops (stale sensor + max-roast); the
+    // isolation of each mechanism is provided by the *negative* test
+    // `roast_within_max_time_does_not_trigger_emergency` below plus the
+    // dedicated stale-sensor test (separator 7).
     assert!(
-        ctrl.safety().is_emergency_active() || ctrl.get_status().fault_condition,
-        "Roast exceeding MAX_ROAST_TIME_SECS should trigger emergency"
+        ctrl.safety().is_emergency_active()
+            && ctrl.get_status().state == libreroaster::config::RoasterState::Error,
+        "Roast exceeding MAX_ROAST_TIME_SECS should latch emergency + state==Error"
     );
 }
 
@@ -169,8 +182,9 @@ fn comms_idle_timeout_triggers_emergency_during_roast() {
     let _ = ctrl.update_control(future);
 
     assert!(
-        ctrl.safety().is_emergency_active() || ctrl.get_status().fault_condition,
-        "Comms idle timeout should trigger emergency during Heating state"
+        ctrl.safety().is_emergency_active()
+            && ctrl.get_status().state == libreroaster::config::RoasterState::Error,
+        "Comms idle timeout should latch emergency + state==Error during Heating state"
     );
 }
 
@@ -427,8 +441,9 @@ fn stale_sensor_reading_triggers_emergency() {
     let _ = ctrl.update_control(t_stale);
 
     assert!(
-        ctrl.safety().is_emergency_active() || ctrl.get_status().fault_condition,
-        "Stale sensor data (>1000ms) should trigger emergency during roast"
+        ctrl.safety().is_emergency_active()
+            && ctrl.get_status().state == libreroaster::config::RoasterState::Error,
+        "Stale sensor data (>1000ms) should latch emergency + state==Error during roast"
     );
 }
 
@@ -541,6 +556,35 @@ fn exactly_at_overtemp_threshold_triggers_emergency() {
     );
 }
 
+#[test]
+fn overtemp_just_below_threshold_does_not_trigger() {
+    // Audit MT-2 (2026-08-11): the overtemp suite only covered `>=`
+    // OVERTEMP_THRESHOLD. Add the negative boundary: `threshold - 1.0` must
+    // NOT trip (severity is decided at the `>=` boundary in
+    // controllers/sensor.rs), and repeated sub-threshold samples must not
+    // accumulate into a trip.
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+
+    let below = libreroaster::config::constants::OVERTEMP_THRESHOLD - 1.0;
+    for _ in 0..8 {
+        let result = ctrl.update_temperatures(below, 200.0, Instant::now());
+        assert!(
+            result.is_ok(),
+            "temperature {below}°C (1° below the cutoff) must NOT trip"
+        );
+        assert!(
+            !ctrl.get_status().fault_condition,
+            "no fault may accumulate from sub-threshold samples"
+        );
+        assert_ne!(
+            ctrl.get_state(),
+            RoasterState::Error,
+            "state must not latch to Error below the cutoff"
+        );
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 10. SSR NOT DETECTED → ZERO OUTPUT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -550,6 +594,12 @@ fn ssr_not_detected_forces_zero_output_in_manual_mode() {
     let _guard = acquire_lock();
     let heater = StubHeater::new();
     let fan = StubFan::new();
+    // Audit H-8 (2026-08-11): the original `if status.ssr_hardware_status !=
+    // Available` guard made the assert unreachable (StubHeater defaults to
+    // Available), so the "stuck/unknown SSR must gate output to zero" rule
+    // never ran. Mirror T6 in safety_injection_midroast_tests.rs: force Error
+    // (BEFORE the move into RoasterControl), assert unconditionally.
+    heater.set_status(libreroaster::config::constants::SsrHardwareStatus::Error);
     let mut ctrl = RoasterControl::new(Box::new(heater), Box::new(fan), SensorConversionHub::new())
         .expect("build");
 
@@ -562,9 +612,15 @@ fn ssr_not_detected_forces_zero_output_in_manual_mode() {
     tick_now(&mut ctrl, 150.0, 180.0);
 
     let status = ctrl.get_status();
-    if status.ssr_hardware_status != libreroaster::config::constants::SsrHardwareStatus::Available {
-        assert_eq!(status.ssr_output, 0.0);
-    }
+    assert_eq!(
+        status.ssr_hardware_status,
+        libreroaster::config::constants::SsrHardwareStatus::Error,
+        "precondition: SSR must be reported as Error after set_status"
+    );
+    assert_eq!(
+        status.ssr_output, 0.0,
+        "manual control with SSR not Available must output 0 %"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1007,8 +1063,9 @@ fn nan_pv_triggers_emergency_during_roast() {
     let _ = ctrl.update_control(Instant::now());
 
     assert!(
-        ctrl.safety().is_emergency_active() || ctrl.get_status().fault_condition,
-        "NaN PV should trigger emergency shutdown"
+        ctrl.safety().is_emergency_active()
+            && ctrl.get_status().state == libreroaster::config::RoasterState::Error,
+        "NaN PV should latch emergency + state==Error"
     );
 }
 

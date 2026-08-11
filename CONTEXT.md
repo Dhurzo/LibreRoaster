@@ -57,13 +57,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-- ✅ All host tests pass (**631 as of 2026-08-04** — lib + integration with `--features test`, 0 failures)
+- ✅ All host tests pass (**672 as of 2026-08-11** — lib + integration with `--features test`, 0 failures; the regression numeric suite adds `--features regression`, see Quality Gates below)
+- ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 11 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts. Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer DI migration (constructor injection instead of `static_cell` singleton)
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 631 host tests pass, ESP32 build warning-free
+- All 672 host tests pass, ESP32 build warning-free
 
 ## Known Constraints
 
@@ -104,8 +105,7 @@ Read these in order depending on what you need to do:
 - `src/hardware/uart/` — UART communication (UART reader task)
 - `src/hardware/usb_cdc/` — USB CDC communication (USB reader task)
 - `src/input/` — Artisan command parser
-- `src/output/` — `ArtisanFormatter`, formatters, traits (the continuous-output state machine, `OutputController`, lives in `src/control/abstractions.rs`)
-- `src/output/formatters/` — Output formatting implementations
+- `src/output/` — `ArtisanFormatter` + `MutableArtisanFormatter` (continuous-output state machine), `OutputError`; the `OutputController` flag lives in `src/control/abstractions.rs`
 - `src/config/` — Constants, `SystemStatus`, command enums
 - `src/error/` — `AppError` types
 - `src/logging/` — Logging infrastructure, telemetry, TRACE stream, roast ring buffer (`roast_logger.rs`)
@@ -122,6 +122,17 @@ Read these in order depending on what you need to do:
 # feature (and the host target) so the Embassy time driver is provided.
 cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 
+# Regression numeric suite (H-9): the strongest numeric tests
+# (sensor_conversion.rs — 19-bit two's-complement LSB math, fixture→fault
+# mapping) are gated `#![cfg(all(test, not(riscv32), feature = "regression"))]`
+# and are NOT part of the `--features test` gate above. Run them explicitly:
+cargo test --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
+
+# Simulated-sensors pipeline (L3): real control-loop ticks over the synthetic
+# `simulated-sensors` temperature curves (wall clock). Includes the full
+# pipeline test `control_loop_tick_simulated_sensors_full_pipeline`:
+cargo test --target x86_64-unknown-linux-gnu --features test --features simulated-sensors --lib control_loop_tick_simulated
+
 # Embedded build:
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
@@ -131,4 +142,4 @@ cargo test --target x86_64-unknown-linux-gnu --features test
 
 ---
 
-*Last updated: 2026-08-04. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-08-11. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

@@ -194,9 +194,8 @@ pub enum RoasterState {
     Preheating,
     Heating,
     Stable,
-    Cooling,
-    Fault,
-    EmergencyStop,
+    // Audit M-A7 (2026-08-11): `Cooling`, `Fault` and `EmergencyStop` removed
+    // — zero references existed; every failure transition uses `Error`.
     Error,
 }
 

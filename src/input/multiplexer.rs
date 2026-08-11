@@ -77,6 +77,26 @@ impl CommandMultiplexer {
 
         match self.active_channel {
             CommChannel::None => {
+                // Audit MP-2 (2026-08-11): boot-time hijack risk, ACCEPTED
+                // and documented. The first syntactically-valid command on
+                // EITHER wire claims the session (e.g. UART line noise that
+                // assembles `READ\r` before Artisan connects over USB takes
+                // the session until the 60 s idle reset). The audit's
+                // suggested fixes were evaluated and REJECTED as regressions:
+                //   - "N consecutive valid commands to activate": drops
+                //     Artisan's very first `READ` (it sends one command, not
+                //     a burst), breaking every session start.
+                //   - "USB always starts active": breaks UART-only
+                //     deployments, where Artisan runs on UART0.
+                //   - boot grace timers: same UART-only breakage inside the
+                //     grace window.
+                // Existing mitigations: P8 (only VALID commands reach this
+                // match — parse garbage is dropped before the gate; the
+                // MP-1 pre-parse gate now also prevents parser-side FIFO
+                // side effects on refused lines), and the 60 s idle reset
+                // restoring `None`. A hijacked session recovers on the next
+                // idle window; no session is ever processed on the wrong
+                // transport (the gate is authoritative).
                 self.active_channel = channel;
                 self.last_command_time = Some(now);
                 log::info!(
@@ -103,6 +123,27 @@ impl CommandMultiplexer {
 
     pub fn should_process_command(&mut self, channel: CommChannel) -> bool {
         self.on_command_received(channel)
+    }
+
+    /// Audit MP-1 (2026-08-11): pure predicate — would a command on `channel`
+    /// be accepted, WITHOUT activating the session? Unlike
+    /// `should_process_command` / `on_command_received` (which activate from
+    /// `None`), this NEVER mutates state. Transport layers use it to skip
+    /// PARSING — and with it the parser-side PROFILE/FANPROFILE FIFO side
+    /// effects (F3-MP1: a dropped/refused command used to leak its profile
+    /// into the FIFO where a later session's `SetProfile` consumed it) — for
+    /// lines the multiplexer gate would refuse anyway. Activation stays
+    /// reserved for successfully parsed commands (P8), so a garbage line can
+    /// never claim the session through this path.
+    pub fn would_process_command(&self, channel: CommChannel) -> bool {
+        if self.is_idle() {
+            // An idle mux behaves as if `active_channel` were `None`: the
+            // next `on_command_received` call resets it (IDLE_TIMEOUT_SECS
+            // branch) and accepts the first command on any channel.
+            true
+        } else {
+            matches!(self.active_channel, CommChannel::None) || self.active_channel == channel
+        }
     }
 
     pub fn should_write_to(&self, channel: CommChannel) -> bool {

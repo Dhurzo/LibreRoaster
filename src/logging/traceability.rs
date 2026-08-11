@@ -3,7 +3,9 @@ use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
 use crate::error::AppError;
 use crate::input::multiplexer::CommChannel;
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 use core::fmt::Write;
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 use heapless::String;
 use portable_atomic::{AtomicU32, Ordering};
 
@@ -98,20 +100,38 @@ impl TracedCommand {
 }
 
 pub fn trace_command_enqueue(traced: &TracedCommand, depth: usize, fallback: bool) {
-    let step = if fallback {
-        TraceStep::QueueFallback
-    } else {
-        TraceStep::QueueEnqueue
-    };
+    // Audit M-R1 (2026-08-11): in releases without instrumentation/test the
+    // event was formatted (soft-float f32 Display, String<256>) and then
+    // DISCARDED by emit_event on every command. Skip the formatting entirely.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (traced, depth, fallback);
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        let step = if fallback {
+            TraceStep::QueueFallback
+        } else {
+            TraceStep::QueueEnqueue
+        };
 
-    if let Some(event) = format_trace_enqueue(traced, step, depth, fallback) {
-        emit_event(event);
+        if let Some(event) = format_trace_enqueue(traced, step, depth, fallback) {
+            emit_event(event);
+        }
     }
 }
 
 pub fn trace_queue_dequeue(traced: &TracedCommand, depth: usize) {
-    if let Some(event) = format_trace_dequeue(traced, depth) {
-        emit_event(event);
+    // Audit M-R1: skip formatting when the event would be discarded.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (traced, depth);
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        if let Some(event) = format_trace_dequeue(traced, depth) {
+            emit_event(event);
+        }
     }
 }
 
@@ -122,14 +142,28 @@ pub fn trace_actuation(
     latency_us: u32,
     saturation_active: bool,
 ) {
-    if let Some(event) = format_trace_actuation(
-        traced,
-        ssr_output,
-        fan_output,
-        latency_us,
-        saturation_active,
-    ) {
-        emit_event(event);
+    // Audit M-R1: skip formatting when the event would be discarded.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (
+            traced,
+            ssr_output,
+            fan_output,
+            latency_us,
+            saturation_active,
+        );
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        if let Some(event) = format_trace_actuation(
+            traced,
+            ssr_output,
+            fan_output,
+            latency_us,
+            saturation_active,
+        ) {
+            emit_event(event);
+        }
     }
 }
 
@@ -140,14 +174,28 @@ pub fn trace_telemetry(
     watchdog_feed_ok: bool,
     app_error: Option<&AppError>,
 ) {
-    if let Some(event) = format_trace_telemetry(
-        trace_id,
-        guard_timeout,
-        guard_timeouts,
-        watchdog_feed_ok,
-        app_error,
-    ) {
-        emit_event(event);
+    // Audit M-R1: skip formatting when the event would be discarded.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (
+            trace_id,
+            guard_timeout,
+            guard_timeouts,
+            watchdog_feed_ok,
+            app_error,
+        );
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        if let Some(event) = format_trace_telemetry(
+            trace_id,
+            guard_timeout,
+            guard_timeouts,
+            watchdog_feed_ok,
+            app_error,
+        ) {
+            emit_event(event);
+        }
     }
 }
 
@@ -159,25 +207,45 @@ pub fn trace_guard(
     watchdog_failure: Option<&'static str>,
     app_error: Option<&AppError>,
 ) {
-    if let Some(event) = format_trace_guard(
-        trace_id,
-        guard_timeout,
-        guard_timeouts,
-        watchdog_feed_ok,
-        watchdog_failure,
-        app_error,
-    ) {
-        emit_event(event);
+    // Audit M-R1: skip formatting when the event would be discarded.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (
+            trace_id,
+            guard_timeout,
+            guard_timeouts,
+            watchdog_feed_ok,
+            watchdog_failure,
+            app_error,
+        );
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        if let Some(event) = format_trace_guard(
+            trace_id,
+            guard_timeout,
+            guard_timeouts,
+            watchdog_feed_ok,
+            watchdog_failure,
+            app_error,
+        ) {
+            emit_event(event);
+        }
     }
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn emit_event(event: String<TRACE_EVENT_MAX_LEN>) {
     #[cfg(any(feature = "instrumentation", feature = "test"))]
-    let _ = ServiceContainer::get_output_channel().try_send(event);
+    let _ = crate::hardware::error_counters::try_send_output(
+        ServiceContainer::get_output_channel(),
+        event,
+    );
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     let _ = event;
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_event<F>(
     trace_id: TraceId,
     step: TraceStep,
@@ -192,6 +260,7 @@ where
     Some(output)
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_enqueue(
     traced: &TracedCommand,
     step: TraceStep,
@@ -210,6 +279,7 @@ fn format_trace_enqueue(
     })
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_dequeue(
     traced: &TracedCommand,
     depth: usize,
@@ -225,6 +295,7 @@ fn format_trace_dequeue(
     })
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_actuation(
     traced: &TracedCommand,
     ssr_output: f32,
@@ -246,6 +317,7 @@ fn format_trace_actuation(
     })
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_telemetry(
     trace_id: TraceId,
     guard_timeout: bool,
@@ -274,6 +346,7 @@ fn format_trace_telemetry(
     })
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn format_trace_guard(
     trace_id: TraceId,
     guard_timeout: bool,
@@ -307,6 +380,7 @@ fn format_trace_guard(
     })
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 pub fn format_safe_shutdown_guard(
     trace_id: TraceId,
     app_error: Option<&AppError>,
@@ -322,11 +396,20 @@ pub fn format_safe_shutdown_guard(
 }
 
 pub fn trace_safe_shutdown_guard(trace_id: TraceId, app_error: Option<&AppError>) {
-    if let Some(event) = format_safe_shutdown_guard(trace_id, app_error) {
-        emit_event(event);
+    // Audit M-R1: skip formatting when the event would be discarded.
+    #[cfg(not(any(feature = "instrumentation", feature = "test")))]
+    {
+        let _ = (trace_id, app_error);
+    }
+    #[cfg(any(feature = "instrumentation", feature = "test"))]
+    {
+        if let Some(event) = format_safe_shutdown_guard(trace_id, app_error) {
+            emit_event(event);
+        }
     }
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn channel_label(channel: CommChannel) -> &'static str {
     match channel {
         CommChannel::None => "None",
@@ -335,6 +418,7 @@ fn channel_label(channel: CommChannel) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn watchdog_label(ok: bool) -> &'static str {
     if ok {
         "ok"
@@ -343,6 +427,7 @@ fn watchdog_label(ok: bool) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "instrumentation", feature = "test"))]
 fn bool_flag(value: bool) -> u8 {
     if value {
         1
@@ -351,7 +436,13 @@ fn bool_flag(value: bool) -> u8 {
     }
 }
 
-#[cfg(test)]
+// Audit MR-1 (2026-08-11): the `format_trace_*`/`emit_event` helpers are
+// gated behind `cfg(any(feature = "instrumentation", feature = "test"))` so
+// release builds compile them to nothing (no wasted formatting). The test
+// module references those helpers, so it must carry the SAME gate — plain
+// `cargo clippy --all-targets` (default features, test profile) otherwise
+// fails to compile the module against the absent helpers.
+#[cfg(all(test, any(feature = "instrumentation", feature = "test")))]
 mod tests {
     use super::*;
     use crate::config::ArtisanCommand;

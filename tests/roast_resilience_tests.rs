@@ -10,16 +10,30 @@ use libreroaster::input::parser::{parse_artisan_command, store_profile, take_pro
 
 #[test]
 fn no_profile_start_falls_back_to_default_target() {
+    // Audit MT-7 (2026-08-11): the test name claims the *fallback* behaviour
+    // — that START without a PROFILE applies DEFAULT_TARGET_TEMP — but the
+    // old body only asserted boot-time defaults. Drive a START and verify
+    // the target lands on DEFAULT_TARGET_TEMP, which is the contract the
+    // name promises and the audit (F2-MT7) was missing.
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
-    let rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub)
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub)
         .expect("RoasterControl should init without profile");
 
     let status = rc.get_status();
     assert!(!status.pid_enabled);
     assert!(!status.charge_detected);
     assert_eq!(rc.get_state(), RoasterState::Idle);
+
+    // START with no PROFILE must fall back to DEFAULT_TARGET_TEMP (constants.rs).
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START without profile should succeed");
+    assert_eq!(
+        rc.get_status().target_temp,
+        libreroaster::config::constants::DEFAULT_TARGET_TEMP,
+        "START without PROFILE should fall back to DEFAULT_TARGET_TEMP"
+    );
 }
 
 #[test]
@@ -75,29 +89,75 @@ fn bt_below_fifty_no_charge_check() {
 
 #[test]
 fn fan_profile_empty_does_not_break_control() {
+    // Audit MT-7 (2026-08-11): the old body poked `status.fan_output = 30.0`
+    // directly and only asserted `is_ok()`. That was vacuous: with no roast
+    // running, `update_control` recomputes the fan from the selector
+    // (roaster_control.rs:936-943), so the stale poke was overwritten with
+    // the honest 0.0. The real contract: with NO FANPROFILE loaded and a
+    // genuine operator `SetFan(30)`, the selector must fall through to the
+    // manual value and preserve it across ticks (the FAN-FLOOR interlock at
+    // FAN_MIN_SAFETY_PCT = 20% lets 30 pass through untouched).
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
     let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
-    // No fan profile loaded — update_control should use manual fan
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START");
+    rc.process_artisan_command(ArtisanCommand::SetFan(30))
+        .expect("operator fan command");
+
     let now = embassy_time::Instant::now();
-    rc.status_mut().ssr_output = 50.0;
-    rc.status_mut().fan_output = 30.0;
+    rc.update_temperatures(150.0, 180.0, now).expect("temps");
     let result = rc.update_control(now);
-    assert!(result.is_ok()); // Should not panic or error
+
+    // (1) Did not panic or error.
+    assert!(result.is_ok(), "update_control returned {:?}", result);
+
+    // (2) Fan stayed at the operator-set manual value (no FANPROFILE =>
+    //     no automatic override), proving the empty-profile branch is not
+    //     silently resetting fan_output to 0 or 100.
+    assert_eq!(
+        rc.get_status().fan_output,
+        30.0,
+        "empty FANPROFILE branch must preserve the operator-set manual fan"
+    );
 }
 
 #[test]
-fn start_without_preheat_uses_default_or_profile() {
-    // START without prior PREHEAT should work (backward compat)
+fn start_without_preheat_parses_and_runs_end_to_end() {
+    // Audit MT-7 (2026-08-11): renamed from `start_without_preheat_uses_default_or_profile`
+    // (overclaiming — old body only called the parser). Now also exercises the
+    // control layer to assert START in the absence of PREHEAT actually enters
+    // the Heating state with a target, which is the contract the name implied.
     let result = parse_artisan_command("START");
-    assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
+    assert!(
+        matches!(result, Ok(ArtisanCommand::StartRoast)),
+        "START parses"
+    );
+
+    let heater = MockSsr::new();
+    let fan = MockFan::new();
+    let hub = SensorConversionHub::new();
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START runs without preheat");
+    assert_eq!(
+        rc.get_state(),
+        RoasterState::Heating,
+        "START must enter Heating even without a preceding PREHEAT"
+    );
 }
 
 #[test]
 fn preheat_then_start_transitions_normally() {
-    // PREHEAT sets target, START should either continue or transition
+    // Audit MT-7 (2026-08-11): the old body only parsed two strings and a
+    // comment admitted "the transition is in RoasterControl handler". Drive
+    // PREHEAT → START through RoasterControl and assert the real transition
+    // (Preheating → Heating). Note the target contract: with NO profile
+    // loaded, `handle_start_roast` (roaster_control.rs:1261-1268) falls back
+    // to `enable_pid_control(DEFAULT_TARGET_TEMP)`, so the PREHEAT target is
+    // intentionally NOT preserved across START — the test pins that too.
     assert!(matches!(
         parse_artisan_command("PREHEAT 180"),
         Ok(ArtisanCommand::Preheat(180.0))
@@ -106,7 +166,30 @@ fn preheat_then_start_transitions_normally() {
         parse_artisan_command("START"),
         Ok(ArtisanCommand::StartRoast)
     ));
-    // Both parse correctly — the transition is in RoasterControl handler
+
+    let heater = MockSsr::new();
+    let fan = MockFan::new();
+    let hub = SensorConversionHub::new();
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
+    rc.process_artisan_command(ArtisanCommand::Preheat(180.0))
+        .expect("PREHEAT runs");
+    assert_eq!(rc.get_state(), RoasterState::Preheating);
+    assert_eq!(rc.get_status().target_temp, 180.0);
+
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START runs after PREHEAT");
+    assert_eq!(
+        rc.get_state(),
+        RoasterState::Heating,
+        "START after PREHEAT must transition into Heating"
+    );
+    // No profile loaded → START falls back to the default target (the
+    // PREHEAT target is a preheat-only setpoint, not carried into the roast).
+    assert_eq!(
+        rc.get_status().target_temp,
+        libreroaster::config::constants::DEFAULT_TARGET_TEMP,
+        "START without PROFILE must fall back to DEFAULT_TARGET_TEMP"
+    );
 }
 
 #[test]

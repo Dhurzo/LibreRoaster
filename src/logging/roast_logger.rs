@@ -23,8 +23,16 @@ const CSV_HEADER: &str = "time_s,bt,et,heater,fan,target,ror";
 // real envelope: a reconnect dump covers the last ~4 min. If longer coverage
 // is needed, lower the log cadence (e.g. one sample every 4 s → ~17 min at
 // the same footprint).
-// Per-row truncation still happens in `handle_dump_log` via `TRACE_EVENT_MAX_LEN`.
+/// Per-row truncation still happens in `handle_dump_log` via `DUMP_ROW_CAPACITY`.
 pub const DUMP_BUFFER_SIZE: usize = 8192;
+
+/// Audit H-5 (2026-08-11): max length of a single `#DUMP` row as queued in
+/// `RoasterControl.dump_pending`. Dump rows come from ring entries of
+/// `String<SAMPLE_CAPACITY>` plus the CSV header, so 128 is the true upper
+/// bound — sizing the queue with 256 wasted ~132 B × 257 slots (~34 KB
+/// static) for rows that are 33-40 B. Do NOT shrink below this: a row longer
+/// than the capacity is silently dropped by `try_from` in `handle_dump_log`.
+pub const DUMP_ROW_CAPACITY: usize = SAMPLE_CAPACITY;
 
 /// Data for a single log sample.
 #[derive(Debug, Clone, Copy)]

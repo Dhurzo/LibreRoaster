@@ -68,6 +68,10 @@ mod software_watchdog {
         }
 
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
+            // Audit M-T3 (2026-08-11): `bean_temp` is reserved for a future
+            // overtemp-gated feed (Artisan's convention: stop feeding during
+            // an overtemp crisis so the RWDT trips). Deliberately UNUSED
+            // today — the feed is unconditional, per Bug B18 below.
             // Bug B18: feed the HW WDT unconditionally FIRST. The fact that we
             // are executing this at all proves the control loop is alive — even
             // a degraded-but-alive loop (gap > 500ms) must keep the RWDT fed,
@@ -104,6 +108,10 @@ mod software_watchdog {
         pub fn is_alive(&self) -> bool {
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
+            // Audit L-6 (2026-08-11): `NEVER_FED` counts as alive BY DESIGN —
+            // before the first feed the loop is starting up, not hung. The
+            // real enforcement is the gap check inside `feed_async` and the
+            // HW RWDT, both of which fire on a genuinely dead loop.
             last == NEVER_FED || now.saturating_sub(last) <= WATCHDOG_TIMEOUT_MS
         }
     }
@@ -393,10 +401,11 @@ mod tests {
     }
 
     #[test]
-    fn watchdog_feed_accepts_varying_temperatures() {
+    fn watchdog_feed_ignores_bean_temp_parameter() {
         let mut feeder = WatchdogFeeder::initialize().unwrap();
-        // The bean_temp parameter is for future use but should not cause
-        // failures even with edge-case values
+        // The bean_temp parameter is reserved (see feed_async doc) and must
+        // not cause failures with any value. There is deliberately NO
+        // overtemp gating today — the feed is unconditional (Bug B18).
         assert!(feeder.feed_async(-1.0).is_ok());
         assert!(feeder.feed_async(0.0).is_ok());
         assert!(feeder.feed_async(100.0).is_ok());

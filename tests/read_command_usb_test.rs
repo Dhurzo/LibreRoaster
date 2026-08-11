@@ -462,8 +462,10 @@ fn test_read_response_after_stop() {
     println!("TEST-READ-USB-14: READ response after STOP");
 
     // A STOP puts the system in Idle; the READ response should still be valid
+    // Audit M-A7 (2026-08-11): used `Error` (the production fault state) —
+    // `EmergencyStop` variant was removed as dead.
     let mut status = test_status();
-    status.state = RoasterState::EmergencyStop;
+    status.state = RoasterState::Error;
     status.ssr_output = 0.0; // Heater = 0 after STOP
 
     let response = ArtisanFormatter::format_read_response_full(&status);

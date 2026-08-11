@@ -111,7 +111,10 @@ mod target_impl {
             if shutdown_failed {
                 let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
                 let _ = safety.push_str("SAFETY OT-REGRESSION-ABORTED shutdown_failed");
-                let _ = ServiceContainer::get_output_channel().try_send(safety);
+                crate::hardware::error_counters::try_send_output(
+                    ServiceContainer::get_output_channel(),
+                    safety,
+                );
 
                 // Still clear the regression flag so the device does not
                 // advertise a regression that did not actually run.
@@ -156,7 +159,10 @@ mod target_impl {
             } else {
                 let _ = safety.push_str("SAFETY OT-REGRESSION");
             }
-            let _ = ServiceContainer::get_output_channel().try_send(safety);
+            crate::hardware::error_counters::try_send_output(
+                ServiceContainer::get_output_channel(),
+                safety,
+            );
 
             self.keep_feeding_watchdog(Duration::from_millis(400)).await;
 
@@ -254,7 +260,10 @@ mod target_impl {
                 { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
             >::try_from(line.as_str())
             {
-                let _ = ServiceContainer::get_output_channel().try_send(buffer);
+                crate::hardware::error_counters::try_send_output(
+                    ServiceContainer::get_output_channel(),
+                    buffer,
+                );
             }
         }
 

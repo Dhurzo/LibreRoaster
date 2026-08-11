@@ -51,6 +51,39 @@ Simulates a complete Artisan-driven roast in-process with stub hardware:
 - Units switching mid-roast (C↔F)
 - READ validity in every state (Idle, Preheating, Heating, Stable, EmergencyStop)
 
+### `tests/full_roast_verification.rs` — 11 tests
+
+Deterministic **L1 simulation of complete roasts** without hardware (drives
+`RoasterControl` directly with explicit timestamps, 310 ms tick cadence, READ
+poll injection every ~12 s to keep the comms-idle backstop quiet):
+
+- **Preheat** — PREHEAT 180 → Preheating, BT ramps and holds at target
+- **Charge dip** — START + BT dip → `#CHARGE` notification fires, not before
+- **Profile following** — PROFILE + FANPROFILE across a full roast; fan
+  interpolation (linear, rounded), RoR at first crack < 0.5 °C/s, target ≥
+  profile setpoint, STATUS 20-field, fan ≥ safety floor
+- **All 6 safety backstops** — overtemp, NaN PV, stale sensor, comms idle,
+  max roast time (30 min), probe-stuck — each trips the latch deterministically
+- **STOP + cooldown** — fan holds 100 % while BT ≥ 60 °C, releases below, no latch
+- **Two consecutive roasts** — second roast: dump queue empty, charge reset,
+  profile t=0 target, dip re-detected
+
+```bash
+cargo test --test full_roast_verification --features test
+```
+
+### L3 end-to-end pipeline test — `simulated-sensors` (gated)
+
+`control_loop_tick_simulated_sensors_full_pipeline` (in-module, tasks.rs) runs
+**real control-loop ticks** over the synthetic wall-clock temperature curves
+(`--features simulated-sensors`): sensor read → control update → watchdog →
+telemetry → output channel, with READ commands injected every 5th tick and TC4
+responses verified. Wall-clock based (~2 s runtime):
+
+```bash
+cargo test --target x86_64-unknown-linux-gnu --features test --features simulated-sensors --lib control_loop_tick_simulated
+```
+
 ### Other notable host integration tests
 
 | Test file | What it covers |

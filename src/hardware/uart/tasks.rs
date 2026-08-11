@@ -59,7 +59,7 @@ pub async fn send_response(response: &str) -> Result<(), crate::input::InputErro
     let output_channel = ServiceContainer::get_output_channel();
     let line = String::<TRACE_EVENT_MAX_LEN>::try_from(response)
         .map_err(|_| crate::input::InputError::BufferFull)?;
-    let _ = output_channel.try_send(line);
+    crate::hardware::error_counters::try_send_output(output_channel, line);
     Ok(())
 }
 
@@ -68,7 +68,7 @@ pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
     let output_channel = ServiceContainer::get_output_channel();
     let line = String::<TRACE_EVENT_MAX_LEN>::try_from(data)
         .map_err(|_| crate::input::InputError::BufferFull)?;
-    let _ = output_channel.try_send(line);
+    crate::hardware::error_counters::try_send_output(output_channel, line);
     Ok(())
 }
 
@@ -107,6 +107,22 @@ pub fn process_command_data(data: &[u8]) {
 
 /// Internal command handler for legacy/compatibility path.
 fn handle_command_data_internal(data: &[u8]) {
+    // Audit MP-1 (2026-08-11): skip parsing — and with it the parser-side
+    // PROFILE/FANPROFILE FIFO side effects — for lines the multiplexer gate
+    // would refuse (inactive transport). Mirrors the pre-parse gate in
+    // `transport_tasks::process_event_queue`; `would_process_command` is a
+    // pure predicate that never activates the channel (P8 preserved).
+    let accepted = critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let guard = multiplexer.borrow(cs).borrow();
+        guard
+            .as_ref()
+            .is_none_or(|mux| mux.would_process_command(CommChannel::Uart))
+    });
+    if !accepted {
+        return;
+    }
+
     let parse_result = if data.is_empty() {
         Err(ParseError::EmptyCommand)
     } else {
@@ -153,6 +169,11 @@ fn handle_command_data_internal(data: &[u8]) {
 }
 
 /// Send parse error (legacy compatibility).
+///
+/// Audit MP-4 (2026-08-11): must NOT activate a channel from `None` — the
+/// P8 fix in `transport_tasks::send_parse_error` reserved activation for
+/// successfully parsed commands. Boot-time garbage on one wire can no
+/// longer hijack the session before a valid command arrives.
 fn send_parse_error_internal(error: ParseError) {
     let mut should_write = true;
 
@@ -160,9 +181,6 @@ fn send_parse_error_internal(error: ParseError) {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            if matches!(mux.get_active_channel(), CommChannel::None) {
-                let _ = mux.on_command_received(CommChannel::Uart);
-            }
             should_write = mux.should_write_to(CommChannel::Uart);
         }
 
@@ -173,7 +191,7 @@ fn send_parse_error_internal(error: ParseError) {
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
             let _ = message.push_str(error.message());
-            let _ = output_channel.try_send(message);
+            crate::hardware::error_counters::try_send_output(output_channel, message);
         }
     });
 }

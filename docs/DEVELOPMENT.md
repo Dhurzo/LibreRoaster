@@ -117,6 +117,14 @@ cargo test --target x86_64-unknown-linux-gnu --features test
 
 This is the correct default verification command when documentation or behavior changes touch protocol, control, or task orchestration.
 
+### Regression numeric suite
+
+The strongest numeric tests (`tests/sensor_conversion.rs` — 19-bit two's-complement LSB math, fixture→fault mapping) are gated behind the `regression` feature, so they are NOT part of the default `--features test` run. Run them explicitly (audit H-9, 2026-08-11):
+
+```bash
+cargo test --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
+```
+
 ### Concurrency instrumentation run
 
 ```bash

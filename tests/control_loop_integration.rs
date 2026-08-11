@@ -286,15 +286,20 @@ fn stop_roast_turns_off_heater_and_full_fan() {
         .process_artisan_command(ArtisanCommand::Stop)
         .expect("stop");
 
+    let output_after = control
+        .update_control(Instant::now())
+        .expect("update after stop");
+    // Audit MT-7 (2026-08-11): the status snapshot used to be taken BEFORE
+    // this final `update_control`, so `fan_output >= 99.0` was asserted on a
+    // pre-tick snapshot while `output_after == 0.0` came from the post-tick
+    // return — the two sides of the same STOP behaviour were pinned at
+    // different points in time. Take ONE post-tick snapshot and assert both
+    // the heater-off and fan-full behaviour from it.
     let status = control.get_status();
     assert!(
         !status.artisan_control,
         "Should no longer be under Artisan+ control"
     );
-
-    let output_after = control
-        .update_control(Instant::now())
-        .expect("update after stop");
     assert_eq!(output_after, 0.0, "Heater should be 0% after STOP");
     assert!(
         status.fan_output >= 99.0,

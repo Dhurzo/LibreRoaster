@@ -132,14 +132,16 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     // (e.g., "FILT;70,70,70,70") or a single value
                     // (e.g., "FILT;5"). The value is acknowledged but not
                     // used by the firmware — just extract the first token.
-                    let val = args
-                        .trim()
-                        .split(',')
-                        .next()
-                        .unwrap_or("0")
-                        .trim()
-                        .parse::<u8>()
-                        .unwrap_or(0);
+                    // Audit L-4 (2026-08-11): garbage was silently coerced to
+                    // 0 (`unwrap_or(0)`) and out-of-range values accepted —
+                    // unlike every other numeric path. Reject loudly:
+                    // non-numeric or > 100 yields `ERR invalid_value`,
+                    // matching the parser's "reject, don't coerce" convention.
+                    let first = args.trim().split(',').next().unwrap_or("").trim();
+                    let val = first.parse::<u8>().map_err(|_| ParseError::InvalidValue)?;
+                    if val > 100 {
+                        return Err(ParseError::InvalidValue);
+                    }
                     Some(Ok(ArtisanCommand::Filt(val)))
                 }
                 "PROFILE" => Some(parse_profile_args(args.trim())),
@@ -263,6 +265,14 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             // so the operator gets `ERR out_of_range` instead of an
             // undefined heater command.
             if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
+                return Err(ParseError::OutOfRange);
+            }
+            // Audit L-5 (2026-08-11): PID;T rejects negative gains in the
+            // parser (`OutOfRange`); PIDGAIN let them through to the handler
+            // (`ERR handler_failed ...:negative_pid_gain`). One input should
+            // have one error token — mirror the PID;T check here. The handler
+            // check below remains as defense-in-depth.
+            if kp < 0.0 || ki < 0.0 || kd < 0.0 {
                 return Err(ParseError::OutOfRange);
             }
             Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
@@ -707,9 +717,12 @@ mod tests {
                     ("Up", ArtisanCommand::IncreaseHeater),
                 ];
 
-                let (input, _expected_command) = command_table[index as usize % command_table.len()];
+                let (input, expected_command) = command_table[index as usize % command_table.len()];
+                // Audit H-7 (2026-08-11): was `matches!(Ok(_expected_command))` —
+                // the `_`-prefixed binding matched ANY payload, so the table only
+                // proved "these strings parse", never "to the right command".
                 let result = super::parse_artisan_command(input);
-                assert!(matches!(result, Ok(_expected_command)));
+                assert_eq!(result, Ok(expected_command));
             }
         }
 
@@ -930,10 +943,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_filt_command_non_numeric_falls_back_to_zero() {
-        // Non-numeric FILT values gracefully fall back to 0
+    fn test_parse_filt_command_non_numeric_rejected() {
+        // Audit L-4: garbage is rejected loudly, not coerced to 0.
         let result = parse_artisan_command("FILT;abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_filt_command_out_of_range_rejected() {
+        // Audit L-4: values above 100 are out of range (0-100 filter %).
+        let result = parse_artisan_command("FILT;999");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        let result = parse_artisan_command("FILT; 101 ");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        // Boundaries stay valid.
+        let result = parse_artisan_command("FILT;0");
         assert!(matches!(result, Ok(ArtisanCommand::Filt(0))));
+        let result = parse_artisan_command("FILT;100");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(100))));
     }
 
     #[test]

@@ -13,6 +13,7 @@
 
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
+use crate::hardware::error_counters::try_send_output;
 use crate::input::multiplexer::CommChannel;
 use crate::input::parser::ParseError;
 use crate::logging::traceability::{trace_command_enqueue, TracedCommand, TRACE_EVENT_MAX_LEN};
@@ -22,6 +23,7 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_time::{Duration, Timer};
 use heapless::{Deque, String, Vec};
 use log::debug;
+use portable_atomic::{AtomicU32, Ordering};
 
 /// Size of the event queue for buffering incoming bytes before parsing.
 pub const EVENT_QUEUE_SIZE: usize = 256;
@@ -212,6 +214,28 @@ pub(crate) fn extract_line_from_event_queue(
     }
 }
 
+/// Audit MP-3 (2026-08-11): coalesce `ERR command_ignored_inactive_channel`
+/// to at most one per second. Without this, a second connected Artisan or a
+/// noisy UART stream polling `READ` floods the ACTIVE host's line with
+/// foreign ERR lines (the output channel is only 16 deep and drained 4 per
+/// 5 ms, so the flood also crowds out real telemetry/STATUS data). One
+/// notification per second keeps the operator informed without the flood.
+static LAST_INACTIVE_ERR_MS: AtomicU32 = AtomicU32::new(0);
+const INACTIVE_ERR_COALESCE_MS: u32 = 1000;
+
+fn emit_inactive_channel_err_if_due() {
+    let now = embassy_time::Instant::now().as_millis() as u32;
+    let last = LAST_INACTIVE_ERR_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < INACTIVE_ERR_COALESCE_MS {
+        return;
+    }
+    LAST_INACTIVE_ERR_MS.store(now, Ordering::Relaxed);
+    let output_channel = ServiceContainer::get_output_channel();
+    let mut msg = String::<TRACE_EVENT_MAX_LEN>::new();
+    let _ = msg.push_str("ERR command_ignored_inactive_channel");
+    try_send_output(output_channel, msg);
+}
+
 /// Handle a parsed command: check multiplexer, push to artisan channel via try_send.
 async fn handle_parsed_command(
     cmd: crate::config::ArtisanCommand,
@@ -267,11 +291,10 @@ async fn handle_parsed_command(
     // only an `info!` in the log. Emit an explicit ERR through the output
     // channel; the dual-output task routes it to the active session, so the
     // operator at least sees that a command was refused, not processed.
+    // Audit MP-3 (2026-08-11): coalesced to 1/s — see
+    // `emit_inactive_channel_err_if_due`.
     if !should_process {
-        let output_channel = ServiceContainer::get_output_channel();
-        let mut msg = String::<TRACE_EVENT_MAX_LEN>::new();
-        let _ = msg.push_str("ERR command_ignored_inactive_channel");
-        let _ = output_channel.try_send(msg);
+        emit_inactive_channel_err_if_due();
     }
 }
 
@@ -298,7 +321,7 @@ async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig
             let output_channel = ServiceContainer::get_output_channel();
             let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
             let _ = message.push_str("ERR channel_full command_dropped");
-            let _ = output_channel.try_send(message);
+            crate::hardware::error_counters::try_send_output(output_channel, message);
         }
     });
 }
@@ -329,7 +352,7 @@ pub(crate) async fn send_parse_error(
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
             let _ = message.push_str(error.message());
-            let _ = output_channel.try_send(message);
+            crate::hardware::error_counters::try_send_output(output_channel, message);
         }
     });
 }
@@ -396,6 +419,28 @@ pub(crate) async fn process_event_queue(
         // truncated junk.
         if command_data.len() >= 256 {
             send_parse_error(ParseError::CommandTooLong, channel, config).await;
+            continue;
+        }
+
+        // Audit MP-1 (2026-08-11): refuse INACTIVE-channel lines BEFORE
+        // parsing. `parse_artisan_command` populates the parser-side
+        // PROFILE/FANPROFILE FIFOs as a side effect; parsing a line that the
+        // multiplexer gate would drop anyway leaked the profile into the
+        // FIFO, where a LATER session's `SetProfile` consumed the stale
+        // entry (F3-MP1). `would_process_command` is a pure predicate — it
+        // does NOT activate the channel, so activation stays reserved for
+        // successfully parsed commands (P8).
+        let accepted = critical_section::with(|cs| {
+            ServiceContainer::get_multiplexer()
+                .borrow(cs)
+                .borrow()
+                .as_ref()
+                .is_none_or(|mux| mux.would_process_command(channel))
+        });
+        if !accepted {
+            // Line already consumed from the queue; notify the active host
+            // (coalesced to 1/s, MP-3) and keep draining.
+            emit_inactive_channel_err_if_due();
             continue;
         }
 

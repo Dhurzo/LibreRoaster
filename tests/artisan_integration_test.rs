@@ -27,7 +27,6 @@ use std::println;
 use libreroaster::config::{ArtisanCommand, RoasterState, SsrHardwareStatus, SystemStatus};
 use libreroaster::input::parser::{parse_artisan_command, ParseError};
 use libreroaster::output::artisan::{ArtisanFormatter, MutableArtisanFormatter};
-use libreroaster::output::OutputFormatter;
 
 /// Helper to create test SystemStatus
 fn create_test_status() -> SystemStatus {

@@ -26,6 +26,12 @@ cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_
 
 # Gate 3: Tests
 cargo test --locked --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
+
+# Gate 4: Regression numeric suite (H-9, audit 2026-08-11)
+# The strongest numeric tests (tests/sensor_conversion.rs — 19-bit
+# two's-complement LSB math, fixture→fault mapping) are gated behind
+# `--features regression` and are NOT part of Gate 3. Run them explicitly:
+cargo test --locked --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
 ```
 
 ## Output Mode

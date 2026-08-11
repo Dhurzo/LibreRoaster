@@ -187,8 +187,21 @@ fn main() -> ! {
     libreroaster::safety::watchdog::init_hw_watchdog();
     info!("Hardware watchdog initialized (RTC WDT)");
 
-    let _ = libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE);
-    info!("USB CDC initialized");
+    // Audit MP-5 (2026-08-11): the init Result was discarded and "USB CDC
+    // initialized" was logged unconditionally — a failed init would leave the
+    // operator believing USB was up while Artisan-on-USB got nothing. Now the
+    // success log is emitted ONLY on Ok. On Err we log loudly but do NOT halt:
+    // UART0 remains a fully functional transport, and on riscv32
+    // `init_usb_cdc` is effectively infallible (StaticCell::init cannot fail),
+    // so this branch is defensive — halting here would brick a working UART
+    // session over an unreachable error.
+    match libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE) {
+        Ok(()) => info!("USB CDC initialized"),
+        Err(e) => log::error!(
+            "USB CDC initialization FAILED: {:?} — USB transport unavailable, UART0 remains active",
+            e
+        ),
+    }
 
     info!("Wake the f*** up samurai we have beans to burn!");
 

@@ -41,14 +41,30 @@ pub async fn usb_reader_task() {
 }
 
 /// Process USB command data directly (legacy compatibility, mainly for tests).
+///
+/// Audit MP-4 (2026-08-11): the previous loop `return`ed after the FIRST
+/// line terminator, silently dropping every later command in the same
+/// buffer (the UART twin was fixed for this in L18). It now processes each
+/// complete line in `data` in order; a trailing unterminated fragment is
+/// dropped, and a bare terminator surfaces as an `EmptyCommand` parse error
+/// exactly once per empty line — mirroring uart `process_command_data`.
 pub fn process_usb_command_data(data: &[u8]) {
     const COMMAND_BUFFER_SIZE: usize = 256;
     let mut command = Vec::<u8, COMMAND_BUFFER_SIZE>::new();
+    let mut processed_any = false;
 
     for &byte in data {
         if byte == 0x0D || byte == 0x0A {
-            handle_complete_usb_command(&command);
-            return;
+            // A line is due when it holds bytes, or when this is the very
+            // first terminator of the buffer (bare `\r` = empty command).
+            // A terminator right after a completed line (the `\n` of a
+            // CRLF pair) must NOT emit a second EmptyCommand error.
+            if !command.is_empty() || !processed_any {
+                handle_complete_usb_command(&command);
+                processed_any = true;
+                command.clear();
+            }
+            continue;
         }
 
         if command.push(byte).is_err() {
@@ -66,6 +82,22 @@ pub fn process_usb_command_data_test(data: &[u8]) {
 
 /// Internal handler for complete USB command (legacy compatibility path).
 fn handle_complete_usb_command(command: &[u8]) {
+    // Audit MP-1 (2026-08-11): skip parsing — and with it the parser-side
+    // PROFILE/FANPROFILE FIFO side effects — for lines the multiplexer gate
+    // would refuse (inactive transport). Mirrors the pre-parse gate in
+    // `transport_tasks::process_event_queue`; `would_process_command` is a
+    // pure predicate that never activates the channel (P8 preserved).
+    let accepted = critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let guard = multiplexer.borrow(cs).borrow();
+        guard
+            .as_ref()
+            .is_none_or(|mux| mux.would_process_command(CommChannel::Usb))
+    });
+    if !accepted {
+        return;
+    }
+
     let parse_result = if command.is_empty() {
         Err(ParseError::EmptyCommand)
     } else {
@@ -114,6 +146,11 @@ fn handle_complete_usb_command(command: &[u8]) {
 }
 
 /// Send parse error via USB CDC (legacy compatibility).
+///
+/// Audit MP-4 (2026-08-11): must NOT activate a channel from `None` — the
+/// P8 fix in `transport_tasks::send_parse_error` reserved activation for
+/// successfully parsed commands. Boot-time garbage on one wire can no
+/// longer hijack the session before a valid command arrives.
 fn send_usb_parse_error(error: ParseError) {
     let mut should_write = true;
 
@@ -121,9 +158,6 @@ fn send_usb_parse_error(error: ParseError) {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
         if let Some(mux) = guard.as_mut() {
-            if matches!(mux.get_active_channel(), CommChannel::None) {
-                let _ = mux.on_command_received(CommChannel::Usb);
-            }
             should_write = mux.should_write_to(CommChannel::Usb);
         }
 
@@ -134,7 +168,7 @@ fn send_usb_parse_error(error: ParseError) {
             let _ = message.push_str(error.code());
             let _ = message.push_str(" ");
             let _ = message.push_str(error.message());
-            let _ = output_channel.try_send(message);
+            crate::hardware::error_counters::try_send_output(output_channel, message);
         }
     });
 }

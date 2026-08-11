@@ -83,8 +83,14 @@ pub struct RoasterControl {
     /// channel is full — so no row is lost. The queue is sized to hold a
     /// full-ring dump (`LOG_CAPACITY + 1` rows) so a complete roast can be
     /// requested via `#DUMP` without losing any row to queue overflow.
-    dump_pending:
-        heapless::Deque<heapless::String<256>, { crate::logging::roast_logger::LOG_CAPACITY + 1 }>,
+    // Audit H-5 (2026-08-11): rows were `String<256>` (257 × ~264 B ≈ 68 KB
+    // static) for 33-40 B rows. `DUMP_ROW_CAPACITY` (128, the ring-entries'
+    // true upper bound — see roast_logger.rs) halves the static cost to
+    // ≈ 34 KB with zero truncation risk.
+    dump_pending: heapless::Deque<
+        heapless::String<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>,
+        { crate::logging::roast_logger::LOG_CAPACITY + 1 },
+    >,
 }
 
 impl RoasterControl {
@@ -719,7 +725,10 @@ impl RoasterControl {
                                 &mut charge_msg,
                                 core::format_args!("#CHARGE dt={:.1}", drop),
                             );
-                            let _ = output_channel.try_send(charge_msg);
+                            crate::hardware::error_counters::try_send_output(
+                                output_channel,
+                                charge_msg,
+                            );
                         }
                     }
                 }
@@ -1050,18 +1059,10 @@ impl RoasterControl {
         Ok(applied_output)
     }
 
-    pub async fn process_output(&mut self) -> Result<(), RoasterError> {
-        if let Err(e) = self
-            .dispatch
-            .get_output_manager_mut()
-            .process_status(&self.status)
-            .await
-        {
-            warn!("Output error: {:?}", e);
-        }
-        Ok(())
-    }
-
+    // Audit M-A5 (2026-08-11): `process_output` removed — it only awaited the
+    // deleted no-op `OutputController::process_status`, so it had zero effect
+    // and zero callers. Continuous output is emitted by `emit_telemetry_stage`
+    // in tasks.rs, not through this type.
     pub fn get_output_manager(&self) -> &crate::control::OutputController {
         self.dispatch.get_output_manager()
     }
@@ -1567,14 +1568,19 @@ impl RoasterControl {
     /// to send. Called from `ServiceContainer::with_roaster_async` (sync
     /// closure); the caller `.await`s `output_channel.try_send(row)` outside
     /// the lock (and re-pushes via `push_dump_row_front` on a full channel).
-    pub fn take_dump_row(&mut self) -> Option<heapless::String<256>> {
+    pub fn take_dump_row(
+        &mut self,
+    ) -> Option<heapless::String<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>> {
         self.dump_pending.pop_front()
     }
 
     /// Bug V2-7: re-push a `#DUMP` row to the FRONT of the deque when the
     /// async emitter's `try_send` failed (output channel full). FIFO order is
     /// preserved and no row is lost — the next tick will retry it.
-    pub fn push_dump_row_front(&mut self, row: heapless::String<256>) {
+    pub fn push_dump_row_front(
+        &mut self,
+        row: heapless::String<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>,
+    ) {
         // If the deque is somehow full (shouldn't happen — it's sized to
         // LOG_CAPACITY+1, larger than any single dump), drop the oldest row
         // to make room for the retry at the front.
@@ -1593,7 +1599,11 @@ impl RoasterControl {
             if line.is_empty() {
                 continue;
             }
-            if let Ok(msg) = heapless::String::<256>::try_from(line) {
+            if let Ok(msg) =
+                heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from(
+                    line,
+                )
+            {
                 // Deque sized for a full ring; push_back should not fail in
                 // practice. If it ever does (defensive), the front rows are
                 // the dump header + earliest samples — drop the row rather
@@ -1729,16 +1739,20 @@ impl RoasterControl {
             &mut msg,
             core::format_args!("ERR OT2_CLAMPED fan={} heater_unchanged", fan_value),
         );
-        let _ = crate::application::service_container::ServiceContainer::get_output_channel()
-            .try_send(msg);
+        crate::hardware::error_counters::try_send_output(
+            crate::application::service_container::ServiceContainer::get_output_channel(),
+            msg,
+        );
     }
 
     fn send_text_response(&self, text: &str) {
         use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
 
         if let Ok(msg) = heapless::String::<TRACE_EVENT_MAX_LEN>::try_from(text) {
-            let _ = crate::application::service_container::ServiceContainer::get_output_channel()
-                .try_send(msg);
+            crate::hardware::error_counters::try_send_output(
+                crate::application::service_container::ServiceContainer::get_output_channel(),
+                msg,
+            );
         }
     }
 
@@ -2079,9 +2093,19 @@ mod tests {
 
     #[test]
     fn artisan_emergency_stop_triggers_emergency() {
+        // Audit MT-7 (2026-08-11): the old body asserted only `is_ok()` — the
+        // name promises the emergency *latch*, so pin it: Error state,
+        // fault_condition, and the safety-latch flag must all be set after
+        // `EmergencyStop` (mirrors stop_latches_then_off_recovers below).
         let mut ctrl = make_control();
         let result = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
         assert!(result.is_ok());
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+        assert!(ctrl.get_status().fault_condition);
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "EmergencyStop must arm the safety latch"
+        );
     }
 
     #[test]
@@ -2201,15 +2225,43 @@ mod tests {
 
     #[test]
     fn accessor_methods_return_references() {
+        // Audit MT-7 (2026-08-11): the old body only bound the accessors to
+        // `_`-prefixed locals (zero assertions). Prove the accessors return
+        // LIVE references: mutate through the `_mut` pair and verify the
+        // change is visible through the read accessor.
         let mut ctrl = make_control();
-        let _s = ctrl.sensor();
-        let _a = ctrl.actuator();
-        let _sa = ctrl.safety();
-        let _d = ctrl.dispatch();
-        let _sm = ctrl.sensor_mut();
-        let _am = ctrl.actuator_mut();
-        let _sam = ctrl.safety_mut();
-        let _dm = ctrl.dispatch_mut();
+
+        // safety: activate via safety_mut, observe via safety.
+        assert!(!ctrl.safety().is_emergency_active(), "starts clean");
+        ctrl.safety_mut().activate_emergency();
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "safety_mut() mutation must be visible through safety()"
+        );
+        ctrl.safety_mut().clear_emergency();
+        assert!(!ctrl.safety().is_emergency_active(), "cleared");
+
+        // sensor: a temperature update must be visible through sensor().
+        let now = Instant::from_millis(1000);
+        ctrl.update_temperatures(150.0, 120.0, now).expect("temps");
+        assert_eq!(
+            ctrl.sensor().last_temp_read(),
+            Some(now),
+            "sensor() must return the live sensor controller state"
+        );
+
+        // actuator: the default StubHeater reports Available.
+        assert_eq!(
+            ctrl.actuator().get_ssr_hardware_status(),
+            crate::config::constants::SsrHardwareStatus::Available,
+            "actuator() must return the live actuator controller state"
+        );
+
+        // dispatch: default state is not streaming.
+        assert!(
+            !ctrl.dispatch().is_streaming(&ctrl.get_status()),
+            "dispatch() must reflect the live dispatcher state"
+        );
     }
 
     // ── Read status (READ command) ──────────────
@@ -2527,12 +2579,20 @@ mod tests {
         // into the new roast's live telemetry.
         let mut ctrl = make_control();
         // Seed the deque with a sentinel row (skip the real logger path).
-        let row = heapless::String::<256>::try_from("sentinel-row").unwrap();
+        let row =
+            heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from(
+                "sentinel-row",
+            )
+            .unwrap();
         ctrl.push_dump_row_front(row);
         assert!(ctrl.take_dump_row().is_some(), "sentinel row is queued");
 
         // Re-seed and start a roast.
-        let row = heapless::String::<256>::try_from("sentinel-row-2").unwrap();
+        let row =
+            heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from(
+                "sentinel-row-2",
+            )
+            .unwrap();
         ctrl.push_dump_row_front(row);
         let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
         assert!(r.is_ok());
@@ -2548,8 +2608,14 @@ mod tests {
         // full must keep FIFO order — the row is retried next, before any row
         // that was already behind it.
         let mut ctrl = make_control();
-        ctrl.push_dump_row_front(heapless::String::<256>::try_from("a").unwrap());
-        ctrl.push_dump_row_front(heapless::String::<256>::try_from("b").unwrap());
+        ctrl.push_dump_row_front(
+            heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from("a")
+                .unwrap(),
+        );
+        ctrl.push_dump_row_front(
+            heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from("b")
+                .unwrap(),
+        );
         // front = "b","a" so pop_front gives "b" first, then "a".
         assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "b");
         assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "a");
