@@ -402,15 +402,16 @@ async fn read_sensors(
         // Diagnostic/`instrumentation` build exists to measure. The macro
         // gate makes this a no-op at the production `Warn` filter, but the
         // `.await`-in-args trap is a latent hazard for future maintainers.
-        let (bt, et) = match ServiceContainer::with_roaster_async(|roaster| {
+        // Audit CI (2026-08-11): `.unwrap_or` (NOT `.unwrap()`) — the
+        // embedded-target clippy flagged the hand-rolled match as
+        // `manual_unwrap_or`; `unwrap_or` is not `unwrap_used` (deny applies
+        // only to `.unwrap()`).
+        let (bt, et) = ServiceContainer::with_roaster_async(|roaster| {
             let status = roaster.get_status();
             (status.bean_temp, status.env_temp)
         })
         .await
-        {
-            Ok(temps) => temps,
-            Err(_) => (0.0, 0.0),
-        };
+        .unwrap_or((0.0, 0.0));
         debug!(
             "stage=SensorRead elapsed={}ms Sensors: BT: {:.1}°C, ET: {:.1}°C",
             sensor_elapsed_ms, bt, et
