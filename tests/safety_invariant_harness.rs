@@ -424,12 +424,14 @@ fn harness_prng_is_deterministic() {
 
 #[test]
 fn dead_probe_manual_roast_now_trips_probe_stuck() {
-    // Verificación del fix S1: sonda muerta (TC corto lee 0.0 °C válido, sin
-    // fault bit) + manual mode a 30 % (bajo el antiguo umbral del detector)
-    // + polling de Artisan cada 3 ticks (neutraliza comms-idle). El detector
-    // probe-stuck — ahora armado con cualquier duty > 0 — debe disparar la
-    // emergencia tras PROBE_STUCK_TIMEOUT_SECS (120 s = 600 ticks) y dejar
-    // el heater a 0. Pre-fix este roast corría a ciegas hasta MAX_ROAST_TIME.
+    // Verificación del fix S1 + Audit A-TC4-C: sonda muerta (TC corto lee
+    // 0.0 °C válido, sin fault bit) + manual mode a 30 % (bajo el antiguo
+    // umbral del detector) + polling de Artisan cada 3 ticks (neutraliza
+    // comms-idle). El detector probe-stuck — armado con cualquier duty > 0 —
+    // es ahora de DOS ETAPAS en modo manual: a los 120 s (600 ticks) solo
+    // avisa por el wire; el latch real llega a los 300 s (1500 ticks),
+    // dejando el heater a 0. Pre-fix este roast corría a ciegas hasta
+    // MAX_ROAST_TIME.
     let mut rng = Rng(7);
     let mut ctrl = RoasterControl::new(
         Box::new(StubHeater::new()),
@@ -445,12 +447,19 @@ fn dead_probe_manual_roast_now_trips_probe_stuck() {
     let baseline = Instant::now();
     let mut heater_ticks = 0u32;
 
-    for tick in 0..TICKS_PER_ROAST {
+    // 300 s a 200 ms/tick + margen para el latch de la segunda etapa.
+    let ticks_to_latch =
+        (libreroaster::config::constants::PROBE_STUCK_MANUAL_LATCH_SECS * 1000 / TICK_MS) + 30;
+    for tick in 0..ticks_to_latch {
         let now = baseline + Duration::from_millis(TICK_MS * tick as u64);
 
-        // Polling de Artisan cada 3 ticks — neutraliza comms-idle.
+        // Polling de Artisan cada 3 ticks — neutraliza comms-idle. El campo
+        // se parchea con el tiempo sintético (misma disciplina que
+        // full_roast_verification::poll_read): `process_artisan_command`
+        // estampa el reloj REAL, que apenas avanza durante un bucle rápido.
         if tick % 3 == 1 {
             let _ = ctrl.process_artisan_command(ArtisanCommand::ReadStatus);
+            ctrl.status_mut().last_command_received_at_ms = now.as_millis();
         }
         let _ = rng.next(); // consumo simbólico para variar la semilla
 
@@ -462,6 +471,14 @@ fn dead_probe_manual_roast_now_trips_probe_stuck() {
             now,
         );
         let _ = ctrl.update_control(now);
+
+        if tick == 600 {
+            // 120 s planos: etapa de aviso — el latch NO debe estar armado.
+            assert!(
+                !ctrl.safety().is_emergency_active(),
+                "A-TC4-C: modo manual no debe latchar a los 120 s (etapa de aviso)"
+            );
+        }
 
         if ctrl.get_status().ssr_output > 0.0 {
             heater_ticks += 1;
@@ -475,8 +492,8 @@ fn dead_probe_manual_roast_now_trips_probe_stuck() {
     );
     assert!(
         ctrl.safety().is_emergency_active(),
-        "S1 fix: sonda muerta + heater on debe disparar probe-stuck antes de \
-         MAX_ROAST_TIME (heater_ticks={heater_ticks})"
+        "S1 fix: sonda muerta + heater on debe disparar probe-stuck a los 300 s, \
+         antes de MAX_ROAST_TIME (heater_ticks={heater_ticks})"
     );
     assert_eq!(
         s.ssr_output, 0.0,
@@ -486,5 +503,7 @@ fn dead_probe_manual_roast_now_trips_probe_stuck() {
         s.fan_output, 100.0,
         "el cooldown debe mantener el fan al 100 %"
     );
-    eprintln!("sanidad S1 fix: emergencia probe-stuck tras {heater_ticks} ticks de heater");
+    eprintln!(
+        "sanidad S1 fix: emergencia probe-stuck (2 etapas) tras {heater_ticks} ticks de heater"
+    );
 }

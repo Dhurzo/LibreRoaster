@@ -3,9 +3,11 @@
 //!
 //! Each test documents a candidate finding. Tests that document current
 //! (possibly undesirable) behaviour PASS and serve as evidence for the report;
-//! the one test that asserts a safety invariant the current code violates
-//! (S5) is marked `#[ignore]` so the suite stays green until the fix lands
-//! (run it explicitly with `cargo test --ignored`).
+//! S5 (the NaN heater-output invariant) now asserts the FIXED behaviour
+//! (`Err(RoasterError::InvalidState("non_finite_heater_output"))`) as a
+//! plain `#[test]` — the historical `#[ignore]` marker was removed when the
+//! fix landed (Audit A-TC4, 2026-08-12: the stale header above used to claim
+//! the `#[ignore]` still existed).
 
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -87,20 +89,26 @@ impl Fan for DeadFan {
 //   - overtemp trap: never fires (0 °C < 260 °C)
 //   - NaN trap:      never fires (0.0 is finite)
 //   - RoR guard:     not armed in manual mode (pid_enabled == false)
-//   - probe-stuck:   disarmed below 50 % heater (roaster_control.rs:920-922)
+//   - probe-stuck:   armed at any duty > 0 (Bug S1 fix); two-stage in manual
+//                    mode since Audit A-TC4-C — warning at 120 s, latch at
+//                    300 s. This repro's loop spans only milliseconds of REAL
+//                    time, so neither window elapses inside it.
 //   - staleness:     reads keep arriving, so never stale
 //   - comms-idle:    Artisan polls READ every ~1 s, refreshing
 //                    `last_command_received_at_ms` on EVERY command
-//                    (roaster_control.rs:994) — the 15 s idle backstop
+//                    (roaster_control.rs:1079) — the 15 s idle backstop
 //                    never elapses in a live session
-// The only backstop left is MAX_ROAST_TIME (30 min).
+// The only backstop left for the blind loop is MAX_ROAST_TIME (30 min).
 #[test]
 fn s1_dead_probe_manual_roast_runs_without_sensor_supervision() {
     let mut ctrl = make_control();
     let t0 = Instant::now();
     tick(&mut ctrl, 25.0, 30.0, t0);
 
-    // Manual session: OT1 30 — below the 50 % probe-stuck arm threshold.
+    // Manual session: OT1 30. Post-fix S1 the probe-stuck detector arms at
+    // any duty > 0, but this loop advances only REAL milliseconds of clock,
+    // so neither the 120 s warning nor the 300 s manual latch (A-TC4-C) can
+    // elapse inside it.
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(30))
         .expect("OT1 30");
     assert!(ctrl.get_status().artisan_control);

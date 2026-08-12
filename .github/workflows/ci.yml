@@ -105,8 +105,12 @@ jobs:
       - name: Generate code coverage
         run: |
           mkdir -p target/coverage
+          # Audit A-TC4 (2026-08-12): include regression + simulated-sensors
+          # so the conversion math (tests/sensor_conversion.rs), the
+          # regression status suite and the L3 simulated-sensors pipeline are
+          # instrumented — previously they showed as uncovered in Codecov.
           cargo llvm-cov --target x86_64-unknown-linux-gnu \
-            --features test \
+            --features "test,regression,simulated-sensors" \
             --no-fail-fast \
             --lcov \
             --output-path target/coverage/lcov.info

@@ -195,6 +195,22 @@ fn drain_charge_notifications() -> bool {
     saw_charge
 }
 
+/// Drain the shared output channel collecting every non-TRACE line, in
+/// arrival order. Callers hold TEST_MUTEX, so no other test in this binary
+/// can interleave on the channel.
+fn drain_output_lines() -> Vec<std::string::String> {
+    let channel =
+        libreroaster::application::service_container::ServiceContainer::get_output_channel();
+    let mut lines = Vec::new();
+    while let Ok(msg) = channel.try_receive() {
+        if msg.starts_with("TRACE,") {
+            continue;
+        }
+        lines.push(msg.as_str().to_string());
+    }
+    lines
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // P3 — PREHEAT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -509,11 +525,20 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
     let t0 = Instant::now();
 
     // Manual mode (no PID): OT1 60 energizes the heater; BT frozen at 80 °C.
+    // Audit A-TC4-C (2026-08-12): manual mode is TWO-STAGE — at ~120 s the
+    // firmware emits `ERR probe_stuck_warning` on the wire WITHOUT latching
+    // (a legitimately slow finish can hold BT <1 °C for 2 min at low duty);
+    // the real latch lands at ~300 s and announces itself with
+    // `ERR safety_fault Probe stuck`.
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(60))
         .expect("manual heater");
+    drain_output_lines(); // clear stale lines from earlier tests in this binary
+
+    // 120 s ≈ tick 388, 300 s ≈ tick 968 (TICK_MS = 310).
+    const WARN_TICKS: u64 = 120 * 1000 / TICK_MS + 5; // 392
+    const LATCH_TICKS: u64 = 300 * 1000 / TICK_MS + 5; // 972
     let mut fired = false;
-    for i in 0..(121u64 * 1000 / TICK_MS) {
-        // 391 ticks = 121 s simulated: probe-stuck fires at 120 s flat BT.
+    for i in 0..LATCH_TICKS {
         let t = tick_time(t0, i);
         if i % READ_EVERY_TICKS == 0 {
             poll_read(&mut ctrl, t);
@@ -522,12 +547,32 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
             fired = true;
             break;
         }
+        if i == WARN_TICKS {
+            // Just past the 120 s warning threshold: the warning must be on
+            // the wire, the latch still disarmed.
+            assert!(
+                !ctrl.safety().is_emergency_active(),
+                "manual mode must not latch at the ~120 s warning threshold"
+            );
+            assert!(
+                drain_output_lines()
+                    .iter()
+                    .any(|l| l == "ERR probe_stuck_warning"),
+                "the two-stage warning must be emitted on the wire"
+            );
+        }
     }
     assert!(
         fired,
-        "flat BT with heater on must trip probe-stuck at 120 s"
+        "flat BT with heater on must latch probe-stuck at ~300 s"
     );
-    assert_emergency_posture(&mut ctrl, tick_time(t0, 400));
+    assert_emergency_posture(&mut ctrl, tick_time(t0, LATCH_TICKS + 2));
+    assert!(
+        drain_output_lines()
+            .iter()
+            .any(|l| l.starts_with("ERR safety_fault Probe stuck")),
+        "the manual-mode latch must announce itself on the wire"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

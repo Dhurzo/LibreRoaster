@@ -644,6 +644,100 @@ mod tests {
         );
     }
 
+    /// Bug-hunt T-B4: byte-level interleaving across TWO transports must not
+    /// cross-contaminate. Each reader task owns its own event queue (the
+    /// production `TransportRxState` per transport); bytes dripped
+    /// alternately into two queues — as simultaneous USB + UART sessions
+    /// would arrive — must reconstruct each command in its own transport
+    /// only. A line split across transports must never merge into a valid
+    /// command on either side.
+    #[test]
+    fn interleaved_byte_drip_across_two_transports_stays_isolated() {
+        let usb_state = TransportRxState::new();
+        usb_state.init();
+        let uart_state = TransportRxState::new();
+        uart_state.init();
+        let mut overflow_usb = EventQueueOverflow::default();
+        let mut overflow_uart = EventQueueOverflow::default();
+
+        // Two sessions in flight: "OT1 75\r" on one queue, "IO3 40\r" on
+        // the other, bytes interleaved one-by-one across transports.
+        let usb_bytes: &[u8] = b"OT1 75\r";
+        let uart_bytes: &[u8] = b"IO3 40\r";
+        for i in 0..usb_bytes.len().max(uart_bytes.len()) {
+            if i < usb_bytes.len() {
+                push_to_event_queue(&usb_state.event_queue, &[usb_bytes[i]], &mut overflow_usb);
+            }
+            if i < uart_bytes.len() {
+                push_to_event_queue(
+                    &uart_state.event_queue,
+                    &[uart_bytes[i]],
+                    &mut overflow_uart,
+                );
+            }
+        }
+
+        assert!(event_queue_has_terminator(&usb_state.event_queue));
+        assert!(event_queue_has_terminator(&uart_state.event_queue));
+
+        let usb_line = extract_line_from_event_queue(&usb_state.event_queue);
+        let uart_line = extract_line_from_event_queue(&uart_state.event_queue);
+        assert_eq!(
+            usb_line.as_deref(),
+            Some(b"OT1 75".as_slice()),
+            "each queue must hold its own complete command"
+        );
+        assert_eq!(
+            uart_line.as_deref(),
+            Some(b"IO3 40".as_slice()),
+            "each queue must hold its own complete command"
+        );
+        assert!(!overflow_usb.triggered);
+        assert!(!overflow_uart.triggered);
+
+        // The extracted lines must parse as the intended commands (pure
+        // parser call — OT1/IO3 have no parser-side side effects).
+        assert_eq!(
+            crate::input::parse_artisan_command(
+                core::str::from_utf8(usb_line.as_deref().unwrap()).unwrap()
+            ),
+            Ok(crate::config::ArtisanCommand::SetHeater(75))
+        );
+        assert_eq!(
+            crate::input::parse_artisan_command(
+                core::str::from_utf8(uart_line.as_deref().unwrap()).unwrap()
+            ),
+            Ok(crate::config::ArtisanCommand::SetFan(40))
+        );
+
+        // A line split ACROSS transports: front half on one queue, back half
+        // (the terminator) on the other. Neither side may complete a command.
+        let a_state = TransportRxState::new();
+        a_state.init();
+        let b_state = TransportRxState::new();
+        b_state.init();
+        let mut overflow_a = EventQueueOverflow::default();
+        let mut overflow_b = EventQueueOverflow::default();
+
+        push_to_event_queue(&a_state.event_queue, b"READ", &mut overflow_a);
+        push_to_event_queue(&b_state.event_queue, b"\r", &mut overflow_b);
+
+        assert!(
+            !event_queue_has_terminator(&a_state.event_queue),
+            "the front half must stay an unterminated partial line"
+        );
+        // The bare terminator on the other transport extracts as an empty
+        // line (T-B1 semantics) — never as a merged 'READ' command.
+        assert_eq!(
+            extract_line_from_event_queue(&b_state.event_queue),
+            None,
+            "the bare terminator must extract as an empty line"
+        );
+        assert!(!event_queue_has_terminator(&b_state.event_queue));
+        assert!(!overflow_a.triggered);
+        assert!(!overflow_b.triggered);
+    }
+
     /// Bug-hunt T-B3: a queue overflow must flush the partial command and
     /// emit `ERR buffer_overflow`; a valid command arriving AFTER the
     /// overflow is the trailing fragment and must NOT execute (EC-01, in the

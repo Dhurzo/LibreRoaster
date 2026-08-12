@@ -61,12 +61,20 @@ pub struct RoasterControl {
     /// Bug P5 (2026-08-03): probe-stuck detector state. A hard thermocouple
     /// short reads a flat ~0 °C, which is a VALID temperature — no MAX31856
     /// fault bit, so the fault/NaN paths never fire and the PID would drive
-    /// the heater blind. While the heater runs ≥ `PROBE_STUCK_HEATER_MIN_PCT`,
-    /// BT must move by more than `PROBE_STUCK_VARIATION_C` within
-    /// `PROBE_STUCK_TIMEOUT_SECS`; otherwise the probe is shorted/broken and
-    /// `emergency_shutdown("Probe stuck")` fires (see `update_control`).
+    /// the heater blind. While the heater runs, BT must move by more than
+    /// `PROBE_STUCK_VARIATION_C` within the timeout window; otherwise the
+    /// probe is shorted/broken. Firmware-PID mode latches via
+    /// `emergency_shutdown("Probe stuck")` at `PROBE_STUCK_TIMEOUT_SECS`;
+    /// manual / Artisan software-PID mode is two-stage (Audit A-TC4-C,
+    /// 2026-08-12) — see `update_control`.
     probe_stuck_last_bt: Option<f32>,
     probe_stuck_last_change: Option<Instant>,
+    /// Audit A-TC4-C (2026-08-12): manual-mode two-stage probe-stuck. Set once
+    /// the `ERR probe_stuck_warning` wire line has been emitted for the
+    /// current stuck episode; cleared on BT movement > `PROBE_STUCK_VARIATION_C`,
+    /// on disarm (heater 0 / non-finite BT), and when a new episode begins.
+    /// Guarantees exactly one warning line per episode.
+    probe_stuck_warning_sent: bool,
     // Bug B3: latched cooling fan after a plain STOP. `stop_streaming` sets the
     // fan to 100% but does NOT arm the safety emergency latch (only
     // `emergency_shutdown` does). Without this flag, the next `update_control`
@@ -119,6 +127,7 @@ impl RoasterControl {
             charge_history_tick_div: 0,
             probe_stuck_last_bt: None,
             probe_stuck_last_change: None,
+            probe_stuck_warning_sent: false,
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
         })
@@ -539,6 +548,16 @@ impl RoasterControl {
     pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
         // THERM-1: Latch the emergency so internal traps (overtemp, sensor timeout,
         // RoR, max-roast-time) prevent re-energizing on the next tick.
+        //
+        // Audit A-TC4 (2026-08-12): emit a wire notification so the host
+        // learns the latch was armed. Previously every internal trap only
+        // logged `warn!` — Artisan discovered the fault through the next
+        // rejected command or a STATUS poll. Guard on
+        // `!is_emergency_active()` so the line is emitted once per latch
+        // event even if a trap re-fires on consecutive ticks.
+        if !self.safety.is_emergency_active() {
+            self.send_safety_fault_notification(reason);
+        }
         self.safety.activate_emergency();
         self.status.fault_condition = true;
         self.state = RoasterState::Error;
@@ -996,6 +1015,22 @@ impl RoasterControl {
         // now trip a recoverable emergency (STOP → OFF) — physically unlikely
         // while heat is being applied, and strictly safer than an unguarded
         // heater.
+        //
+        // Audit A-TC4-C (2026-08-12): manual / Artisan software-PID mode is
+        // now TWO-STAGE. At `PROBE_STUCK_TIMEOUT_SECS` (120 s) the firmware
+        // emits `ERR probe_stuck_warning` on the wire WITHOUT latching — a
+        // legitimately slow finish (RoR below ~0.5 °C/min) can hold BT flat
+        // for 2 min at low duty, and the operator/Artisan deserves a warning
+        // before the roast is torn down. Only after
+        // `PROBE_STUCK_MANUAL_LATCH_SECS` (300 s) of continuous flat BT does
+        // the detector escalate to the emergency latch (which emits
+        // `ERR safety_fault Probe stuck` via `emergency_shutdown`). The
+        // dead-probe backstop (Bug S1) stays closed: worst-case manual
+        // exposure is now 5 min instead of 2, still far under
+        // `MAX_ROAST_TIME_SECS`. Firmware-PID mode keeps the original
+        // single-stage 120 s latch: the `regulating` disarm below already
+        // protects healthy PID holds, so a flat PV far from the setpoint
+        // remains a genuine control hazard there.
         let probe_bt = self.status.bean_temp;
         // Bug H1 (2026-08-10): the arm gate used to compare BT against the
         // setpoint directly. With `PID;CHAN;1` the PID regulates ET
@@ -1018,22 +1053,49 @@ impl RoasterControl {
                 None => {
                     self.probe_stuck_last_bt = Some(probe_bt);
                     self.probe_stuck_last_change = Some(current_time);
+                    self.probe_stuck_warning_sent = false;
                 }
                 Some(prev) => {
                     if (probe_bt - prev).abs() > PROBE_STUCK_VARIATION_C {
                         self.probe_stuck_last_bt = Some(probe_bt);
                         self.probe_stuck_last_change = Some(current_time);
+                        self.probe_stuck_warning_sent = false;
                     } else if let Some(last_change) = self.probe_stuck_last_change {
-                        if current_time
+                        let flat_secs = current_time
                             .saturating_duration_since(last_change)
-                            .as_secs()
-                            >= PROBE_STUCK_TIMEOUT_SECS
-                        {
-                            warn!(
-                                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — emergency",
-                                probe_bt, PROBE_STUCK_TIMEOUT_SECS
-                            );
-                            self.emergency_shutdown("Probe stuck")?;
+                            .as_secs();
+                        if flat_secs >= PROBE_STUCK_TIMEOUT_SECS {
+                            if self.status.pid_enabled {
+                                // Firmware-PID mode: single-stage latch (the
+                                // original Bug P5 contract — a flat PV far
+                                // from the setpoint is a control hazard).
+                                warn!(
+                                    "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — emergency",
+                                    probe_bt, PROBE_STUCK_TIMEOUT_SECS
+                                );
+                                self.emergency_shutdown("Probe stuck")?;
+                            } else {
+                                // Manual / Artisan software-PID mode:
+                                // two-stage (Audit A-TC4-C). Stage 1 at
+                                // PROBE_STUCK_TIMEOUT_SECS: one wire warning
+                                // per stuck episode, no latch. Stage 2 at
+                                // PROBE_STUCK_MANUAL_LATCH_SECS: real latch.
+                                if !self.probe_stuck_warning_sent {
+                                    self.probe_stuck_warning_sent = true;
+                                    self.send_text_response("ERR probe_stuck_warning");
+                                    warn!(
+                                        "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — manual-mode warning",
+                                        probe_bt, PROBE_STUCK_TIMEOUT_SECS
+                                    );
+                                }
+                                if flat_secs >= PROBE_STUCK_MANUAL_LATCH_SECS {
+                                    warn!(
+                                        "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s in manual mode — emergency",
+                                        probe_bt, PROBE_STUCK_MANUAL_LATCH_SECS
+                                    );
+                                    self.emergency_shutdown("Probe stuck")?;
+                                }
+                            }
                         }
                     }
                 }
@@ -1042,6 +1104,7 @@ impl RoasterControl {
             // Heater below the threshold (or BT faulted) — disarm.
             self.probe_stuck_last_bt = None;
             self.probe_stuck_last_change = None;
+            self.probe_stuck_warning_sent = false;
         }
 
         self.status.state = self.state;
@@ -1081,11 +1144,23 @@ impl RoasterControl {
         // Bug #6 fix: Reject all commands when a fault condition is active.
         // Prevents heater ramp commands from worsening an over-temp situation
         // that was detected between sensor reads.
-        // Exception: READ, STATUS, STOP, START and PREHEAT are always allowed.
+        // Exception: READ, STATUS, STOP, START, PREHEAT and the handshake
+        // commands CHAN/UNITS/FILT are always allowed.
         // READ/STATUS are monitoring; STOP/EmergencyStop are safety; and
         // START/PREHEAT (Bug P3, 2026-08-03) are the operator's deliberate
         // re-energize actions — the handlers clear the held latch, so the
         // manual flow after a STOP is no longer bricked until `OFF`.
+        // Audit A-TC4 (2026-08-12): CHAN/UNITS/FILT were previously rejected
+        // here too, but they are pure handshake/display-state commands with
+        // no actuator or latch side effects (handle_chan records the poll
+        // rate + acks; handle_filt records the requested filter + acks;
+        // handle_units only switches the display scale). Rejecting them
+        // breaks Artisan reconnects: the ArduinoTC4 driver hard-fails its
+        // initialisation ("Arduino could not set channels/units/filters")
+        // on any non-'#' line and re-initialises forever, so a latched
+        // device could never be re-attached until someone typed PID;OFF by
+        // hand. Allowing them keeps the handshake working while the latch
+        // still rejects every re-energizing command below.
         if self.status.fault_condition {
             match command {
                 crate::config::ArtisanCommand::ReadStatus
@@ -1093,7 +1168,10 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::Stop
                 | crate::config::ArtisanCommand::EmergencyStop
                 | crate::config::ArtisanCommand::StartRoast
-                | crate::config::ArtisanCommand::Preheat(_) => { /* allow */ }
+                | crate::config::ArtisanCommand::Preheat(_)
+                | crate::config::ArtisanCommand::Chan(_)
+                | crate::config::ArtisanCommand::Units(_)
+                | crate::config::ArtisanCommand::Filt(_) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     return Err(RoasterError::InvalidState {
@@ -1738,6 +1816,26 @@ impl RoasterControl {
         let _ = core::fmt::Write::write_fmt(
             &mut msg,
             core::format_args!("ERR OT2_CLAMPED fan={} heater_unchanged", fan_value),
+        );
+        crate::hardware::error_counters::try_send_output(
+            crate::application::service_container::ServiceContainer::get_output_channel(),
+            msg,
+        );
+    }
+
+    /// Send an `ERR safety_fault <reason>` notification through the output
+    /// channel when an internal trap arms the emergency latch, so the host
+    /// (Artisan or a script) learns about the fault immediately instead of
+    /// discovering it through the next rejected command (Audit A-TC4,
+    /// 2026-08-12). Same emission pattern as `send_ot2_clamped_notification`.
+    /// The reason keeps its human-readable spaces on the wire; it is not a
+    /// stable contract (see PROTOCOL.md §10).
+    fn send_safety_fault_notification(&self, reason: &str) {
+        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+        let mut msg = heapless::String::<{ TRACE_EVENT_MAX_LEN }>::new();
+        let _ = core::fmt::Write::write_fmt(
+            &mut msg,
+            core::format_args!("ERR safety_fault {}", reason),
         );
         crate::hardware::error_counters::try_send_output(
             crate::application::service_container::ServiceContainer::get_output_channel(),
@@ -2894,25 +2992,29 @@ mod tests {
     // ── P5 (2026-08-03): probe-stuck detector ──────────────────────────────
 
     #[test]
-    fn probe_stuck_detector_fires_after_flat_bt() {
-        // Bug P5: a shorted thermocouple reads a flat ~0 °C — VALID
-        // temperature with no MAX31856 fault bit — so the PID drives the
-        // heater blind. Heater ≥ 50 % with flat BT for PROBE_STUCK_TIMEOUT_SECS
-        // must abort with an emergency.
+    fn probe_stuck_pid_mode_fires_after_flat_bt() {
+        // Bug P5 + Audit A-TC4-C (2026-08-12): in firmware-PID mode the
+        // detector keeps the original single-stage latch at
+        // PROBE_STUCK_TIMEOUT_SECS (120 s): a flat PV FAR from the setpoint
+        // while the loop is chasing it is a control hazard (a shorted TC
+        // reads flat ~0 °C — a VALID temperature with no MAX31856 fault bit).
         let mut ctrl = make_control();
-        let r = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
-        assert!(r.is_ok());
-        assert!(
-            ctrl.get_status().ssr_output > 0.0,
-            "test precondition: manual heater must be energized"
-        );
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
+        // High proportional gain with zero integral: BT far from the target
+        // saturates the output, guaranteeing the arm-gate precondition.
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetPidGain(300.0, 0.0, 0.0));
 
         let t0 = Instant::from_millis(300_000);
-        // Pretend the OT1 command arrived at t0 so the comms-idle backstop
+        // Pretend the commands arrived at t0 so the comms-idle backstop
         // does not fire instead of the probe detector.
         ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
         ctrl.update_temperatures(0.0, 25.0, t0).unwrap();
-        let _ = ctrl.update_control(t0); // arms the baseline on the first ≥50% tick
+        let _ = ctrl.update_control(t0); // arms the baseline on the first PID tick
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: PID chasing a far target must energize the heater"
+        );
+        assert!(ctrl.get_status().pid_enabled);
 
         let t1 = Instant::from_millis(
             300_000 + crate::config::constants::PROBE_STUCK_TIMEOUT_SECS * 1000 + 1000,
@@ -2923,7 +3025,57 @@ mod tests {
 
         assert!(
             ctrl.safety().is_emergency_active(),
-            "P5: flat BT at ≥50% heater for the timeout must abort"
+            "P5: flat BT far from the PID target must latch at the 120 s threshold"
+        );
+        assert_eq!(ctrl.get_state(), RoasterState::Error);
+    }
+
+    #[test]
+    fn probe_stuck_manual_mode_two_stage_warns_then_latches() {
+        // Audit A-TC4-C (2026-08-12): manual / Artisan software-PID mode is
+        // two-stage. At PROBE_STUCK_TIMEOUT_SECS (120 s) the detector must
+        // NOT latch — a legitimately slow finish can hold BT < 1 °C for
+        // 2 min at low duty. Only after PROBE_STUCK_MANUAL_LATCH_SECS (300 s)
+        // of continuous flat BT does the emergency latch fire, keeping the
+        // dead-probe backstop (Bug S1) closed.
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+        assert!(
+            ctrl.get_status().ssr_output > 0.0,
+            "test precondition: manual heater must be energized"
+        );
+        assert!(!ctrl.get_status().pid_enabled);
+
+        let t0 = Instant::from_millis(300_000);
+        ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+        ctrl.update_temperatures(0.0, 25.0, t0).unwrap();
+        let _ = ctrl.update_control(t0); // arms the baseline
+
+        // Stage 1: past the 120 s warning threshold — no latch.
+        let t1 = Instant::from_millis(
+            300_000 + crate::config::constants::PROBE_STUCK_TIMEOUT_SECS * 1000 + 1000,
+        );
+        ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+        ctrl.update_temperatures(0.0, 25.0, t1).unwrap();
+        let _ = ctrl.update_control(t1);
+
+        assert!(
+            !ctrl.safety().is_emergency_active(),
+            "A-TC4-C: manual mode must NOT latch at the 120 s warning threshold"
+        );
+        assert_ne!(ctrl.get_state(), RoasterState::Error);
+
+        // Stage 2: past the 300 s latch threshold — real latch.
+        let t2 = Instant::from_millis(
+            300_000 + crate::config::constants::PROBE_STUCK_MANUAL_LATCH_SECS * 1000 + 1000,
+        );
+        ctrl.status_mut().last_command_received_at_ms = t2.as_millis();
+        ctrl.update_temperatures(0.0, 25.0, t2).unwrap();
+        let _ = ctrl.update_control(t2);
+
+        assert!(
+            ctrl.safety().is_emergency_active(),
+            "A-TC4-C: manual mode must latch at the 300 s threshold"
         );
         assert_eq!(ctrl.get_state(), RoasterState::Error);
     }

@@ -462,3 +462,161 @@ fn b8_long_fanprofile_above_128_bytes_parses() {
         Ok(ArtisanCommand::SetFanProfile)
     ));
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Audit A-TC4 — degenerate PROFILE/FANPROFILE shapes at the control layer
+// ─────────────────────────────────────────────────────────────────────────
+// Artisan's profile editor can emit setpoints out of time order (the user
+// drags a point past its neighbour) and duplicated timestamps are legal on
+// the wire. The interpolation must never panic and must always yield a
+// finite, plausible target. The exact interpolated value for out-of-order
+// inputs is best-effort (first bracketing pair found, or a hold), so these
+// tests pin "no panic + finite + within range", not a specific number.
+
+#[test]
+fn profile_target_at_never_panics_on_unsorted_or_duplicate_times() {
+    // Unsorted times: interpolation returns a deterministic finite value.
+    let unsorted = RoastProfile {
+        setpoints: heapless::Vec::from_slice(&[
+            ProfileSetpoint {
+                time_secs: 120,
+                temperature: 200.0,
+            },
+            ProfileSetpoint {
+                time_secs: 0,
+                temperature: 100.0,
+            },
+            ProfileSetpoint {
+                time_secs: 60,
+                temperature: 150.0,
+            },
+        ])
+        .unwrap(),
+    };
+    for t in [0u32, 30, 61, 130, 3600] {
+        let target = unsorted.target_at(t);
+        assert!(target.is_some(), "target_at({t}) must yield a value");
+        let v = target.unwrap();
+        assert!(v.is_finite(), "target_at({t}) must be finite, got {v}");
+        assert!(
+            (50.0..=300.0).contains(&v),
+            "target_at({t}) out of the valid roast range: {v}"
+        );
+    }
+
+    // Duplicated timestamps (range == 0) must not divide by zero.
+    let duplicated = RoastProfile {
+        setpoints: heapless::Vec::from_slice(&[
+            ProfileSetpoint {
+                time_secs: 0,
+                temperature: 100.0,
+            },
+            ProfileSetpoint {
+                time_secs: 0,
+                temperature: 150.0,
+            },
+            ProfileSetpoint {
+                time_secs: 60,
+                temperature: 200.0,
+            },
+        ])
+        .unwrap(),
+    };
+    for t in [0u32, 10, 60, 600] {
+        let v = duplicated.target_at(t).expect("target must exist");
+        assert!(v.is_finite(), "target_at({t}) must be finite, got {v}");
+        assert!(
+            (50.0..=300.0).contains(&v),
+            "target_at({t}) out of range: {v}"
+        );
+    }
+}
+
+#[test]
+fn fan_profile_target_at_never_panics_on_unsorted_or_duplicate_times() {
+    let unsorted = FanProfile {
+        setpoints: heapless::Vec::from_slice(&[
+            FanSetpoint {
+                time_secs: 120,
+                fan_speed: 80,
+            },
+            FanSetpoint {
+                time_secs: 0,
+                fan_speed: 30,
+            },
+            FanSetpoint {
+                time_secs: 60,
+                fan_speed: 50,
+            },
+        ])
+        .unwrap(),
+    };
+    for t in [0u32, 30, 61, 130, 3600] {
+        let v = unsorted.target_at(t).expect("target must exist");
+        assert!(v <= 100, "fan target must stay within duty range, got {v}");
+    }
+
+    let duplicated = FanProfile {
+        setpoints: heapless::Vec::from_slice(&[
+            FanSetpoint {
+                time_secs: 0,
+                fan_speed: 30,
+            },
+            FanSetpoint {
+                time_secs: 0,
+                fan_speed: 60,
+            },
+            FanSetpoint {
+                time_secs: 60,
+                fan_speed: 90,
+            },
+        ])
+        .unwrap(),
+    };
+    for t in [0u32, 10, 60, 600] {
+        let v = duplicated.target_at(t).expect("target must exist");
+        assert!(v <= 100, "fan target must stay within duty range, got {v}");
+    }
+}
+
+#[test]
+fn unsorted_profile_loads_and_drives_start_without_panic() {
+    let heater = MockSsr::new();
+    let fan = MockFan::new();
+    let hub = SensorConversionHub::new();
+    let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
+
+    let unsorted = RoastProfile {
+        setpoints: heapless::Vec::from_slice(&[
+            ProfileSetpoint {
+                time_secs: 120,
+                temperature: 200.0,
+            },
+            ProfileSetpoint {
+                time_secs: 0,
+                temperature: 150.0,
+            },
+            ProfileSetpoint {
+                time_secs: 60,
+                temperature: 180.0,
+            },
+        ])
+        .unwrap(),
+    };
+    store_profile(unsorted);
+    rc.process_artisan_command(ArtisanCommand::SetProfile)
+        .expect("unsorted profile must load");
+
+    rc.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START with an unsorted profile must work");
+
+    let target = rc.get_status().target_temp;
+    assert!(target.is_finite(), "target must be finite, got {target}");
+    assert!(
+        (50.0..=300.0).contains(&target),
+        "target must be within 50-300°C, got {target}"
+    );
+
+    // Clean up the FIFO in case the handler did not consume it.
+    let _ = take_profile();
+}

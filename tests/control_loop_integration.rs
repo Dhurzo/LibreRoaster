@@ -425,6 +425,7 @@ fn read_command_produces_tc4_format_output() {
 fn fault_condition_rejects_mutating_commands() {
     let _guard = acquire_lock();
     let mut control = build_control();
+    drain_channels();
 
     control
         .update_temperatures(150.0, 180.0, Instant::now())
@@ -435,6 +436,18 @@ fn fault_condition_rejects_mutating_commands() {
     control
         .emergency_shutdown("test")
         .expect_err("emergency_shutdown returns Err");
+
+    // Audit A-TC4: the latch must be announced on the wire (previously the
+    // internal traps were silent and the host only discovered the fault via
+    // the next rejected command or a STATUS poll).
+    let output = drain_output();
+    assert!(
+        output
+            .iter()
+            .any(|m| m.starts_with("ERR safety_fault test")),
+        "emergency_shutdown must emit ERR safety_fault, got: {:?}",
+        output
+    );
 
     let heater_result = control.process_artisan_command(ArtisanCommand::SetHeater(50));
     assert!(
@@ -449,6 +462,36 @@ fn fault_condition_rejects_mutating_commands() {
     assert!(
         status_result.is_ok(),
         "STATUS should still work during fault"
+    );
+
+    // Audit A-TC4: the handshake commands must stay accepted during the
+    // latch — otherwise a reconnecting Artisan hits "Arduino could not set
+    // channels/units/filters" and re-initialises forever without ever
+    // polling READ. They have no actuator side effects (poll-rate record,
+    // display scale, requested filter), so the safety whitelist loses
+    // nothing by admitting them.
+    control
+        .process_artisan_command(ArtisanCommand::Chan(1200))
+        .expect("CHAN should still work during fault");
+    control
+        .process_artisan_command(ArtisanCommand::Units(false))
+        .expect("UNITS should still work during fault");
+    control
+        .process_artisan_command(ArtisanCommand::Filt(70))
+        .expect("FILT should still work during fault");
+
+    // The acks must be '#'-prefixed: Artisan's ArduinoTC4 handshake only
+    // accepts empty or '#'-prefixed lines.
+    let acks = drain_output();
+    assert!(
+        acks.iter().any(|m| m.as_str() == "#1200"),
+        "CHAN ack '#1200' expected, got: {:?}",
+        acks
+    );
+    assert!(
+        acks.iter().filter(|m| m.as_str() == "#OK").count() >= 2,
+        "UNITS and FILT acks '#OK' expected, got: {:?}",
+        acks
     );
 }
 

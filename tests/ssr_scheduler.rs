@@ -1,3 +1,9 @@
+// Audit A-TC4 (2026-08-12): added the `test` feature gate — this file uses
+// `embassy_time::Instant`, which fails to link on a plain `cargo test`
+// without the host Embassy time driver provided by the `test` feature
+// (same failure mode documented in CONTEXT.md).
+#![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
+
 use embassy_time::{Duration, Instant};
 use libreroaster::config::constants::SSR_CYCLE_GUARD_MS;
 use libreroaster::control::SsrCycleGuard;

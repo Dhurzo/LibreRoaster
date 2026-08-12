@@ -125,9 +125,21 @@ pub const PROBE_STUCK_HEATER_MIN_PCT: f32 = 50.0;
 /// value. 1 °C over 2 minutes is far less than any real probe moves at
 /// ≥ 50 % heater.
 pub const PROBE_STUCK_VARIATION_C: f32 = 1.0;
-/// Bug P5: consecutive seconds of flat BT at ≥ `PROBE_STUCK_HEATER_MIN_PCT`
-/// heater before the probe-stuck emergency fires.
+/// Bug P5: consecutive seconds of flat BT with the heater on before the
+/// probe-stuck detector reacts. In firmware-PID mode this is the emergency
+/// latch threshold; in manual / Artisan software-PID mode (Audit A-TC4-C,
+/// 2026-08-12) it is the WIRE-WARNING threshold — the latch lands at
+/// `PROBE_STUCK_MANUAL_LATCH_SECS` instead.
 pub const PROBE_STUCK_TIMEOUT_SECS: u64 = 120;
+/// Audit A-TC4-C (2026-08-12): in manual / Artisan software-PID mode the
+/// probe-stuck detector is two-stage: the wire warning fires at
+/// `PROBE_STUCK_TIMEOUT_SECS`; the emergency latch only after this many
+/// consecutive seconds of flat BT with the heater on. A legitimately slow
+/// finish can hold BT < 1 °C for 2 min at low duty, but 5 min of flat BT
+/// with heat applied is never a healthy roast — the dead-probe backstop
+/// (Bug S1) stays closed with worst-case exposure at 5 min, still far under
+/// `MAX_ROAST_TIME_SECS`.
+pub const PROBE_STUCK_MANUAL_LATCH_SECS: u64 = 300;
 /// Bug P5 (2026-08-03): the detector disarms while the PID is legitimately
 /// REGULATING within this many °C of the setpoint. A stable roast holds BT
 /// nearly flat by design (that is the PID's job), and on a cold ambient /
