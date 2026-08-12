@@ -1,6 +1,6 @@
 # Testing — LibreRoaster
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-12
 
 This document describes every test layer in the project, what each covers, its current status, and how to run it.
 
@@ -21,7 +21,7 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** host-side test suite is fully green — **672 unit + integration tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-05, tras BUG-CATCH-PLAN.md fases 0-4). Includes the safety hunt suites: `safety_repro_tests.rs` (S1-S6 repros, S5 `#[ignore]` rojo), `safety_injection_midroast_tests.rs` (6), `safety_invariant_harness.rs` (3, N=1000 roasts aleatorios), `transport_tasks.rs` in-crate byte-drip tests (3), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
+**Current status:** host-side test suite is fully green — **680 tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-12, tras la auditoría de compatibilidad Artisan A-TC4). The suite holds **482 unit + 247 integration test functions**; the difference vs. the 680 passing in this gate are the regression/feature-gated tests (see §2.7 and §6). Includes the safety hunt suites (`safety_repro_tests.rs`, `safety_injection_midroast_tests.rs`, `safety_invariant_harness.rs` — 1000 roasts aleatorios), the in-crate transport byte-drip tests (T-B1..T-B4), the Artisan golden-transcript replay suite (`artisan_transcript_replay.rs`), the pipeline soak (`pipeline_soak.rs`), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
 
 > Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
@@ -50,12 +50,13 @@ These live inside the library crate, co-located with the code they test. They ve
 | `src/logging/traceability.rs` | 8 | TRACE event formatting: queue depth, stage names, guard state, watchdog state serialization | ✅ All pass |
 | `src/logging/roast_logger.rs` | 7 | Roast logger: start/stop/dump cycle, CSV event logging | ✅ All pass |
 | `src/hardware/heat_presence.rs` | 6 | Heat-source detection state machine | ✅ All pass |
+| `src/hardware/transport_tasks.rs` | 4 | Transport event queue: byte-drip accumulation (T-B1), end-to-end dripped command (T-B2), overflow flush + `ERR buffer_overflow` (T-B3), two-transport byte-level interleave isolation (T-B4) | ✅ All pass |
 | `src/input/multiplexer.rs` | 6 | Output channel routing: active channel selection, USB vs UART switching | ✅ All pass |
 | `src/output/formatters/*.rs` | 16 | CSV (6), time (5), ROR (5): number normalization, NaN/Infinity handling, time formatting | ✅ All pass |
 | `src/hardware/*.rs` (ssr, init, max31856, fan, mod) | 8 | SSR PWM, hardware init validation, MAX31856 register math, fan duty mapping | ✅ All pass |
 | `src/memory/constants.rs`, `src/host_time_driver.rs` | 2 | Memory/allocation constants; host Embassy time driver | ✅ All pass |
 
-**Totals:** 464 unit tests across 31 files in `src/`.
+**Totals:** 482 unit tests across 32 files in `src/`.
 
 ---
 
@@ -67,13 +68,14 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| All integration test files | 212 | ✅ All pass |
+| All integration test files | 247 | ✅ All pass (680 pass in the default `--features test` gate; 33 more are regression-gated, §2.7) |
 
 ### 2.1 Protocol & Command Handling
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
 | `tests/artisan_integration_test.rs` | 11 | Complete Artisan+ protocol flow: parse → dispatch → format → response. Tests READ, OT1, IO3, START, STOP, CHAN, UNITS responses | ✅ All pass |
+| `tests/artisan_transcript_replay.rs` | 3 | Artisan golden-transcript replay (Audit A-TC4): connect handshake, software-PID slider session and firmware-PID session replayed byte-by-byte through the production pipeline. Pins the wire contract Artisan depends on: `#1200`/`#OK` handshake acks, 5/8-field TC4 READ, 20-field STATUS, and the absence of the deprecated 4-field READ | ✅ All pass |
 | `tests/command_errors.rs` | 5 | Error propagation through command pipeline: invalid commands, parse errors, service container error mapping | ✅ All pass |
 | `tests/command_idempotence.rs` | 4 | Idempotency of start/stop: double-start, double-stop, stop-without-start, state consistency after repeated calls | ✅ All pass |
 | `tests/read_command_usb_test.rs` | 15 | READ command over USB CDC path: TC4 format (5-value, 8-value), Celsius/Fahrenheit, NaN handling, field ordering | ✅ All pass |
@@ -85,7 +87,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 | `tests/artisan_roast_simulation.rs` | 8 | Full-host roast simulation: handshake → preheat → profile load → charge detection → active roast → PID control → stop → cooldown. Uses simulated sensor curves with full state machine | ✅ All pass |
 | `tests/critical_path_tests.rs` | 44 | End-to-end critical flows: roast lifecycle, emergency stops, safety interlocks, protocol round-trips | ✅ All pass |
 | `tests/control_loop_integration.rs` | 16 | Control loop integration: stage ordering, command draining, telemetry emission under load | ✅ All pass |
-| `tests/roast_resilience_tests.rs` | 22 | Edge-case resilience: no-profile fallback, missing charge detection, invalid commands during roast, rapid start-stop cycles | ✅ All pass |
+| `tests/roast_resilience_tests.rs` | 25 | Edge-case resilience: no-profile fallback, missing charge detection, invalid commands during roast, rapid start-stop cycles, degenerate PROFILE/FANPROFILE shapes (unsorted/duplicated timestamps) at the control layer | ✅ All pass |
 
 ### 2.3 Safety & Fault Injection
 
@@ -119,6 +121,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
 | `tests/control_loop_stage.rs` | 2 | Stage reporter sequence validation: correct ordering and transition counting through all control loop stages | ✅ All pass |
+| `tests/pipeline_soak.rs` | 1 | Bounded pipeline soak (Audit A-TC4): ~700 mixed commands (valid Artisan traffic, garbage, latch/recovery cycles) through both transport entry points; queues stay bounded, wire stays well-formed, zero `ERR channel_full` drops | ✅ All pass |
 
 ### 2.7 Regression
 
@@ -175,13 +178,14 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | Area | Gap | Impact |
 |------|-----|--------|
-| E2E serial over real hardware | No automated CI for HIL tests (requires physical ESP32-C3) | Firmware changes may break serial protocol without detection until manual test |
-| Long-duration stability | No soak test (>1 hour) with active PID | Memory leaks or timer drift may go undetected |
+| E2E serial over real hardware | No automated CI for HIL tests (requires physical ESP32-C3). A desktop-Artisan HIL session checklist is staged in `TEST-PLAN.md` (V2) | Firmware changes may break serial protocol without detection until manual test |
+| Wire format vs. real Artisan | Partially covered since A-TC4 (2026-08-12): `tests/artisan_transcript_replay.rs` replays byte transcripts of real Artisan sessions and pins the wire contract; the remaining gap is a live desktop-Artisan HIL session (telemetry interleave tolerance) | Low (host-covered); HIL confirmation pending hardware |
+| Long-duration stability | Protocol-layer soak covered by `tests/pipeline_soak.rs`; a **thermal** soak (>1 hour with active PID and sensor ticks) is still untested | Memory leaks or timer drift under thermal load may go undetected |
 | Real MAX31856 with thermocouple | Mock sensors only; real sensor noise/glitch patterns untested | Sensor fault recovery paths may be exercised only in simulation |
-| Concurrent UART + USB conflict | Dual-channel stress tests exist; byte-level drip for a single channel is covered in-crate (`transport_tasks.rs` T-B1/T-B2); **byte-level interleaving of two channels in flight remains untested** (command-level interleave covered by `safety_injection_midroast_tests.rs` T5) | Rare race conditions in byte-level framing between two live transports may not be caught |
-| Feature-gated tests | 17 tests require `--features regression` (fault injection, sensor fixtures, regression snapshots) — covered by the dedicated CI `regression` job | Low: covered in CI |
+| Concurrent UART + USB conflict | Covered since A-TC4: byte-level interleave of two transports in flight is tested in-crate (`transport_tasks.rs` T-B4); command-level interleave by `safety_injection_midroast_tests.rs` T5; routing policy (first-valid-command-wins) by `multiplexer_tests.rs` | None for framing; routing behaviour is by design |
+| Feature-gated tests | 33 tests require `--features regression` (sensor_conversion 16, regression_status 13, fault_injection 4) — covered by the dedicated CI `regression` job | Low: covered in CI |
 | Embedded-only tests | ~32 tests require `target_arch = "riscv32"` — never run in CI | USB CDC, SSR monitor, and instrumentation paths untested in automated CI |
-| Property-based testing | Proptest exists and is green: `src/input/parser.rs` (hostile bytes/NUL), `src/control/pid.rs`, `src/control/controllers/actuator.rs`, `src/hardware/sensors/simulated.rs`, `src/output/artisan.rs` (hostile SystemStatus — documents the S10 truncation repro as `#[ignore]`). No cargo-fuzz yet | Edge cases in PID math, sensor conversion, and protocol parsing are now covered; fuzzing over the wire format remains future work |
+| Property-based testing | Proptest exists and is green: `src/input/parser.rs` (hostile bytes/NUL), `src/control/pid.rs`, `src/control/controllers/actuator.rs`, `src/hardware/sensors/simulated.rs`, `src/output/artisan.rs` (hostile SystemStatus). No `#[ignore]` tests exist anywhere in the repo. No cargo-fuzz yet | Edge cases in PID math, sensor conversion, and protocol parsing are now covered; fuzzing over the wire format remains future work |
 | Regression-runner unit coverage | `src/safety/regression.rs` has no direct unit tests; its behavior is exercised via `tests/regression_status.rs` and `tests/fault_injection_scenarios.rs` | Low (covered by integration) |
 | Flash memory / persistence | No storage layer exists yet | N/A for current milestone |
 
@@ -196,7 +200,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 | Clippy command | `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` (host) plus the same against `--target riscv32imc-unknown-none-elf --features embedded` (embedded job) |
 | Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
 | Regression tests | ✅ Run — `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` |
-| Code coverage | ✅ Run — `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
+| Code coverage | ✅ Run — `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` (Audit A-TC4: regression + simulated-sensors included so the conversion math and the L3 pipeline are instrumented) |
 | HIL tests | ❌ Not run (needs physical ESP32-C3) |
 | Embedded-only tests | ❌ Not run (needs `riscv32` target) |
 
@@ -299,7 +303,7 @@ Fields: `#<time_s>,ET,BT,ROR,Gas`.
 |---------|------|--------|
 | `READ` | none | Returns single TC4 response (`AMB,ET,BT,...`) |
 | `STATUS` / `STAT` | none | Returns 20-field diagnostic line |
-| `CHAN;0` | channel number | Set Artisan channel (0=USB, 1=UART) |
+| `CHAN;1200` | polling rate | Artisan's channel-map handshake: the rate is recorded in `chan_poll_rate_hz` and acknowledged with `#<rate>`. It does NOT select a transport (USB/UART routing is owned by the command multiplexer). |
 | `UNITS;C` / `UNITS;F` | temp scale | Set Celsius or Fahrenheit |
 | `SETTARGET 200` | target °C | Set PID target temperature |
 | `START` | **no args** | Begin roast, enable PID and continuous output |
@@ -337,6 +341,8 @@ This prints each phase: handshake → preheat → profile load → charge → ac
 |---------|-------|-----|
 | `ERR invalid_value empty_command` | Empty line sent (newline without content) | Normal when pressing Enter — harmless |
 | `ERR invalid_value unknown_command` | Command not recognized | Check command syntax (e.g., `START` not `START 200`) |
+| `ERR safety_fault <reason>` | An internal safety trap (overtemp, stale sensor, probe-stuck, …) armed the emergency latch | Inspect the reason; recover with `PID;OFF` (or `START`/`PREHEAT`) — the heater is off and the fan at 100 % while latched |
+| `ERR probe_stuck_warning` | Manual / software-PID mode: BT flat (≤ 1 °C) for 120 s with the heater on (Audit A-TC4-C) | Informational — the roast keeps running (a slow finish can hold BT flat at low duty). If it persists to 300 s, the detector latches with `ERR safety_fault Probe stuck` |
 | No telemetry after `START` | Continuous output was already off before START, or START failed silently | Send `READ` first to verify the device is responsive, then `READ` again to check whether PID is active (8-field vs 5-field response) |
 | `cr1_readback_mismatch` on boot | Real MAX31856 connected but not responding | Use `--features "embedded,simulated-sensors"` to skip MAX31856 init |
 | `/dev/ttyACM0: Dispositivo o recurso ocupado` | espflash monitor or another terminal holds the port | Kill the existing monitor, use picocom/screen instead, or type commands directly into the espflash monitor window |

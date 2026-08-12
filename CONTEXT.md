@@ -57,14 +57,21 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-- ✅ All host tests pass (**672 as of 2026-08-11** — lib + integration with `--features test`, 0 failures; the regression numeric suite adds `--features regression`, see Quality Gates below)
+- ✅ All host tests pass (**680 as of 2026-08-12** — 482 unit + 247 integration test functions, 0 failures with `--features test`; the regression numeric suite adds `--features regression` → 740 passing, see Quality Gates below)
 - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 11 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts. Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer DI migration (constructor injection instead of `static_cell` singleton)
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 672 host tests pass, ESP32 build warning-free
+- All 680 host tests pass, ESP32 build warning-free
+
+**Artisan compatibility audit (A-TC4, 2026-08-12):**
+- Internal safety traps now emit `ERR safety_fault <reason>` on the wire, once per latch event (`emergency_shutdown` in `roaster_control.rs`) — Artisan/automation no longer discovers latches only via rejected commands. The operator `STOP` path does not emit it.
+- Probe-stuck detector is two-stage in manual/software-PID mode (A-TC4-C): `ERR probe_stuck_warning` on the wire at 120 s of flat BT (no latch — a slow finish can legitimately hold BT flat), real latch at 300 s via `ERR safety_fault Probe stuck`. Firmware-PID mode keeps the original single-stage 120 s latch. The dead-probe backstop (Bug S1) stays closed in both modes.
+- Handshake commands `CHAN`/`UNITS`/`FILT` are accepted while the safety latch is armed (zero actuator side effects) — Artisan can reconnect to a latched device instead of looping on "Arduino could not set channels/units/filters". All re-energizing commands remain rejected while latched.
+- Golden-transcript replay suite (`tests/artisan_transcript_replay.rs` + `tests/fixtures/artisan_transcripts/*.txt`) pins the wire contract against real Artisan session bytes; `tests/pipeline_soak.rs` stress-tests the full pipeline; T-B4 covers byte-level interleave across two transports; degenerate PROFILE/FANPROFILE shapes tested at the control layer.
+- CI coverage job now instruments `regression` + `simulated-sensors` (previously the conversion math and L3 pipeline showed as uncovered).
 
 ## Known Constraints
 
@@ -138,8 +145,16 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
 # All host tests:
 cargo test --target x86_64-unknown-linux-gnu --features test
+
+# Race check (strongest cross-test interference check on the shared
+# ServiceContainer channels):
+cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --test-threads=1 --no-fail-fast
+
+# Coverage (as CI): include regression + simulated-sensors, otherwise the
+# conversion math and the L3 pipeline show as uncovered:
+cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info
 ```
 
 ---
 
-*Last updated: 2026-08-11. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-08-12. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

@@ -1,6 +1,6 @@
 # LibreRoaster Development Guide
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-12
 
 This guide explains how to build, flash, test, and verify LibreRoaster without losing sight of the project’s two-runtime architecture: a real embedded firmware target and a host-side verification target.
 
@@ -124,6 +124,25 @@ The strongest numeric tests (`tests/sensor_conversion.rs` — 19-bit two's-compl
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
 ```
+
+### Simulated-sensors pipeline (L3)
+
+Real control-loop ticks over the synthetic `simulated-sensors` temperature curves (wall clock), including the full pipeline test `control_loop_tick_simulated_sensors_full_pipeline`:
+
+```bash
+cargo test --target x86_64-unknown-linux-gnu --features test --features simulated-sensors --lib control_loop_tick_simulated
+```
+
+### Artisan wire-contract tests (Audit A-TC4)
+
+Golden-transcript replay pins the wire contract against real Artisan session bytes; the soak stress-tests the full pipeline with a random command stream:
+
+```bash
+cargo test --target x86_64-unknown-linux-gnu --features test --test artisan_transcript_replay
+cargo test --target x86_64-unknown-linux-gnu --features test --test pipeline_soak
+```
+
+Run these whenever a change touches the parser, formatters, transport tasks, or command handlers.
 
 ### Concurrency instrumentation run
 

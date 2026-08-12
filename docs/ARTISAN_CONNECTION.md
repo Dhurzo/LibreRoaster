@@ -1,6 +1,6 @@
 # Artisan ↔ LibreRoaster Connection Guide
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-08-12
 
 This guide explains how to connect the official Artisan application to LibreRoaster and, more importantly, what kind of compatibility to expect from that connection.
 
@@ -70,6 +70,13 @@ LibreRoaster accepts these and responds with lightweight acknowledgements.
 > `UNITS`/`FILT`). This is deliberate: Artisan's ArduinoTC4 driver rejects
 > any non-`#` initialisation response with "Arduino could not set
 > temperature unit/filters" and never proceeds to `READ` polling.
+>
+> The handshake keeps working even while the device's safety latch is
+> armed: `CHAN`/`UNITS`/`FILT` are accepted in every state (they have no
+> actuator side effects), so reconnecting Artisan to a latched device
+> completes normally instead of looping on "Arduino could not set
+> channels/units/filters". Re-energizing commands remain rejected until
+> the latch is cleared.
 
 This means the connection model is forgiving: a terminal and a manually configured Artisan session can both talk to the device without a fragile startup contract.
 
@@ -101,8 +108,9 @@ Using the official Artisan app in serial-controller mode, LibreRoaster is built 
 - heater and fan control,
 - PID enable/disable and setpoint control,
 - profile command injection via `PROFILE` and `FANPROFILE`,
-- startup handshake commands,
-- deeper runtime diagnostics via `STATUS`.
+- startup handshake commands (including reconnects to a latched device),
+- deeper runtime diagnostics via `STATUS`,
+- immediate safety-fault visibility (`ERR safety_fault <reason>` when an internal trap latches the device).
 
 This is the project’s core compatibility target.
 
@@ -167,6 +175,10 @@ That points to the USB path, not the protocol core.
 ### `READ` works but automation fails
 
 Usually means the client is using `READ` where it should use `STATUS`, or it assumes unsupported protocol features beyond the implemented TC4-style surface.
+
+### `ERR safety_fault <reason>` appears and sliders stop responding
+
+An internal trap (over-temperature, stale sensor, probe-stuck, comms-idle, …) armed the safety latch: the heater is at 0 % and the fan at 100 %. While latched, every re-energizing command is rejected with `ERR handler_failed … fault_condition_active`. Recovery: send `PID;OFF` (or `START`/`PREHEAT`). The handshake still works, so closing and reconnecting Artisan is also safe.
 
 ## 11. Compatibility summary
 

@@ -1,6 +1,6 @@
 # LibreRoaster Architecture Guide
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-12
 
 This document describes the current firmware architecture of LibreRoaster from the implementation outward. It is written for engineers who need to reason about runtime behavior, ownership boundaries, timing, and the points where protocol handling meets real hardware.
 
@@ -282,6 +282,25 @@ LibreRoaster’s safety story is layered, not singular.
 ### Diagnostic visibility
 
 The `STATUS` line exports watchdog health, guard timeout counts, PID internals, command latency, regression state, and current display scale. The firmware is built so external automation can detect not only roast conditions but also operational degradation.
+
+Since the A-TC4 audit (2026-08-12), internal safety traps additionally
+emit a `ERR safety_fault <reason>` line on the wire exactly once per latch
+event (`emergency_shutdown` in `RoasterControl`) — a connected host learns
+about the latch immediately instead of discovering it through the next
+rejected command. The operator-initiated `STOP` path does not emit it.
+While the latch is armed, the handshake commands `CHAN`/`UNITS`/`FILT`
+remain accepted (they carry no actuator side effects), so Artisan can
+reconnect to a latched device instead of looping on "Arduino could not set
+channels/units/filters"; every re-energizing command stays rejected.
+
+The probe-stuck detector is two-stage in manual / Artisan software-PID mode
+(A-TC4-C, 2026-08-12): at 120 s of flat BT with the heater on it emits
+`ERR probe_stuck_warning` on the wire without latching (a legitimately slow
+finish can hold BT nearly flat at low duty), and only at 300 s of continuous
+flatness does it escalate to the emergency latch (`ERR safety_fault Probe
+stuck`). Firmware-PID mode keeps the single-stage 120 s latch, because the
+regulating-near-target disarm already protects healthy PID holds there. The
+dead-probe backstop (Bug S1) stays closed in both modes.
 
 ## 11. Protocol boundary with Artisan
 

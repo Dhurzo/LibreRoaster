@@ -1,6 +1,6 @@
 # LibreRoaster Protocol Reference
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-12
 
 This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the firmware currently accepts and emits, how the session behaves, and where compatibility with the official Artisan application starts and stops.
 
@@ -249,8 +249,12 @@ Increment or decrement heater output in 5% steps.
 Emergency stop path. Heater is cut and fan is forced to 100%.
 
 `STOP` arms the safety latch: while latched, only `READ`, `STATUS`, `STOP`,
-`START` and `PREHEAT` are accepted (other commands return
-`ERR handler_failed:fault_condition_active`). Recovery:
+`START`, `PREHEAT` and the handshake commands `CHAN`/`UNITS`/`FILT` are
+accepted (other commands return
+`ERR handler_failed:fault_condition_active`). `CHAN`/`UNITS`/`FILT` are
+admitted deliberately: they have no actuator side effects, and rejecting
+them would break Artisan reconnects (its ArduinoTC4 handshake fails on any
+non-`#` line and re-initialises forever). Recovery:
 
 1. `PID;OFF` — unconditional un-latch, returns to `Idle`; or
 2. `START` / `PREHEAT` — treated as the operator's deliberate re-energize:
@@ -362,6 +366,19 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 - `ERR buffer_overflow` — the transport byte buffer overflowed
 - `ERR regression_disabled` — `REG` sent on a build without the `regression` feature
 - `ERR OT2_CLAMPED fan=<n> heater_unchanged` — `OT2` value was clamped (see §6)
+- `ERR safety_fault <reason>` — an internal trap (overtemperature, stale
+  sensor, NaN reading, rate-of-rise, probe-stuck, comms-idle, max roast
+  time, watchdog or actuator-write failure) armed the emergency latch. The
+  `<reason>` text is a human-readable diagnostic (may contain spaces), not
+  a stable contract. The line is emitted once per latch event; the STOP
+  command path (operator-initiated) does not emit it.
+- `ERR probe_stuck_warning` — manual / Artisan software-PID mode only
+  (Audit A-TC4-C): the bean probe has been flat (≤ 1 °C movement) for 120 s
+  with the heater on. This is a WARNING, not a latch: the roast keeps
+  running (a legitimately slow finish can hold BT flat for 2 min at low
+  duty). If the probe stays flat for 300 s total, the detector escalates to
+  the real latch, announced by `ERR safety_fault Probe stuck`. The warning
+  is emitted once per stuck episode (reset by probe movement or heater off).
 
 ## 11. Protocol edge cases that matter
 
