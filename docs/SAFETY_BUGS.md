@@ -134,4 +134,37 @@ Pendiente de ejecución con la placa real (no requiere osciloscopio):
 
 ---
 
+## 7. Actualizaciones posteriores (auditoría A-TC4, 2026-08-12)
+
+### A-TC4-C — detector probe-stuck en dos etapas (modo manual)
+
+Tras la opción C aprobada por el usuario (2026-08-12): en modo manual /
+software-PID el detector sigue armado a cualquier duty > 0 (el backstop S1
+queda cerrado), pero es de dos etapas — `ERR probe_stuck_warning` en el
+wire a los 120 s de BT plano (sin latch: un final de tostado lento puede
+sostener BT < 1 °C a baja potencia legítimamente) y el latch real a los
+300 s (`ERR safety_fault Probe stuck`). Modo firmware-PID sin cambios
+(latch directo a 120 s). Peor caso de exposición con sonda muerta en
+manual: 5 min, muy por debajo de `MAX_ROAST_TIME_SECS`. Pins:
+`s3_probe_stuck_manual_flat_bt_trips` (dos etapas),
+`probe_stuck_manual_mode_two_stage_warns_then_latches` (inline),
+`dead_probe_manual_roast_now_trips_probe_stuck` (harness), invariante I6.
+
+### A-TC4-D — guard RoR en dos bandas (falso disparo light-roast)
+
+La verificación light-roast (aprobada 2026-08-12) reprodujo un falso
+disparo: un turnaround real de tostado ligero (~3 s a 0.6 °C/s tras la
+carga, pico típico 15-25 °C/min) superaba el umbral único de 0.5 °C/s y
+latcheaba `rate_of_rise_exceeded` en ~1 s. Mitigación: banda blanda
+(0.5–1.0 °C/s, `MAX_BT_RATE_OF_RISE`..`MAX_BT_RATE_OF_RISE_HARD`) con
+debounce extendido `ROR_SOFT_DEBOUNCE_LIMIT = 12` ticks (~3.7 s); banda
+dura (> 1.0 °C/s) conserva el latch rápido de 3 ticks — la protección
+anti-runaway no se degrada (coste: ≤ ~2.7 °C de subida extra en la banda
+blanda). Ambas constantes son provisionales pendientes de calibración HIL.
+Aplica a `check_bt_rate` y `check_rate_of_rise` (`tiered_ror_trip`).
+Pins: 7 tests light-roast en `full_roast_verification.rs` + 4 unit tests
+en `sensor.rs` + fixture `light_roast_session_ascii.txt`.
+
+---
+
 *Este informe es el entregable del bug hunt. Los fixes se aplicaron el 2026-08-05 por instrucción del usuario y se verificaron con los tests de reproducción (rojos pre-fix, verdes post-fix). Tests: `tests/safety_repro_tests.rs`, `tests/safety_injection_midroast_tests.rs`, `tests/safety_invariant_harness.rs`, proptests en `src/input/parser.rs`, `src/control/pid.rs`, `src/control/controllers/actuator.rs`, `src/hardware/sensors/simulated.rs`, `src/output/artisan.rs`, tests de transporte en `src/hardware/transport_tasks.rs`.*

@@ -21,7 +21,7 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** host-side test suite is fully green — **680 tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-12, tras la auditoría de compatibilidad Artisan A-TC4). The suite holds **482 unit + 247 integration test functions**; the difference vs. the 680 passing in this gate are the regression/feature-gated tests (see §2.7 and §6). Includes the safety hunt suites (`safety_repro_tests.rs`, `safety_injection_midroast_tests.rs`, `safety_invariant_harness.rs` — 1000 roasts aleatorios), the in-crate transport byte-drip tests (T-B1..T-B4), the Artisan golden-transcript replay suite (`artisan_transcript_replay.rs`), the pipeline soak (`pipeline_soak.rs`), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
+**Current status:** host-side test suite is fully green — **693 tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-12, tras la auditoría de compatibilidad Artisan A-TC4 + verificación light-roast A-TC4-D). The suite holds **487 unit + 255 integration test functions**; the difference vs. the 693 passing in this gate are the regression/feature-gated tests (see §2.7 and §6). Includes the safety hunt suites (`safety_repro_tests.rs`, `safety_injection_midroast_tests.rs`, `safety_invariant_harness.rs` — 1000 roasts aleatorios), the in-crate transport byte-drip tests (T-B1..T-B4), the Artisan golden-transcript replay suite (`artisan_transcript_replay.rs`), the pipeline soak (`pipeline_soak.rs`), the light-roast verification suite (A-TC4-D, see §2.2), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
 
 > Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
@@ -39,7 +39,7 @@ These live inside the library crate, co-located with the code they test. They ve
 | `src/control/policies.rs` | 26 | Control policies: manual/PID arbitration, actuator guard conditions, heater/fan interlock | ✅ All pass |
 | `src/config/constants.rs` | 25 | Configuration constants: pin assignments, timing values, protocol constants, feature-gate validation | ✅ All pass |
 | `src/application/tasks.rs` | 25 | Task-level logic: control loop stages, command draining, rate limiting, telemetry emission | ✅ All pass |
-| `src/control/controllers/sensor.rs` | 24 | SensorController: sampling, EMA filtering, fault debounce, rate-of-rise, over-temperature guard | ✅ All pass |
+| `src/control/controllers/sensor.rs` | 29 | SensorController: sampling, EMA filtering, fault debounce, rate-of-rise (two-tier hard/soft bands, A-TC4-D), over-temperature guard | ✅ All pass |
 | `src/hardware/sensors/simulated.rs` | 18 | Simulated temperature curves: interpolation, waypoints, curve presets, noise, bounds | ✅ All pass |
 | `src/safety/watchdog.rs` | 16 | Watchdog: software feeding, timeout accounting, reason tokens, hardware RTC watchdog | ✅ All pass |
 | `src/control/pid.rs` | 15 | PID arithmetic: proportional/integral/derivative terms, integrator clamping, saturation, anti-windup | ✅ All pass |
@@ -56,7 +56,7 @@ These live inside the library crate, co-located with the code they test. They ve
 | `src/hardware/*.rs` (ssr, init, max31856, fan, mod) | 8 | SSR PWM, hardware init validation, MAX31856 register math, fan duty mapping | ✅ All pass |
 | `src/memory/constants.rs`, `src/host_time_driver.rs` | 2 | Memory/allocation constants; host Embassy time driver | ✅ All pass |
 
-**Totals:** 482 unit tests across 32 files in `src/`.
+**Totals:** 487 unit tests across 32 files in `src/`.
 
 ---
 
@@ -68,14 +68,14 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| All integration test files | 247 | ✅ All pass (680 pass in the default `--features test` gate; 33 more are regression-gated, §2.7) |
+| All integration test files | 255 | ✅ All pass (693 pass in the default `--features test` gate; 33 more are regression-gated, §2.7) |
 
 ### 2.1 Protocol & Command Handling
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
 | `tests/artisan_integration_test.rs` | 11 | Complete Artisan+ protocol flow: parse → dispatch → format → response. Tests READ, OT1, IO3, START, STOP, CHAN, UNITS responses | ✅ All pass |
-| `tests/artisan_transcript_replay.rs` | 3 | Artisan golden-transcript replay (Audit A-TC4): connect handshake, software-PID slider session and firmware-PID session replayed byte-by-byte through the production pipeline. Pins the wire contract Artisan depends on: `#1200`/`#OK` handshake acks, 5/8-field TC4 READ, 20-field STATUS, and the absence of the deprecated 4-field READ | ✅ All pass |
+| `tests/artisan_transcript_replay.rs` | 4 | Artisan golden-transcript replay (Audit A-TC4): connect handshake, software-PID slider session, firmware-PID session and light-roast slider session (A-TC4-D) replayed byte-by-byte through the production pipeline. Pins the wire contract Artisan depends on: `#1200`/`#OK` handshake acks, 5/8-field TC4 READ, 20-field STATUS, and the absence of the deprecated 4-field READ | ✅ All pass |
 | `tests/command_errors.rs` | 5 | Error propagation through command pipeline: invalid commands, parse errors, service container error mapping | ✅ All pass |
 | `tests/command_idempotence.rs` | 4 | Idempotency of start/stop: double-start, double-stop, stop-without-start, state consistency after repeated calls | ✅ All pass |
 | `tests/read_command_usb_test.rs` | 15 | READ command over USB CDC path: TC4 format (5-value, 8-value), Celsius/Fahrenheit, NaN handling, field ordering | ✅ All pass |
@@ -88,6 +88,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 | `tests/critical_path_tests.rs` | 44 | End-to-end critical flows: roast lifecycle, emergency stops, safety interlocks, protocol round-trips | ✅ All pass |
 | `tests/control_loop_integration.rs` | 16 | Control loop integration: stage ordering, command draining, telemetry emission under load | ✅ All pass |
 | `tests/roast_resilience_tests.rs` | 25 | Edge-case resilience: no-profile fallback, missing charge detection, invalid commands during roast, rapid start-stop cycles, degenerate PROFILE/FANPROFILE shapes (unsorted/duplicated timestamps) at the control layer | ✅ All pass |
+| `tests/full_roast_verification.rs` | 18 | Deterministic L1 full-roast simulation (real PID/safety math, synthetic 310 ms ticks): preheat, charge + `#CHARGE`, profile/fan-profile following, RoR through first crack, all 6 safety backstops, STOP/cooldown release, two consecutive roasts, and the **light-roast verification suite (A-TC4-D)**: software-PID and firmware-PID light-roast full flows (charge dip 200→95 °C, development to ~203 °C) plus 5 boundary tests — manual RoR-guard disarm, turnaround spike tolerance, hard-band runaway latch, sustained soft-band latch, slow-finish probe-stuck margin | ✅ All pass |
 
 ### 2.3 Safety & Fault Injection
 

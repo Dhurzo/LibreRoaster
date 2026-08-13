@@ -372,6 +372,20 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   `<reason>` text is a human-readable diagnostic (may contain spaces), not
   a stable contract. The line is emitted once per latch event; the STOP
   command path (operator-initiated) does not emit it.
+- `ERR probe_stuck_warning` — manual/software-PID mode only: BT has been
+  flat (< 1 °C variation) for 120 s with the heater on. Purely
+  informational (a legitimately slow finish can hold BT flat at low duty);
+  the latch lands at 300 s via `ERR safety_fault Probe stuck`. Emitted once
+  per stuck episode. Firmware-PID mode does not use this stage (it latches
+  directly at 120 s).
+
+> RoR-guard tiering (A-TC4-D, 2026-08-12): the `rate_of_rise_exceeded` trap
+> is two-tier. Rates in the soft band (0.5–1.0 °C/s) latch only after ~3.7 s
+> of sustained exceedance (12 consecutive control ticks); rates above
+> 1.0 °C/s keep the fast 3-tick latch. A healthy light-roast turnaround
+> spike (~3 s at 0.6 °C/s) therefore does not trip, while a genuine runaway
+> still aborts within ~1 s. Both thresholds are provisional pending HIL
+> calibration.
 - `ERR probe_stuck_warning` — manual / Artisan software-PID mode only
   (Audit A-TC4-C): the bean probe has been flat (≤ 1 °C movement) for 120 s
   with the heater on. This is a WARNING, not a latch: the roast keeps
