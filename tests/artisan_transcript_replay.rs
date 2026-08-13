@@ -76,22 +76,40 @@ fn drain_channels() {
 
 /// Feed a transcript (one `\n`-terminated command per line) through the
 /// UART transport entry point, exactly as a real serial session arrives.
-fn feed_transcript(transcript: &str) {
-    for line in transcript.lines() {
-        if line.trim().is_empty() {
-            continue;
+///
+/// Audit A-TC4-D (2026-08-12): the harness must mirror PRODUCTION drain
+/// cadences on BOTH channels, or its own fixtures overflow the fixed
+/// capacities and produce false failures:
+/// - the OUTPUT channel (16 deep) fills with the TRACE event each enqueue
+///   emits — without a drain after every line, the first processed
+///   command's response is silently dropped through the best-effort
+///   `try_send` (production's `dual_output_task` drains every 5 ms);
+/// - the COMMAND channel (16 deep) fills when a whole transcript is fed
+///   without processing — Artisan's real cadence (~12 commands/s against a
+///   ~310 ms control-loop drain) never puts more than ~5 commands in
+///   flight, so feed in small chunks and process after each.
+fn feed_transcript(transcript: &str, collected: &mut Vec<StdString>) {
+    let lines: Vec<&str> = transcript
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    // ~4-5 commands in flight is the production steady state.
+    const CHUNK: usize = 4;
+    for chunk in lines.chunks(CHUNK) {
+        for line in chunk {
+            let mut bytes = line.as_bytes().to_vec();
+            bytes.push(b'\n');
+            process_command_data(&bytes);
+            drain_output_into(collected);
         }
-        let mut bytes = line.as_bytes().to_vec();
-        bytes.push(b'\n');
-        process_command_data(&bytes);
+        process_all_queued(collected);
     }
 }
 
 /// Drain the artisan channel and process every command through the roaster,
 /// emitting READ/STATUS responses exactly like the production control loop
 /// (tasks.rs `drain_commands`). Returns the non-TRACE output lines.
-fn process_all_queued() -> Vec<StdString> {
-    let mut collected = Vec::new();
+fn process_all_queued(collected: &mut Vec<StdString>) {
     block_on(async {
         let cmd_channel = ServiceContainer::get_artisan_channel();
         while let Ok(traced) = cmd_channel.try_receive() {
@@ -122,11 +140,10 @@ fn process_all_queued() -> Vec<StdString> {
             // and a long transcript would otherwise silently drop responses
             // through the best-effort `try_send` (production
             // `dual_output_task` drains every 5 ms — mirror it here).
-            drain_output_into(&mut collected);
+            drain_output_into(collected);
         }
     });
-    drain_output_into(&mut collected);
-    collected
+    drain_output_into(collected);
 }
 
 fn drain_output_into(collected: &mut Vec<StdString>) {
@@ -227,11 +244,11 @@ fn connect_handshake_transcript_replays_cleanly() {
     init_service_container();
     drain_channels();
 
-    feed_transcript(include_str!(
-        "fixtures/artisan_transcripts/connect_handshake_ascii.txt"
-    ));
-    let outputs = process_all_queued();
-
+    let mut outputs = Vec::new();
+    feed_transcript(
+        include_str!("fixtures/artisan_transcripts/connect_handshake_ascii.txt"),
+        &mut outputs,
+    );
     assert!(
         !outputs.iter().any(|l| l.starts_with("ERR ")),
         "a clean handshake must produce no ERR lines, got: {:?}",
@@ -273,11 +290,11 @@ fn software_pid_slider_session_replays_cleanly() {
     init_service_container();
     drain_channels();
 
-    feed_transcript(include_str!(
-        "fixtures/artisan_transcripts/software_pid_session_ascii.txt"
-    ));
-    let outputs = process_all_queued();
-
+    let mut outputs = Vec::new();
+    feed_transcript(
+        include_str!("fixtures/artisan_transcripts/software_pid_session_ascii.txt"),
+        &mut outputs,
+    );
     assert!(
         !outputs.iter().any(|l| l.starts_with("ERR ")),
         "a clean slider session must produce no ERR lines, got: {:?}",
@@ -313,11 +330,11 @@ fn firmware_pid_session_replays_cleanly() {
     init_service_container();
     drain_channels();
 
-    feed_transcript(include_str!(
-        "fixtures/artisan_transcripts/firmware_pid_session_ascii.txt"
-    ));
-    let outputs = process_all_queued();
-
+    let mut outputs = Vec::new();
+    feed_transcript(
+        include_str!("fixtures/artisan_transcripts/firmware_pid_session_ascii.txt"),
+        &mut outputs,
+    );
     assert!(
         !outputs.iter().any(|l| l.starts_with("ERR ")),
         "a clean firmware-PID session must produce no ERR lines, got: {:?}",
@@ -354,5 +371,55 @@ fn firmware_pid_session_replays_cleanly() {
     assert!(
         !status.fault_condition,
         "PID;OFF (roast end) must NOT arm the safety latch"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. Light-roast slider session (Audit A-TC4-D, 2026-08-12)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn light_roast_slider_session_replays_cleanly() {
+    let _guard = acquire_lock();
+    init_service_container();
+    drain_channels();
+
+    let mut outputs = Vec::new();
+    feed_transcript(
+        include_str!("fixtures/artisan_transcripts/light_roast_session_ascii.txt"),
+        &mut outputs,
+    );
+    assert!(
+        !outputs.iter().any(|l| l.starts_with("ERR ")),
+        "a clean light-roast slider session must produce no ERR lines, got: {:?}",
+        outputs
+    );
+    let classes = assert_all_lines_wellformed(&outputs);
+    // A light roast driven by Artisan's software PID never sends START —
+    // the wire stays in the 5-field format for the whole session.
+    assert!(
+        classes.iter().all(|c| *c != WireLine::Read8),
+        "light-roast slider mode must never flip READ to the 8-field format"
+    );
+    assert!(
+        classes.contains(&WireLine::Read5),
+        "READ must be the 5-field TC4 format"
+    );
+    // Handshake acks present (Artisan hard-requires the '#' prefix).
+    assert!(outputs.iter().any(|l| l.as_str() == "#1200"));
+    assert!(outputs.iter().filter(|l| l.as_str() == "#OK").count() >= 2);
+
+    // Roast end = `OT1;0`: heater lands at 0, no latch.
+    let status = block_on(async {
+        ServiceContainer::with_roaster_async(|roaster| roaster.get_status()).await
+    })
+    .expect("read status");
+    assert_eq!(
+        status.ssr_output, 0.0,
+        "OT1;0 at roast end must cut the heater"
+    );
+    assert!(
+        !status.fault_condition,
+        "a light-roast slider session must never arm the safety latch"
     );
 }

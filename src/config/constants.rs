@@ -105,13 +105,28 @@ pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 /// 100% every tick regardless of the manual setting or fan profile.
 pub const COOLING_RELEASE_BEAN_TEMP_C: f32 = 60.0;
 
-/// Maximum safe bean temperature rate of rise in °C/s.
-/// 0.5°C/s = 30°C/min — above this rate during active heating indicates
-/// a possible runaway heater, stuck SSR, or thermocouple failure.
+/// Soft RoR guard threshold in °C/s (0.5 °C/s = 30 °C/min). Rates between
+/// this value and `MAX_BT_RATE_OF_RISE_HARD` — the band where aggressive
+/// light-roast turnarounds legitimately live for a few seconds — latch only
+/// after `ROR_SOFT_DEBOUNCE_LIMIT` consecutive ticks. Above this threshold
+/// during active heating indicates a possible runaway heater, stuck SSR, or
+/// thermocouple failure.
 pub const MAX_BT_RATE_OF_RISE: f32 = 0.5;
-/// Consecutive RoR exceedances required before emergency shutdown.
-/// Prevents false triggers from single-spike sensor glitches.
+/// Hard RoR guard threshold in °C/s (1.0 °C/s = 60 °C/min). No legitimate
+/// roast phase sustains this: rates above it latch after the FAST debounce
+/// (`ROR_EXCEEDED_CONSECUTIVE_LIMIT`). Audit A-TC4-D (2026-08-12): both
+/// thresholds are provisional pending hardware calibration (HIL).
+pub const MAX_BT_RATE_OF_RISE_HARD: f32 = 1.0;
+/// Consecutive RoR exceedances required before emergency shutdown in the
+/// HARD band (> `MAX_BT_RATE_OF_RISE_HARD`) — ~1 s at the ~310 ms control
+/// cadence. Prevents false triggers from single-spike sensor glitches.
 pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
+/// Consecutive RoR exceedances required before emergency shutdown in the
+/// SOFT band (`MAX_BT_RATE_OF_RISE`..=`MAX_BT_RATE_OF_RISE_HARD`) — ~3.7 s
+/// sustained at the ~310 ms control cadence. Audit A-TC4-D (2026-08-12): a
+/// brief light-roast turnaround spike stays tolerated; a sustained marginal
+/// climb still aborts. Provisional pending hardware calibration (HIL).
+pub const ROR_SOFT_DEBOUNCE_LIMIT: u8 = 12;
 
 /// Bug P5 (2026-08-03): probe-stuck detector — the heater output at or above
 /// this percentage arms the detector: a heater this hot must move the BT

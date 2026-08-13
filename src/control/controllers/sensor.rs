@@ -6,6 +6,30 @@ use log::warn;
 
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
+/// Audit A-TC4-D (2026-08-12): two-tier rate-of-rise debounce (light-roast
+/// verification). Aggressive light-roast turnarounds legitimately climb
+/// 0.5-1.0 °C/s for a few seconds right after charge; the old single
+/// 3-tick / 0.5 °C/s rule latched a false emergency on them in firmware-PID
+/// mode. The guard now runs two bands:
+///
+/// - HARD (> `MAX_BT_RATE_OF_RISE_HARD`): a genuine runaway — latches after
+///   `ROR_EXCEEDED_CONSECUTIVE_LIMIT` consecutive ticks (~1 s).
+/// - SOFT (`MAX_BT_RATE_OF_RISE`..=`MAX_BT_RATE_OF_RISE_HARD`): latches only
+///   after `ROR_SOFT_DEBOUNCE_LIMIT` consecutive ticks (~3.7 s sustained at
+///   the ~310 ms control cadence) — a brief turnaround spike stays
+///   tolerated, a sustained marginal climb still aborts.
+///
+/// Both thresholds are provisional pending hardware calibration (HIL).
+/// The hard-band protection is not degraded: a rate in the hard band still
+/// latches after exactly the fast 3-tick debounce.
+fn tiered_ror_trip(rate: f32, consecutive: u8) -> bool {
+    if rate > MAX_BT_RATE_OF_RISE_HARD {
+        consecutive >= ROR_EXCEEDED_CONSECUTIVE_LIMIT
+    } else {
+        consecutive >= ROR_SOFT_DEBOUNCE_LIMIT
+    }
+}
+
 /// F4.11 (Gap #3): Number of consecutive faulty sensor reads required before
 /// latching `status.fault_condition = true`. A single transient SPI glitch
 /// (the most common false trigger) must NOT permanently latch a fault, which
@@ -288,13 +312,22 @@ impl SensorController {
         if status.derivative_rate > MAX_BT_RATE_OF_RISE {
             self.pv_ror_exceeded_count = self.pv_ror_exceeded_count.saturating_add(1);
             warn!(
-                "BT RoR {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
+                "BT RoR {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{}, band {})",
                 status.derivative_rate,
                 MAX_BT_RATE_OF_RISE,
                 self.pv_ror_exceeded_count,
-                ROR_EXCEEDED_CONSECUTIVE_LIMIT
+                if status.derivative_rate > MAX_BT_RATE_OF_RISE_HARD {
+                    ROR_EXCEEDED_CONSECUTIVE_LIMIT
+                } else {
+                    ROR_SOFT_DEBOUNCE_LIMIT
+                },
+                if status.derivative_rate > MAX_BT_RATE_OF_RISE_HARD {
+                    "hard"
+                } else {
+                    "soft"
+                }
             );
-            if self.pv_ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+            if tiered_ror_trip(status.derivative_rate, self.pv_ror_exceeded_count) {
                 // Bug M10 (2026-08-10): reset the debounce counter before
                 // firing, exactly like `check_bt_rate` does. Without this the
                 // counter stayed pinned at the limit through the latched
@@ -348,13 +381,22 @@ impl SensorController {
         if bt_rate > MAX_BT_RATE_OF_RISE {
             self.bt_ror_exceeded_count = self.bt_ror_exceeded_count.saturating_add(1);
             warn!(
-                "BT RoR guard {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{})",
+                "BT RoR guard {:.2}°C/s exceeds limit {:.1}°C/s (count {}/{}, band {})",
                 bt_rate,
                 MAX_BT_RATE_OF_RISE,
                 self.bt_ror_exceeded_count,
-                ROR_EXCEEDED_CONSECUTIVE_LIMIT
+                if bt_rate > MAX_BT_RATE_OF_RISE_HARD {
+                    ROR_EXCEEDED_CONSECUTIVE_LIMIT
+                } else {
+                    ROR_SOFT_DEBOUNCE_LIMIT
+                },
+                if bt_rate > MAX_BT_RATE_OF_RISE_HARD {
+                    "hard"
+                } else {
+                    "soft"
+                }
             );
-            if self.bt_ror_exceeded_count >= ROR_EXCEEDED_CONSECUTIVE_LIMIT {
+            if tiered_ror_trip(bt_rate, self.bt_ror_exceeded_count) {
                 self.bt_ror_exceeded_count = 0;
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("bt_rate_of_rise_exceeded"),
@@ -590,17 +632,89 @@ mod tests {
     }
 
     #[test]
-    fn check_rate_of_rise_below_threshold() {
+    fn check_rate_of_rise_below_threshold_resets() {
         let hub = SensorConversionHub::new();
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
         status.pid_enabled = true;
-        status.derivative_rate = 2.0;
+        status.derivative_rate = 0.3; // genuinely below MAX_BT_RATE_OF_RISE
         status.derivative_available = true;
 
         let result = ctrl.check_rate_of_rise(&status);
 
         assert!(result.is_ok());
+        assert_eq!(ctrl.pv_ror_exceeded_count, 0);
+    }
+
+    #[test]
+    fn check_rate_of_rise_hard_band_single_tick_does_not_trip() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 2.0; // hard band
+        status.derivative_available = true;
+
+        assert!(ctrl.check_rate_of_rise(&status).is_ok());
+        assert_eq!(ctrl.pv_ror_exceeded_count, 1);
+    }
+
+    /// Audit A-TC4-D (2026-08-12): the SOFT band (0.5..=1.0 °C/s — where
+    /// aggressive light-roast turnarounds live) must require the extended
+    /// debounce: 11 consecutive soft ticks stay tolerated, the 12th latches.
+    #[test]
+    fn check_rate_of_rise_soft_band_requires_extended_debounce() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        status.pid_enabled = true;
+        status.derivative_rate = 0.7; // soft band
+        status.derivative_available = true;
+
+        for i in 0..(ROR_SOFT_DEBOUNCE_LIMIT - 1) {
+            assert!(
+                ctrl.check_rate_of_rise(&status).is_ok(),
+                "soft tick {i} must not trip before the extended debounce"
+            );
+        }
+        assert_eq!(ctrl.pv_ror_exceeded_count, ROR_SOFT_DEBOUNCE_LIMIT - 1);
+        assert!(
+            ctrl.check_rate_of_rise(&status).is_err(),
+            "the {ROR_SOFT_DEBOUNCE_LIMIT}th consecutive soft tick must latch"
+        );
+    }
+
+    #[test]
+    fn check_bt_rate_soft_band_requires_extended_debounce() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+
+        for i in 0..(ROR_SOFT_DEBOUNCE_LIMIT - 1) {
+            assert!(
+                ctrl.check_bt_rate(0.7).is_ok(),
+                "soft tick {i} must not trip before the extended debounce"
+            );
+        }
+        assert_eq!(ctrl.bt_ror_exceeded_count, ROR_SOFT_DEBOUNCE_LIMIT - 1);
+        assert!(
+            ctrl.check_bt_rate(0.7).is_err(),
+            "the {ROR_SOFT_DEBOUNCE_LIMIT}th consecutive soft tick must latch"
+        );
+    }
+
+    #[test]
+    fn check_bt_rate_hard_band_trips_on_third() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+
+        assert!(ctrl.check_bt_rate(1.5).is_ok());
+        assert_eq!(ctrl.bt_ror_exceeded_count, 1);
+        assert!(ctrl.check_bt_rate(1.5).is_ok());
+        assert_eq!(ctrl.bt_ror_exceeded_count, 2);
+        assert!(
+            ctrl.check_bt_rate(1.5).is_err(),
+            "the hard band keeps the fast 3-tick debounce"
+        );
     }
 
     #[test]
@@ -629,7 +743,7 @@ mod tests {
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
         status.pid_enabled = true;
-        status.derivative_rate = 10.0;
+        status.derivative_rate = 10.0; // hard band (> 1.0 °C/s)
         status.derivative_available = true;
 
         assert!(ctrl.check_rate_of_rise(&status).is_ok());
@@ -671,8 +785,9 @@ mod tests {
         assert_eq!(ctrl.pv_ror_exceeded_count, 0);
 
         // BT is genuinely running away: its guard must accumulate despite the
-        // healthy PV checks interleaved between ticks.
-        assert!(ctrl.check_bt_rate(1.0).is_ok());
+        // healthy PV checks interleaved between ticks. 1.1 °C/s sits in the
+        // HARD band (Audit A-TC4-D), so the fast 3-tick debounce applies.
+        assert!(ctrl.check_bt_rate(1.1).is_ok());
         assert_eq!(ctrl.bt_ror_exceeded_count, 1);
         assert!(ctrl.check_rate_of_rise(&status).is_ok()); // healthy ET tick
         assert_eq!(ctrl.pv_ror_exceeded_count, 0);
@@ -680,11 +795,11 @@ mod tests {
             ctrl.bt_ror_exceeded_count == 1,
             "healthy PV tick must NOT reset the BT guard counter (R1)"
         );
-        assert!(ctrl.check_bt_rate(1.0).is_ok());
+        assert!(ctrl.check_bt_rate(1.1).is_ok());
         assert_eq!(ctrl.bt_ror_exceeded_count, 2);
         // Third consecutive BT violation trips the guard even though the PV
         // path kept resetting its own (independent) counter.
-        assert!(ctrl.check_bt_rate(1.0).is_err());
+        assert!(ctrl.check_bt_rate(1.1).is_err());
     }
 
     #[test]

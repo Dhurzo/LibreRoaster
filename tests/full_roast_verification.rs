@@ -34,8 +34,9 @@ use embassy_time::{Duration, Instant};
 
 use libreroaster::common::{StubFan, StubHeater};
 use libreroaster::config::constants::{
-    CHARGE_DROP_THRESHOLD_C, COOLING_RELEASE_BEAN_TEMP_C, MAX_BT_RATE_OF_RISE, MAX_ROAST_TIME_SECS,
-    OVERTEMP_THRESHOLD,
+    CHARGE_DROP_THRESHOLD_C, COOLING_RELEASE_BEAN_TEMP_C, MAX_BT_RATE_OF_RISE,
+    MAX_BT_RATE_OF_RISE_HARD, MAX_ROAST_TIME_SECS, OVERTEMP_THRESHOLD,
+    ROR_EXCEEDED_CONSECUTIVE_LIMIT, ROR_SOFT_DEBOUNCE_LIMIT,
 };
 use libreroaster::config::{
     ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RoasterState,
@@ -209,6 +210,17 @@ fn drain_output_lines() -> Vec<std::string::String> {
         lines.push(msg.as_str().to_string());
     }
     lines
+}
+
+/// Send a slider/actuator command interleaved with the synthetic-clock tick
+/// loop. `process_artisan_command` stamps `last_command_received_at_ms` from
+/// the REAL clock (the same reason `poll_read` patches); a slider arriving
+/// mid-flight at real time would otherwise open a multi-hundred-second
+/// comms-idle gap on the next synthetic tick. Patch the stamp back to the
+/// tick's synthetic time — what a real Artisan session would register.
+fn send_slider(ctrl: &mut RoasterControl, cmd: ArtisanCommand, t: Instant) {
+    ctrl.process_artisan_command(cmd).expect("slider command");
+    ctrl.status_mut().last_command_received_at_ms = t.as_millis();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -572,6 +584,433 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
             .iter()
             .any(|l| l.starts_with("ERR safety_fault Probe stuck")),
         "the manual-mode latch must announce itself on the wire"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A-TC4-D — LIGHT ROAST verification (Audit A-TC4-D, 2026-08-12)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A normal Artisan light roast: preheat ET ≈ 200 °C, charge dip to ~95 °C,
+// an aggressive turnaround (RoR peak 15-30 °C/min), a declining development
+// phase, drop at BT ≈ 200 °C around 8-10 min. Both Artisan drive modes are
+// covered — the modern software-PID slider stream (manual mode) and the
+// legacy firmware-PID path — plus the boundary tests around the two-tier
+// rate-of-rise guard.
+//
+// Slopes used here stay ≤ 0.19 °C/s (11.4 °C/min) for the healthy phases —
+// comfortably under the 0.5 °C/s soft guard threshold (constants.rs), and
+// the boundary tests below drive the intentional spikes.
+
+#[test]
+fn light_roast_software_pid_full_flow() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    // ── Preheat by slider (manual mode — Artisan's modern default) ──────
+    // Empty-drum preheat: OT1 80 + IO3 40; BT climbs 0.08 °C/tick
+    // (0.26 °C/s) from 25 to 200 °C (~11 simulated min).
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(80))
+        .expect("OT1 80");
+    ctrl.process_artisan_command(ArtisanCommand::SetFan(40))
+        .expect("IO3 40");
+    drain_output_lines(); // clear stale lines left by earlier tests in this binary
+    for i in 0..2200u64 {
+        let t = tick_time(t0, i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        let bt = (25.0 + 0.08 * i as f32).min(200.0);
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("preheat must run clean");
+    }
+    assert_eq!(
+        ctrl.get_state(),
+        RoasterState::Idle,
+        "manual mode stays Idle"
+    );
+
+    // ── Charge: 200 → 95 °C in 10 ticks (10.5 °C/tick falling) ──────────
+    // Manual mode keeps state = Idle, so the charge detector is gated out
+    // (roaster_control.rs charge gate) and no #CHARGE may appear on the wire.
+    let charge_start = 2200u64;
+    for i in 0..10u64 {
+        let t = tick_time(t0, charge_start + i);
+        // Artisan polls READ ~1/s even through the charge window — without
+        // it the 15 s comms-idle backstop would (correctly) fire here.
+        poll_read(&mut ctrl, t);
+        let bt = 200.0 - 10.5 * i as f32;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("charge dip");
+    }
+    assert!(
+        !ctrl.get_status().charge_detected,
+        "manual mode must not run the charge detector"
+    );
+    assert!(
+        !drain_charge_notifications(),
+        "#CHARGE must never be emitted in a manual slider session"
+    );
+
+    // ── Development: 95 → 202 °C at 0.06 °C/tick with Artisan's slider ──
+    // stream: heater steps down, airflow steps up (light-roast profile).
+    for i in 0..1800u64 {
+        let t = tick_time(t0, charge_start + 10 + i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        match i {
+            0 => {
+                send_slider(&mut ctrl, ArtisanCommand::SetHeater(100), t);
+            }
+            600 => {
+                send_slider(&mut ctrl, ArtisanCommand::SetHeater(75), t);
+                send_slider(&mut ctrl, ArtisanCommand::SetFan(60), t);
+            }
+            1200 => {
+                send_slider(&mut ctrl, ArtisanCommand::SetHeater(50), t);
+                send_slider(&mut ctrl, ArtisanCommand::SetFan(80), t);
+            }
+            _ => {}
+        }
+        let bt = 95.0 + 0.06 * i as f32;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("development must run clean");
+    }
+
+    // ── Drop: OT1;0 (what Artisan sends at roast end) ───────────────────
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(0))
+        .expect("OT1 0");
+    let t = tick_time(t0, charge_start + 10 + 1800);
+    tick_at(&mut ctrl, 203.0, 213.0, t).expect("post-drop tick");
+
+    let s = ctrl.get_status();
+    assert_eq!(s.ssr_output, 0.0, "OT1;0 must cut the heater");
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "a clean light roast must not latch anything"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Idle);
+    assert!(
+        !s.pid_enabled,
+        "software-PID mode never enables the firmware PID"
+    );
+    // READ stays the 5-field TC4 format through the whole session.
+    let response = ArtisanFormatter::format_read_response_full(&s);
+    assert_eq!(response.split(',').count(), 5, "READ must stay 5-field");
+    // The wire carried no error lines during the whole session.
+    assert!(
+        !drain_output_lines().iter().any(|l| l.starts_with("ERR ")),
+        "a clean software-PID light roast must emit no ERR lines"
+    );
+}
+
+#[test]
+fn light_roast_firmware_pid_full_flow() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    // Legacy TC4 PID path: PID;ON (=START) then PID;SV;200.
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START");
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("PID;SV;200");
+    assert_eq!(ctrl.get_state(), RoasterState::Heating);
+    assert!(ctrl.get_status().pid_enabled);
+    assert_eq!(ctrl.get_status().target_temp, 200.0);
+    drain_output_lines(); // clear stale lines left by earlier tests in this binary
+
+    // ── Drum warm-up under PID: 25 → 200 °C at 0.06 °C/tick ─────────────
+    // (no dip — charge detection only triggers on a real drop).
+    for i in 0..2920u64 {
+        let t = tick_time(t0, i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        let bt = (25.0 + 0.06 * i as f32).min(200.0);
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("warm-up");
+    }
+    assert!(
+        !ctrl.get_status().charge_detected,
+        "no charge may be detected without a dip"
+    );
+
+    // ── Charge: 200 → 95 °C — the detector IS armed in Heating state ────
+    let charge_start = 2920u64;
+    for i in 0..10u64 {
+        let t = tick_time(t0, charge_start + i);
+        // Artisan keeps polling READ through the charge window; without it
+        // the comms-idle backstop would fire instead of the charge detection.
+        poll_read(&mut ctrl, t);
+        let bt = 200.0 - 10.5 * i as f32;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("charge dip");
+    }
+    assert!(
+        ctrl.get_status().charge_detected,
+        "firmware-PID mode must detect the light-roast charge dip"
+    );
+    assert!(
+        drain_charge_notifications(),
+        "#CHARGE must be emitted in firmware-PID mode"
+    );
+
+    // ── Development + drop: 95 → 203 °C at 0.06 °C/tick ─────────────────
+    for i in 0..1800u64 {
+        let t = tick_time(t0, charge_start + 10 + i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        let bt = 95.0 + 0.06 * i as f32;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("development");
+    }
+
+    // READ carries the 8-field PID variant while PID is on.
+    let s = ctrl.get_status();
+    let response = ArtisanFormatter::format_read_response_full(&s);
+    assert_eq!(
+        response.split(',').count(),
+        8,
+        "READ with PID on must be 8-field, got: {response}"
+    );
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "a clean firmware-PID light roast must not latch anything"
+    );
+
+    // ── Roast end = PID;OFF ─────────────────────────────────────────────
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("PID;OFF");
+    let t = tick_time(t0, charge_start + 10 + 1800 + 1);
+    tick_at(&mut ctrl, 203.0, 213.0, t).expect("post-off tick");
+    let s = ctrl.get_status();
+    assert_eq!(s.ssr_output, 0.0, "PID;OFF must cut the heater");
+    assert!(
+        !s.fault_condition,
+        "PID;OFF (roast end) must NOT arm the safety latch"
+    );
+    assert!(
+        !drain_output_lines()
+            .iter()
+            .any(|l| l.starts_with("ERR safety_fault")),
+        "a clean firmware-PID light roast must emit no safety faults"
+    );
+}
+
+// ── Boundary tests: the two-tier rate-of-rise guard ────────────────────────
+//
+// The guard is fed by `refresh_bt_guard_derivative` (IIR alpha 0.3, sensor.rs)
+// on the BT-only derivative. For a constant input rate r the filtered value
+// converges as r·(1 − 0.7ⁿ) per tick, so the filtered signal crosses the
+// 0.5 °C/s soft band ~4-6 ticks into a spike and the 1.0 °C/s hard band
+// ~3-4 ticks into a fast one. The tests below use 0.186 °C/tick = 0.6 °C/s,
+// 0.217 °C/tick = 0.7 °C/s and 0.465 °C/tick = 1.5 °C/s at TICK_MS = 310.
+
+#[test]
+fn light_roast_boundary_manual_mode_ror_guard_disarmed() {
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(80))
+        .expect("OT1 80");
+
+    // 0.6 °C/s for 16 ticks (~5 s) — enough to trip the 3-tick rule if the
+    // guard were armed. In pure-manual mode (pid_enabled = false) the arm
+    // gate (roaster_control.rs) keeps it disarmed by design.
+    let mut bt = 100.0f32;
+    for i in 0..16u64 {
+        let t = tick_time(t0, i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        bt += 0.186;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("manual spike");
+    }
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "manual mode must keep the RoR guard disarmed"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Idle);
+}
+
+#[test]
+fn light_roast_boundary_turnaround_does_not_trip_firmware_pid() {
+    // The key light-roast false-trip: a ~3 s, 0.6 °C/s turnaround right after
+    // charge in firmware-PID mode. With the old single-tier 3-tick rule the
+    // filtered derivative crossed 0.5 °C/s ~6 ticks in and latched ~2 ticks
+    // later — a false emergency on a healthy aggressive light roast. The
+    // soft band (ROR_SOFT_DEBOUNCE_LIMIT = 12) tolerates the brief spike.
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START");
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("SV 200");
+
+    // Seed the derivative pipeline with 4 healthy ticks (slope 0.05 °C/tick).
+    let mut bt = 90.0f32;
+    for i in 0..4u64 {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("seed");
+    }
+
+    // Turnaround spike: 0.6 °C/s (soft band + 0.1) for 10 ticks (~3.1 s).
+    // The per-tick step is derived FROM the production soft threshold so the
+    // test keeps pinning the false-trip scenario if HIL calibration ever
+    // moves MAX_BT_RATE_OF_RISE.
+    let spike_step = (MAX_BT_RATE_OF_RISE + 0.1) * (TICK_MS as f32 / 1000.0);
+    for i in 4..14u64 {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        bt += spike_step;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("turnaround spike");
+    }
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "a ~3 s light-roast turnaround must not trip the soft band"
+    );
+
+    // The roast continues cleanly afterwards at a healthy slope.
+    for i in 14..40u64 {
+        let t = tick_time(t0, i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        bt += 0.05;
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("post-turnaround");
+    }
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "the roast must stay clean after the tolerated spike"
+    );
+}
+
+#[test]
+fn light_roast_boundary_hard_runaway_trips_firmware_pid() {
+    // A genuine runaway: 1.5 °C/s sustained. The filtered derivative crosses
+    // the 1.0 °C/s hard band ~4 ticks into the spike and the FAST 3-tick
+    // debounce latches ~2 ticks later — the hard-band protection is not
+    // degraded by the two-tier change.
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START");
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("SV 200");
+
+    let mut bt = 90.0f32;
+    for i in 0..4u64 {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("seed");
+    }
+
+    let mut fired = false;
+    let hard_step = (MAX_BT_RATE_OF_RISE_HARD + 0.5) * (TICK_MS as f32 / 1000.0); // 1.5 °C/s
+                                                                                  // Enter the hard band ~4 spike ticks in (IIR alpha 0.3); the FAST
+                                                                                  // 3-tick debounce then latches — bound the loop on the production
+                                                                                  // consecutive limit plus margin so a regressed debounce fails loudly.
+    for i in 4..(4 + ROR_EXCEEDED_CONSECUTIVE_LIMIT as u64 + 12) {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        bt += hard_step;
+        if tick_at(&mut ctrl, bt, bt + 10.0, t).is_err() {
+            fired = true;
+            break;
+        }
+    }
+    assert!(fired, "a sustained hard-band runaway must still latch");
+    assert_emergency_posture(&mut ctrl, tick_time(t0, 40));
+    assert!(
+        drain_output_lines()
+            .iter()
+            .any(|l| l.starts_with("ERR safety_fault Bean temperature rate-of-rise exceeded")),
+        "the hard-band latch must announce itself on the wire"
+    );
+}
+
+#[test]
+fn light_roast_boundary_sustained_soft_band_trips_firmware_pid() {
+    // A marginal-but-SUSTAINED climb (0.7 °C/s) must still abort: the
+    // filtered derivative enters the soft band ~6 ticks in and the 12-tick
+    // debounce latches ~10 ticks later (~5 s sustained).
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("START");
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("SV 200");
+
+    let mut bt = 90.0f32;
+    for i in 0..4u64 {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("seed");
+    }
+
+    let mut fired = false;
+    let soft_step = (MAX_BT_RATE_OF_RISE + 0.2) * (TICK_MS as f32 / 1000.0); // 0.7 °C/s
+                                                                             // Enters the soft band ~3 spike ticks in (IIR alpha 0.3); the extended
+                                                                             // 12-tick debounce then latches — bound the loop on the production
+                                                                             // debounce limit plus margin.
+    for i in 4..(4 + ROR_SOFT_DEBOUNCE_LIMIT as u64 + 12) {
+        let t = tick_time(t0, i);
+        poll_read(&mut ctrl, t);
+        bt += soft_step;
+        if tick_at(&mut ctrl, bt, bt + 10.0, t).is_err() {
+            fired = true;
+            break;
+        }
+    }
+    assert!(
+        fired,
+        "a SUSTAINED soft-band climb must latch after the extended debounce"
+    );
+    assert_emergency_posture(&mut ctrl, tick_time(t0, 40));
+}
+
+#[test]
+fn light_roast_boundary_slow_finish_does_not_trip_probe_stuck() {
+    // A very slow manual light finish: RoR 0.05 °C/s (3 °C/min) with the
+    // heater on. BT moves 6 °C per 120 s — far above the 1 °C probe-stuck
+    // variation — so neither the 120 s warning nor the 300 s manual latch
+    // may fire over a 400 s window (A-TC4-C two-stage detector).
+    let _guard = acquire_lock();
+    let mut ctrl = build_control();
+    let t0 = Instant::now();
+
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(40))
+        .expect("OT1 40");
+    drain_output_lines(); // clear stale lines left by earlier tests in this binary
+
+    let mut bt = 195.0f32;
+    for i in 0..1300u64 {
+        // 403 simulated seconds — past the 300 s manual latch threshold.
+        let t = tick_time(t0, i);
+        if i % READ_EVERY_TICKS == 0 {
+            poll_read(&mut ctrl, t);
+        }
+        bt += 0.0155; // 0.05 °C/s
+        tick_at(&mut ctrl, bt, bt + 10.0, t).expect("slow finish");
+    }
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "a slow finish with live BT must not latch probe-stuck"
+    );
+    let lines = drain_output_lines();
+    assert!(
+        !lines.iter().any(|l| l == "ERR probe_stuck_warning"),
+        "a live probe must not even reach the warning stage"
+    );
+    assert!(
+        !lines.iter().any(|l| l.starts_with("ERR safety_fault")),
+        "no safety fault on a healthy slow finish"
     );
 }
 

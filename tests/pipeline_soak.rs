@@ -117,7 +117,13 @@ const COMMANDS: &[&str] = &[
 ];
 
 /// Feed one command line through a transport entry point.
-fn feed(command: &str, via_usb: bool) {
+///
+/// The output channel is drained after every command (each enqueue emits a
+/// TRACE event into the 16-deep shared channel); without the per-feed drain
+/// the channel fills with TRACE lines and responses drop through the
+/// best-effort `try_send` (production `dual_output_task` drains every 5 ms —
+/// mirror it here). Audit A-TC4-D (2026-08-12).
+fn feed(command: &str, via_usb: bool, collected: &mut Vec<StdString>) {
     let mut bytes = command.as_bytes().to_vec();
     bytes.push(b'\r');
     if via_usb {
@@ -125,12 +131,12 @@ fn feed(command: &str, via_usb: bool) {
     } else {
         process_command_data(&bytes);
     }
+    drain_output_into(collected);
 }
 
 /// Drain the artisan channel and process commands exactly like the
 /// production control loop, emitting READ/STATUS responses.
-fn process_all_queued() -> Vec<StdString> {
-    let mut collected = Vec::new();
+fn process_all_queued(collected: &mut Vec<StdString>) {
     block_on(async {
         let cmd_channel = ServiceContainer::get_artisan_channel();
         while let Ok(traced) = cmd_channel.try_receive() {
@@ -161,11 +167,10 @@ fn process_all_queued() -> Vec<StdString> {
             // and a heavy round would otherwise silently drop responses
             // through the best-effort `try_send` (production
             // `dual_output_task` drains every 5 ms — mirror it here).
-            drain_output_into(&mut collected);
+            drain_output_into(collected);
         }
     });
-    drain_output_into(&mut collected);
-    collected
+    drain_output_into(collected);
 }
 
 fn drain_output_into(collected: &mut Vec<StdString>) {
@@ -224,14 +229,15 @@ fn random_command_soak_keeps_queues_bounded_and_wire_wellformed() {
     let mut total_output = 0u64;
 
     for _round in 0..rounds {
+        let mut outputs = Vec::new();
         for _i in 0..commands_per_round {
             let pick = rng.below(COMMANDS.len() as u64) as usize;
             let via_usb = rng.below(2) == 1;
-            feed(COMMANDS[pick], via_usb);
+            feed(COMMANDS[pick], via_usb, &mut outputs);
             total_commands += 1;
         }
 
-        let outputs = process_all_queued();
+        process_all_queued(&mut outputs);
         assert!(
             !outputs.iter().any(|l| l.starts_with("ERR channel_full")),
             "the 16-slot command channel must absorb the soak load, got drops: {:?}",
@@ -254,7 +260,8 @@ fn random_command_soak_keeps_queues_bounded_and_wire_wellformed() {
     }
 
     // Final drain: nothing may remain queued after processing.
-    let leftovers = process_all_queued();
+    let mut leftovers = Vec::new();
+    process_all_queued(&mut leftovers);
     for line in &leftovers {
         assert_line_wellformed(line);
     }
