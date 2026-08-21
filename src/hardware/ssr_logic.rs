@@ -486,6 +486,10 @@ mod tests {
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 
+    // `cross_check_heat_detection` is intentionally a no-op when the physical
+    // heat-presence pin is absent (`simulated-sensors` / `no-heat-sense`), so
+    // these latch tests only exercise the real-pin path.
+    #[cfg(not(any(feature = "simulated-sensors", feature = "no-heat-sense")))]
     #[test]
     fn stuck_on_requires_ten_consecutive_heat_samples_at_zero_duty() {
         let mut base = base_with_duty(0);
@@ -504,6 +508,7 @@ mod tests {
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 
+    #[cfg(not(any(feature = "simulated-sensors", feature = "no-heat-sense")))]
     #[test]
     fn heat_mismatch_latches_error_after_five_samples() {
         let mut base = base_with_duty(DUTY_OBSERVABLE);
