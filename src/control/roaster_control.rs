@@ -13,6 +13,7 @@ use embassy_time::{Duration, Instant};
 use log::{debug, error, info, warn};
 
 use crate::hardware::sensors::SensorConversionHub;
+use crate::logging::edge_log_gate::EdgeLogGate;
 
 /// Bug R7 (2026-07-26): a manual heater session (`heat_session_start`) only
 /// closes after the heater has been OFF for this long. Prevents a momentary
@@ -99,6 +100,14 @@ pub struct RoasterControl {
         heapless::String<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>,
         { crate::logging::roast_logger::LOG_CAPACITY + 1 },
     >,
+    /// BUG-04 (2026-08-21): rising-edge gate for the FAN-FLOOR interlock
+    /// warn. The interlock is a PERSISTENT condition (re-evaluated every
+    /// tick because `fan_output` is recomputed from `artisan_manual_fan()`,
+    /// which is 0.0 by default), and a per-tick `warn!` injected ≈3 lines/s
+    /// into the same physical channel that carries the Artisan protocol
+    /// (esp-println `auto` → USB-Serial-JTAG / UART0, both shared),
+    /// corrupting READ/STATUS responses. Log once per activation episode.
+    fan_floor_gate: EdgeLogGate,
 }
 
 impl RoasterControl {
@@ -130,6 +139,7 @@ impl RoasterControl {
             probe_stuck_warning_sent: false,
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
+            fan_floor_gate: EdgeLogGate::new(),
         })
     }
 
@@ -332,9 +342,6 @@ impl RoasterControl {
                     self.dispatch.disable_pid();
                     self.status.pid_enabled = false;
                     self.status.artisan_control = true;
-                    self.dispatch
-                        .get_output_manager_mut()
-                        .enable_continuous_output();
                     return Ok(());
                 }
                 Err(e) => return Err(e),
@@ -351,9 +358,6 @@ impl RoasterControl {
             self.dispatch.disable_pid();
             self.status.pid_enabled = false;
             self.status.artisan_control = true;
-            self.dispatch
-                .get_output_manager_mut()
-                .enable_continuous_output();
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         }
 
@@ -362,12 +366,9 @@ impl RoasterControl {
             // The two lines that used to live here (`artisan_control = true`
             // and `pid_enabled = false`) made a mid-roast slider move drop
             // the heater by disabling PID and falling into manual mode with
-            // no manual heater set. Keep only the side-effect of issuing a
-            // continuous-output tick (so Artisan sees the fan change) and the
-            // physical fan write.
-            self.dispatch
-                .get_output_manager_mut()
-                .enable_continuous_output();
+            // no manual heater set. The physical fan write remains the only
+            // side effect (BUG-08: telemetry is opt-in via STREAM;ON, not a
+            // side effect of slider moves).
 
             // Bug S6 (2026-08-05): the `FAN_MIN_SAFETY_PCT` interlock floor
             // used to live only in the control tick, so an `OT2 0` (or any
@@ -378,11 +379,23 @@ impl RoasterControl {
             // The tick-level floor remains as a second line of defense.
             let mut fan = fan;
             if self.status.ssr_output > 0.0 && fan < FAN_MIN_SAFETY_PCT {
-                warn!(
-                    "SAFETY FAN-FLOOR: heater at {:.1}% with fan command {:.1}% — raising fan to minimum {:.0}%",
-                    self.status.ssr_output, fan, FAN_MIN_SAFETY_PCT
-                );
+                // BUG-04: warn once per activation episode (edge gate) — the
+                // interlock is persistent across ticks and a per-tick warn!
+                // corrupts the protocol channel.
+                if self.fan_floor_gate.rising(true) {
+                    warn!(
+                        "SAFETY FAN-FLOOR: heater at {:.1}% with fan command {:.1}% — raising fan to minimum {:.0}%",
+                        self.status.ssr_output, fan, FAN_MIN_SAFETY_PCT
+                    );
+                } else {
+                    debug!(
+                        "SAFETY FAN-FLOOR active: heater {:.1}%, fan command raised to {:.0}%",
+                        self.status.ssr_output, FAN_MIN_SAFETY_PCT
+                    );
+                }
                 fan = FAN_MIN_SAFETY_PCT;
+            } else {
+                self.fan_floor_gate.rising(false);
             }
 
             self.actuator.set_fan_speed(fan, &mut self.status)?;
@@ -539,6 +552,16 @@ impl RoasterControl {
         // Bug B3: explicit recovery also drops the cooldown latch — the
         // operator is taking over, so airflow returns to operator control.
         self.cooling_active = false;
+        // BUG-02 (2026-08-21): explicit operator recovery also re-arms the
+        // SSR availability state machine. Without this, a `NotDetected`/
+        // `Error` latch survives the recovery — the only automatic
+        // transitions back to `Available` require either a trustworthy LOW
+        // sample or duty ≥ 50 %, and a non-`Available` status forces the
+        // duty to 0 % every tick. A real physical fault (if any) is
+        // re-detected within the debounce window (~1.7 s at the real tick
+        // cadence) once the heater is driven ≥ 50 % again, so the re-arm
+        // removes the irreversibility, not the protection.
+        self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
     pub fn is_temperature_valid(temp: f32) -> bool {
@@ -970,11 +993,23 @@ impl RoasterControl {
         // Explicit operator values at or above the floor pass through untouched.
         let mut fan_output = fan_output;
         if desired_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT {
-            warn!(
-                "SAFETY FAN-FLOOR: heater at {:.1}% with fan at {:.1}% — raising fan to minimum {:.0}%",
-                desired_output, fan_output, FAN_MIN_SAFETY_PCT
-            );
+            // BUG-04: warn once per activation episode (edge gate) — see the
+            // command-path FAN-FLOOR site for the protocol-corruption
+            // rationale.
+            if self.fan_floor_gate.rising(true) {
+                warn!(
+                    "SAFETY FAN-FLOOR: heater at {:.1}% with fan at {:.1}% — raising fan to minimum {:.0}%",
+                    desired_output, fan_output, FAN_MIN_SAFETY_PCT
+                );
+            } else {
+                debug!(
+                    "SAFETY FAN-FLOOR active: heater {:.1}%, fan raised to {:.0}%",
+                    desired_output, FAN_MIN_SAFETY_PCT
+                );
+            }
             fan_output = FAN_MIN_SAFETY_PCT;
+        } else {
+            self.fan_floor_gate.rising(false);
         }
         // Bug B (2026-08-03): a fan-write failure in the control loop used to
         // propagate via `?` up to `update_control_stage` (tasks.rs), which only
@@ -1171,7 +1206,11 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::Preheat(_)
                 | crate::config::ArtisanCommand::Chan(_)
                 | crate::config::ArtisanCommand::Units(_)
-                | crate::config::ArtisanCommand::Filt(_) => { /* allow */ }
+                | crate::config::ArtisanCommand::Filt(_)
+                // BUG-08: STREAM is a pure output-state command with zero
+                // actuator side effects — same whitelist rationale as
+                // CHAN/UNITS/FILT (Artisan reconnect while latched).
+                | crate::config::ArtisanCommand::SetStreaming(_) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     return Err(RoasterError::InvalidState {
@@ -1244,6 +1283,9 @@ impl RoasterControl {
             }
             crate::config::ArtisanCommand::SetPidOutputLimits(min, max) => {
                 self.handle_set_pid_output_limits(min, max)
+            }
+            crate::config::ArtisanCommand::SetStreaming(enabled) => {
+                self.handle_set_streaming(enabled)
             }
         }
     }
@@ -1345,9 +1387,10 @@ impl RoasterControl {
                 );
             }
             crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
-            self.dispatch
-                .get_output_manager_mut()
-                .enable_continuous_output();
+            // BUG-08 (2026-08-21): START no longer enables the spontaneous
+            // telemetry stream — that is opt-in via `STREAM;ON`. The
+            // `#DUMP` ring-buffer feed is driven by the roast logger state
+            // (see `emit_telemetry_stage`), not by the stream flag.
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
             self.state = crate::config::constants::RoasterState::Heating;
             self.status.state = self.state;
@@ -1405,6 +1448,16 @@ impl RoasterControl {
         info!("Artisan+ STOP - stopping roast");
         self.stop_streaming()?;
         crate::logging::roast_logger::stop_roast();
+        // BUG-02 (2026-08-21): a plain STOP (no fault/emergency latched) is
+        // also an explicit operator action — re-arm the SSR availability
+        // state machine here too. `clear_emergency_explicit` covers the
+        // latched paths (STOP-with-fault, START, PREHEAT, StopRoast); this
+        // covers the common case where heat detection latched
+        // `NotDetected`/`Error` WITHOUT arming the emergency latch (e.g. a
+        // build without the optional GPIO1 current-sense circuit), in which
+        // the `Stop` path above never calls `clear_emergency_explicit` and
+        // the heater would otherwise stay dead until a power cycle.
+        self.actuator.rearm_heater_hardware_status(&mut self.status);
         Ok(())
     }
 
@@ -1555,6 +1608,35 @@ impl RoasterControl {
             self.send_text_response(ack.as_str());
         }
         result
+    }
+
+    /// BUG-08 (2026-08-21): opt-in continuous telemetry.
+    ///
+    /// The spontaneous 1 Hz `#<t>,ET,BT,ROR,Gas` stream is OFF by default and
+    /// is enabled only by an explicit `STREAM;ON` (this handler), never as a
+    /// side effect of START/OT1/OT2/PID;SV. Artisan polls `READ` and does not
+    /// need the stream; a spontaneous line could otherwise occupy the
+    /// response slot between `flush()` and `readline()` in the ArduinoTC4
+    /// driver. `STOP`/`OFF`/`stop_streaming` clear the STREAM state (session
+    /// scope), same as PID/manual state.
+    fn handle_set_streaming(&mut self, enabled: bool) -> Result<(), RoasterError> {
+        if enabled {
+            self.dispatch
+                .get_output_manager_mut()
+                .enable_continuous_output();
+            info!("Continuous telemetry enabled (STREAM;ON)");
+        } else {
+            self.dispatch
+                .get_output_manager_mut()
+                .disable_continuous_output();
+            info!("Continuous telemetry disabled (STREAM;OFF)");
+        }
+        // '#'-prefixed ack: this is an extension command for custom clients,
+        // but keeping the handshake-shaped ack lets any line-oriented peer
+        // treat it uniformly.
+        let ack = crate::output::artisan::ArtisanFormatter::format_handshake_ack();
+        self.send_text_response(ack.as_str());
+        Ok(())
     }
 
     fn handle_filt(&mut self, val: u8) -> Result<(), RoasterError> {
@@ -1991,7 +2073,7 @@ impl RoasterControl {
 mod tests {
     use super::*;
     use crate::common::{StubFan, StubHeater};
-    use crate::config::{ArtisanCommand, RoasterCommand, RoasterState};
+    use crate::config::{ArtisanCommand, RoasterCommand, RoasterState, SsrHardwareStatus};
     use crate::control::traits::Fan;
     use crate::hardware::sensors::SensorConversionHub;
     use alloc::boxed::Box;
@@ -2444,6 +2526,183 @@ mod tests {
             "Latched stop must keep state = Error, not Idle"
         );
         assert_eq!(ctrl.get_status().state, RoasterState::Error);
+    }
+
+    // ── BUG-02: SSR availability latch must be re-armed by operator recovery ─
+
+    #[test]
+    fn off_rearms_ssr_hardware_status_without_fault() {
+        // BUG-02 (2026-08-21): heat detection latches `NotDetected`/`Error`
+        // WITHOUT arming the emergency latch (periodic_health_check swallows
+        // the error). A plain `OFF` then bypasses `clear_emergency_explicit`
+        // (no fault) — `handle_stop` must still re-arm the heater, or the
+        // build without the GPIO1 current-sense circuit dead-locks the
+        // heater until a power cycle.
+        let heater = StubHeater::new();
+        heater.set_status(SsrHardwareStatus::NotDetected);
+        let mut ctrl = make_control_with_stubs(heater, StubFan::new());
+        assert_eq!(
+            ctrl.get_status().ssr_hardware_status,
+            SsrHardwareStatus::NotDetected
+        );
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(r.is_ok(), "OFF must succeed: {:?}", r);
+        assert_eq!(
+            ctrl.get_status().ssr_hardware_status,
+            SsrHardwareStatus::Available,
+            "operator OFF must re-arm the SSR availability"
+        );
+    }
+
+    #[test]
+    fn emergency_stop_does_not_rearm_ssr_hardware_status() {
+        // The internal/emergency path must NOT re-arm: `EmergencyStop` is the
+        // action that latches, not the one that recovers.
+        let heater = StubHeater::new();
+        heater.set_status(SsrHardwareStatus::Error);
+        let mut ctrl = make_control_with_stubs(heater, StubFan::new());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(r.is_ok());
+
+        // The stub was moved into the control; verify via the published
+        // status. `handle_emergency_stop` refreshes it from the driver
+        // (`force_heater_off`), so it must still read the driver value
+        // `NotDetected` — and crucially NOT `Available` (no re-arm).
+        assert_eq!(
+            ctrl.get_status().ssr_hardware_status,
+            SsrHardwareStatus::NotDetected,
+            "EmergencyStop must not re-arm the SSR availability"
+        );
+    }
+
+    #[test]
+    fn off_with_latched_emergency_rearms_ssr_hardware_status() {
+        // Latched path: OFF runs clear_emergency_explicit + handle_stop, both
+        // of which re-arm (idempotent). The published status must recover.
+        let heater = StubHeater::new();
+        heater.set_status(SsrHardwareStatus::Error);
+        let mut ctrl = make_control_with_stubs(heater, StubFan::new());
+
+        let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(ctrl.safety().is_emergency_active());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(r.is_ok(), "OFF recovery must succeed: {:?}", r);
+        assert_eq!(
+            ctrl.get_status().ssr_hardware_status,
+            SsrHardwareStatus::Available,
+            "latched OFF recovery must re-arm the SSR availability"
+        );
+    }
+
+    #[test]
+    fn start_with_latch_rearms_ssr_hardware_status() {
+        // START is a documented re-energizing recovery — it must also re-arm
+        // the SSR availability state machine.
+        let heater = StubHeater::new();
+        heater.set_status(SsrHardwareStatus::NotDetected);
+        let mut ctrl = make_control_with_stubs(heater, StubFan::new());
+
+        let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(ctrl.safety().is_emergency_active());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+        assert!(r.is_ok(), "START recovery must succeed: {:?}", r);
+        assert_eq!(
+            ctrl.get_status().ssr_hardware_status,
+            SsrHardwareStatus::Available,
+            "START recovery must re-arm the SSR availability"
+        );
+    }
+
+    #[test]
+    fn heater_command_works_after_rearm() {
+        // End-to-end BUG-02: after the re-arm, a heater command is actually
+        // applied (no more forced 0 % output).
+        let heater = StubHeater::new();
+        heater.set_status(SsrHardwareStatus::NotDetected);
+        let mut ctrl = make_control_with_stubs(heater, StubFan::new());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::Stop);
+        assert!(r.is_ok());
+
+        let heater_after = ctrl.process_artisan_command(ArtisanCommand::SetHeater(50));
+        assert!(
+            heater_after.is_ok(),
+            "heater command must be accepted after re-arm: {:?}",
+            heater_after
+        );
+    }
+
+    // ── BUG-08: telemetry stream is opt-in (STREAM;ON/OFF) ──────────
+
+    #[test]
+    fn stream_command_toggles_telemetry() {
+        let mut ctrl = make_control();
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::SetStreaming(true))
+            .expect("STREAM;ON succeeds");
+        assert!(ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::SetStreaming(false))
+            .expect("STREAM;OFF succeeds");
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+    }
+
+    #[test]
+    fn control_commands_do_not_auto_enable_telemetry() {
+        let mut ctrl = make_control();
+
+        ctrl.process_artisan_command(ArtisanCommand::SetHeater(50))
+            .expect("OT1 succeeds");
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::SetFan(60))
+            .expect("OT2 succeeds");
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+            .expect("START succeeds");
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+            .expect("PID;SV succeeds");
+        assert!(!ctrl.get_output_manager().is_continuous_enabled());
+    }
+
+    #[test]
+    fn stop_clears_telemetry_stream() {
+        let mut ctrl = make_control();
+        ctrl.process_artisan_command(ArtisanCommand::SetStreaming(true))
+            .expect("STREAM;ON succeeds");
+        assert!(ctrl.get_output_manager().is_continuous_enabled());
+
+        ctrl.process_artisan_command(ArtisanCommand::Stop)
+            .expect("OFF succeeds");
+        assert!(
+            !ctrl.get_output_manager().is_continuous_enabled(),
+            "STOP clears the session-scoped STREAM state"
+        );
+    }
+
+    #[test]
+    fn stream_accepted_while_latched() {
+        // BUG-08: STREAM has zero actuator side effects — allowed while the
+        // safety latch is armed (same rationale as CHAN/UNITS/FILT).
+        let mut ctrl = make_control();
+        let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+        assert!(ctrl.safety().is_emergency_active());
+
+        let r = ctrl.process_artisan_command(ArtisanCommand::SetStreaming(true));
+        assert!(
+            r.is_ok(),
+            "STREAM;ON must be accepted while latched: {:?}",
+            r
+        );
+        assert!(ctrl.get_output_manager().is_continuous_enabled());
     }
 
     // ── V2-16a: RoR guard must not fire during empty-drum PREHEAT ─

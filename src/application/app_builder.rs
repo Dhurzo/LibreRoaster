@@ -10,6 +10,8 @@ use crate::input::ArtisanInput;
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 #[cfg(target_arch = "riscv32")]
+use esp_hal::gpio::Output;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::peripherals::UART0;
 
 use crate::safety::watchdog::{WatchdogError, WatchdogFeeder};
@@ -29,6 +31,9 @@ pub struct AppBuilder {
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
     sensor_hub: Option<SensorConversionHub>,
+    /// BUG-06: status LED handle (embedded-only).
+    #[cfg(target_arch = "riscv32")]
+    status_led: Option<Output<'static>>,
 }
 
 impl Default for AppBuilder {
@@ -49,7 +54,17 @@ impl AppBuilder {
             heater: None,
             fan: None,
             sensor_hub: None,
+            #[cfg(target_arch = "riscv32")]
+            status_led: None,
         }
+    }
+
+    /// BUG-06: hand the status LED handle to the service container so the
+    /// control-loop task can drive it (embedded-only).
+    #[cfg(target_arch = "riscv32")]
+    pub fn with_status_led(mut self, led: Output<'static>) -> Self {
+        self.status_led = Some(led);
+        self
     }
 
     #[cfg(target_arch = "riscv32")]
@@ -131,6 +146,12 @@ impl AppBuilder {
 
         ServiceContainer::init_roaster(roaster);
         ServiceContainer::init_artisan_input(artisan_input);
+
+        // BUG-06: install the status LED into the container (embedded-only).
+        #[cfg(target_arch = "riscv32")]
+        if let Some(led) = self.status_led {
+            ServiceContainer::init_status_led(led);
+        }
 
         ServiceContainer::init_multiplexer();
         let watchdog = WatchdogFeeder::initialize().map_err(BuildError::WatchdogInit)?;

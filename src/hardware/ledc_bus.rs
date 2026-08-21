@@ -11,6 +11,10 @@ struct ChannelEntry<'a> {
     number: channel::Number,
     name: &'static str,
     duty: Cell<u16>,
+    /// BUG-04 (2026-08-21): rising-edge gate for the LEDC-GUARD timeout
+    /// warn — one `warn!` per busy episode instead of one per rejected
+    /// write (protocol channel integrity). Re-arms on a successful acquire.
+    guard_timeout_warned: Cell<bool>,
 }
 
 impl<'a> ChannelEntry<'a> {
@@ -24,6 +28,7 @@ impl<'a> ChannelEntry<'a> {
             number,
             name,
             duty: Cell::new(0),
+            guard_timeout_warned: Cell::new(false),
         }
     }
 }
@@ -73,7 +78,18 @@ impl<'a> LedcBus<'a> {
     where
         F: FnOnce(&mut channel::Channel<'a, LowSpeed>) -> R,
     {
-        let guard = self.guard.try_acquire(entry.name)?;
+        let guard = match self.guard.try_acquire(entry.name) {
+            Ok(guard) => guard,
+            Err(err) => {
+                // BUG-04: warn once per busy episode; re-armed on the next
+                // successful acquire.
+                if !entry.guard_timeout_warned.replace(true) {
+                    warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
+                }
+                return Err(err);
+            }
+        };
+        entry.guard_timeout_warned.set(false);
         let mut channel_ref = entry.channel.borrow_mut();
         let result = f(&mut channel_ref);
         drop(channel_ref);
@@ -182,10 +198,7 @@ impl<'a> LedcChannelHandle<'a> {
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
-            Err(err) => {
-                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
-                Err(channel::Error::Channel)
-            }
+            Err(_) => Err(channel::Error::Channel),
         }
     }
 
@@ -201,10 +214,7 @@ impl<'a> LedcChannelHandle<'a> {
                 self.bus.store_duty(entry, duty);
                 Ok(())
             }
-            Err(err) => {
-                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
-                Err(channel::Error::Channel)
-            }
+            Err(_) => Err(channel::Error::Channel),
         }
     }
 
@@ -235,10 +245,7 @@ impl<'a> LedcChannelHandle<'a> {
                 Ok(())
             }
             Ok(Err(err)) => Err(err),
-            Err(err) => {
-                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
-                Err(channel::Error::Channel)
-            }
+            Err(_) => Err(channel::Error::Channel),
         }
     }
 
@@ -318,10 +325,7 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
             .with_channel_mut(entry, |channel| channel.configure(config))
         {
             Ok(result) => result,
-            Err(err) => {
-                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
-                Err(channel::Error::Channel)
-            }
+            Err(_) => Err(channel::Error::Channel),
         }
     }
 
@@ -345,10 +349,7 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
             .with_channel_mut(entry, |channel| channel.is_duty_fade_running())
         {
             Ok(value) => value,
-            Err(err) => {
-                warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
-                false
-            }
+            Err(_) => false,
         }
     }
 }

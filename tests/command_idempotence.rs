@@ -30,7 +30,10 @@ fn start_stop_idempotent() {
         .expect("first START succeeds");
 
     let started = control.get_status();
-    assert!(control.get_output_manager().is_continuous_enabled());
+    // BUG-08 (2026-08-21): telemetry is opt-in — START must NOT enable the
+    // spontaneous stream (it used to, and its `#` lines could occupy the
+    // READ response slot).
+    assert!(!control.get_output_manager().is_continuous_enabled());
     assert!(started.pid_enabled);
     assert_eq!(started.state, RoasterState::Heating);
 
@@ -39,15 +42,22 @@ fn start_stop_idempotent() {
         .expect("duplicate START leaves session intact");
 
     let restarted = control.get_status();
-    assert!(control.get_output_manager().is_continuous_enabled());
+    assert!(!control.get_output_manager().is_continuous_enabled());
     assert_eq!(restarted.target_temp, started.target_temp);
     assert!(restarted.pid_enabled);
+
+    // Opt-in stream: STREAM;ON enables it explicitly…
+    control
+        .process_artisan_command(ArtisanCommand::SetStreaming(true))
+        .expect("STREAM;ON succeeds");
+    assert!(control.get_output_manager().is_continuous_enabled());
 
     control
         .process_artisan_command(ArtisanCommand::EmergencyStop)
         .expect("STOP zeros outputs and disables streaming");
 
     let stopped = control.get_status();
+    // …and STOP clears it (session-scoped).
     assert!(!control.get_output_manager().is_continuous_enabled());
     assert_eq!(stopped.ssr_output, 0.0);
     assert_eq!(stopped.fan_output, 100.0);
@@ -98,7 +108,9 @@ fn manual_bounds_and_reset() {
         .expect("manual fan within bounds should apply");
     let status_manual_fan = control.get_status();
     assert_eq!(status_manual_fan.fan_output, 60.0);
-    assert!(control.get_output_manager().is_continuous_enabled());
+    // BUG-08 (2026-08-21): slider commands must NOT auto-enable the
+    // spontaneous telemetry stream (opt-in via STREAM;ON only).
+    assert!(!control.get_output_manager().is_continuous_enabled());
 
     control
         .process_artisan_command(ArtisanCommand::EmergencyStop)

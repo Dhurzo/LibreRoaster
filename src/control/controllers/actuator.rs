@@ -3,9 +3,10 @@ use crate::config::*;
 use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterError;
 use crate::control::SsrCycleGuard;
+use crate::logging::edge_log_gate::EdgeLogGate;
 use alloc::boxed::Box;
 use embassy_time::Instant;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 const SSR_SLEW_RATE_PER_SEC: f32 = 50.0;
 
@@ -16,6 +17,9 @@ pub struct ActuatorController {
     last_desired_output: f32,
     slewing_output: f32,
     last_slew_update: Option<Instant>,
+    /// BUG-04: rising-edge gate for the "SSR cycle busy" warn (one warn per
+    /// busy episode; re-arms when a write is accepted).
+    cycle_busy_gate: EdgeLogGate,
 }
 
 impl ActuatorController {
@@ -27,6 +31,7 @@ impl ActuatorController {
             last_desired_output: 0.0,
             slewing_output: 0.0,
             last_slew_update: None,
+            cycle_busy_gate: EdgeLogGate::new(),
         }
     }
 
@@ -61,11 +66,13 @@ impl ActuatorController {
             status.saturation_active = false;
             status.integrator_clamped = false;
             self.update_guard_busy_ms(now, status);
+            self.cycle_busy_gate.rising(false);
             return Ok(0.0);
         }
 
         match self.ssr_guard.next_cycle_allowed(now) {
             Ok(_) => {
+                self.cycle_busy_gate.rising(false);
                 let actual_output = if clamped > 0.0 {
                     let mut actual_output = self.slewing_output;
 
@@ -104,7 +111,14 @@ impl ActuatorController {
                 status.saturation_active = true;
                 status.integrator_clamped = true;
                 status.ssr_cycle_guard_busy_until_ms = Self::busy_window_ms(now, busy_until);
-                warn!("SSR cycle busy until {:?}", busy_until);
+                // BUG-04: the guard can stay busy across several ticks while
+                // the control loop keeps retrying; warn once per busy
+                // episode instead of every tick (protocol channel integrity).
+                if self.cycle_busy_gate.rising(true) {
+                    warn!("SSR cycle busy until {:?}", busy_until);
+                } else {
+                    debug!("SSR cycle busy until {:?}", busy_until);
+                }
                 if reject_on_busy {
                     Err(RoasterError::InvalidState {
                         source: Some("ssr_cycle_busy"),
@@ -256,6 +270,15 @@ impl ActuatorController {
 
     pub fn get_ssr_hardware_status(&self) -> SsrHardwareStatus {
         self.heater.get_status()
+    }
+
+    /// BUG-02 (2026-08-21): propagate the explicit-recovery re-arm to the
+    /// heater driver and refresh the status published in telemetry. Called
+    /// only from `clear_emergency_explicit` / `handle_stop` (operator
+    /// recovery), never from internal stop paths.
+    pub fn rearm_heater_hardware_status(&mut self, status: &mut SystemStatus) {
+        self.heater.rearm_hardware_status();
+        status.ssr_hardware_status = self.heater.get_status();
     }
 
     pub fn set_heater_power(&mut self, power: f32) -> Result<(), RoasterError> {

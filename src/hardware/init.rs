@@ -273,14 +273,33 @@ fn init_spi_sensors(
     let et_cs = Output::new(gpio3, Level::High, OutputConfig::default());
     let et_spi = SpiDeviceWithCs::new(spi_mutex, et_cs);
 
-    let bean_sensor = Max31856::new(bt_spi).map_err(|e| InitError::HardwareInit {
-        what: "BT sensor",
-        reason: format!("{:?}", e),
-    })?;
-    let env_sensor = Max31856::new(et_spi).map_err(|e| InitError::HardwareInit {
-        what: "ET sensor",
-        reason: format!("{:?}", e),
-    })?;
+    // BUG-07 (2026-08-21): tolerant boot. A single absent/unsoldered
+    // MAX31856 degrades that channel (fault debounce → NaN → hold at
+    // runtime) instead of halting the whole firmware; BOTH dead is a
+    // genuine no-go (no temperature → no safe control) and still aborts.
+    let (bean_sensor, bt_ok) = Max31856::new_tolerant(bt_spi);
+    let (env_sensor, et_ok) = Max31856::new_tolerant(et_spi);
+
+    if let Err(e) = crate::hardware::max31856::boot_policy(bt_ok, et_ok) {
+        return Err(InitError::HardwareInit {
+            what: "thermocouples",
+            reason: format!(
+                "{:?} (BT ok={}, ET ok={}) — check SPI bus (SCLK GPIO6 / MOSI GPIO7 / \
+                 MISO GPIO5), CS wiring (BT GPIO4 / ET GPIO3) and 3V3",
+                e, bt_ok, et_ok
+            ),
+        });
+    }
+
+    if !bt_ok {
+        log::error!(
+            "BT channel (GPIO4 CS) unverified — BT will read as faulted. \
+             Roasting on BT feedback is UNSAFE; use PID;CHAN;1 (ET) or repair the wiring."
+        );
+    }
+    if !et_ok {
+        log::warn!("ET channel (GPIO3 CS) unverified — continuing in BT-only configuration.");
+    }
 
     Ok((bean_sensor, env_sensor))
 }

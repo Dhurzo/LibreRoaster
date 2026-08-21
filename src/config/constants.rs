@@ -251,6 +251,12 @@ pub enum ArtisanCommand {
     SetPidChannel(u8),            // PID;CHAN;2 — 1=ET, 2=BT (default)
     SetPidCycleTime(u32),         // PID;CT;1000 — cycle time in ms
     SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
+    // BUG-08 (2026-08-21): opt-in continuous telemetry. `STREAM;ON` enables
+    // the spontaneous 1 Hz `#<t>,ET,BT,ROR,Gas` stream; `STREAM;OFF` (and
+    // any STOP) disables it. Off by default — the stream used to be a side
+    // effect of START/OT1/OT2/PID;SV, and its spontaneous lines could occupy
+    // the READ response slot on the shared wire.
+    SetStreaming(bool), // STREAM;ON / STREAM;OFF
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;

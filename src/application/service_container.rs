@@ -23,6 +23,8 @@ use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as EmbassyMutex;
+#[cfg(target_arch = "riscv32")]
+use esp_hal::gpio::Output;
 use heapless::String;
 
 pub struct ServiceContainer {
@@ -36,6 +38,13 @@ pub struct ServiceContainer {
     // NEVER read or written (always None). The real multiplexer lives in the
     // `ARTISAN_MULTIPLEXER` static, accessed via `get_multiplexer()`.
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
+    /// BUG-06 (2026-08-21): the status LED's single long-lived owner. Stored
+    /// here so the control-loop task can drive the pattern and
+    /// `enter_safe_shutdown` can keep using the LED if the container was
+    /// populated before the failure. Embedded-only (esp-hal `Output` does
+    /// not exist on host).
+    #[cfg(target_arch = "riscv32")]
+    pub status_led: Mutex<RefCell<Option<Output<'static>>>>,
 }
 
 // Bug E1 (2026-08-03): was 8. The channel is drained once per control tick
@@ -153,8 +162,38 @@ impl ServiceContainer {
             roaster: EmbassyMutex::new(None),
             artisan_input: Mutex::new(RefCell::new(None)),
             watchdog_feeder: Mutex::new(RefCell::new(None)),
+            #[cfg(target_arch = "riscv32")]
+            status_led: Mutex::new(RefCell::new(None)),
         };
         &SERVICE
+    }
+
+    /// BUG-06: install the status LED handle (embedded-only, called once by
+    /// `AppBuilder::build()` before the executor runs).
+    #[cfg(target_arch = "riscv32")]
+    pub fn init_status_led(led: Output<'static>) {
+        critical_section::with(|cs| {
+            Self::get_instance()
+                .status_led
+                .borrow(cs)
+                .borrow_mut()
+                .replace(led);
+        });
+    }
+
+    /// BUG-06: run `f` on the status LED if installed. Returns `None` when
+    /// the LED was never installed (host builds, or init failed before the
+    /// builder ran). The closure runs inside the critical section so the
+    /// GPIO write is not interleaved.
+    #[cfg(target_arch = "riscv32")]
+    pub fn with_status_led<R, F>(f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Output<'static>) -> R,
+    {
+        critical_section::with(|cs| {
+            let mut guard = Self::get_instance().status_led.borrow(cs).borrow_mut();
+            guard.as_mut().map(f)
+        })
     }
 
     pub fn is_initialized() -> bool {

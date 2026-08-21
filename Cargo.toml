@@ -45,6 +45,15 @@ instrumentation = []
 async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
+# BUG-02 (2026-08-21): build without the optional current-sense circuit on
+# GPIO1. Without that circuit the pin floats HIGH with the internal pull-up,
+# which the firmware interprets as "no heat" and latches `NotDetected` in
+# ≈1.7 s at duty ≥ 50 %, killing the heater until a power cycle (the
+# operator-recovery re-arm also depends on this flag NOT masking a real
+# fault, so prefer wiring the circuit). With this feature the heat-source
+# interpretation is disabled; the other safety layers (overtemp, RoR,
+# staleness, frozen probe, comms-idle, max-roast-time, fan floor) stay active.
+no-heat-sense = []
 # Bug V2-6: `regression` no longer pulls `embedded-hal-mock` (a std-only
 # crate) into the embedded build — that broke `riscv32 + regression` (the
 # `void` transitive dep wanted std, cascading into 14 errors). The

@@ -57,14 +57,21 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-- ✅ All host tests pass (**693 as of 2026-08-12** — 487 unit + 255 integration test functions, 0 failures with `--features test`; the regression numeric suite adds `--features regression` → 753 passing, see Quality Gates below)
-- ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
+ - ✅ All host tests pass (**741 as of 2026-08-21** — 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+ - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer DI migration (constructor injection instead of `static_cell` singleton)
 - 24 clippy warnings fixed, 17 files quality-improved
 - All 693 host tests pass, ESP32 build warning-free
+
+**Hardware-readiness bug-fix round (2026-08-21, audit informe 2026-08-21):**
+- **BUG-02 (SSR one-way latch) fixed**: `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. Internal stop paths never re-arm. New `no-heat-sense` cargo feature for builds without the GPIO1 current-sense circuit (guards in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
+- **BUG-04 (log spam on protocol wire) fixed**: `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), "SSR cycle busy", and LEDC-GUARD timeouts now warn once per activation episode. The dedicated UART1 log sink remains deferred (needs bench validation).
+- **BUG-06 (GPIO8 double handle) fixed**: status LED is a real indicator — pure pattern logic in `src/hardware/status_led.rs` (host-tested), single owner stored in `ServiceContainer`, driven once per tick by the control loop. `enter_safe_shutdown` keeps `Peripherals::steal()` as documented fallback (app tasks are dead by then).
+- **BUG-07 (MAX31856 boot halt) fixed**: `Max31856::new_tolerant()` returns `(device, verified)`; `init_spi_sensors` degrades a single dead channel (BT-only / ET-only configs boot) and aborts only when BOTH channels are dead (`boot_policy` helper). `new()` keeps the hard-fail contract for HIL examples. Scripted SPI mock + 9 host tests.
+- **BUG-08 (spontaneous telemetry) fixed**: continuous `#` telemetry is **opt-in via `STREAM;ON`** (`ArtisanCommand::SetStreaming`, `#OK` ack, allowed while latched) and OFF by default — START/OT1/OT2/PID;SV no longer enable it. The `#DUMP` ring-buffer feed is decoupled from the stream flag (driven by `roast_logger::is_logging_active()`). Golden transcripts and pipeline soak stay green (soak sends STREAM;ON to keep the `#`-line validation exercised). Docs updated: PROTOCOL/HARDWARE/ARTISAN_CONNECTION/README.
 
 **Artisan compatibility audit (A-TC4, 2026-08-12):**
 - Internal safety traps now emit `ERR safety_fault <reason>` on the wire, once per latch event (`emergency_shutdown` in `roaster_control.rs`) — Artisan/automation no longer discovers latches only via rejected commands. The operator `STOP` path does not emit it.
@@ -109,7 +116,7 @@ Read these in order depending on what you need to do:
 - `src/control/handlers/` — Command handlers and artisans
 - `src/hardware/` — MAX31856, SSR, fan, UART, shared SPI
 - `src/hardware/sensors/` — Sensor implementations and conversions
-- `src/hardware/ssr.rs` + `ssr_stub.rs` — SSR control implementations (the `ssr/` subdirectory is empty)
+- `src/hardware/ssr.rs` + `ssr_stub.rs` — SSR control implementations (the `ssr/` subdirectory is empty); the pure state machine lives in un-gated `src/hardware/ssr_logic.rs`
 - `src/hardware/uart/` — UART communication (UART reader task)
 - `src/hardware/usb_cdc/` — USB CDC communication (USB reader task)
 - `src/input/` — Artisan command parser
@@ -158,4 +165,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-08-12. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-08-21. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

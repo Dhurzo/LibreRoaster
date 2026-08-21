@@ -32,6 +32,8 @@ pub enum HeaterCall {
     SetPower(f32),
     /// get_status was called
     GetStatus,
+    /// rearm_hardware_status was called (BUG-02 explicit recovery)
+    RearmHardwareStatus,
 }
 
 /// Records of calls made to StubFan
@@ -129,6 +131,13 @@ impl Heater for StubHeater {
     fn get_status(&self) -> SsrHardwareStatus {
         self.calls.borrow_mut().push(HeaterCall::GetStatus);
         *self.status.borrow()
+    }
+
+    fn rearm_hardware_status(&mut self) {
+        self.calls
+            .borrow_mut()
+            .push(HeaterCall::RearmHardwareStatus);
+        *self.status.borrow_mut() = SsrHardwareStatus::Available;
     }
 }
 

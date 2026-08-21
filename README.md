@@ -26,12 +26,12 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 631 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
+| 741 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
 | PID control, profiles, safety interlocks | ✅ **Implemented — 11 critical bugs fixed (see below)** |
 
-> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (631 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
+> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (741 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
 | Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
 | End-to-end roast with real Artisan | ❌ Not yet tested |
 | Real coffee roasted using LibreRoaster | ❌ Not yet |
@@ -62,6 +62,9 @@ The guide is **currently in progress** and will be published once validated. If 
 - **Safety layers:** 8 independent layers — dual watchdog (software + hardware RWDT), over-temperature cutoff (260°C), rate-of-rise protection (30°C/min), stale-temperature guard (1s), heat-source detection (GPIO1), SSR stuck-on detection, max roast time (30 min), fault-command rejection
 - **Control:** full PID with anti-windup, configurable channel (ET/BT), profile interpolation, preheat behavior
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
+- **Opt-in telemetry stream:** spontaneous `#` telemetry is OFF by default; enable with `STREAM;ON` (custom clients only — Artisan polls `READ`)
+- **Status LED:** GPIO8 state indicator (off/1 Hz/solid/4 Hz by roast state; `Error` blinks at 4 Hz)
+- **`no-heat-sense` feature:** build without the optional GPIO1 current-sense circuit (see `docs/HARDWARE.md` §8)
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 - **Focused controllers:** SensorController, ActuatorController (heater + fan together), SafetyController, CommandDispatcher (v5.4)
 - **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (line-coverage target: ≥80% for production code)
@@ -201,7 +204,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **631 unit + integration tests** run on x86_64 (637 including doctests):
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **741 unit + integration tests** run on x86_64 (747 including doctests):
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test

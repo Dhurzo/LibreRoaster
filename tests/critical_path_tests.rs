@@ -938,11 +938,8 @@ fn start_roast_drops_cooldown_latch() {
     assert!(ctrl.get_status().fan_output >= 99.0, "cooldown armed");
 
     // New roast start overrides the cooldown latch. We must NOT issue any
-    // manual command before START2: SetFan/SetHeater keep the
-    // `is_continuous_enabled` flag set, which makes `is_streaming()` return
-    // true and START2 is silently ignored (so `cooling_active` would stay
-    // armed and the test would fail). The latch drop must come purely from
-    // the START2 path.
+    // manual command before START2 (the cooldown state owns the fan); the
+    // latch drop must come purely from the START2 path.
     ctrl.process_artisan_command(ArtisanCommand::StartRoast)
         .expect("start 2");
     tick_now(&mut ctrl, 200.0, 220.0);

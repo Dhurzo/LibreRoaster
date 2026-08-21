@@ -10,5 +10,6 @@
 //! macro (which wrote via `esp_println::println!` straight to the protocol
 //! port) had ZERO invocations anywhere and were deleted.
 
+pub mod edge_log_gate;
 pub mod roast_logger;
 pub mod traceability;

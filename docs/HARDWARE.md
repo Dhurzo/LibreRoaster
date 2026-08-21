@@ -95,6 +95,31 @@ These values shape both roast behavior and failure behavior. If you change them,
 
 GPIO1 is used as a pulled-up input to detect heater-side activity. Its value feeds safety reasoning about whether the commanded heater state matches observed behavior.
 
+**BUG-02 (2026-08-21): the current-sense circuit on GPIO1 is OPTIONAL but strongly recommended.** The expected circuit: a current sensor on the heater
+load whose output pulls GPIO1 LOW while the heater conducts (open-collector
+or optocoupler in the load path); at rest the internal pull-up keeps the pin
+HIGH. The exact sensor (current transformer, optocoupler) is builder's
+choice — the only contract is the polarity above.
+
+- **Without the circuit**, the pin floats HIGH ("no heat") and the firmware
+  latches `NotDetected` at duty ≥ 50 % within ≈1.7 s, forcing the heater to
+  0 % until an explicit operator recovery (`OFF`/`START`/`PREHEAT`/`StopRoast`
+  re-arms the availability state machine). For builds that deliberately omit
+  the circuit, compile with the `no-heat-sense` feature, which disables the
+  heat-source interpretation (all other safety layers stay active).
+- **With the circuit**, a transient "no heat" read is debounced
+  (`HEAT_ABSENT_DEBOUNCE = 5` consecutive samples ≈ 1.7 s) before the latch,
+  and a single LOW sample re-clears it.
+
+### Status LED (GPIO8)
+
+The status LED is a real runtime indicator (single owner: the service
+container). Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in
+`Heating`/`Stable`, 4 Hz blink on `Error` or any fault. The safe-shutdown
+path (init failure) takes GPIO8 via `Peripherals::steal()` and blinks it
+3×400 ms — by then all application tasks are dead, so the steal is the final
+owner.
+
 ### Strapping pins
 
 The project documentation must always keep these points visible:

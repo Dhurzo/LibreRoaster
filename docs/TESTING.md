@@ -254,16 +254,18 @@ Using `picocom` (or `screen`) instead of `espflash --monitor` lets you send comm
 
 ### 9.2 Why firmware is silent after boot
 
-The firmware boots successfully and displays log messages, but emits **no telemetry** because continuous output is **disabled by default** (`OutputController::continuous_enabled = false` in `src/control/abstractions.rs`). Telemetry is only emitted every ~100ms when continuous output is enabled.
+The firmware boots successfully and displays log messages, but emits **no telemetry** because continuous output is **disabled by default** (`OutputController::continuous_enabled = false` in `src/control/abstractions.rs`). Telemetry is only emitted every ~1 s when continuous output is enabled.
 
-Continuous output is enabled by these commands:
-- `START` — begins roast, enables PID and continuous telemetry
-- `OT1 <pct>` — manual heater control (0-100)
-- `IO3 <pct>` — manual fan control (0-100)
-- `UP` / `DOWN` — incremental heater adjustment
+**BUG-08 (2026-08-21):** continuous output is **opt-in** and enabled only by the explicit command:
+
+- `STREAM;ON` — enable the spontaneous `#` telemetry stream (LibreRoaster extension for custom clients; Artisan does not need it)
 
 It is disabled by:
+
+- `STREAM;OFF`
 - `STOP` — emergency stop, disables PID and continuous output
+
+`START`, `OT1`, `IO3`, `UP`/`DOWN` and `PID;SV` change control state but do **not** enable the stream. The `#DUMP` ring-buffer log still fills during an active roast regardless of the stream flag.
 
 Commands like `READ` and `STATUS` return a **single response** regardless of continuous output state.
 
@@ -278,11 +280,12 @@ echo "STATUS" > /dev/ttyACM0     # 20-field diagnostic line
 
 # Enable continuous output and view simulated curves
 echo "SETTARGET 200" > /dev/ttyACM0  # Set PID target to 200°C
-echo "START"         > /dev/ttyACM0  # Begin roast, enable continuous telemetry
+echo "START"         > /dev/ttyACM0  # Begin roast
+echo "STREAM;ON"     > /dev/ttyACM0  # Opt-in spontaneous # telemetry
 
-# Alternative: manual control also enables continuous output
-echo "OT1 50"  > /dev/ttyACM0   # Heater at 50%, enables continuous telemetry
-echo "IO3 75"  > /dev/ttyACM0   # Fan at 75%, enables continuous telemetry
+# Manual control (does NOT enable the stream)
+echo "OT1 50"  > /dev/ttyACM0   # Heater at 50%
+echo "IO3 75"  > /dev/ttyACM0   # Fan at 75%
 
 # Stop
 echo "STOP"    > /dev/ttyACM0   # Disable PID and continuous output

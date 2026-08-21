@@ -98,6 +98,7 @@ struct SsrShared {
     status: crate::config::constants::SsrHardwareStatus,
     fail_next_writes: u32,
     write_calls: u32,
+    rearm_calls: u32,
 }
 
 impl Default for SsrShared {
@@ -107,6 +108,7 @@ impl Default for SsrShared {
             status: crate::config::constants::SsrHardwareStatus::Available,
             fail_next_writes: 0,
             write_calls: 0,
+            rearm_calls: 0,
         }
     }
 }
@@ -148,6 +150,11 @@ impl MockSsr {
     pub fn write_calls(&self) -> u32 {
         critical_section::with(|cs| self.shared.borrow(cs).borrow().write_calls)
     }
+
+    /// Number of `rearm_hardware_status` calls so far (shared across clones).
+    pub fn rearm_calls(&self) -> u32 {
+        critical_section::with(|cs| self.shared.borrow(cs).borrow().rearm_calls)
+    }
 }
 
 impl Heater for MockSsr {
@@ -176,6 +183,14 @@ impl Heater for MockSsr {
 
     fn get_status(&self) -> crate::config::constants::SsrHardwareStatus {
         critical_section::with(|cs| self.shared.borrow(cs).borrow().status)
+    }
+
+    fn rearm_hardware_status(&mut self) {
+        critical_section::with(|cs| {
+            let mut s = self.shared.borrow(cs).borrow_mut();
+            s.rearm_calls = s.rearm_calls.saturating_add(1);
+            s.status = crate::config::constants::SsrHardwareStatus::Available;
+        });
     }
 
     fn last_duty_delta_ticks(&self) -> i16 {

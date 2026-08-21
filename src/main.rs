@@ -69,6 +69,13 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
     let app_error = AppError::Initialization { source: error };
     trace_safe_shutdown_guard(TraceId::next(), Some(&app_error));
 
+    // BUG-06 (2026-08-21): GPIO8 has ONE long-lived owner during normal
+    // operation now (the handle stored in the ServiceContainer via
+    // `AppBuilder::with_status_led`). This path runs only when init failed —
+    // possibly BEFORE the container received the LED — so it cannot borrow
+    // the container handle and keeps `Peripherals::steal()` as a fallback.
+    // By this point all application tasks are dead, so the steal is the
+    // final (single active) owner for the rest of the run.
     let peripherals = unsafe { Peripherals::steal() };
     let mut led = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
 
@@ -212,7 +219,8 @@ fn main() -> ! {
             .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
             .with_real_ssr(hw_handles.ssr)
             .with_fan_control(hw_handles.fan)
-            .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor);
+            .with_temperature_sensors(hw_handles.bean_sensor, hw_handles.env_sensor)
+            .with_status_led(hw_handles.status_led);
 
         #[cfg(feature = "simulated-sensors")]
         let builder = AppBuilder::new()
@@ -220,7 +228,8 @@ fn main() -> ! {
             .with_uart_pins(peripherals.GPIO20, peripherals.GPIO21)
             .with_real_ssr(hw_handles.ssr)
             .with_fan_control(hw_handles.fan)
-            .with_simulated_sensors();
+            .with_simulated_sensors()
+            .with_status_led(hw_handles.status_led);
 
         match builder.build() {
             Ok(app) => app,

@@ -147,6 +147,12 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
+                // BUG-08 (2026-08-21): opt-in continuous telemetry.
+                "STREAM" => Some(match args.trim().to_ascii_uppercase().as_str() {
+                    "ON" => Ok(ArtisanCommand::SetStreaming(true)),
+                    "OFF" => Ok(ArtisanCommand::SetStreaming(false)),
+                    _ => Err(ParseError::InvalidValue),
+                }),
                 // Unknown init command → fall through to operational parsing
                 // on the normalised string (e.g. "OT1 75", "READ").
                 _ => None,
@@ -800,6 +806,52 @@ mod tests {
     fn test_parse_start_command() {
         let result = parse_artisan_command("START");
         assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
+    }
+
+    // ── BUG-08: STREAM;ON / STREAM;OFF (opt-in telemetry) ──────────────
+
+    #[test]
+    fn test_parse_stream_on() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;ON"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+        assert!(matches!(
+            parse_artisan_command("STREAM ON"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_off() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;OFF"),
+            Ok(ArtisanCommand::SetStreaming(false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_case_insensitive() {
+        assert!(matches!(
+            parse_artisan_command("stream;on"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+        assert!(matches!(
+            parse_artisan_command("Stream;Off"),
+            Ok(ArtisanCommand::SetStreaming(false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_invalid_value() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;MAYBE"),
+            Err(ParseError::InvalidValue)
+        ));
+        assert!(matches!(
+            parse_artisan_command("STREAM;1"),
+            Err(ParseError::InvalidValue)
+        ));
     }
 
     #[test]

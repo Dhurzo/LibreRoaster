@@ -17,6 +17,16 @@ pub trait Heater: Send {
     /// Default implementation is a no-op.
     fn periodic_health_check(&mut self, _current_time_ms: u32) {}
 
+    /// BUG-02 (2026-08-21): re-arm the heater's hardware-availability state
+    /// machine after an explicit operator recovery (`OFF`/`START`/`PREHEAT`/
+    /// `StopRoast`). `NotDetected`/`Error` force the output to 0 % and the
+    /// automatic re-detection paths can never run at 0 % duty, so without
+    /// this the heater stays dead until a power cycle. A real physical fault
+    /// is re-detected within the debounce window once the heater is driven
+    /// ≥ 50 % again — the re-arm removes irreversibility, not protection.
+    /// Default implementation is a no-op (stubs/mocks need no change).
+    fn rearm_hardware_status(&mut self) {}
+
     fn last_duty_delta_ticks(&self) -> i16 {
         0
     }
@@ -47,6 +57,10 @@ impl<T: Heater + ?Sized> Heater for &mut T {
 
     fn periodic_health_check(&mut self, current_time_ms: u32) {
         (**self).periodic_health_check(current_time_ms);
+    }
+
+    fn rearm_hardware_status(&mut self) {
+        (**self).rearm_hardware_status();
     }
 }
 

@@ -92,12 +92,11 @@ impl CommandDispatcher {
         }
         status.pid_enabled = true;
         status.target_temp = target_temp;
-        // Ensure telemetry starts emitting when PID is enabled.
-        // Without this, SETTARGET/SETTARGET+START leaves the system
-        // in a state where pid_enabled=true but is_continuous_enabled()=false,
-        // causing is_streaming() to return true (blocking START) while
-        // emit_telemetry_stage() produces no output.
-        self.get_output_manager_mut().enable_continuous_output();
+        // BUG-08 (2026-08-21): enabling the PID no longer enables the
+        // continuous telemetry stream — it is opt-in via `STREAM;ON`. The
+        // stale comment about `is_streaming()` blocking START was obsoleted
+        // by the state-based START gate (bug V2-4), and the `#DUMP` ring
+        // feed is driven by the roast logger state, not this flag.
         info!("PID control re-enabled with target: {:.1}°C", target_temp);
         Ok(())
     }

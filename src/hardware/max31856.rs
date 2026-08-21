@@ -78,6 +78,38 @@ where
     SPI: SpiDevice,
 {
     pub fn new(spi: SPI) -> Result<Self, Max31856Error> {
+        // BUG-07 (2026-08-21): `new` delegates to the tolerant path and keeps
+        // its hard-fail contract for callers that need a verified device
+        // (HIL examples). `init_spi_sensors` uses `new_tolerant` directly so
+        // a single absent/unsoldered MAX31856 degrades the channel instead of
+        // halting the whole firmware.
+        let (dev, verified) = Self::new_tolerant(spi);
+        if verified {
+            Ok(dev)
+        } else {
+            Err(Max31856Error::CommunicationError {
+                source: "channel_unverified_at_boot",
+            })
+        }
+    }
+
+    /// BUG-07 (2026-08-21): configure the device WITHOUT conditioning boot
+    /// on the CR1 read-back.
+    ///
+    /// Returns `(device, verified)`. A device with `verified == false` is
+    /// still usable: every read passes through the fault register and the
+    /// `SENSOR_FAULT_DEBOUNCE` → NaN → hold path already degrades a dead
+    /// channel safely at runtime (see the bug B-Q comment in
+    /// `SensorController::update_temperatures`, which documents the supported
+    /// BT-only config with ET unplugged).
+    ///
+    /// Boot must NOT abort because one amplifier is absent: that turns a
+    /// cold solder joint into a mute device with no diagnostics, and makes
+    /// the single-probe and pure-logger configurations documented in
+    /// PHILOSOPHY.md impossible. The firmware-level backstop (NaN → sensor
+    /// fault → emergency on both channels dead) still prevents regulating
+    /// against a dead channel.
+    pub fn new_tolerant(spi: SPI) -> (Self, bool) {
         let mut max31856 = Max31856 { spi };
 
         // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator
@@ -85,29 +117,40 @@ where
         // (50 Hz notch filter, bit 0).
         // Bit layout: 0b0001_0001 = 0x11. The 50 Hz filter is selected by
         // CR0 bit 0 (not CR1 bit 3); conversion time maxes at 185 ms (datasheet).
-        max31856.write_register(0x80, 0x11)?;
+        let mut ok = max31856.write_register(0x80, 0x11).is_ok();
         // CR1 (0x81): AVGSEL=1 sample, TC TYPE = Type K (0011). Bits 3:0 = 0011.
         // The 50/60 Hz filter is NOT a CR1 field; the old `0x0B` value was
         // selecting "voltage mode with gain ×8" (TC TYPE = 1011) — no
         // thermocouple linearization, garbage temperatures even if the
         // readback had matched.
-        max31856.write_register(0x81, 0x03)?;
+        ok &= max31856.write_register(0x81, 0x03).is_ok();
         // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
-        max31856.write_register(0x82, 0x00)?;
+        ok &= max31856.write_register(0x82, 0x00).is_ok();
 
         // Verify config register was written by reading it back
         let cr1 = max31856.read_register(0x01).unwrap_or(0xFF);
         log::info!("MAX31856 init: wrote CR1=0x03, read back CR1=0x{:02X}", cr1);
         if cr1 != 0x03 {
-            return Err(Max31856Error::CommunicationError {
-                source: "cr1_readback_mismatch",
-            });
+            log::error!(
+                "MAX31856: CR1 read-back 0x{:02X} != 0x03 — channel NOT responding \
+                 (check CS wiring, solder joints, 3V3 and MISO)",
+                cr1
+            );
+            ok = false;
         }
 
-        // Perform boot self-test
-        max31856.self_test()?;
+        // Perform boot self-test (informational on failure — see BUG-07).
+        if ok {
+            if let Err(e) = max31856.self_test() {
+                log::warn!(
+                    "MAX31856: boot self-test failed ({:?}) — channel degraded",
+                    e
+                );
+                ok = false;
+            }
+        }
 
-        Ok(max31856)
+        (max31856, ok)
     }
 
     /// Perform boot self-test to verify MAX31856 initialization and basic functionality
@@ -409,6 +452,22 @@ where
     }
 }
 
+/// BUG-07 (2026-08-21): boot decision for the dual-channel thermocouple setup.
+///
+/// A single dead channel degrades (the firmware logs the reason and keeps
+/// running on the other channel); BOTH dead is a genuine no-go — without any
+/// temperature there is no safe control — so `init_spi_sensors` aborts only
+/// in that case. Kept here (un-gated module) so the policy is host-tested.
+pub fn boot_policy(bt_ok: bool, et_ok: bool) -> Result<(), Max31856Error> {
+    if bt_ok || et_ok {
+        Ok(())
+    } else {
+        Err(Max31856Error::CommunicationError {
+            source: "no_thermocouple_channel_responded",
+        })
+    }
+}
+
 impl<SPI> Thermometer for Max31856<SPI>
 where
     SPI: SpiDevice + Send,
@@ -427,5 +486,186 @@ mod tests {
         use embedded_hal::spi::Error as _;
         let err = Max31856Error::CommunicationError { source: "test" };
         assert!(matches!(err.kind(), embedded_hal::spi::ErrorKind::Other));
+    }
+
+    // ── BUG-07: tolerant boot tests with a scripted SPI device ──────────
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct SpiFault;
+
+    impl embedded_hal::spi::Error for SpiFault {
+        fn kind(&self) -> embedded_hal::spi::ErrorKind {
+            embedded_hal::spi::ErrorKind::Other
+        }
+    }
+
+    /// Minimal scripted MAX31856: 16 register slots, optional fault injection.
+    /// The driver only uses `transaction` with Write (A7=1 → register write)
+    /// and Write(addr)+Read sequences.
+    struct ScriptedSpi {
+        registers: [u8; 16],
+        /// Fail every transaction (dead chip / bad wiring).
+        fail_all: bool,
+        /// Succeed writes but fail reads (self-test conversion failure).
+        fail_reads: bool,
+        /// Writes do not stick (absent chip: no device to store them).
+        no_store: bool,
+    }
+
+    impl ScriptedSpi {
+        /// A healthy device: CR0=0x11, CR1=0x03, MASK=0x00, no faults, and a
+        /// conversion block encoding 25.0 °C (25 × 128 = 3200 = 0x0C80).
+        fn healthy() -> Self {
+            let mut registers = [0u8; 16];
+            registers[0x00] = 0x11;
+            registers[0x01] = 0x03;
+            registers[0x02] = 0x00;
+            registers[0x0C] = 0x00;
+            registers[0x0D] = 0x0C;
+            registers[0x0E] = 0x80;
+            registers[0x0F] = 0x00;
+            Self {
+                registers,
+                fail_all: false,
+                fail_reads: false,
+                no_store: false,
+            }
+        }
+
+        /// An absent chip: MISO floats, reads return 0xFF and writes vanish.
+        fn absent() -> Self {
+            Self {
+                registers: [0xFF; 16],
+                fail_all: false,
+                fail_reads: false,
+                no_store: true,
+            }
+        }
+    }
+
+    impl embedded_hal::spi::ErrorType for ScriptedSpi {
+        type Error = SpiFault;
+    }
+
+    impl embedded_hal::spi::SpiDevice<u8> for ScriptedSpi {
+        fn transaction(
+            &mut self,
+            operations: &mut [embedded_hal::spi::Operation<'_, u8>],
+        ) -> Result<(), SpiFault> {
+            if self.fail_all {
+                return Err(SpiFault);
+            }
+            let mut pending_read_addr: Option<u8> = None;
+            for op in operations.iter_mut() {
+                match op {
+                    embedded_hal::spi::Operation::Read(buf) => {
+                        if self.fail_reads {
+                            return Err(SpiFault);
+                        }
+                        let addr = pending_read_addr.unwrap_or(0) as usize;
+                        for (i, byte) in buf.iter_mut().enumerate() {
+                            *byte = self.registers[(addr + i) & 0x0F];
+                        }
+                        pending_read_addr = None;
+                    }
+                    embedded_hal::spi::Operation::Write(bytes) => {
+                        if bytes.len() >= 2 && bytes[0] & 0x80 != 0 {
+                            let reg = (bytes[0] & 0x7F) as usize;
+                            if !self.no_store {
+                                self.registers[reg & 0x0F] = bytes[1];
+                            }
+                        } else if !bytes.is_empty() {
+                            pending_read_addr = Some(bytes[0] & 0x7F);
+                        }
+                    }
+                    embedded_hal::spi::Operation::Transfer(read, write) => {
+                        if self.fail_reads {
+                            return Err(SpiFault);
+                        }
+                        let addr = pending_read_addr.unwrap_or(0) as usize;
+                        for (i, byte) in read.iter_mut().enumerate() {
+                            *byte = self.registers[(addr + i) & 0x0F];
+                        }
+                        let _ = write;
+                        pending_read_addr = None;
+                    }
+                    embedded_hal::spi::Operation::TransferInPlace(buf) => {
+                        if self.fail_reads {
+                            return Err(SpiFault);
+                        }
+                        let _ = buf;
+                    }
+                    embedded_hal::spi::Operation::DelayNs(_) => {}
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn new_tolerant_verifies_healthy_chip() {
+        let (dev, verified) = Max31856::new_tolerant(ScriptedSpi::healthy());
+        assert!(verified, "healthy device must verify");
+        // The device remains usable for register reads.
+        assert_eq!(dev.spi.registers[0x01], 0x03);
+    }
+
+    #[test]
+    fn new_tolerant_degrades_on_cr1_mismatch() {
+        let (dev, verified) = Max31856::new_tolerant(ScriptedSpi::absent());
+        assert!(!verified, "absent device must NOT verify");
+        // Still usable: a subsequent register read returns the floating 0xFF
+        // (the runtime fault path, not the boot path, decides what to do).
+        assert_eq!(dev.spi.registers[0x01], 0xFF);
+    }
+
+    #[test]
+    fn new_tolerant_degrades_on_write_failure() {
+        let mut spi = ScriptedSpi::healthy();
+        spi.fail_all = true;
+        let (_dev, verified) = Max31856::new_tolerant(spi);
+        assert!(!verified, "write failure must degrade the channel");
+    }
+
+    #[test]
+    fn new_tolerant_degrades_on_self_test_read_failure() {
+        let mut spi = ScriptedSpi::healthy();
+        spi.fail_reads = true;
+        let (_dev, verified) = Max31856::new_tolerant(spi);
+        assert!(!verified, "self-test read failure must degrade the channel");
+    }
+
+    #[test]
+    fn new_keeps_hard_fail_contract() {
+        let result = Max31856::new(ScriptedSpi::absent());
+        assert!(matches!(
+            result,
+            Err(Max31856Error::CommunicationError {
+                source: "channel_unverified_at_boot"
+            })
+        ));
+    }
+
+    #[test]
+    fn new_accepts_healthy_chip() {
+        let result = Max31856::new(ScriptedSpi::healthy());
+        assert!(result.is_ok(), "healthy device must pass new()");
+    }
+
+    #[test]
+    fn boot_policy_allows_single_channel() {
+        assert!(boot_policy(true, false).is_ok());
+        assert!(boot_policy(false, true).is_ok());
+        assert!(boot_policy(true, true).is_ok());
+    }
+
+    #[test]
+    fn boot_policy_rejects_no_channels() {
+        assert!(matches!(
+            boot_policy(false, false),
+            Err(Max31856Error::CommunicationError {
+                source: "no_thermocouple_channel_responded"
+            })
+        ));
     }
 }

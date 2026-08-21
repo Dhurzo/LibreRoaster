@@ -747,12 +747,22 @@ async fn emit_telemetry_stage(
         .set_stage(ControlLoopStage::TelemetryEmit);
     let mut is_continuous_now = false;
     let mut status_for_output: Option<SystemStatus> = None;
+    // BUG-08 (2026-08-21): the `#DUMP` ring-buffer feed used to be gated on
+    // `is_continuous_enabled()` — the same flag as the spontaneous `#` line
+    // emission. Now that telemetry is opt-in (`STREAM;ON`, off by default),
+    // a full roast run without STREAM would otherwise lose its recoverable
+    // log. Capture a SECOND snapshot driven by the roast-logger state so the
+    // ring always fills while a roast is active, independent of the stream.
+    let mut status_for_logger: Option<SystemStatus> = None;
 
     if let Err(err) = ServiceContainer::with_roaster_async(
         |roaster: &mut crate::control::roaster_control::RoasterControl| {
             is_continuous_now = roaster.get_output_manager().is_continuous_enabled();
             if is_continuous_now {
                 status_for_output = Some(roaster.get_status());
+            }
+            if crate::logging::roast_logger::is_logging_active() {
+                status_for_logger = Some(roaster.get_status());
             }
         },
     )
@@ -804,8 +814,10 @@ async fn emit_telemetry_stage(
     // (regardless of `should_emit`), so 256 samples covered ~25.6 s instead
     // of the intended ~256 s — a roast that survived a Disconnect/#DUMP
     // recovery lost the most recent data because the ring had already cycled.
+    // BUG-08: the feed uses `status_for_logger` (driven by the roast-logger
+    // state), NOT `status_for_output` (driven by the opt-in stream flag).
     if should_emit {
-        if let Some(status) = status_for_output {
+        if let Some(status) = status_for_logger {
             // Bug V2-8: the `time_s` column is derived INSIDE the logger from
             // its own epoch (`start`, set by `start_roast`) and this `now`.
             // The caller no longer owns the time base. M8: feed the `#DUMP`
@@ -980,6 +992,33 @@ fn finalize_tick(
     );
 }
 
+/// BUG-06 (2026-08-21): drive the status LED once per tick (embedded-only).
+///
+/// The pattern is decided by the pure `status_led` module (host-tested);
+/// the GPIO write goes through the single owner stored in the service
+/// container. Blink phase is locked to the boot-epoch clock, so no per-task
+/// toggle state is needed.
+#[cfg(target_arch = "riscv32")]
+async fn update_status_led_stage() {
+    use crate::hardware::status_led::{led_on, pattern_for};
+    use esp_hal::gpio::Level;
+
+    let elapsed_ms = Instant::now().as_millis();
+    let on = ServiceContainer::with_roaster_async(|roaster| {
+        let status = roaster.get_status();
+        led_on(
+            pattern_for(status.state, status.fault_condition),
+            elapsed_ms,
+        )
+    })
+    .await
+    .unwrap_or(false);
+
+    ServiceContainer::with_status_led(|led| {
+        led.set_level(if on { Level::High } else { Level::Low });
+    });
+}
+
 /// Execute one iteration of the control loop tick.
 ///
 /// Extracted from `control_loop_task` for testability. Contains the full tick
@@ -1066,6 +1105,9 @@ async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputCh
         output_channel,
     )
     .await;
+
+    #[cfg(target_arch = "riscv32")]
+    update_status_led_stage().await;
 
     finalize_tick(
         tick_state,

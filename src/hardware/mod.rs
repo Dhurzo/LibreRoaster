@@ -26,9 +26,11 @@ pub mod ssr;
 #[cfg(not(target_arch = "riscv32"))]
 #[path = "ssr_stub.rs"]
 pub mod ssr;
+pub mod ssr_logic;
 
 pub mod error_counters;
 pub mod static_sync;
+pub mod status_led;
 // Fase 2 (BUG-CATCH-PLAN.md): the mocks use `alloc::sync::Arc` +
 // `critical_section::Mutex`, which require `target_has_atomic = "ptr"` —
 // unavailable on riscv32imc (no atomic extension). Nothing outside the test

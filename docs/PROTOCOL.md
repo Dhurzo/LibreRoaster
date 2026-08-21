@@ -152,12 +152,22 @@ Field map:
 
 `STATUS` is the right interface for anything that needs runtime health, not just roast temperatures.
 
-### Continuous telemetry
+### Continuous telemetry (opt-in, `STREAM;ON`)
 
-During an active session the control loop also emits a spontaneous telemetry
-line once per second (`DEFAULT_OUTPUT_INTERVAL_MS`), not once per control
-tick (the real tick is ~310–330 ms). It is always prefixed with `#` so
-clients can distinguish it from synchronous responses:
+**BUG-08 (2026-08-21): the spontaneous telemetry stream is OFF by default.**
+It is enabled only by an explicit `STREAM;ON` and disabled by `STREAM;OFF`
+or any `STOP`/`OFF` (the stream state is session-scoped). `START`, `OT1`,
+`OT2` and `PID;SV` do **not** enable it.
+
+Rationale: the stream lines are spontaneous — they can occupy the response
+slot of a `READ` on the shared wire (the ArduinoTC4 driver reads one line
+per request). Artisan does not need the stream; it polls `READ`. Custom
+clients that want live curves opt in explicitly.
+
+When enabled, the control loop emits a telemetry line once per second
+(`DEFAULT_OUTPUT_INTERVAL_MS`), not once per control tick (the real tick is
+~310–330 ms). It is always prefixed with `#` so clients can distinguish it
+from synchronous responses:
 
 ```text
 #<time>,ET,BT,ROR,Gas
@@ -167,6 +177,19 @@ clients can distinguish it from synchronous responses:
 - `ET`, `BT`: environment and bean temperatures (display scale)
 - `ROR`: rate of rise, in °C/min of the active display scale
 - `Gas`: current heater output percentage
+
+### `STREAM;ON` / `STREAM;OFF`
+
+LibreRoaster extension (not part of the TC4 command set):
+
+- `STREAM;ON` — enable the spontaneous `#` telemetry stream. Response: `#OK`.
+- `STREAM;OFF` — disable it. Response: `#OK`.
+
+Accepted while the safety latch is armed (zero actuator side effects, same
+as `CHAN`/`UNITS`/`FILT`). The `#DUMP` ring-buffer feed is independent of
+this flag: a roast always fills the recoverable log, whether or not the
+stream is enabled.
+
 
 Clients that only poll `READ` can ignore these lines; clients that stream
 must treat any line beginning with `#` as asynchronous.
