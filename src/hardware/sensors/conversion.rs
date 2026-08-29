@@ -1,3 +1,10 @@
+//! Temperature sensor conversion and fault handling for LibreRoaster.
+//!
+//! Decodes raw MAX31856 register reads into °C, classifies fault-register
+//! bits into a `SensorFault`, and runs the `SensorConversionHub` that samples
+//! the bean/env thermocouples (real SPI or simulated), applies stale-read
+//! fallback and EMA smoothing, and exposes the latest `SensorSample`.
+
 use crate::control::RoasterError;
 use crate::hardware::max31856::Max31856Error;
 use embassy_time::Instant;
@@ -25,6 +32,8 @@ const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
 /// while keeping the filter responsive to real temperature changes.
 const EMA_ALPHA: f32 = 0.2;
 
+/// Decode a raw 24-bit MAX31856 temperature register into °C using
+/// two's-complement math and the `MAX31856_LSB` weight.
 pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     if (raw_temp & 0x800000) != 0 {
         // Sign bit (bit 23, which is bit 18 of the 19-bit value) set → negative.
@@ -37,6 +46,10 @@ pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     }
 }
 
+/// Fault classification for a single MAX31856 thermocouple channel.
+///
+/// Each field maps to a bit of the device fault-status register, plus a few
+/// derived flags used by the control/safety layer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SensorFault {
     /// bit 0 (0x01) — Open / Thermocouple open-circuit fault.
@@ -123,6 +136,7 @@ impl SensorFault {
         }
     }
 
+    /// True if any fault field (including `fault_detected`) is set.
     pub fn has_fault(&self) -> bool {
         self.open_circuit
             || self.short_to_vcc
@@ -171,6 +185,7 @@ type SensorChannelResult = Result<(f32, SensorFault), Max31856Error>;
 
 #[cfg(feature = "regression")]
 #[derive(Clone, Copy)]
+/// Raw ADC bytes plus fault register for one fixture reading (regression feature).
 pub struct FixtureReading {
     pub bean_adc: [u8; 3],
     pub bean_fault: u8,
@@ -188,6 +203,10 @@ impl FixtureReading {
     }
 }
 
+/// Samples and decodes the bean/env thermocouples into a `SensorSample`.
+///
+/// Owns the MAX31856 devices (real SPI) or a `SimulatedSensorSource`, tracks
+/// stale-read fallback counts and EMA filter state per channel.
 pub struct SensorConversionHub {
     #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     bean_sensor: Max31856<BtSpi>,
@@ -292,6 +311,7 @@ impl SensorConversionHub {
         Self::new()
     }
 
+    /// Return the most recent successfully built sensor sample, if any.
     pub fn last_sample(&self) -> Option<SensorSample> {
         self.last_sample
     }
@@ -307,6 +327,7 @@ impl SensorConversionHub {
         Ok((temperature, sensor_fault))
     }
 
+    /// Build a `SensorSample` from a `FixtureReading` (regression feature).
     #[cfg(feature = "regression")]
     pub fn sample_from_fixture(
         &mut self,
@@ -317,6 +338,7 @@ impl SensorConversionHub {
         self.build_sample(timestamp, bean_result, env_result)
     }
 
+    /// Construct a hub pre-loaded with a single fixture sample (regression).
     #[cfg(feature = "regression")]
     pub fn from_fixture(fixture: FixtureReading) -> Result<Self, RoasterError> {
         let mut hub = Self::new_uninit();
@@ -324,6 +346,7 @@ impl SensorConversionHub {
         Ok(hub)
     }
 
+    /// Read both channels and return a freshly built `SensorSample`.
     pub async fn sample(&mut self) -> Result<SensorSample, RoasterError> {
         #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
         {

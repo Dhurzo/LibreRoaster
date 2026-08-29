@@ -77,6 +77,9 @@ fn pct_to_ticks(pct: u8) -> u32 {
     (SSR_DUTY_RANGE * pct as u32) / 100
 }
 
+/// HIL scenario (audit C1): reproduce the production SSR config and measure config-DUTY
+/// sync vs DUTY_R lag, ramp 1 %->60 % via config readback, and verify the zero-duty
+/// safe-shutdown path; prints the C1 suite result. WARNING: drives GPIO10 non-zero.
 #[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {

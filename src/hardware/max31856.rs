@@ -1,3 +1,9 @@
+//! ESP32-C3 driver for the MAX31856 thermocouple amplifier over shared SPI.
+//!
+//! Configures the device (Type-K, 50 Hz notch, one-shot conversion), reads the
+//! 24-bit temperature register and fault status, and exposes a `Thermometer`
+//! implementation. `boot_policy` decides whether a dead channel is tolerated.
+
 use crate::control::traits::Thermometer;
 use crate::control::RoasterError;
 use crate::hardware::sensors::conversion::convert_raw_temp;
@@ -18,6 +24,7 @@ pub mod bt_spi {
     >;
 }
 
+/// Concrete SPI device type alias for the **environment-temperature** MAX31856.
 #[allow(dead_code)]
 #[cfg(target_arch = "riscv32")]
 pub mod et_spi {
@@ -30,16 +37,22 @@ pub mod et_spi {
     >;
 }
 
+/// Errors surfaced by the MAX31856 driver and mapped into `RoasterError`.
 #[derive(Debug, Clone, Copy)]
 pub enum Max31856Error {
+    /// SPI transaction to the device failed.
     CommunicationError { source: &'static str },
+    /// Fault-status register reported a thermocouple fault.
     FaultDetected { source: &'static str },
+    /// Decoded temperature fell outside the valid range.
     InvalidTemperature { source: &'static str },
 }
 
 /// Raw conversion payload returned by the MAX31856 driver.
 pub struct Max31856Reading {
+    /// 24-bit concatenated temperature register (LTCB0<<16 | LTCB1<<8 | LTCB2).
     pub raw_temp: u32,
+    /// Fault-status register value read alongside the temperature.
     pub fault: u8,
 }
 
@@ -69,6 +82,7 @@ impl From<Max31856Error> for RoasterError {
     }
 }
 
+/// MAX31856 thermocouple amplifier driver parameterised over its SPI device.
 pub struct Max31856<SPI> {
     spi: SPI,
 }
@@ -238,6 +252,7 @@ where
         Ok(())
     }
 
+    /// Program the device for Type-K thermocouples (CR1 = 0x03).
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
         // Type K (TC TYPE = 0011). The 50 Hz filter lives in CR0 bit 0, not
         // in CR1; the old `0x0B` value selected voltage mode ×8 (TC TYPE = 1011).
@@ -292,7 +307,7 @@ where
     /// # Deprecation
     ///
     /// This method uses a blocking spin loop (`spin_loop()` × 1,600,000 iterations)
-    /// instead of an async timer. Use [`read_raw_temperature_async()`] in all
+    /// instead of an async timer. Use `read_raw_temperature_async()` in all
     /// Embassy task contexts. This sync variant exists only for non-async test
     /// harnesses and initialization paths.
     #[deprecated = "Use read_raw_temperature_async() in async contexts"]
@@ -321,6 +336,7 @@ where
         self.read_conversion_block()
     }
 
+    /// Start a one-shot conversion (CR0 = 0x51: 1SHOT | FILT50 | OCFAULT).
     pub fn trigger_conversion(&mut self) -> Result<(), Max31856Error> {
         // CR0 with 1SHOT=1 (bit 6) triggers a single conversion in normally-off
         // mode. Preserve CMODE=0, OCFAULT settings from init, AND the 50 Hz
@@ -331,6 +347,7 @@ where
         Ok(())
     }
 
+    /// Read the most recent conversion result (temperature + fault register).
     pub fn read_conversion_result(&mut self) -> Result<Max31856Reading, Max31856Error> {
         self.read_conversion_block()
     }

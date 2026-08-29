@@ -45,10 +45,10 @@ use libreroaster::control::roaster_control::RoasterControl;
 use libreroaster::hardware::sensors::SensorConversionHub;
 use libreroaster::output::artisan::ArtisanFormatter;
 
-// Tick cadence: the real embedded loop is CONTROL_LOOP_TICK_MS ≈ 310-330 ms
-// (100 ms timer + ~210 ms MAX31856 conversion wait). 310 ms keeps every
-// time-derived backstop honest (stale 1 s, charge window ~3.1 s,
-// comms-idle 15 s, max-roast 30 min).
+/// Tick cadence: the real embedded loop is `CONTROL_LOOP_TICK_MS` ≈ 310-330 ms
+/// (100 ms timer + ~210 ms MAX31856 conversion wait). 310 ms keeps every
+/// time-derived backstop honest (stale 1 s, charge window ~3.1 s,
+/// comms-idle 15 s, max-roast 30 min).
 const TICK_MS: u64 = 310;
 /// Inject a READ every N ticks to keep the 15 s comms-idle backstop away.
 const READ_EVERY_TICKS: u64 = 40; // 12.4 s simulated

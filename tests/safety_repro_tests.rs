@@ -31,6 +31,7 @@ use libreroaster::control::traits::Fan;
 use libreroaster::control::RoasterError;
 use libreroaster::hardware::sensors::SensorConversionHub;
 
+/// Build a stub `RoasterControl` for the S1–S8 safety repro tests.
 fn make_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),
@@ -40,6 +41,7 @@ fn make_control() -> RoasterControl {
     .expect("test control should build")
 }
 
+/// Build a stub `RoasterControl` using the supplied fan implementation.
 fn make_control_with_fan(fan: Box<dyn Fan + Send>) -> RoasterControl {
     RoasterControl::new(Box::new(StubHeater::new()), fan, SensorConversionHub::new())
         .expect("test control should build")

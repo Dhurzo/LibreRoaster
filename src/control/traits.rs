@@ -1,13 +1,24 @@
+//! Hardware actuator traits: `Thermometer`, `Heater`, `Fan`.
+//!
+//! These object-safe traits let `RoasterControl` drive heater, fan, and sensor
+//! hardware behind `Box<dyn>` handles supplied by `AppBuilder`, with blanket
+//! `&mut T` impls so owned and borrowed actuators are interchangeable.
+
 use crate::config::constants::SsrHardwareStatus;
 use crate::control::RoasterError;
 
+/// Read-only temperature source (thermocouple conversion hub).
 pub trait Thermometer: Send {
+    /// Reads the current temperature in degrees Celsius.
     fn read_temperature(&mut self) -> Result<f32, RoasterError>;
 }
 
+/// Heater actuator (SSR) with health monitoring and explicit re-arm support.
 pub trait Heater: Send {
+    /// Sets heater duty cycle (0..=100 %).
     fn set_power(&mut self, duty: f32) -> Result<(), RoasterError>;
 
+    /// Returns the SSR hardware-availability status.
     fn get_status(&self) -> SsrHardwareStatus;
 
     /// Periodic health check — called every ~1s by the control loop.
@@ -27,20 +38,26 @@ pub trait Heater: Send {
     /// Default implementation is a no-op (stubs/mocks need no change).
     fn rearm_hardware_status(&mut self) {}
 
+    /// Returns the most recent duty-change magnitude in ticks (diagnostics).
     fn last_duty_delta_ticks(&self) -> i16 {
         0
     }
 
+    /// Returns the number of automatic recovery retries since last drive.
     fn last_retry_count(&self) -> u8 {
         0
     }
 }
 
+/// Fan actuator with normal and emergency speed control.
 pub trait Fan: Send {
+    /// Sets fan speed (0..=100 %).
     fn set_speed(&mut self, duty: f32) -> Result<(), RoasterError>;
 
+    /// Forces a fan speed outside the normal control path (safety override).
     fn emergency_set_speed(&mut self, percentage: f32) -> Result<(), RoasterError>;
 
+    /// Returns the current fan speed (0..=100 %).
     fn get_speed(&self) -> f32 {
         0.0
     }

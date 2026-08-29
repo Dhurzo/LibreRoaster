@@ -64,6 +64,7 @@ fn read_ledc_duty(channel_number: usize) -> u16 {
     (raw >> 4) as u16
 }
 
+/// Busy-wait for `ms` milliseconds via the ESP ROM delay routine.
 #[cfg(target_arch = "riscv32")]
 fn delay_ms(ms: u32) {
     esp_hal::rom::ets_delay_us(ms * 1000);
@@ -145,6 +146,9 @@ fn safe_shutdown() -> ! {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+/// HIL scenario: verify all GPIO pinouts (LEDC fan/SSR, GPIO1 heat, GPIO8 LED, SPI bus,
+/// chip-selects), then run a synthetic 120 s roast curve driving real SSR/fan PWM with
+/// telemetry and a safe-shutdown verification at the end.
 #[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {

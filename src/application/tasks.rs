@@ -1,3 +1,11 @@
+//! Control-loop and dual-output Embassy tasks.
+//!
+//! Owns the two long-lived application tasks: `control_loop_task` (drain
+//! commands, read sensors, update control, drive LEDC, feed the watchdog,
+//! emit telemetry) and `dual_output_task` (route formatted output to the
+//! active transport via the command multiplexer). The per-tick logic is
+//! factored into `control_loop_tick`/`dual_output_tick` for host-side testing.
+
 extern crate alloc;
 
 use crate::application::service_container::{ContainerError, ServiceContainer};
@@ -374,7 +382,6 @@ async fn read_sensors(
     output_channel: &OutputChannel,
 ) {
     // Control loop now uses async read_sensors() - no longer blocks executor
-    // Using the roaster_async_sensor_read method that takes ownership, calls async, returns it
     tick_state
         .stage_tracker
         .set_stage(ControlLoopStage::SensorRead);
@@ -1117,6 +1124,10 @@ async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputCh
     );
 }
 
+/// Long-lived Embassy task running the control loop until the device resets.
+///
+/// Spawns `control_loop_tick` on `CONTROL_LOOP_PERIOD_MS` cadence; the safety
+/// watchdogs and emergency-shutdown paths live inside the tick.
 #[task]
 pub async fn control_loop_task() {
     info!("Roaster control loop started - Artisan+ integration ACTIVE");
@@ -1227,6 +1238,10 @@ async fn dual_output_tick(output_channel: &OutputChannel) {
     }
 }
 
+/// Long-lived Embassy task forwarding the Artisan output channel to USB/UART.
+///
+/// Drains up to `MAX_MESSAGES_PER_TICK` lines per 5 ms invocation, appending
+/// CRLF and writing to the active transport selected by the multiplexer.
 #[task]
 pub async fn dual_output_task() {
     info!("Dual output task started - USB CDC + UART");

@@ -1,14 +1,10 @@
-/// Artisan standard CSV protocol formatter
-///
-/// Implements the standard Artisan serial protocol format:
-/// time,ET,BT,ROR,Gas
-///
-/// Fields:
-/// - time: Seconds since roast start
-/// - ET: Environment temperature (°C)
-/// - BT: Bean temperature (°C)  
-/// - ROR: Rate of rise (°C/s) - calculated as moving average
-/// - Gas: SSR output percentage (0-100) as heater control
+//! Artisan wire-format output for LibreRoaster.
+//!
+//! Builds the TC4-compatible READ/STATUS telemetry lines and the continuous
+//! `#`-prefixed stream from `SystemStatus`, including rate-of-rise filtering
+//! and the °C/°F display-scale conversion. `ArtisanFormatter` holds the pure
+//! shared helpers; `MutableArtisanFormatter` keeps per-session RoR state.
+
 // Artisan protocol formatter for LibreRoaster
 //
 // This module handles formatting of temperature data and commands according to the
@@ -50,12 +46,14 @@ use heapless::{Deque, String as HeaplessString};
 pub struct ArtisanFormatter;
 
 impl ArtisanFormatter {
+    /// Format elapsed roast time as `SS.ss` (centisecond precision).
     fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
         let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
         let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
         buf
     }
 
+    /// Build one CSV telemetry line: `time,ET,BT,ROR,Gas`.
     fn format_artisan_line(
         time_str: &str,
         et: f32,
@@ -76,6 +74,7 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Clamp a telemetry scalar to a wire-safe finite magnitude (|v| ≤ 1000).
     fn normalize_read_value(value: f32) -> f32 {
         if !value.is_finite() {
             return 0.0;
@@ -115,6 +114,7 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Format a TC4 READ response: AMB,ET,BT,CHAN3,CHAN4 plus PID fields.
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
         // Bug L15 (2026-08-10): `ambient_temp` is an always-0.0 placeholder on
         // this firmware (no ambient probe). Sending it through
@@ -253,6 +253,7 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Format the `CHAN` acknowledgement line (`#<channel>`).
     pub fn format_chan_ack(channel: u16) -> HeaplessString<REPORT_BUFFER_SIZE> {
         let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = core::write!(&mut buf, "#{}", channel);
@@ -276,6 +277,7 @@ impl ArtisanFormatter {
         buf
     }
 
+    /// Format an `ERR <code> <message>` wire error line.
     pub fn format_err(code: u8, message: &str) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
         let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
         let _ = core::write!(&mut buf, "ERR {} {}", code, message);
@@ -284,11 +286,13 @@ impl ArtisanFormatter {
 
     // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
 
+    /// Single-pole IIR low-pass: `out = α·x + (1-α)·prev`.
     pub fn apply_iir_filter(instantaneous_ror: f32, last_filtered: f32, alpha: f32) -> f32 {
         // IIR filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
         alpha * instantaneous_ror + (1.0 - alpha) * last_filtered
     }
 
+    /// Detect a genuine spike against a linear-extrapolated window (n ≥ 4).
     pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
         // M9: contrast against a linear extrapolation of the window, NOT
         // against the mean. On a clean ramp {m, m+d, m+2d, m+3d, ...} the
@@ -323,16 +327,23 @@ impl ArtisanFormatter {
     }
 }
 
+/// Stateful formatter that emits the continuous `#`-prefixed telemetry stream
+/// and tracks bean-temperature history for rate-of-rise calculation.
 pub struct MutableArtisanFormatter {
+    /// Time the current telemetry session started.
     start_time: Instant,
+    /// Most recent bean temperature used for RoR deltas.
     last_bt: f32,
     /// Bug #6: `last_bt == 0.0` was previously used as the "first sample"
     /// sentinel, but a legitimate BT reading of 0 °C (cold ambient, sensor
     /// fallback) would falsely re-initialise the ROR state and discard the
     /// real history. We now track initialisation explicitly with this flag.
     is_initialised: bool,
+    /// Rolling bean-temperature window for RoR slope estimation.
     bt_history: Deque<f32, BT_HISTORY_SIZE>,
+    /// Timestamps paired with `bt_history` entries.
     timestamp_history: Deque<Instant, BT_HISTORY_SIZE>,
+    /// Last IIR-filtered RoR value, persisted across samples.
     last_filtered_ror: f32,
 }
 
@@ -350,14 +361,17 @@ impl Default for MutableArtisanFormatter {
 }
 
 impl MutableArtisanFormatter {
+    /// Create a fresh formatter with no accumulated history.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Clear all RoR/telemetry state back to a fresh session.
     pub fn reset(&mut self) {
         *self = Self::default();
     }
 
+    /// Render the current status as a `#`-prefixed continuous-telemetry line.
     pub fn format(
         &mut self,
         status: &SystemStatus,
@@ -418,6 +432,7 @@ impl MutableArtisanFormatter {
         Ok(prefixed)
     }
 
+    /// Update the BT history and compute the IIR-filtered rate of rise.
     fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
         // Bug V2-12: a single non-finite BT (sensor fault → NaN flowing into
         // `derivative_rate` is the more common upstream path, but this method
@@ -541,6 +556,7 @@ impl MutableArtisanFormatter {
         filtered_ror
     }
 
+    /// Push a BT sample and its timestamp, evicting the oldest if full.
     fn update_bt_history_with_timestamp(
         bt_history: &mut Deque<f32, BT_HISTORY_SIZE>,
         timestamp_history: &mut Deque<Instant, BT_HISTORY_SIZE>,
@@ -558,6 +574,7 @@ impl MutableArtisanFormatter {
         let _ = timestamp_history.push_back(now);
     }
 
+    /// Compute raw RoR (°C/s) from a BT window and its real timestamps.
     fn compute_ror_with_timestamps(bt: &[f32], timestamps: &[Instant]) -> f32 {
         if bt.len() < 2 {
             return 0.0;

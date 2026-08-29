@@ -1,3 +1,10 @@
+//! Shared LEDC PWM bus abstraction for the SSR heater and fan.
+//!
+//! Wraps the esp-hal LEDC channels behind a single `LedcBus` that arbitrates
+//! writes through `LedcGuard` and hands out `LedcChannelHandle`s. Tracks duty
+//! in a single unit (ticks) and exposes both the live (wire) and config (write
+//! verification) duty registers.
+
 use crate::hardware::ledc_guard::{LedcGuard, LedcGuardError};
 use crate::hardware::ssr::{DutyWriteError, LedcDutyReader};
 use core::cell::{Cell, RefCell};
@@ -33,14 +40,19 @@ impl<'a> ChannelEntry<'a> {
     }
 }
 
+/// Owns the LEDC channels for the fan and SSR and arbitrates writes via `LedcGuard`.
 pub struct LedcBus<'a> {
+    /// Spin guard ensuring only one task touches a channel at a time.
     guard: LedcGuard,
+    /// Fan PWM channel entry (Channel0).
     fan: ChannelEntry<'a>,
+    /// SSR PWM channel entry (Channel1).
     ssr: ChannelEntry<'a>,
     // Note: Timer configuration is handled internally by Channel implementation
 }
 
 impl<'a> LedcBus<'a> {
+    /// Build a `LedcBus` from the already-configured fan and SSR channels.
     pub fn new(
         fan_channel: channel::Channel<'a, LowSpeed>,
         fan_number: channel::Number,
@@ -54,6 +66,7 @@ impl<'a> LedcBus<'a> {
         }
     }
 
+    /// Borrow a handle to drive the fan channel.
     pub fn fan_handle(&'a self) -> LedcChannelHandle<'a> {
         LedcChannelHandle {
             bus: self,
@@ -61,6 +74,7 @@ impl<'a> LedcBus<'a> {
         }
     }
 
+    /// Borrow a handle to drive the SSR channel.
     pub fn ssr_handle(&'a self) -> LedcChannelHandle<'a> {
         LedcChannelHandle {
             bus: self,
@@ -157,6 +171,7 @@ impl ChannelRole {
 }
 
 #[derive(Clone, Copy)]
+/// Handle to a single LEDC channel, used by the SSR and fan controllers to set duty.
 pub struct LedcChannelHandle<'a> {
     bus: &'a LedcBus<'a>,
     role: ChannelRole,
@@ -167,6 +182,7 @@ impl<'a> LedcChannelHandle<'a> {
         self.role.entry(self.bus)
     }
 
+    /// Set duty by percentage (0-100), converting to ticks before caching (see notes).
     pub fn set_duty(&self, duty: u8) -> Result<(), channel::Error> {
         let entry = self.entry();
         match self
@@ -202,9 +218,9 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
-    /// Set duty as a raw value, bypassing [`ChannelIFace::set_duty`]'s
+    /// Set duty as a raw value, bypassing `ChannelIFace::set_duty`'s
     /// percentage conversion. Use this when you have already computed a raw
-    /// duty value via [`percentage_to_ledc_duty`].
+    /// duty value via `percentage_to_ledc_duty`.
     pub fn set_duty_raw(&self, duty: u16) -> Result<(), channel::Error> {
         let entry = self.entry();
         match self.bus.with_channel_mut(entry, |channel| {
@@ -218,6 +234,7 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
+    /// Begin a duty fade from `start_duty` to `end_duty` over `duration_ms` (percent).
     pub fn start_duty_fade(
         &self,
         start_duty: u8,
@@ -274,6 +291,7 @@ impl<'a> LedcChannelHandle<'a> {
         }
     }
 
+    /// Return the cached duty in ticks (last value written/faded to).
     pub fn applied_duty(&self) -> u16 {
         self.entry().duty.get()
     }
@@ -288,6 +306,7 @@ impl<'a> LedcChannelHandle<'a> {
         self.bus.read_live_register(self.entry())
     }
 
+    /// Return the cached duty as a percentage of this channel's resolution.
     pub fn applied_percent(&self) -> f32 {
         // Bug B10: divide by THIS channel's resolution, not always the SSR's.
         (self.applied_duty() as f32) * 100.0 / self.max_duty() as f32
@@ -309,6 +328,7 @@ impl<'a> LedcDutyReader for LedcChannelHandle<'a> {
         self.bus.read_config_register(self.entry())
     }
 
+    /// Write a raw duty value (ticks) as the `LedcDutyReader` trait requires.
     fn set_duty_raw(&self, duty: u16) -> Result<(), DutyWriteError> {
         LedcChannelHandle::set_duty_raw(self, duty).map_err(|_| DutyWriteError)
     }

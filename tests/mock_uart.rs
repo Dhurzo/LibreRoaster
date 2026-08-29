@@ -45,10 +45,8 @@ use std::vec::Vec;
 
 use libreroaster::hardware::uart::UartError;
 
-/// Mock implementation of UartDriver for testing
-///
-/// Simulates UART communication for Artisan+ protocol testing
-/// without requiring actual hardware.
+/// Standalone mock of the `UartDriver` interface for testing the Artisan+
+/// protocol without requiring actual hardware.
 pub struct MockUartDriver {
     /// Incoming data buffer (simulates RX)
     rx_buffer: Vec<u8>,

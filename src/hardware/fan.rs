@@ -1,3 +1,9 @@
+//! ESP32-C3 fan control over an LEDC PWM channel.
+//!
+//! `FanController` wraps an `LedcChannelHandle`, converting a 0–100 % speed
+//! into raw duty and choosing between smooth hardware fades and a direct write.
+//! `emergency_set_speed` bypasses the fade for safety-critical shutdowns.
+
 use crate::config::constants::FAN_PWM_RESOLUTION;
 use crate::control::traits::Fan;
 use crate::control::RoasterError;
@@ -7,11 +13,16 @@ use log::{debug, info};
 
 const FAN_MAX_DUTY: u32 = (1u32 << FAN_PWM_RESOLUTION) - 1;
 
+/// Errors returned by fan control operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanError {
+    /// Controller initialisation (LEDC attach) failed.
     InitializationError { source: &'static str },
+    /// Requested speed was outside the valid range.
     InvalidSpeed { source: &'static str },
+    /// LEDC duty write or fade start failed.
     PwmError { source: &'static str },
+    /// Underlying LEDC/peripheral error.
     LedcError { source: &'static str },
 }
 
@@ -26,14 +37,18 @@ impl embedded_hal::digital::Error for FanError {
     }
 }
 
+/// LEDC-driven fan controller (real hardware variant).
 pub struct FanController<'a> {
+    /// Optional attached LEDC channel; `None` means placeholder/no-hardware mode.
     ledc_handle: Option<LedcChannelHandle<'a>>,
+    /// Last applied fan speed in percent (0–100).
     current_speed: f32,
 }
 
 const FADE_THRESHOLD_DUTY: u8 = 12;
 
 impl<'a> FanController<'a> {
+    /// Create a placeholder controller with no LEDC hardware attached.
     pub fn new() -> Result<Self, FanError> {
         info!("No LEDC peripherals available - fan control disabled");
         Ok(Self {
@@ -42,6 +57,7 @@ impl<'a> FanController<'a> {
         })
     }
 
+    /// Create a controller driving the supplied LEDC channel handle.
     pub fn with_handle(handle: LedcChannelHandle<'a>) -> Result<Self, FanError> {
         info!("Fan controller attached to LEDC bus");
         Ok(Self {
@@ -78,6 +94,7 @@ impl<'a> FanController<'a> {
         Ok(())
     }
 
+    /// Set fan speed (0–100 %), using a hardware fade for large deltas.
     pub fn set_speed(&mut self, speed_percent: f32) -> Result<(), FanError> {
         let clamped_speed = speed_percent.clamp(0.0, 100.0);
         let target_duty = Self::percentage_to_duty(clamped_speed);

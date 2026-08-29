@@ -1,3 +1,10 @@
+//! Embedded UART0 driver for the ESP32-C3 (riscv32 target).
+//!
+//! Splits the `Uart` peripheral into independent TX/RX halves guarded by
+//! separate async mutexes so the reader and writer never block each other,
+//! and exposes `init_uart`/`uart_read_bytes`/`uart_write_bytes` used by the
+//! transport tasks.
+
 use core::fmt;
 use core::ptr;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -10,11 +17,16 @@ use static_cell::StaticCell;
 
 use crate::hardware::static_sync::SyncCell;
 
+/// Errors returned by the embedded UART driver.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UartError {
+    /// A byte could not be transmitted to the host.
     TransmissionError,
+    /// A byte could not be received from the host.
     ReceptionError,
+    /// The receive/transmit buffer could not hold the data.
     BufferOverflow,
+    /// UART peripheral or driver initialization failed.
     InitError,
 }
 
@@ -42,10 +54,12 @@ pub struct UartTxDriver {
 }
 
 impl UartTxDriver {
+    /// Wrap the TX half of the UART peripheral.
     pub fn new(tx: UartTx<'static, esp_hal::Async>) -> Self {
         Self { tx }
     }
 
+    /// Transmit `data` over UART, bounding each phase at 50 ms (see in-body notes).
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UartError> {
         // Bug S8 (2026-08-05): symmetric with the USB CDC driver (Bug A2).
         // `Write::write`/`Write::flush` on the async UART can stall if the
@@ -75,15 +89,18 @@ impl UartTxDriver {
     }
 }
 
+/// RX half of the embedded UART driver (owns the `UartRx` peripheral).
 pub struct UartRxDriver {
     rx: UartRx<'static, esp_hal::Async>,
 }
 
 impl UartRxDriver {
+    /// Wrap the RX half of the UART peripheral.
     pub fn new(rx: UartRx<'static, esp_hal::Async>) -> Self {
         Self { rx }
     }
 
+    /// Receive bytes into `buffer`; returns the count read or a `ReceptionError`.
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UartError> {
         Read::read(&mut self.rx, buffer)
             .await
@@ -101,6 +118,7 @@ static UART_TX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 /// Async mutex guarding RX only. TX may proceed concurrently.
 static UART_RX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 
+/// Initialize the embedded UART driver: split UART0 into TX/RX and publish the halves.
 pub fn init_uart(
     uart0: esp_hal::peripherals::UART0<'static>,
     rx: impl PeripheralInput<'static>,

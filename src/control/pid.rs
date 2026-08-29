@@ -1,3 +1,7 @@
+//! PID controller for bean-temperature regulation with anti-windup protection.
+//!
+//! `CoffeeRoasterPid` is a positional P/I/D controller whose integrator gates itself on actuator feedback (`PidFeedback`) and on its own output clamp, so the heater cannot wind up while saturated or guard-blocked.
+
 use crate::config::PID_SAMPLE_TIME_MS;
 
 const DEFAULT_KP: f32 = 2.0;
@@ -8,8 +12,11 @@ const SATURATION_EPSILON: f32 = 1.0;
 /// Provides the latest actuator status so the PID can obey actual outputs and guard resets.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PidFeedback {
+    /// Heater duty requested by the controller on the last tick (0-100 %).
     pub desired_output: f32,
+    /// Heater duty actually applied after slew/clamping (0-100 %).
     pub applied_output: f32,
+    /// True while the SSR zero-cross cycle guard is busy.
     pub guard_busy: bool,
 }
 
@@ -32,6 +39,7 @@ impl PidFeedback {
     }
 }
 
+/// Positional PID controller for bean temperature with conditional-integration anti-windup.
 pub struct CoffeeRoasterPid {
     kp: f32,
     ki: f32,
@@ -57,9 +65,12 @@ pub struct CoffeeRoasterPid {
     output_max: f32,
 }
 
+/// Errors returned by the PID controller.
 #[derive(Debug, PartialEq)]
 pub enum PidError {
+    /// Construction or reset of the controller failed.
     InitializationError,
+    /// A computation input was invalid (e.g., a non-finite target).
     ComputationError,
 }
 
@@ -91,8 +102,9 @@ impl CoffeeRoasterPid {
         }
     }
 
-    /// Update PID gains in place without disturbing `enabled`, `target`,
-    /// `output_min/max`, `cycle_time_ms` or any other operating state.
+    /// Update PID gains in place, preserving `enabled`, `target`,
+    /// `output_min/max`, `cycle_time_ms` and `derivative_rate`; resets the
+    /// integrator and last-error baseline.
     ///
     /// Bug B5: `set_pid_gains` (handlers/temperature.rs) used to replace the
     /// whole controller with `CoffeeRoasterPid::with_gains(...)`, which
@@ -111,6 +123,7 @@ impl CoffeeRoasterPid {
         self.last_error_initialized = false;
     }
 
+    /// Enable the controller, resetting integrator and derivative state.
     pub fn enable(&mut self) {
         self.enabled = true;
         self.integrator = 0.0;
@@ -126,14 +139,17 @@ impl CoffeeRoasterPid {
         self.last_feedback = None;
     }
 
+    /// Disable the controller; `compute_output` returns 0.0 while disabled.
     pub fn disable(&mut self) {
         self.enabled = false;
     }
 
+    /// Whether the controller is currently enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// Set the target temperature; rejects non-finite values.
     pub fn set_target(&mut self, target: f32) -> Result<(), PidError> {
         if !target.is_finite() {
             return Err(PidError::ComputationError);
@@ -147,10 +163,12 @@ impl CoffeeRoasterPid {
         self.last_feedback = Some(feedback);
     }
 
+    /// Set the PID cycle time in milliseconds (minimum 10).
     pub fn set_cycle_time(&mut self, ms: u32) {
         self.cycle_time_ms = ms.max(10);
     }
 
+    /// Set the output clamp range; values are clamped to [0,100] and swapped if inverted.
     pub fn set_output_limits(&mut self, min: f32, max: f32) {
         self.output_min = min.clamp(0.0, 100.0);
         self.output_max = max.clamp(0.0, 100.0);
@@ -256,6 +274,7 @@ impl CoffeeRoasterPid {
         mv
     }
 
+    /// Seconds since the last update, falling back to `cycle_time_ms` when unknown.
     fn delta_seconds(&self, timestamp_ms: u32) -> f32 {
         let default_seconds = self.cycle_time_ms as f32 / 1000.0;
 
@@ -271,6 +290,7 @@ impl CoffeeRoasterPid {
         default_seconds
     }
 
+    /// Anti-windup gate: integrate only while actuator feedback is not saturated.
     fn should_integrate(&self) -> bool {
         self.last_feedback
             .map(|feedback| !feedback.is_saturated())
@@ -291,6 +311,7 @@ impl CoffeeRoasterPid {
         self.derivative_rate
     }
 
+    /// Clamp the MV to the output limits and flag integrator clamping when desired exceeds applied.
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
         // Only clamp to the configured output range. Anti-windup is already
         // applied in `should_integrate()` by checking `feedback.is_saturated()`,

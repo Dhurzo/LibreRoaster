@@ -1,6 +1,13 @@
+//! Host test mocks for the thermometer, SSR/heater, and fan traits.
+//!
+//! Each mock stores shared, `Arc`-wrapped state so a clone configured by the
+//! test (before the mock is moved into `RoasterControl`) can still inject
+//! errors or read back calls mid-run.
+
 use crate::control::traits::{Fan, Heater, Thermometer};
 use crate::control::RoasterError;
 use crate::hardware::{fan::FanError, max31856::Max31856Error, ssr::SsrError};
+
 use alloc::sync::Arc;
 use core::cell::RefCell;
 use critical_section::Mutex as CsMutex;
@@ -21,6 +28,7 @@ struct ThermoShared {
 }
 
 impl MockThermometer {
+    /// Create a mock reporting 25 °C with no injected error.
     pub fn new() -> Self {
         Self {
             inject_error: None,
@@ -29,14 +37,17 @@ impl MockThermometer {
         }
     }
 
+    /// Inject a persistent error returned by every `read_temperature`.
     pub fn inject_error(&mut self, error: Max31856Error) {
         self.inject_error = Some(error);
     }
 
+    /// Clear any injected error so reads return `default_temp`.
     pub fn clear_error(&mut self) {
         self.inject_error = None;
     }
 
+    /// Set the temperature returned when no error is injected.
     pub fn set_default_temp(&mut self, temp: f32) {
         self.default_temp = temp;
     }
@@ -114,6 +125,7 @@ impl Default for SsrShared {
 }
 
 impl MockSsr {
+    /// Create a mock SSR reporting `Available` status with no injected error.
     pub fn new() -> Self {
         Self {
             inject_error: None,
@@ -121,10 +133,12 @@ impl MockSsr {
         }
     }
 
+    /// Inject a persistent error returned by every `set_power`.
     pub fn inject_error(&mut self, error: SsrError) {
         self.inject_error = Some(error);
     }
 
+    /// Clear any injected error so writes succeed.
     pub fn clear_error(&mut self) {
         self.inject_error = None;
     }
@@ -226,6 +240,7 @@ struct FanShared {
 }
 
 impl MockFan {
+    /// Create a mock fan reporting 0 % speed with no injected error.
     pub fn new() -> Self {
         Self {
             inject_error: None,
@@ -233,10 +248,12 @@ impl MockFan {
         }
     }
 
+    /// Inject a persistent error returned by every `set_speed`.
     pub fn inject_error(&mut self, error: FanError) {
         self.inject_error = Some(error);
     }
 
+    /// Clear any injected error so writes succeed.
     pub fn clear_error(&mut self) {
         self.inject_error = None;
     }

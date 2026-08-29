@@ -1,3 +1,11 @@
+//! Firmware entry point for the LibreRoaster ESP32-C3 coffee-roaster controller.
+//!
+//! Boots the `no_std` binary on the ESP32-C3 (`riscv32`), initialises all hardware via
+//! `libreroaster::hardware::init`, builds the application with `AppBuilder`, starts the
+//! embassy executor under the ESP RTOS scheduler, and parks init failures into a
+//! safe-shutdown blink loop. On non-embedded targets this file is a no-op stub so the
+//! crate still compiles for the host test suite.
+
 #![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
 #![deny(

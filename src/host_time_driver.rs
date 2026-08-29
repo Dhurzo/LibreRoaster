@@ -1,3 +1,10 @@
+//! Host (non-embedded) `embassy-time` driver used by the host test suite.
+//!
+//! Provides `embassy_time_driver::Driver` via a single worker thread that sleeps until the
+//! earliest scheduled deadline and fires all due wakers, so host `Timer` futures advance
+//! without spawning one OS thread per wake. Compiled only when `target_arch` is not
+//! `riscv32`.
+
 #![cfg(not(target_arch = "riscv32"))]
 
 use core::task::Waker;
@@ -23,6 +30,7 @@ struct HostTimeDriver {
 }
 
 impl HostTimeDriver {
+    /// Create an empty driver with no scheduled wakes yet.
     const fn new() -> Self {
         Self {
             start: OnceLock::new(),
@@ -31,6 +39,7 @@ impl HostTimeDriver {
         }
     }
 
+    /// Return the instant this driver first became active (monotonic baseline).
     fn baseline(&self) -> Instant {
         *self.start.get_or_init(Instant::now)
     }
@@ -102,6 +111,7 @@ fn worker_loop() {
     }
 }
 
+/// Lazily spawn the single worker thread that services pending wake deadlines.
 fn spawn_worker() {
     static WORKER: Once = Once::new();
     WORKER.call_once(|| {
@@ -118,6 +128,7 @@ fn spawn_worker() {
 }
 
 impl Driver for HostTimeDriver {
+    /// Current time in embassy ticks since the driver baseline.
     fn now(&self) -> u64 {
         let base = self.baseline();
         let nanos = Instant::now().duration_since(base).as_nanos();

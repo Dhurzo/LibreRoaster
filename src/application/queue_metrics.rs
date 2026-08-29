@@ -1,3 +1,9 @@
+//! Command-channel saturation metrics for the Artisan command path.
+//!
+//! Tracks the live and peak command-channel depth and counts backlog events
+//! past `QUEUE_DEPTH_BACKLOG_THRESHOLD`, exposing a lock-free snapshot used by
+//! STATUS/telemetry so the B26 "command silently dropped" path is observable.
+
 use crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
 use portable_atomic::{AtomicUsize, Ordering};
 
@@ -9,8 +15,10 @@ use portable_atomic::{AtomicUsize, Ordering};
 // real saturation, giving B26's "command silently dropped" path the
 // telemetry it should have had all along. Bug E1 (2026-08-03): the channel
 // grew 8→16, so the threshold now computes against 16 (12).
+/// Depth at/above which a queued command counts as a backlog event (3/4 of channel cap).
 pub const QUEUE_DEPTH_BACKLOG_THRESHOLD: usize = ARTISAN_CMD_CHANNEL_SIZE * 3 / 4;
 
+/// Lock-free counters for command-channel depth, peak depth, and backlog events.
 pub struct QueueProcessorMetrics {
     queue_depth: AtomicUsize,
     max_depth: AtomicUsize,
@@ -18,6 +26,7 @@ pub struct QueueProcessorMetrics {
 }
 
 impl QueueProcessorMetrics {
+    /// Returns a zeroed metrics struct (usable in a `static`).
     pub const fn new() -> Self {
         Self {
             queue_depth: AtomicUsize::new(0),
@@ -64,8 +73,10 @@ impl Default for QueueProcessorMetrics {
     }
 }
 
+/// Process-wide instance updated by `record_queue_depth` each control tick.
 pub static QUEUE_PROCESSOR_METRICS: QueueProcessorMetrics = QueueProcessorMetrics::new();
 
+/// Records the current command-channel depth into the global metrics instance.
 pub fn record_queue_depth(depth: usize) {
     QUEUE_PROCESSOR_METRICS.record_depth(depth);
 }

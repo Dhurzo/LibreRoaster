@@ -31,7 +31,7 @@
 /// optional current-sense circuit — latches `NotDetected` within ~2 s.
 pub const HEAT_ABSENT_DEBOUNCE: u8 = 5;
 
-/// Outcome of feeding one detection-pin sample to [`debounce_heat_absent`].
+/// Outcome of feeding one detection-pin sample to `debounce_heat_absent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeatPresenceOutcome {
     /// Sample was informative and consistent — no status transition.

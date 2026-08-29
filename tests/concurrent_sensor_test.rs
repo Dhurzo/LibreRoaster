@@ -1,3 +1,9 @@
+//! Concurrent sensor-read mutex stress test.
+//!
+//! Installs a host `critical_section` impl that serializes a `RefCell` borrow,
+//! then spawns N concurrent `roaster_async_sensor_read` tasks and asserts the
+//! async-lock depth never exceeds 1 (no overlapping holders).
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 
 extern crate std;
@@ -43,12 +49,15 @@ unsafe impl critical_section::Impl for TestCriticalSection {
     }
 }
 
+/// Number of concurrent sensor readers (and executor pool size).
 const CONCURRENT_READS: usize = 10;
 
+/// Build a stub `RoasterControl` for the sensor-read workers.
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
+/// Register a fresh stub roaster in the global container.
 fn init_service_container() {
     let roaster = build_control();
     ServiceContainer::init_roaster(roaster);

@@ -1,3 +1,9 @@
+//! Command/transport concurrency stress test.
+//!
+//! Spawns parallel workers that hammer both USB and UART entry points with
+//! `READ`/`OT1`/`IO3` while concurrent sensor reads run, then asserts the
+//! artisan channel drains without backlog under the shared `ServiceContainer`.
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::type_complexity)]
 
@@ -17,10 +23,12 @@ use std::time::Duration as StdDuration;
 mod tests_common;
 use tests_common::{build_test_control, StubFan, StubHeater};
 
+/// Build a stub `RoasterControl` for the concurrency workers.
 fn build_control() -> RoasterControl {
     build_test_control(Box::new(StubHeater::new()), Box::new(StubFan::new()))
 }
 
+/// Register a fresh stub roaster + artisan input in the global container.
 fn init_service_container() {
     let roaster = build_control();
     let artisan_input = ArtisanInput::new().expect("ArtisanInput should build");
@@ -28,6 +36,7 @@ fn init_service_container() {
     ServiceContainer::init_artisan_input(artisan_input);
 }
 
+/// Drain both the artisan and output channels before a run.
 fn reset_channels() {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     while cmd_channel.try_receive().is_ok() {}

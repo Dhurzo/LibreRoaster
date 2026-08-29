@@ -2,6 +2,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 #![allow(clippy::type_complexity)]
 
+//! Control-loop integration tests exercising the full command → `RoasterControl` → output
+//! pipeline through the real `ServiceContainer` channels (and `with_roaster_async`).
+//!
+//! Covers draining queued commands from the Artisan channel, the per-tick `update_control`
+//! stage, full single/multi-tick roast simulation, TC4 READ/STATUS wire formatting, the
+//! fault-mode command whitelist (handshake commands stay accepted while latched), profile /
+//! manual / PID behaviour, and host-side sensor reads. All tests serialize on `TEST_MUTEX`.
+
 extern crate std;
 
 use std::boxed::Box;
@@ -31,6 +39,7 @@ fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
     guard
 }
 
+/// Build a fresh `RoasterControl` with stub heater/fan and an empty `SensorConversionHub`.
 fn build_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),
@@ -40,11 +49,13 @@ fn build_control() -> RoasterControl {
     .expect("RoasterControl should build")
 }
 
+/// Build a `RoasterControl` and install it into the `ServiceContainer` singleton.
 fn init_service_container() {
     let roaster = build_control();
     ServiceContainer::init_roaster(roaster);
 }
 
+/// Drain (discard) any pending messages on the Artisan command and output channels.
 fn drain_channels() {
     let cmd = ServiceContainer::get_artisan_channel();
     while cmd.try_receive().is_ok() {}
@@ -52,6 +63,7 @@ fn drain_channels() {
     while out.try_receive().is_ok() {}
 }
 
+/// Wrap an `ArtisanCommand` as a `TracedCommand` (channel `None`) and push it to the channel.
 fn send_command(cmd: ArtisanCommand) {
     let traced = TracedCommand {
         command: cmd,
@@ -61,6 +73,7 @@ fn send_command(cmd: ArtisanCommand) {
     let _ = ServiceContainer::get_artisan_channel().try_send(traced);
 }
 
+/// Drain and return every message currently queued on the output channel.
 fn drain_output() -> std::vec::Vec<std::string::String> {
     let channel = ServiceContainer::get_output_channel();
     let mut messages = std::vec::Vec::new();
@@ -70,6 +83,7 @@ fn drain_output() -> std::vec::Vec<std::string::String> {
     messages
 }
 
+/// Build a `RoasterControl` for the per-tick `update_control` stage tests (untracked by `ServiceContainer`).
 fn build_tracked_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),

@@ -1,3 +1,9 @@
+//! Command dispatch sub-controller for roaster control.
+//!
+//! Routes parsed `RoasterCommand`s to the temperature/system handlers,
+//! evaluates Artisan manual policies with commit-after-write discipline,
+//! and fronts PID management (gains, target, feedback) for the loop.
+
 use crate::config::*;
 use crate::control::handlers::{
     ArtisanCommandHandler, SystemCommandHandler, TemperatureCommandHandler,
@@ -8,6 +14,7 @@ use crate::control::{RoasterCommandHandler, RoasterError};
 use embassy_time::Instant;
 use log::{info, warn};
 
+/// Command routing facade over the temperature, Artisan, and system handlers.
 pub struct CommandDispatcher {
     pub(crate) temp_handler: TemperatureCommandHandler,
     pub(crate) artisan_handler: ArtisanCommandHandler,
@@ -15,6 +22,7 @@ pub struct CommandDispatcher {
 }
 
 impl CommandDispatcher {
+    /// Build the dispatcher and its three sub-handlers.
     pub fn new() -> Result<Self, RoasterError> {
         let temp_handler = TemperatureCommandHandler::new()?;
         Ok(Self {
@@ -24,6 +32,9 @@ impl CommandDispatcher {
         })
     }
 
+    /// Route a command to the first handler that accepts it.
+    ///
+    /// `StopRoast` short-circuits to `StopStreaming`; unmatched commands error.
     pub fn process_command(
         &mut self,
         command: RoasterCommand,
@@ -50,10 +61,12 @@ impl CommandDispatcher {
         }))
     }
 
+    /// Whether the Artisan manual policy accepts this command.
     pub fn can_handle_manual(&self, command: RoasterCommand) -> bool {
         <ArtisanCommandHandler as ManualCommandPolicy>::can_handle(&self.artisan_handler, command)
     }
 
+    /// Evaluate a manual command without committing state (commit-after-write).
     pub fn evaluate_manual_policy(
         &mut self,
         command: RoasterCommand,
@@ -74,6 +87,9 @@ impl CommandDispatcher {
         self.artisan_handler.commit_manual_fan(value);
     }
 
+    /// Arm PID control with a target; only the first call enables the controller.
+    ///
+    /// Repeated calls (Artisan ramp/soak re-sends SV) update the target only.
     pub fn enable_pid(
         &mut self,
         target_temp: f32,
@@ -101,30 +117,37 @@ impl CommandDispatcher {
         Ok(())
     }
 
+    /// Disable PID control.
     pub fn disable_pid(&mut self) {
         self.temp_handler.disable_pid();
     }
 
+    /// Compute the PID output for the given bean temperature.
     pub fn get_pid_output(&mut self, bean_temp: f32, current_time: Instant) -> f32 {
         self.temp_handler.get_pid_output(bean_temp, current_time)
     }
 
+    /// Push actuator/LEDC guard feedback into the PID integrator.
     pub fn set_pid_feedback(&mut self, feedback: PidFeedback) {
         self.temp_handler.set_pid_feedback(feedback);
     }
 
+    /// Update the PID target temperature (°C).
     pub fn set_pid_target(&mut self, target: f32) -> Result<(), RoasterError> {
         self.temp_handler.set_pid_target(target)
     }
 
+    /// Output manager (continuous-output state machine).
     pub fn get_output_manager(&self) -> &crate::control::OutputController {
         self.temp_handler.get_output_manager()
     }
 
+    /// Mutable access to the output manager.
     pub fn get_output_manager_mut(&mut self) -> &mut crate::control::OutputController {
         self.temp_handler.get_output_manager_mut()
     }
 
+    /// True if continuous output is enabled or control (PID/manual) is active.
     pub fn is_streaming(&self, status: &SystemStatus) -> bool {
         self.temp_handler
             .get_output_manager()
@@ -133,6 +156,9 @@ impl CommandDispatcher {
             || status.artisan_control
     }
 
+    /// Stop streaming: disable continuous output, PID, and manual state.
+    ///
+    /// Zeros SSR output; the caller sets fan speed separately.
     pub fn stop_streaming(&mut self, status: &mut SystemStatus) {
         self.temp_handler
             .get_output_manager_mut()
@@ -146,38 +172,47 @@ impl CommandDispatcher {
         status.ssr_cycle_guard_busy_until_ms = 0;
     }
 
+    /// Last committed manual heater value (%).
     pub fn artisan_manual_heater(&self) -> f32 {
         self.artisan_handler.get_manual_heater()
     }
 
+    /// Last committed manual fan value (%).
     pub fn artisan_manual_fan(&self) -> f32 {
         self.artisan_handler.get_manual_fan()
     }
 
+    /// Clear the committed Artisan manual values.
     pub fn clear_artisan_manual(&mut self) {
         self.artisan_handler.clear_manual();
     }
 
+    /// Current PID integrator value.
     pub fn pid_integrator_value(&self) -> f32 {
         self.temp_handler.pid_integrator_value()
     }
 
+    /// Whether the PID output is currently saturated.
     pub fn pid_saturation_active(&self) -> bool {
         self.temp_handler.pid_saturation_active()
     }
 
+    /// Whether the PID integrator is clamped.
     pub fn pid_integrator_clamped(&self) -> bool {
         self.temp_handler.pid_integrator_clamped()
     }
 
+    /// Set PID gains (rejects negative values).
     pub fn set_pid_gains(&mut self, kp: f32, ki: f32, kd: f32) -> Result<(), RoasterError> {
         self.temp_handler.set_pid_gains(kp, ki, kd)
     }
 
+    /// Set the PID cycle time in milliseconds.
     pub fn set_pid_cycle_time(&mut self, ms: u32) {
         self.temp_handler.set_pid_cycle_time(ms);
     }
 
+    /// Set the raw PID output limits (min/max %).
     pub fn set_pid_output_limits(&mut self, min: f32, max: f32) {
         self.temp_handler.set_pid_output_limits(min, max);
     }
@@ -189,7 +224,10 @@ impl CommandDispatcher {
     }
 }
 
+/// Outcome of dispatching one command.
 pub enum CommandDispatchResult {
+    /// `StopRoast` received: stop streaming before any handler runs.
     StopStreaming,
+    /// A handler processed the command (may be an error).
     Handled(Result<(), RoasterError>),
 }

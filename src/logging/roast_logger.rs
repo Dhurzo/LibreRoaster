@@ -1,6 +1,7 @@
-/// Ring-buffer roast data logger — backup recorder for Artisan disconnects.
-/// Stores up to LOG_CAPACITY CSV samples in a heapless ring buffer.
-/// On reconnect, Artisan can send `#DUMP` to retrieve buffered data.
+//! Ring-buffer roast data logger — backup recorder for Artisan disconnects.
+//!
+//! Stores up to `LOG_CAPACITY` CSV samples in a heapless ring buffer.
+//! On reconnect, Artisan can send `#DUMP` to retrieve buffered data.
 use core::cell::RefCell;
 use critical_section::Mutex;
 use embassy_time::Instant;
@@ -93,6 +94,7 @@ pub fn is_logging_active() -> bool {
     critical_section::with(|cs| ROAST_LOGGER.borrow(cs).borrow().is_active())
 }
 
+/// In-memory roast ring-buffer logger (backup recorder for disconnects).
 pub struct RoastLogger {
     buffer: Deque<HeaplessString<SAMPLE_CAPACITY>, LOG_CAPACITY>,
     active: bool,
@@ -104,6 +106,7 @@ pub struct RoastLogger {
 }
 
 impl RoastLogger {
+    /// Create an inactive logger with an empty buffer.
     pub fn new() -> Self {
         Self {
             buffer: Deque::new(),
@@ -121,6 +124,7 @@ impl RoastLogger {
         }
     }
 
+    /// Begin a new roast, resetting the buffer and epoch to `now`.
     pub fn start_roast(&mut self, now: Instant) {
         self.active = true;
         self.buffer.clear();
@@ -129,10 +133,12 @@ impl RoastLogger {
         self.start = Some(now);
     }
 
+    /// Stop logging (the buffer is retained until the next START).
     pub fn stop_roast(&mut self) {
         self.active = false;
     }
 
+    /// Whether logging is currently active.
     pub fn is_active(&self) -> bool {
         self.active
     }

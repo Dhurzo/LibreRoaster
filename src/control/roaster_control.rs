@@ -1,3 +1,11 @@
+//! Top-level control facade for the roaster: owns the sensor, actuator,
+//! safety and dispatch controllers plus roast state (`RoasterState`,
+//! profiles, charge detection) and is the single writer to hardware.
+//!
+//! The application layer drives it from two entry points: `update_control`
+//! (one control-loop tick: safety backstops, PID/manual selection, guarded
+//! heater/fan writes) and `process_artisan_command` / `process_command`
+//! (TC4/Artisan commands). All safety latches live here.
 use super::policies::{ManualPolicyOutcome, SafetyPolicyOutcome};
 use super::RoasterError;
 use crate::config::*;
@@ -20,6 +28,8 @@ use crate::logging::edge_log_gate::EdgeLogGate;
 /// `OT1 0` from resetting the MAX_ROAST_TIME budget.
 const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
 
+/// Central control object: roast state machine, safety latches and the
+/// single writer that applies sensor/actuator/safety/dispatch decisions.
 pub struct RoasterControl {
     state: RoasterState,
     status: SystemStatus,
@@ -27,6 +37,7 @@ pub struct RoasterControl {
     actuator: ActuatorController,
     safety: SafetyController,
     dispatch: CommandDispatcher,
+    /// Last time the PID actually computed output (throttles to `pid_cycle_time_ms`).
     last_pid_update: Option<Instant>,
     active_profile: Option<RoastProfile>,
     profile_start_time: Option<Instant>,
@@ -50,6 +61,7 @@ pub struct RoasterControl {
     charge_detected: bool,
     charge_time: Option<Instant>,
     preheat_target: Option<f32>,
+    /// Rolling bean-temperature samples feeding charge (bean-drop) detection.
     bt_charge_history: heapless::Deque<f32, 10>,
     /// Bug B23: per-tick divider that throttles `bt_charge_history` sampling
     /// to once every `CHARGE_SAMPLE_TICK_DIV` ticks. With the real tick
@@ -111,6 +123,7 @@ pub struct RoasterControl {
 }
 
 impl RoasterControl {
+    /// Build the control facade from boxed heater/fan drivers and the sensor hub.
     pub fn new(
         heater: Box<dyn Heater + Send>,
         fan: Box<dyn Fan + Send>,
@@ -143,6 +156,7 @@ impl RoasterControl {
         })
     }
 
+    /// Read both MAX31856 channels into status; over-range readings latch the emergency.
     pub async fn read_sensors(&mut self) -> Result<(), RoasterError> {
         match self.sensor.read_sensors(&mut self.status).await {
             Err(RoasterError::TemperatureOutOfRange {
@@ -163,22 +177,27 @@ impl RoasterControl {
         }
     }
 
+    /// Return a copy of the current system status snapshot.
     pub fn get_status(&self) -> SystemStatus {
         self.status
     }
 
+    /// Mutable handle to the live `SystemStatus`.
     pub fn status_mut(&mut self) -> &mut SystemStatus {
         &mut self.status
     }
 
+    /// Most recent raw sensor sample, if one has been read.
     pub fn last_sensor_sample(&self) -> Option<crate::hardware::sensors::SensorSample> {
         self.sensor.last_sensor_sample()
     }
 
+    /// Current roast state machine state.
     pub fn get_state(&self) -> RoasterState {
         self.state
     }
 
+    /// Apply a fresh BT/ET sample assuming no sensor faults.
     pub fn update_temperatures(
         &mut self,
         bean_temp: f32,
@@ -231,11 +250,14 @@ impl RoasterControl {
         }
     }
 
+    /// Flag whether an over-temperature regression run is active.
     pub fn mark_overtemp_regression_active(&mut self, active: bool) {
         self.safety
             .mark_overtemp_regression_active(active, &mut self.status);
     }
 
+    /// Route an internal `RoasterCommand`: safety policy first, then manual
+    /// policy, then dispatch; `StopRoast` is the explicit recovery path.
     pub fn process_command(
         &mut self,
         command: RoasterCommand,
@@ -297,6 +319,7 @@ impl RoasterControl {
         }
     }
 
+    /// Apply a manual policy outcome: guarded heater/fan writes, then PID/manual state commits.
     fn apply_policy_outcome(
         &mut self,
         outcome: &ManualPolicyOutcome,
@@ -409,6 +432,7 @@ impl RoasterControl {
         Ok(())
     }
 
+    /// Apply a safety outcome: zero SSR, disable PID and latch the emergency state.
     fn apply_safety_outcome(
         &mut self,
         outcome: &SafetyPolicyOutcome,
@@ -564,10 +588,12 @@ impl RoasterControl {
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
+    /// Validate a raw temperature reading (finite and within sensor range).
     pub fn is_temperature_valid(temp: f32) -> bool {
         SensorController::is_temperature_valid(temp)
     }
 
+    /// Latch an emergency shutdown with `reason`, zeroing all actuator outputs.
     pub fn emergency_shutdown(&mut self, reason: &str) -> Result<(), RoasterError> {
         // THERM-1: Latch the emergency so internal traps (overtemp, sensor timeout,
         // RoR, max-roast-time) prevent re-energizing on the next tick.
@@ -587,6 +613,7 @@ impl RoasterControl {
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
+    /// Run one control-loop tick: staleness guard, safety backstops, output selection and actuator writes.
     pub fn update_control(&mut self, current_time: Instant) -> Result<f32, RoasterError> {
         if let Some(last_read) = self.sensor.last_temp_read() {
             if current_time.saturating_duration_since(last_read)
@@ -1161,14 +1188,17 @@ impl RoasterControl {
     // deleted no-op `OutputController::process_status`, so it had zero effect
     // and zero callers. Continuous output is emitted by `emit_telemetry_stage`
     // in tasks.rs, not through this type.
+    /// Shared access to the continuous-output `OutputController`.
     pub fn get_output_manager(&self) -> &crate::control::OutputController {
         self.dispatch.get_output_manager()
     }
 
+    /// Mutable shared access to the continuous-output `OutputController`.
     pub fn get_output_manager_mut(&mut self) -> &mut crate::control::OutputController {
         self.dispatch.get_output_manager_mut()
     }
 
+    /// Process one parsed Artisan command; rejects re-energizing commands while latched.
     pub fn process_artisan_command(
         &mut self,
         command: crate::config::ArtisanCommand,
@@ -1936,18 +1966,22 @@ impl RoasterControl {
         }
     }
 
+    /// Enable PID control toward `target_temp` via the dispatch handler.
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.dispatch.enable_pid(target_temp, &mut self.status)
     }
 
+    /// Current fan output percentage from status (0-100).
     pub fn get_fan_speed(&self) -> f32 {
         self.status.fan_output
     }
 
+    /// Last desired heater (SSR) output recorded by the actuator controller.
     pub fn last_desired_heater_output(&self) -> f32 {
         self.actuator.last_desired_heater_output()
     }
 
+    /// Run one PID update when due per `pid_cycle_time_ms`; returns the SSR duty to apply.
     fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {
         use crate::config::constants::SsrHardwareStatus;
 
@@ -2040,29 +2074,37 @@ impl RoasterControl {
     }
 
     // Immutable accessor methods
+    /// Immutable access to the `SensorController`.
     pub fn sensor(&self) -> &SensorController {
         &self.sensor
     }
+    /// Immutable access to the `ActuatorController`.
     pub fn actuator(&self) -> &ActuatorController {
         &self.actuator
     }
+    /// Immutable access to the `SafetyController`.
     pub fn safety(&self) -> &SafetyController {
         &self.safety
     }
+    /// Immutable access to the `CommandDispatcher`.
     pub fn dispatch(&self) -> &CommandDispatcher {
         &self.dispatch
     }
 
     // Mutable accessor methods
+    /// Mutable access to the `SensorController`.
     pub fn sensor_mut(&mut self) -> &mut SensorController {
         &mut self.sensor
     }
+    /// Mutable access to the `ActuatorController`.
     pub fn actuator_mut(&mut self) -> &mut ActuatorController {
         &mut self.actuator
     }
+    /// Mutable access to the `SafetyController`.
     pub fn safety_mut(&mut self) -> &mut SafetyController {
         &mut self.safety
     }
+    /// Mutable access to the `CommandDispatcher`.
     pub fn dispatch_mut(&mut self) -> &mut CommandDispatcher {
         &mut self.dispatch
     }

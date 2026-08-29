@@ -265,6 +265,7 @@ mod hw_watchdog {
     pub fn init() {}
 }
 
+/// Re-export of the hardware RTC watchdog feed/init for the control loop.
 pub use hw_watchdog::{feed as feed_hw_watchdog, init as init_hw_watchdog};
 
 #[cfg(test)]

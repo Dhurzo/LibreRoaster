@@ -1,3 +1,9 @@
+//! Temperature command handler for roaster control.
+//!
+//! Owns the `CoffeeRoasterPid` instance and output manager; handles
+//! StartRoast/StopRoast/SetTemperature and exposes PID tuning accessors
+//! used by the dispatcher.
+
 // Temperature command handler for roaster control
 //
 // This module handles temperature-related commands:
@@ -14,9 +20,9 @@ use crate::control::{RoasterCommandHandler, RoasterError};
 use embassy_time::Instant;
 use log::info;
 
-/// Temperature command handler
+/// PID and output-manager owner for temperature commands.
 ///
-/// Manages PID control and output for temperature-related roaster commands
+/// Handles `StartRoast`/`StopRoast`/`SetTemperature` and exposes PID tuning.
 pub struct TemperatureCommandHandler {
     pid_controller: CoffeeRoasterPid,
     output_manager: OutputController,
@@ -140,10 +146,12 @@ impl TemperatureCommandHandler {
         Ok(())
     }
 
+    /// Set the PID cycle time in milliseconds.
     pub fn set_pid_cycle_time(&mut self, ms: u32) {
         self.pid_controller.set_cycle_time(ms);
     }
 
+    /// Set the raw PID output limits (min/max %).
     pub fn set_pid_output_limits(&mut self, min: f32, max: f32) {
         self.pid_controller.set_output_limits(min, max);
     }

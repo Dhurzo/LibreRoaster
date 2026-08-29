@@ -1,3 +1,10 @@
+//! Artisan serial command parser for LibreRoaster.
+//!
+//! Translates raw TC4/Artisan command lines (READ, OT1, PID;..., PROFILE,
+//! STREAM, ...) into the internal `ArtisanCommand` enum. Handles delimiter
+//! normalisation, value range/clamping, and FIFO staging of PROFILE/FANPROFILE
+//! payloads via interrupt-safe statics for the control loop to consume.
+
 use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -30,9 +37,13 @@ pub fn take_profile() -> Option<RoastProfile> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
+    /// Command string did not match any known Artisan/TC4 verb.
     UnknownCommand,
+    /// Command was recognised but a parameter failed numeric parsing.
     InvalidValue,
+    /// A parsed numeric value fell outside its allowed range.
     OutOfRange,
+    /// The command line was empty or whitespace-only.
     EmptyCommand,
     /// Command exceeded maximum buffer size (256 bytes).
     CommandTooLong,
@@ -42,6 +53,7 @@ pub enum ParseError {
 }
 
 impl ParseError {
+    /// Returns the stable machine-readable error token for this parse failure.
     pub fn code(&self) -> &'static str {
         match self {
             ParseError::UnknownCommand => "unknown_command",
@@ -53,6 +65,7 @@ impl ParseError {
         }
     }
 
+    /// Returns the human-readable error message for this parse failure.
     pub fn message(&self) -> &'static str {
         match self {
             ParseError::UnknownCommand => "unknown_command",
@@ -65,6 +78,11 @@ impl ParseError {
     }
 }
 
+/// Parse a single Artisan/TC4 command line into an `ArtisanCommand`.
+///
+/// Trims and normalises the delimiter (`;`/`,`/`=` to space), dispatches
+/// init/handshake and operational verbs, and rejects malformed or out-of-range
+/// input with a `ParseError`.
 pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError> {
     let trimmed = command.trim();
 
@@ -509,10 +527,10 @@ fn parse_float(value_str: &str) -> Result<f32, ParseError> {
 /// and this doc-comment now describe what the code actually does: clamp
 /// the fan, leave the heater alone, notify the host.
 ///
-/// - Decimals are rounded to nearest integer
-/// - Values are silently clamped to 0-100 range
+/// - Decimals are rounded to the nearest integer
+/// - Out-of-range values are clamped to `[0, 100]` and `was_clamped` is set true
 /// - Negative values clamp to 0
-/// - Returns (clamped_value, was_clamped)
+/// - Returns `Ok((clamped_value, was_clamped))`; non-finite input returns `Err(InvalidValue)`
 fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
     let value = value_str
         .parse::<f32>()
@@ -636,6 +654,7 @@ fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
 /// first before the control loop drains it).
 static PARSED_FAN_PROFILE: Mutex<RefCell<heapless::Deque<FanProfile, 4>>> =
     Mutex::new(RefCell::new(heapless::Deque::new()));
+/// Stage a parsed FANPROFILE into the interrupt-safe FIFO for the control loop.
 pub fn fan_profile_store(profile: FanProfile) {
     critical_section::with(|cs| {
         let mut slot = PARSED_FAN_PROFILE.borrow(cs).borrow_mut();
@@ -645,6 +664,7 @@ pub fn fan_profile_store(profile: FanProfile) {
         let _ = slot.push_back(profile);
     });
 }
+/// Remove and return the oldest staged FANPROFILE, if any.
 pub fn fan_profile_take() -> Option<FanProfile> {
     critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
 }

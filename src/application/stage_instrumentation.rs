@@ -21,11 +21,17 @@ pub const STAGE_REPORT_MAX_LEN: usize = TRACE_EVENT_MAX_LEN;
 /// These must match the stages in tasks.rs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StageName {
+    /// Control loop is between stages (no stage active).
     Idle,
+    /// Thermocouple conversion + read stage.
     SensorRead,
+    /// RoasterControl control update (PID/actuator) stage.
     ControlUpdate,
+    /// LEDC PWM write stage.
     LedcWrite,
+    /// RTC watchdog feed stage.
     WatchdogFeed,
+    /// Telemetry/`#DUMP` emission stage.
     TelemetryEmit,
 }
 
@@ -53,6 +59,7 @@ pub enum GuardState {
 }
 
 impl GuardState {
+    /// Returns 0 for `Ok`, 1 for `Timeout` (compact wire encoding).
     pub fn as_flag(&self) -> u8 {
         match self {
             GuardState::Ok => 0,
@@ -60,6 +67,7 @@ impl GuardState {
         }
     }
 
+    /// Returns the `"ok"`/`"timeout"` token used in the report string.
     pub fn as_str(&self) -> &'static str {
         match self {
             GuardState::Ok => "ok",
@@ -80,6 +88,7 @@ pub enum WatchdogState {
 }
 
 impl WatchdogState {
+    /// Returns the `"ok"`/`"fail"`/`"none"` token used in the report string.
     pub fn as_str(&self) -> &'static str {
         match self {
             WatchdogState::Ok => "ok",
@@ -99,7 +108,7 @@ pub struct StageReporter {
 }
 
 impl StageReporter {
-    /// Create a new StageReporter instance.
+    /// Creates a new reporter that serializes stage events into `STAGE,...` strings.
     pub fn new() -> Self {
         Self { _private: () }
     }

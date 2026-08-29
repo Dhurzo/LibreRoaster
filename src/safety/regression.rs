@@ -29,8 +29,10 @@ mod target_impl {
         use crate::config::SystemStatus;
         use crate::hardware::sensors::conversion::FixtureReading;
 
+        /// Builds the expected `SystemStatus` for a fixture.
         pub type StatusBuilder = fn() -> SystemStatus;
 
+        /// A single over-temperature regression fixture (name + expected line).
         pub struct RegressionFixture {
             pub name: &'static str,
             pub reading: FixtureReading,
@@ -38,6 +40,7 @@ mod target_impl {
             pub expected_status_line: &'static str,
         }
 
+        /// Returns the catalogue of regression fixtures (empty until a HIL set is added).
         pub fn canonical_fixtures() -> &'static [RegressionFixture] {
             &[]
         }
@@ -45,11 +48,13 @@ mod target_impl {
 
     static REGRESSION_TRIGGER: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 
+    /// Signal the regression task to run an over-temperature self-test.
     pub fn request_regression() {
         let _ = REGRESSION_TRIGGER.sender().try_send(());
     }
 
     #[task]
+    /// Embassy task that waits for a trigger and runs the over-temp regression.
     pub async fn regression_task() {
         let receiver = REGRESSION_TRIGGER.receiver();
         loop {
@@ -67,10 +72,12 @@ mod target_impl {
     struct OverTempTestRunner;
 
     impl OverTempTestRunner {
+        /// Create a fresh over-temperature test runner.
         pub fn new() -> Self {
             Self
         }
 
+        /// Execute one over-temperature regression pass (ramp, shutdown, replay).
         pub async fn run_once(&mut self) {
             info!("Over-temp regression requested");
 
@@ -284,13 +291,16 @@ mod target_impl {
 }
 
 #[cfg(all(target_arch = "riscv32", feature = "regression"))]
+/// Re-export of the embedded over-temperature regression entry points.
 pub use target_impl::{regression_task, request_regression};
 
 #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
+/// No-op regression request on non-regression builds.
 pub fn request_regression() {}
 
 #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
 #[embassy_executor::task]
+/// Idle stub regression task on non-regression builds.
 pub async fn regression_task() {
     // Stub for non-regression builds - does nothing
     loop {

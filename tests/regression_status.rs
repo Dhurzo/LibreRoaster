@@ -15,6 +15,7 @@ use libreroaster::config::{RoasterState, SsrHardwareStatus, SystemStatus};
 use libreroaster::hardware::sensors::conversion::{FixtureReading, SensorConversionHub};
 use libreroaster::output::artisan::ArtisanFormatter;
 
+/// Canonical warm/normal MAX31856 fixture: bean ~4.7°C, env ~0.8°C, no fault bits.
 fn warm_fixture() -> FixtureReading {
     FixtureReading {
         bean_adc: [0x00, 0x4B, 0x00],
@@ -24,6 +25,7 @@ fn warm_fixture() -> FixtureReading {
     }
 }
 
+/// Cold/negative fixture: bean reads -0.3°C, env 0.0°C, no fault bits.
 fn cold_fixture() -> FixtureReading {
     FixtureReading {
         bean_adc: [0xFF, 0xFA, 0xE0],
@@ -33,6 +35,7 @@ fn cold_fixture() -> FixtureReading {
     }
 }
 
+/// Faulted fixture: bean open-circuit (fault 0x01), env fault 0x04.
 fn fault_fixture() -> FixtureReading {
     FixtureReading {
         bean_adc: [0x00, 0x00, 0x00],

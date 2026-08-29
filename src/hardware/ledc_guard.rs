@@ -1,3 +1,9 @@
+//! Short-timeout spin guard arbitrating LEDC register access.
+//!
+//! Ensures only one task touches an LEDC channel at a time on the single-core
+//! Embassy runtime. Held for <1 us around a register write; contention beyond
+//! `LEDC_GUARD_TIMEOUT_MS` is reported instead of deadlocked.
+
 use crate::config::constants::LEDC_GUARD_TIMEOUT_MS;
 use core::cell::Cell;
 use core::hint::spin_loop;
@@ -18,6 +24,7 @@ impl LedcGuardError {
     }
 }
 
+/// Single-owner spin guard for LEDC channel register access.
 pub struct LedcGuard {
     locked: Cell<bool>,
 }
@@ -29,6 +36,7 @@ pub struct LedcGuardToken<'a> {
 }
 
 impl LedcGuard {
+    /// Create an unlocked guard.
     pub const fn new() -> Self {
         Self {
             locked: Cell::new(false),
@@ -37,7 +45,7 @@ impl LedcGuard {
 
     /// Attempts to acquire the guard with a short timeout.
     ///
-    /// # Safety of spin_loop on single-core Embassy
+    /// # Notes on spin-loop safety (single-core Embassy)
     ///
     /// On the ESP32-C3 with Embassy cooperative multitasking, the lock holder
     /// cannot be preempted — only one task executes at a time. The guard is held

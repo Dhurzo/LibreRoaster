@@ -1,3 +1,8 @@
+//! Safety command handler for roaster control.
+//!
+//! Evaluates EmergencyStop/ArtisanEmergencyStop into a `SafetyPolicyOutcome`
+//! and owns the latched emergency flag shared with the safety controller.
+
 // Safety command handler for roaster control
 //
 // This module handles safety-related commands:
@@ -11,9 +16,7 @@ use crate::control::policies::{SafetyPolicy, SafetyPolicyOutcome};
 use crate::control::RoasterError;
 use log::warn;
 
-/// Safety command handler
-///
-/// Manages emergency conditions and safety-related commands
+/// Evaluates emergency-stop commands and owns the latched emergency flag.
 pub struct SafetyCommandHandler {
     emergency_flag: bool,
 }
@@ -36,6 +39,7 @@ impl SafetyCommandHandler {
         self.emergency_flag = false;
     }
 
+    /// Arm the latched emergency flag.
     pub fn activate_emergency(&mut self) {
         self.emergency_flag = true;
     }

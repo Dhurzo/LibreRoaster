@@ -73,11 +73,8 @@ pub struct MockUsbCdcDriver {
 }
 
 impl MockUsbCdcDriver {
-    /// Create a new MockUsbCdcDriver
-    ///
-    /// # Arguments
-    ///
-    /// * `max_rx_size` - Maximum RX buffer size (default 256 for USB CDC)
+    /// Create a new `MockUsbCdcDriver` with an empty RX/TX buffer and default
+    /// settings (256-byte max RX size, connected, no simulated errors).
     ///
     /// # Example
     ///
@@ -649,6 +646,7 @@ fn test_usb_zero_length_operations() {
 }
 
 /// Helper to create mock SystemStatus
+/// Build a `SystemStatus` fixture with representative field values for READ/STATUS formatting tests.
 fn create_mock_status() -> libreroaster::config::SystemStatus {
     libreroaster::config::SystemStatus {
         state: libreroaster::config::RoasterState::Stable,

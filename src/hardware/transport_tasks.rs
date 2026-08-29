@@ -71,12 +71,14 @@ pub struct TransportRxState {
 }
 
 impl TransportRxState {
+    /// Create an uninitialized transport RX state. Call `init` before use.
     pub const fn new() -> Self {
         Self {
             event_queue: BlockingMutex::new(RefCell::new(None)),
         }
     }
 
+    /// Allocate the backing event queue (called once per transport at task start).
     pub fn init(&self) {
         self.event_queue
             .lock(|cell| *cell.borrow_mut() = Some(Deque::new()));

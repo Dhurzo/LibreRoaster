@@ -46,11 +46,15 @@ use libreroaster::hardware::test_mocks::{MockFan, MockSsr};
 
 // 130 s de roast simulado: cubre el detector probe-stuck (120 s) para que los
 // roasts con sonda muerta alcancen la emergencia y la exposición S1 caiga a 0.
+/// Number of simulated control ticks per roast (~130 s at `TICK_MS`), long
+/// enough for the probe-stuck detector (120 s) to reach emergency.
 const TICKS_PER_ROAST: u32 = 650;
+/// Simulated wall-clock per tick (200 ms); exceeds the 100 ms SSR cycle guard.
 const TICK_MS: u64 = 200;
 
 // ── PRNG determinista (xorshift64*) ──────────────────────────────────────
 
+/// Deterministic xorshift64* PRNG so random-roast sequences are reproducible.
 struct Rng(u64);
 
 impl Rng {
@@ -85,6 +89,7 @@ enum Trigger {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Per-roast fault profile driving sensors, heater, fan and SSR behaviour.
 struct RoastConfig {
     probe_dead: bool,
     trigger: Trigger,
@@ -92,6 +97,7 @@ struct RoastConfig {
     ssr_stuck: bool,
 }
 
+/// Draws a random `RoastConfig` from the seeded PRNG.
 fn random_config(rng: &mut Rng) -> RoastConfig {
     let probe_dead = rng.chance(20);
     let trigger = match rng.below(6) {
@@ -203,12 +209,14 @@ fn initial_command_burst(rng: &mut Rng) -> Vec<ArtisanCommand> {
 
 // ── Un roast simulado ────────────────────────────────────────────────────
 
+/// Per-seed result: the fault profile plus I6 supervision-exposure counters.
 struct RoastOutcome {
     cfg: RoastConfig,
     i6_expected: u32,   // exposición S1 documentada (sonda muerta/desconectada)
     i6_unexpected: u32, // violación en roast con sonda efectiva = bug nuevo
 }
 
+/// Runs one full simulated roast for `seed`, asserting safety invariants I1–I7.
 fn run_roast(seed: u64) -> RoastOutcome {
     let mut rng = Rng(seed ^ 0x9E37_79B9_7F4A_7C15);
     let cfg = random_config(&mut rng);

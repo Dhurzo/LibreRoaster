@@ -1,3 +1,9 @@
+//! USB CDC reader task and legacy command-processing helpers.
+//!
+//! Implements `RxSource` for USB CDC, defines the static transport config/state,
+//! and exposes `usb_reader_task` plus the legacy direct-processing path that
+//! mirrors the UART task (used by integration tests).
+
 use crate::application::service_container::ServiceContainer;
 use crate::hardware::transport_tasks::{
     run_reader_task, RxSource, TransportConfig, TransportRxState,
@@ -33,8 +39,6 @@ static USB_CONFIG: TransportConfig = TransportConfig {
 static USB_STATE: TransportRxState = TransportRxState::new();
 
 /// USB CDC reader task - thin wrapper around generic implementation.
-///
-/// Includes USB-specific logging of received commands.
 #[cfg_attr(target_arch = "riscv32", embassy_executor::task)]
 pub async fn usb_reader_task() {
     run_reader_task(UsbCdcRx, &USB_STATE, &USB_CONFIG).await;

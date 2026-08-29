@@ -1,3 +1,9 @@
+//! Artisan command multiplexer and active-transport selection for LibreRoaster.
+//!
+//! Decides which of the USB / UART transports owns the current Artisan session
+//! and enforces a `IDLE_TIMEOUT_SECS` failover back to `None` so a stale or
+//! hijacked wire cannot hold the session indefinitely.
+
 // Bug L9 (2026-07-25): the `Instant` mock used to be gated to
 // `#[cfg(not(target_arch = "riscv32"))]`, which kept it active on EVERY host
 // build — including non-test host builds where `CommandMultiplexer`'s
@@ -38,21 +44,28 @@ impl Instant {
 // The `# ` acknowledgment documented in README is therefore not sent.
 // If re-enabling, restore init_state.rs and uncomment init flow.
 
+/// Seconds of command inactivity before the active channel resets to `None`.
 pub const IDLE_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Transport that originated (or should receive) an Artisan command.
 pub enum CommChannel {
+    /// No transport currently owns the session.
     None,
+    /// Native USB CDC (`ttyACM0`).
     Usb,
+    /// UART0 (`GPIO20`/`GPIO21`).
     Uart,
 }
 
+/// Tracks the active Artisan transport and its last-command timestamp.
 pub struct CommandMultiplexer {
     active_channel: CommChannel,
     last_command_time: Option<Instant>,
 }
 
 impl CommandMultiplexer {
+    /// Create a multiplexer with no active channel.
     pub fn new() -> Self {
         Self {
             active_channel: CommChannel::None,
@@ -60,6 +73,8 @@ impl CommandMultiplexer {
         }
     }
 
+    /// Record a command arrival on `channel`, activating or refreshing the
+    /// session and returning whether the command should be processed.
     pub fn on_command_received(&mut self, channel: CommChannel) -> bool {
         let now = Instant::now();
 
@@ -121,6 +136,7 @@ impl CommandMultiplexer {
         }
     }
 
+    /// Convenience wrapper that records the command and returns acceptance.
     pub fn should_process_command(&mut self, channel: CommChannel) -> bool {
         self.on_command_received(channel)
     }
@@ -146,14 +162,17 @@ impl CommandMultiplexer {
         }
     }
 
+    /// Whether telemetry/responses should be written to `channel`.
     pub fn should_write_to(&self, channel: CommChannel) -> bool {
         self.active_channel == channel
     }
 
+    /// Return the currently active transport (if any).
     pub fn get_active_channel(&self) -> CommChannel {
         self.active_channel
     }
 
+    /// True if no command has arrived within `IDLE_TIMEOUT_SECS`.
     pub fn is_idle(&self) -> bool {
         if let Some(last_time) = self.last_command_time {
             let elapsed = Instant::now().duration_since(last_time);
@@ -163,6 +182,7 @@ impl CommandMultiplexer {
         }
     }
 
+    /// Clear the active channel and last-command timestamp.
     pub fn reset(&mut self) {
         if self.active_channel != CommChannel::None {
             log::info!(
