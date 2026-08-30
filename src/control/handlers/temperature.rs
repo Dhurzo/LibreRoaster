@@ -156,7 +156,7 @@ impl TemperatureCommandHandler {
         self.pid_controller.set_output_limits(min, max);
     }
 
-    /// Returns the PID output limits currently in effect (clamped to [0,100]
+    /// Returns the PID output limits currently in effect (clamped to `[0, 100]`
     /// and swapped to ensure min <= max), not the raw inputs.
     pub fn pid_output_limits(&self) -> (f32, f32) {
         self.pid_controller.output_limits()

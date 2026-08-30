@@ -18,7 +18,7 @@ use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 use super::simulated::SimulatedSensorSource;
 
 /// MAX31856 reports temperature using a 0.0078125°C LSB and two's-complement math.
-/// The 19-bit temperature value occupies bits [23:5] of the 24-bit concatenated
+/// The 19-bit temperature value occupies bits `[23:5]` of the 24-bit concatenated
 /// register read (LTCB0<<16 | LTCB1<<8 | LTCB2). Shift right by 5 to align the
 /// LSB to bit 0 before multiplying by the LSB weight.
 pub const MAX31856_LSB: f32 = 0.0078125;

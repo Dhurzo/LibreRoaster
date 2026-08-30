@@ -1,3 +1,12 @@
+//! Over-temperature regression runner.
+//!
+//! On `riscv32` + the `regression` feature, `regression_task` waits for a trigger
+//! and runs one over-temp self-test pass (heater/fan ramp, forced emergency
+//! shutdown, fixture replay, watchdog feeding, then P9 recovery). The fixture
+//! catalogue is intentionally empty until HIL-validated fixtures exist; the run
+//! then emits an explicit `SAFETY OT-REGRESSION-EMPTY` marker. All other builds
+//! get no-op stubs of the same entry points.
+
 #[cfg(all(target_arch = "riscv32", feature = "regression"))]
 mod target_impl {
     use crate::application::service_container::{ContainerError, ServiceContainer};

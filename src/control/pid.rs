@@ -168,7 +168,7 @@ impl CoffeeRoasterPid {
         self.cycle_time_ms = ms.max(10);
     }
 
-    /// Set the output clamp range; values are clamped to [0,100] and swapped if inverted.
+    /// Set the output clamp range; values are clamped to `[0, 100]` and swapped if inverted.
     pub fn set_output_limits(&mut self, min: f32, max: f32) {
         self.output_min = min.clamp(0.0, 100.0);
         self.output_max = max.clamp(0.0, 100.0);
@@ -180,7 +180,7 @@ impl CoffeeRoasterPid {
     /// Returns the (post-clamp, post-swap) output limits currently applied by
     /// the PID. Callers that echo `set_output_limits` inputs into telemetry
     /// should report these values, not the raw inputs, so observers see the
-    /// limits the PID is actually enforcing (clamped to [0,100] and swapped
+    /// limits the PID is actually enforcing (clamped to `[0, 100]` and swapped
     /// to satisfy `min <= max`).
     pub fn output_limits(&self) -> (f32, f32) {
         (self.output_min, self.output_max)

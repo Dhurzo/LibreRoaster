@@ -1,3 +1,8 @@
+//! Build script for the embedded (`riscv32`) target.
+//!
+//! Appends `-Tlinkall.x` so it stays the last linker script (flip-link ordering),
+//! and prints actionable hints for common link failures such as a missing `defmt`.
+
 // Allow unwrap in build scripts - they run at compile time, not production
 #![allow(clippy::unwrap_used)]
 
