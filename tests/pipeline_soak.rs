@@ -50,6 +50,7 @@ fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
     guard
 }
 
+/// Register a fresh stub roaster + artisan input and the command multiplexer.
 fn init_service_container() {
     let roaster = RoasterControl::new(
         Box::new(StubHeater::new()),

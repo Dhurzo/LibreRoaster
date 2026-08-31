@@ -1,3 +1,9 @@
+//! Mock-UART integration tests for the command pipeline.
+//!
+//! Drives raw bytes through `process_command_data`, drains/processes the
+//! artisan channel like the control loop, and asserts wire responses and
+//! side-effect-free error handling against the global `ServiceContainer`.
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(deprecated)]
 #![allow(clippy::expect_used)]
@@ -24,10 +30,12 @@ use tests_common::init_test_service_container;
 /// Serializes tests that share global ServiceContainer state.
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Acquire the global test mutex guarding shared channels.
 fn acquire_serial() -> std::sync::MutexGuard<'static, ()> {
     TEST_MUTEX.lock().expect("test mutex poisoned")
 }
 
+/// Drain both the artisan and output channels before a run.
 fn reset_channels() {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     while cmd_channel.try_receive().is_ok() {}
@@ -36,6 +44,7 @@ fn reset_channels() {
     while output_channel.try_receive().is_ok() {}
 }
 
+/// Drain the output channel, skipping internal `TRACE,` lines.
 fn collect_output() -> Vec<StdString> {
     let output_channel = ServiceContainer::get_output_channel();
     let mut messages = Vec::new();
@@ -50,6 +59,7 @@ fn collect_output() -> Vec<StdString> {
     messages
 }
 
+/// Drain the artisan channel, returning every enqueued `ArtisanCommand`.
 fn collect_commands() -> Vec<ArtisanCommand> {
     let channel = ServiceContainer::get_artisan_channel();
     let mut commands = Vec::new();
@@ -61,6 +71,7 @@ fn collect_commands() -> Vec<ArtisanCommand> {
     commands
 }
 
+/// Process all queued commands through the roaster, emitting READ responses.
 fn drain_and_process_commands() {
     loop {
         let command = {
@@ -98,16 +109,19 @@ fn drain_and_process_commands() {
     }
 }
 
+/// Snapshot the current `SystemStatus` from the global roaster.
 fn current_status() -> SystemStatus {
     ServiceContainer::with_roaster(|roaster| roaster.get_status())
         .expect("Roaster should be initialized")
 }
 
+/// Return whether the spontaneous telemetry stream is currently enabled.
 fn continuous_output_enabled() -> bool {
     ServiceContainer::with_roaster(|roaster| roaster.get_output_manager().is_continuous_enabled())
         .expect("Roaster should be initialized")
 }
 
+/// Assert the relevant `SystemStatus` fields are identical before/after.
 fn assert_status_unchanged(before: SystemStatus, after: SystemStatus) {
     assert_eq!(before.state, after.state);
     assert_eq!(before.bean_temp, after.bean_temp);

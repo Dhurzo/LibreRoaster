@@ -22,6 +22,7 @@ pub struct EdgeLogGate {
 }
 
 impl EdgeLogGate {
+    /// Create a gate in the idle (not-yet-warned) state.
     pub fn new() -> Self {
         Self { warned: false }
     }

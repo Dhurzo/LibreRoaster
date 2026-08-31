@@ -1,3 +1,10 @@
+//! Sensor sub-controller for roaster control.
+//!
+//! Owns temperature sampling through the shared `SensorConversionHub`,
+//! per-channel fault debouncing (`SENSOR_FAULT_DEBOUNCE`), IIR derivative
+//! filtering, and the rate-of-rise runaway guards (legacy PV check plus
+//! BT-only guard) that feed the safety layer each control tick.
+
 use crate::config::*;
 use crate::control::RoasterError;
 use crate::hardware::sensors::{SensorConversionHub, SensorSample};
@@ -42,11 +49,14 @@ fn tiered_ror_trip(rate: f32, consecutive: u8) -> bool {
 /// `fault_condition = true` independently and are not affected.
 pub const SENSOR_FAULT_DEBOUNCE: u8 = 5;
 
+/// Temperature sampling and rate-of-rise guard state for the control loop.
 pub struct SensorController {
     sensor_hub: SensorConversionHub,
+    /// Freshness timestamp of the last clean read; frozen while both channels fault.
     last_temp_read: Option<Instant>,
     last_pv_sample: Option<f32>,
     last_pv_sample_time: Option<Instant>,
+    /// IIR-filtered PV derivative state (`DERIVATIVE_FILTER_ALPHA` smoothing).
     last_filtered_derivative: f32,
     /// Bug M4 (2026-07-25): dedicated sample pair for the BT-only RoR guard.
     /// The previous design keyed the runaway guard on `status.derivative_rate`
@@ -58,6 +68,7 @@ pub struct SensorController {
     /// always and the PID feed on whatever PV is configured; they are now
     /// independent measurements.
     last_bt_guard_sample: Option<(f32, Instant)>,
+    /// Filtered BT rate-of-rise (°C/s) consumed by `check_bt_rate`.
     bt_guard_derivative: f32,
     /// Bug R1 (2026-07-26): debounce counter for the legacy PV-RoR check
     /// (`check_rate_of_rise`). Previously a SINGLE `ror_exceeded_count` was
@@ -85,6 +96,7 @@ pub struct SensorController {
 }
 
 impl SensorController {
+    /// Create a controller around the given sensor conversion hub.
     pub fn new(sensor_hub: SensorConversionHub) -> Self {
         Self {
             sensor_hub,
@@ -101,6 +113,7 @@ impl SensorController {
         }
     }
 
+    /// Sample both channels and update `status` (debounced faults, held/poisoned temps).
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
         // F4.11 (Gap #3) + V2-3: debounce each channel against its own counter.
@@ -167,6 +180,10 @@ impl SensorController {
         }
     }
 
+    /// Validate, offset, and publish a fresh sample into `status`.
+    ///
+    /// Faulted channels hold their last valid value until debounced to NaN;
+    /// overtemp on any clean channel returns an error.
     pub fn update_temperatures(
         &mut self,
         bean_temp: f32,
@@ -251,6 +268,9 @@ impl SensorController {
         Ok(())
     }
 
+    /// Update the IIR-filtered PV derivative published in `status`.
+    ///
+    /// Sets `derivative_available = false` when no finite rate can be computed.
     pub fn refresh_filtered_derivative(
         &mut self,
         current_pv: f32,
@@ -291,18 +311,24 @@ impl SensorController {
         self.last_pv_sample_time = Some(current_time);
     }
 
+    /// Return the most recent raw sample from the sensor hub, if any.
     pub fn last_sensor_sample(&self) -> Option<SensorSample> {
         self.sensor_hub.last_sample()
     }
 
+    /// Freshness timestamp of the last clean sensor read.
     pub fn last_temp_read(&self) -> Option<Instant> {
         self.last_temp_read
     }
 
+    /// Check that a reading lies within `MIN_VALID_TEMP..=MAX_VALID_TEMP`.
     pub fn is_temperature_valid(temp: f32) -> bool {
         (MIN_VALID_TEMP..=MAX_VALID_TEMP).contains(&temp)
     }
 
+    /// Legacy PV rate-of-rise guard (tiered debounce via `tiered_ror_trip`).
+    ///
+    /// Consumes the filtered PV derivative; a sustained exceedance errors.
     pub fn check_rate_of_rise(&mut self, status: &SystemStatus) -> Result<(), RoasterError> {
         if !status.derivative_available {
             self.pv_ror_exceeded_count = 0;

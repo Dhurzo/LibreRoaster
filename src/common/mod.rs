@@ -18,7 +18,9 @@ use core::cell::RefCell;
 
 use crate::config::constants::SsrHardwareStatus;
 
+/// Re-export the hardware trait abstractions used by the test stubs.
 pub use crate::control::traits::{Fan, Heater, Thermometer};
+/// Re-export the shared control error type returned by the stub methods.
 pub use crate::control::RoasterError;
 
 // ============================================================================

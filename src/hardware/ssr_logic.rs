@@ -23,9 +23,13 @@ use log::{error, warn};
 /// `ssr_stub`, which keeps its own copy) are unaffected.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SsrError {
+    /// GPIO write (SSR pin) failed.
     OutputError { source: &'static str },
+    /// GPIO read (detection pin) failed.
     InputError { source: &'static str },
+    /// Heat source not detected despite commanded duty.
     HeatSourceNotDetected { source: &'static str },
+    /// LEDC PWM write or duty verification failed.
     PwmError { source: &'static str },
 }
 
@@ -35,10 +39,14 @@ impl embedded_hal::digital::Error for SsrError {
     }
 }
 
+/// Heat-source hardware availability state for an SSR channel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SsrHardwareStatus {
+    /// Heat source present and responding to commanded duty.
     Available,
+    /// Heater commanded but no heat detected (debounced).
     NotDetected,
+    /// Detection pin error or stuck-on cross-check tripped.
     Error,
 }
 
@@ -56,14 +64,19 @@ const HEAT_MISMATCH_MAX: u8 = 5;
 #[allow(dead_code)]
 const HEAT_PRESENT_MISMATCH_MAX: u8 = 10;
 
-/// Trait for status getter methods.
-/// Provides default implementations for common status queries.
+/// Common status queries implemented by SSR control types.
 pub trait StatusGetters {
+    /// Return the current `SsrHardwareStatus`.
     fn get_hardware_status(&self) -> SsrHardwareStatus;
+    /// True when the heat source is `Available`.
     fn is_heating_available(&self) -> bool;
+    /// Return the last commanded raw duty in LEDC ticks.
     fn get_current_duty(&self) -> u16;
+    /// True when the PWM output is enabled.
     fn is_pwm_enabled(&self) -> bool;
+    /// Last measured duty delta (commanded vs readback) in ticks.
     fn last_lead_delta_ticks(&self) -> i16;
+    /// Number of duty-retry attempts on the last set.
     fn last_retry_count(&self) -> u8;
 }
 
@@ -253,6 +266,8 @@ impl SsrControlBase {
         }
     }
 
+    /// Cross-check commanded duty against the detection pin to catch a stuck-on
+    /// or never-heating SSR (no-op under `simulated-sensors`/`no-heat-sense`).
     pub fn cross_check_heat_detection<F, E>(
         &mut self,
         current_duty: u16,

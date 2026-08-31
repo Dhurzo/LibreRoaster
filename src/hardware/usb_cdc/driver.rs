@@ -1,3 +1,9 @@
+//! USB CDC (USB serial JTAG) driver for LibreRoaster.
+//!
+//! On the embedded target the `UsbSerialJtag` peripheral is split into TX/RX
+//! halves guarded by independent async mutexes, with 50 ms write timeouts so a
+//! vanished host cannot stall all output. The host build provides a no-op stub.
+
 use core::fmt;
 
 #[cfg(target_arch = "riscv32")]
@@ -16,13 +22,20 @@ use embassy_time::{with_timeout, Duration as EmbassyDuration};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 
+/// Errors returned by the USB CDC driver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsbCdcError {
+    /// A byte could not be transmitted to the host.
     TransmissionError,
+    /// A byte could not be received from the host.
     ReceptionError,
+    /// The transmit/receive buffer could not hold the data.
     BufferOverflow,
+    /// The CDC driver was used before `init_usb_cdc` ran.
     NotInitialized,
+    /// Operation not supported in the current build configuration.
     NotSupported,
+    /// A write was refused due to output back-pressure.
     WouldBlock,
 }
 
@@ -52,10 +65,12 @@ pub struct UsbCdcTxDriver {
 
 #[cfg(target_arch = "riscv32")]
 impl UsbCdcTxDriver {
+    /// Wrap the TX half of the USB serial JTAG peripheral.
     pub fn new(usb: UsbSerialJtagTx<'static, esp_hal::Async>) -> Self {
         Self { usb }
     }
 
+    /// Transmit `data` over USB CDC, bounding each phase at 50 ms (see in-body notes).
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UsbCdcError> {
         // Bug A2 (2026-07-25): `UsbSerialJtagTx::write_async` only completes
         // when the host reads from the endpoint. If the host disappears mid-
@@ -105,16 +120,19 @@ impl UsbCdcTxDriver {
 }
 
 #[cfg(target_arch = "riscv32")]
+/// RX half of the embedded USB CDC driver (owns the `UsbSerialJtagRx` peripheral).
 pub struct UsbCdcRxDriver {
     usb: UsbSerialJtagRx<'static, esp_hal::Async>,
 }
 
 #[cfg(target_arch = "riscv32")]
 impl UsbCdcRxDriver {
+    /// Wrap the RX half of the USB serial JTAG peripheral.
     pub fn new(usb: UsbSerialJtagRx<'static, esp_hal::Async>) -> Self {
         Self { usb }
     }
 
+    /// Receive bytes into `buffer`; returns the count read or a `ReceptionError`.
     pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
         use embedded_io_async::Read;
         Read::read(&mut self.usb, buffer)
@@ -124,18 +142,22 @@ impl UsbCdcRxDriver {
 }
 
 #[cfg(not(target_arch = "riscv32"))]
+/// Host stub USB CDC driver with no underlying peripheral.
 pub struct UsbCdcDriver;
 
 #[cfg(not(target_arch = "riscv32"))]
 impl UsbCdcDriver {
+    /// Construct the host stub driver.
     pub fn new() -> Result<Self, UsbCdcError> {
         Ok(Self)
     }
 
+    /// Host stub: succeeds without touching any peripheral.
     pub async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), UsbCdcError> {
         Ok(())
     }
 
+    /// Host stub: always reports zero bytes read.
     pub async fn read_bytes(&mut self, _buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
         Ok(0)
     }
@@ -158,6 +180,7 @@ static USB_CDC_TX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static USB_CDC_RX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 
 #[cfg(target_arch = "riscv32")]
+/// Initialize the embedded CDC driver: split the peripheral into TX/RX halves.
 pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<(), UsbCdcError> {
     let usb_async = usb.into_async();
     let (rx_half, tx_half) = usb_async.split();
@@ -175,6 +198,7 @@ pub fn init_usb_cdc(usb: UsbSerialJtag<'static, esp_hal::Blocking>) -> Result<()
 }
 
 #[cfg(not(target_arch = "riscv32"))]
+/// Host stub: nothing to initialize; always returns `Ok`.
 pub fn init_usb_cdc(_usb: ()) -> Result<(), UsbCdcError> {
     Ok(())
 }
@@ -204,11 +228,13 @@ pub async fn usb_cdc_read_bytes(buffer: &mut [u8]) -> Result<usize, UsbCdcError>
 }
 
 #[cfg(not(target_arch = "riscv32"))]
+/// Host stub: succeeds without writing to any peripheral.
 pub async fn usb_cdc_write_bytes(_data: &[u8]) -> Result<(), UsbCdcError> {
     Ok(())
 }
 
 #[cfg(not(target_arch = "riscv32"))]
+/// Host stub: always reports zero bytes read.
 pub async fn usb_cdc_read_bytes(_buffer: &mut [u8]) -> Result<usize, UsbCdcError> {
     Ok(0)
 }

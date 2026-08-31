@@ -1,3 +1,9 @@
+//! One-shot hardware initialization for LibreRoaster.
+//!
+//! Binds the LEDC timers/channels, SPI thermocouples, SSR, fan, status LED and
+//! heat-detection input to their peripherals and returns the `HardwareHandles`
+//! consumed by `AppBuilder`. Runs once at boot; never in the hot path.
+
 // Note: This module uses alloc::format! for error message construction.
 // This is acceptable because init runs exactly once at startup and is NOT
 // in the hot path. Do NOT use alloc in the control loop or telemetry path.
@@ -50,6 +56,7 @@ pub struct InitPeripherals {
     pub gpio1: GPIO1<'static>,
 }
 
+/// Fully-initialized hardware used by the application to drive the roaster.
 pub struct HardwareHandles {
     #[cfg(not(feature = "simulated-sensors"))]
     pub bean_sensor: Max31856<
@@ -73,6 +80,7 @@ pub struct HardwareHandles {
     pub status_led: Output<'static>,
 }
 
+/// Initialize all hardware from the collected peripherals and return `HardwareHandles`.
 pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, InitError> {
     // Verify at init time that the constants match what this function expects.
     assert_eq!(FAN_PWM_PIN, 9, "FAN_PWM_PIN must be 9 (GPIO9 for fan PWM)");
@@ -223,6 +231,10 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
 }
 
 #[cfg(not(feature = "simulated-sensors"))]
+/// Initialize the shared SPI bus and the two MAX31856 thermocouple channels.
+///
+/// Uses `new_tolerant` so a single missing sensor degrades that channel instead
+/// of halting boot; both dead aborts via `boot_policy`.
 fn init_spi_sensors(
     spi2: SPI2<'static>,
     gpio6: GPIO6<'static>,

@@ -1,3 +1,11 @@
+//! `libreroaster` — `no_std` library crate for the LibreRoaster ESP32-C3 coffee-roaster
+//! controller.
+//!
+//! Exposes the firmware modules (`application`, `control`, `hardware`, `input`, `output`,
+//! `safety`, `config`, `error`, `logging`, `memory`), and on host targets a `common`
+//! helper module plus the `host_time_driver` embassy-time backend used by the host test
+//! suite. The embedded entry point lives in `src/main.rs`.
+
 #![cfg_attr(not(any(test, feature = "test")), no_std)]
 #![cfg_attr(
     not(test),

@@ -1,3 +1,9 @@
+//! USB CDC (USB serial JTAG) transport module for LibreRoaster.
+//!
+//! Provides the split TX/RX CDC driver, the Embassy reader task, and the
+//! multiplexer-aware init path that lets Artisan drive the roaster over USB
+//! (ttyACM0) using the TC4-compatible serial protocol.
+
 pub mod driver;
 pub mod tasks;
 
@@ -10,8 +16,10 @@ pub use driver::{UsbCdcDriver, UsbCdcError};
 pub use driver::{UsbCdcError, UsbCdcRxDriver, UsbCdcTxDriver};
 pub use tasks::usb_reader_task;
 
+/// USB CDC line rate reported to the host (115200 8N1).
 pub const USB_CDC_BAUD_RATE: u32 = 115200;
 
+/// Build the USB serial JTAG peripheral and initialize the embedded CDC driver.
 #[cfg(target_arch = "riscv32")]
 pub fn initialize_usb_cdc_system(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
@@ -20,6 +28,7 @@ pub fn initialize_usb_cdc_system(
     driver::init_usb_cdc(usb)
 }
 
+/// Host stub: no USB peripheral to initialize; always returns `Ok`.
 #[cfg(not(target_arch = "riscv32"))]
 pub fn initialize_usb_cdc_system(_usb: ()) -> Result<(), UsbCdcError> {
     Ok(())

@@ -1,3 +1,10 @@
+//! Command/event traceability for the control pipeline.
+//!
+//! Emits `TRACE,...` events (when the `instrumentation` or `test` feature is
+//! enabled) that correlate each Artisan command with its queue, actuation,
+//! and telemetry stages via a monotonic `TraceId`. Release builds compile the
+//! formatting helpers to nothing (Audit M-R1).
+
 #[cfg(any(feature = "instrumentation", feature = "test"))]
 use crate::application::service_container::ServiceContainer;
 use crate::config::ArtisanCommand;
@@ -23,9 +30,11 @@ pub const TRACE_EVENT_MAX_LEN: usize = 256;
 static TRACE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Monotonic identifier correlating traced events across the pipeline.
 pub struct TraceId(u32);
 
 impl TraceId {
+    /// Allocate the next unique trace id (wraps 0 to 1 to stay non-zero).
     pub fn next() -> Self {
         let next = TRACE_ID_COUNTER
             .fetch_add(1, Ordering::Relaxed)
@@ -38,26 +47,36 @@ impl TraceId {
         }
     }
 
+    /// Construct a trace id from a raw value (e.g. from a test fixture).
     pub const fn from_u32(value: u32) -> Self {
         TraceId(value)
     }
 
+    /// Return the underlying numeric id.
     pub const fn value(&self) -> u32 {
         self.0
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Pipeline stage a traced event was emitted at.
 pub enum TraceStep {
+    /// Command pushed onto the shared channel.
     QueueEnqueue,
+    /// Command pulled off the shared channel.
     QueueDequeue,
+    /// Command pushed via the fallback (no active transport) path.
     QueueFallback,
+    /// Actuator outputs applied (SSR + fan).
     Actuation,
+    /// Periodic telemetry/guard snapshot emitted.
     Telemetry,
+    /// Guard (LEDC/time watchdog) evaluation emitted.
     Guard,
 }
 
 impl TraceStep {
+    /// Return the stable string label for the trace step.
     pub const fn as_str(&self) -> &'static str {
         match self {
             TraceStep::QueueEnqueue => "queue_enqueue",
@@ -71,6 +90,7 @@ impl TraceStep {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// A command tagged with its trace id and originating transport.
 pub struct TracedCommand {
     pub command: ArtisanCommand,
     pub trace_id: TraceId,
@@ -78,6 +98,7 @@ pub struct TracedCommand {
 }
 
 impl TracedCommand {
+    /// Build a traced command with a freshly allocated trace id.
     pub fn new(command: ArtisanCommand, channel: CommChannel) -> Self {
         Self {
             command,
@@ -86,6 +107,7 @@ impl TracedCommand {
         }
     }
 
+    /// Build a traced command with a caller-supplied trace id (tests).
     pub const fn with_trace_id(
         command: ArtisanCommand,
         channel: CommChannel,
@@ -99,6 +121,7 @@ impl TracedCommand {
     }
 }
 
+/// Emit a queue-enqueue (or fallback) trace event for a command.
 pub fn trace_command_enqueue(traced: &TracedCommand, depth: usize, fallback: bool) {
     // Audit M-R1 (2026-08-11): in releases without instrumentation/test the
     // event was formatted (soft-float f32 Display, String<256>) and then
@@ -121,6 +144,7 @@ pub fn trace_command_enqueue(traced: &TracedCommand, depth: usize, fallback: boo
     }
 }
 
+/// Emit a queue-dequeue trace event for a command.
 pub fn trace_queue_dequeue(traced: &TracedCommand, depth: usize) {
     // Audit M-R1: skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
@@ -135,6 +159,7 @@ pub fn trace_queue_dequeue(traced: &TracedCommand, depth: usize) {
     }
 }
 
+/// Emit an actuation trace event recording SSR/fan outputs and latency.
 pub fn trace_actuation(
     traced: &TracedCommand,
     ssr_output: f32,
@@ -167,6 +192,7 @@ pub fn trace_actuation(
     }
 }
 
+/// Emit a periodic telemetry trace event (guard/watchdog status).
 pub fn trace_telemetry(
     trace_id: TraceId,
     guard_timeout: bool,
@@ -199,6 +225,7 @@ pub fn trace_telemetry(
     }
 }
 
+/// Emit a guard evaluation trace event (timeout/watchdog/error status).
 pub fn trace_guard(
     trace_id: TraceId,
     guard_timeout: bool,
@@ -381,6 +408,7 @@ fn format_trace_guard(
 }
 
 #[cfg(any(feature = "instrumentation", feature = "test"))]
+/// Format a safe-shutdown guard trace event (used by `trace_safe_shutdown_guard`).
 pub fn format_safe_shutdown_guard(
     trace_id: TraceId,
     app_error: Option<&AppError>,
@@ -395,6 +423,7 @@ pub fn format_safe_shutdown_guard(
     )
 }
 
+/// Emit a safe-shutdown guard trace event (always reports a failure).
 pub fn trace_safe_shutdown_guard(trace_id: TraceId, app_error: Option<&AppError>) {
     // Audit M-R1: skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]

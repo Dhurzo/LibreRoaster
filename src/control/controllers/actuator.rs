@@ -1,3 +1,9 @@
+//! Actuator sub-controller for roaster control.
+//!
+//! Owns all heater/fan hardware writes: SSR cycle-guard gating, output slew
+//! limiting (`SSR_SLEW_RATE_PER_SEC`), emergency shutdown sequencing (heater
+//! off + fan 100 % with retries), and monitor metrics published to status.
+
 use crate::config::constants::SsrHardwareStatus;
 use crate::config::*;
 use crate::control::traits::{Fan, Heater};
@@ -10,12 +16,16 @@ use log::{debug, error, info, warn};
 
 const SSR_SLEW_RATE_PER_SEC: f32 = 50.0;
 
+/// Heater/fan actuation state for the control loop.
 pub struct ActuatorController {
     heater: Box<dyn Heater + Send>,
     fan: Box<dyn Fan + Send>,
     ssr_guard: SsrCycleGuard,
+    /// Last commanded output recorded by `set_last_desired_output`.
     last_desired_output: f32,
+    /// Current slew-limiter position (applied SSR duty, %).
     slewing_output: f32,
+    /// Timestamp of the last slew step; `None` forces a direct apply next write.
     last_slew_update: Option<Instant>,
     /// BUG-04: rising-edge gate for the "SSR cycle busy" warn (one warn per
     /// busy episode; re-arms when a write is accepted).
@@ -23,6 +33,7 @@ pub struct ActuatorController {
 }
 
 impl ActuatorController {
+    /// Create a controller around the given heater and fan drivers.
     pub fn new(heater: Box<dyn Heater + Send>, fan: Box<dyn Fan + Send>) -> Self {
         Self {
             heater,
@@ -35,6 +46,10 @@ impl ActuatorController {
         }
     }
 
+    /// Apply a desired SSR duty (%) through clamp, slew limit, and cycle guard.
+    ///
+    /// Returns the applied output; when the guard is busy and `reject_on_busy`
+    /// is set, errors with `ssr_cycle_busy` instead of writing.
     pub fn apply_guarded_heater(
         &mut self,
         desired: f32,
@@ -130,6 +145,7 @@ impl ActuatorController {
         }
     }
 
+    /// Write fan speed and publish it to `status.fan_output` on success.
     pub fn set_fan_speed(
         &mut self,
         speed: f32,
@@ -203,6 +219,9 @@ impl ActuatorController {
         false
     }
 
+    /// Run the full emergency sequence: heater off + fan 100 % (retried).
+    ///
+    /// Always returns an error; a failed fan write escalates to `emergency_fan_failed`.
     pub fn emergency_shutdown(
         &mut self,
         reason: &str,
@@ -251,6 +270,7 @@ impl ActuatorController {
         })
     }
 
+    /// Copy SSR monitor counters into `status`; log when non-zero.
     pub fn capture_ssr_monitor_metrics(&mut self, status: &mut SystemStatus) {
         status.ssr_last_duty_delta_ticks = self.heater.last_duty_delta_ticks();
         status.ssr_retry_count = self.heater.last_retry_count();
@@ -263,11 +283,13 @@ impl ActuatorController {
         }
     }
 
+    /// Publish the remaining SSR cycle-guard busy window (ms) to `status`.
     pub fn update_guard_busy_ms(&mut self, now: Instant, status: &mut SystemStatus) {
         let busy_until = self.ssr_guard.busy_until();
         status.ssr_cycle_guard_busy_until_ms = Self::busy_window_ms(now, busy_until);
     }
 
+    /// Current SSR hardware availability status from the heater driver.
     pub fn get_ssr_hardware_status(&self) -> SsrHardwareStatus {
         self.heater.get_status()
     }
@@ -281,26 +303,32 @@ impl ActuatorController {
         status.ssr_hardware_status = self.heater.get_status();
     }
 
+    /// Write heater power directly (bypasses slew limit and cycle guard).
     pub fn set_heater_power(&mut self, power: f32) -> Result<(), RoasterError> {
         self.heater.set_power(power)
     }
 
+    /// Write fan speed via the emergency path (no floor or clamp applied).
     pub fn set_fan_raw(&mut self, speed: f32) -> Result<(), RoasterError> {
         self.fan.emergency_set_speed(speed)
     }
 
+    /// Record the last commanded heater output (pre-guard).
     pub fn set_last_desired_output(&mut self, output: f32) {
         self.last_desired_output = output;
     }
 
+    /// Last commanded heater output recorded by `set_last_desired_output`.
     pub fn last_desired_heater_output(&self) -> f32 {
         self.last_desired_output
     }
 
+    /// Query the SSR cycle guard for when the next write is allowed.
     pub fn ssr_guard_next_cycle_allowed(&self, now: Instant) -> Result<Instant, Instant> {
         self.ssr_guard.next_cycle_allowed(now)
     }
 
+    /// Per-tick heater health check (heat-presence sensing); no rate limit.
     pub fn periodic_health_check(&mut self, now: Instant) {
         // Bug H7 (2026-08-10): the 1000 ms gate was removed — it quantized
         // the sampling to 4 ticks (1240 ms real cadence → 40 ms of PWM phase

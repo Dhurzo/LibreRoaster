@@ -41,6 +41,7 @@ fn read_duty_ch0() -> u16 {
     (raw >> 4) as u16
 }
 
+/// Busy-wait for `ms` milliseconds via the ESP ROM delay routine.
 #[cfg(target_arch = "riscv32")]
 fn delay_ms(ms: u32) {
     esp_hal::rom::ets_delay_us(ms * 1000);
@@ -57,6 +58,8 @@ fn safe_shutdown() -> ! {
     }
 }
 
+/// HIL scenario: sweep the fan PWM duty 0/25/50/75/100/0 % via LEDC Channel0 and verify
+/// each step against the hardware duty register, then re-assert the zero-duty safe-shutdown path.
 #[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {

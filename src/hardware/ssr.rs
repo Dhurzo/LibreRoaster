@@ -1,3 +1,10 @@
+//! SSR heater control over LEDC PWM with heat-source detection.
+//!
+//! Wraps an LEDC channel and an optional SSR-on detection pin into
+//! `SsrControl` / `SsrControlSimple`. The pure state machine (`SsrControlBase`,
+//! `SsrError`, `SsrHardwareStatus`, `StatusGetters`) lives in `ssr_logic` and is
+//! re-exported here. On host builds this module is replaced by `ssr_stub`.
+
 use crate::config::constants::{
     SsrHardwareStatus as GlobalSsrStatus, SSR_DUTY_TOLERANCE_TICKS, SSR_PWM_RESOLUTION,
 };
@@ -13,6 +20,7 @@ use log::{debug, error, info, warn};
 // `ssr_logic` module so host unit tests cover it — this module is replaced
 // by `ssr_stub.rs` on host builds. Re-exported so existing callers keep
 // resolving through `hardware::ssr`.
+/// Re-exports of the pure SSR state-machine types from `ssr_logic`.
 pub use crate::hardware::ssr_logic::{SsrControlBase, SsrError, SsrHardwareStatus, StatusGetters};
 
 /// Error returned when a raw duty write to the LEDC hardware fails.
@@ -20,15 +28,17 @@ pub use crate::hardware::ssr_logic::{SsrControlBase, SsrError, SsrHardwareStatus
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DutyWriteError;
 
+/// Low-level LEDC duty access bypassing `ChannelIFace`'s percentage conversion.
 pub trait LedcDutyReader {
+    /// Read the live duty value (DUTY_R) in raw timer ticks.
     fn read_duty_ticks(&self) -> u16;
 
     /// Set duty directly in hardware, bypassing the percentage conversion
-    /// that [`ChannelIFace::set_duty`] applies. The duty value MUST be in the
+    /// that `ChannelIFace::set_duty` applies. The duty value MUST be in the
     /// raw resolution range (e.g. 0-255 for 8-bit).
     ///
     /// This is the correct method to call when you have already computed a raw
-    /// duty value via [`percentage_to_ledc_duty`]. Calling [`ChannelIFace::set_duty`]
+    /// duty value via `percentage_to_ledc_duty`. Calling `ChannelIFace::set_duty`
     /// with a raw value > 100 will fail because it expects a percentage (0-100).
     fn set_duty_raw(&self, duty: u16) -> Result<(), DutyWriteError>;
 }
@@ -83,15 +93,19 @@ where
 /// Trait for heat source detection functionality.
 /// Implementations must provide detection logic.
 pub trait HeatSourceDetector {
+    /// Probe the detection pin and update heat-availability state.
     fn detect_heat_source(&mut self, current_time: u32) -> Result<(), SsrError>;
 }
 
 /// Trait for periodic health check functionality.
 /// Implementations must provide periodic check logic.
 pub trait PeriodicCheck {
+    /// Run a periodic health probe (heat detection / cross-check).
     fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError>;
 }
 
+/// Full SSR controller: owns the SSR GPIO plus an LEDC PWM channel and a
+/// detection pin. Embeds `SsrControlBase` for shared state.
 pub struct SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,
@@ -108,6 +122,7 @@ where
     _phantom: PhantomData<&'a ()>,
 }
 
+/// Convert a 0–100 % duty into raw LEDC ticks, applying min-duty snap-to-zero.
 pub fn percentage_to_ledc_duty(percentage: f32) -> u16 {
     let clamped = percentage.clamp(0.0, 100.0);
     let max_duty = (1u32 << SSR_PWM_RESOLUTION) - 1;
@@ -129,6 +144,7 @@ where
     DETECT: InputPin,
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
+    /// Build a `SsrControl`, forcing the SSR GPIO low and the PWM to 0 %.
     pub fn new_with_pwm_and_detection(
         mut pin: PIN,
         detection_pin: DETECT,
@@ -175,6 +191,7 @@ where
         self.base.is_pwm_enabled
     }
 
+    /// Set heater output as a percentage, writing raw duty and verifying readback.
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
@@ -216,6 +233,7 @@ where
     }
 }
 
+/// SSR controller variant without the SSR GPIO: PWM + detection pin only.
 pub struct SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
@@ -232,6 +250,7 @@ where
     DETECT: InputPin,
     PWM: ChannelIFace<'a, LowSpeed> + LedcDutyReader,
 {
+    /// Build a `SsrControlSimple`, initialising the PWM channel to 0 %.
     pub fn new(detection_pin: DETECT, pwm_channel: PWM) -> Result<Self, SsrError> {
         pwm_channel
             .set_duty_raw(0)
@@ -272,6 +291,7 @@ where
         }
     }
 
+    /// Run heat detection and the stuck-on cross-check for the simple controller.
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
         // No throttle (bug audit 2026-08-02): consecutive detects must stay
         // one control-loop tick apart (~330 ms → ~130 ms of PWM phase
@@ -289,6 +309,7 @@ where
         Ok(())
     }
 
+    /// Set heater output as a percentage, writing raw duty and verifying readback.
     pub fn set_percentage(&mut self, percentage: f32) -> Result<(), SsrError> {
         let clamped = percentage.clamp(0.0, 100.0);
         let ledc_duty = percentage_to_ledc_duty(clamped);
@@ -569,6 +590,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::percentage_to_ledc_duty;
+
     use crate::config::constants::{
         SSR_CYCLE_GUARD_MS, SSR_DUTY_TOLERANCE_TICKS, SSR_PWM_RESOLUTION,
     };

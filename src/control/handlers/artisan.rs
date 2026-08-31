@@ -1,3 +1,9 @@
+//! Artisan+ manual control policy for roaster commands.
+//!
+//! Evaluates SetHeaterManual/SetFanManual/UP/DOWN/SetUnits into a
+//! `ManualPolicyOutcome`; handler state commits only after the hardware
+//! write succeeds (`commit_manual_heater` / `commit_manual_fan`).
+
 // Artisan manual command handler for roaster control
 //
 // This module handles Artisan+ manual commands:
@@ -13,9 +19,10 @@ use crate::config::{RoasterCommand, SystemStatus, TemperatureScale, TemperatureS
 use crate::control::policies::{ManualCommandPolicy, ManualPolicyOutcome};
 use log::{info, warn};
 
-/// Artisan command handler
+/// Artisan+ manual command handler.
 ///
-/// Manages Artisan+ manual commands for heater and fan control
+/// Evaluates heater/fan/units commands into a `ManualPolicyOutcome`, committing
+/// the applied manual values only after the hardware write succeeds.
 pub struct ArtisanCommandHandler {
     manual_heater: f32,
     manual_fan: f32,

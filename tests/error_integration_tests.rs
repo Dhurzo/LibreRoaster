@@ -1,3 +1,9 @@
+//! Hardware-to-application error propagation tests.
+//!
+//! Verifies that mock hardware faults (`Max31856Error`, `SsrError`, `FanError`)
+//! convert into the right `AppError`/`RoasterError` variants with correct
+//! `source()` strings, and that `is_recoverable()` reflects the error class.
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 

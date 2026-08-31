@@ -1,6 +1,17 @@
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+//! Critical-path integration tests for `RoasterControl` safety and control behaviour.
+//!
+//! Drives a real `RoasterControl` (stub heater/fan + `SensorConversionHub`) through the
+//! scenarios that must never regress: charge detection reset between roasts, every safety
+//! backstop (max-roast, comms-idle, stale sensor, overtemp, NaN PV), fault recovery via the
+//! OFF command, PID↔manual transitions and integrator reset, SSR slew limiting, profile
+//! following, fan/cooldown latch (B3), PID-not-disabled-by-fan (B4), gain mid-roast (B5),
+//! single-fault debounce (B7), and up/down heater commands.
+//!
+//! Each test holds `TEST_MUTEX` so the shared `ServiceContainer`/channels are not raced.
+
 extern crate alloc;
 extern crate std;
 
@@ -17,6 +28,7 @@ use libreroaster::hardware::sensors::SensorConversionHub;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Acquire the shared test mutex, recovering from a poisoned state after a panic.
 fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
     let guard = TEST_MUTEX
         .lock()
@@ -25,6 +37,7 @@ fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
     guard
 }
 
+/// Build a fresh `RoasterControl` with stub heater/fan and an empty `SensorConversionHub`.
 fn build_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),

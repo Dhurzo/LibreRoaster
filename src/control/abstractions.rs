@@ -1,15 +1,29 @@
+//! Shared control-layer abstractions: errors, command handler trait, output flag.
+//!
+//! Defines `RoasterError` (the unified error type with `From` conversions from
+//! hardware/input errors), the `RoasterCommandHandler` trait for dispatch, and
+//! `OutputController` (tracks the continuous-output enable flag feeding the
+//! streaming state machine).
+
 use crate::config::{RoasterCommand, SystemStatus};
 use crate::hardware::{fan::FanError, ssr::SsrError, uart::UartError};
 use crate::input::InputError;
 use embassy_time::Instant;
 
+/// Unified control-layer error type; wraps hardware/input faults with a source token.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RoasterError {
+    /// A temperature reading fell outside the safe operating range.
     TemperatureOutOfRange { source: Option<&'static str> },
+    /// A thermocouple reported a fault (open/short/out-of-range).
     SensorFault { source: Option<&'static str> },
+    /// The requested command is illegal in the current roast state.
     InvalidState { source: Option<&'static str> },
+    /// The PID controller produced an unrecoverable error.
     PidError { source: Option<&'static str> },
+    /// A heater/fan hardware error (SSR, PWM, LEDC, or UART).
     HardwareError { source: Option<&'static str> },
+    /// An emergency shutdown latched the actuators off.
     EmergencyShutdown { source: Option<&'static str> },
 }
 
@@ -55,6 +69,7 @@ fn write_source(
 }
 
 impl RoasterError {
+    /// Returns the stable wire token for this error (e.g. `sensor_fault`).
     pub fn message_token(&self) -> &'static str {
         match self {
             RoasterError::TemperatureOutOfRange { .. } => "temperature_out_of_range",
@@ -66,6 +81,7 @@ impl RoasterError {
         }
     }
 
+    /// Returns the optional underlying source token attached to the error.
     pub fn source(&self) -> Option<&'static str> {
         match self {
             RoasterError::TemperatureOutOfRange { source }
@@ -126,7 +142,9 @@ impl From<InputError> for RoasterError {
     }
 }
 
+/// Trait for components that can apply a `RoasterCommand` to their state.
 pub trait RoasterCommandHandler {
+    /// Applies `command`, updating `status`; returns an error on rejection/fault.
     fn handle_command(
         &mut self,
         command: RoasterCommand,
@@ -134,15 +152,18 @@ pub trait RoasterCommandHandler {
         status: &mut SystemStatus,
     ) -> Result<(), RoasterError>;
 
+    /// Returns true if this handler accepts `command`.
     fn can_handle(&self, command: RoasterCommand) -> bool;
 }
 
+/// Tracks the continuous-output enable flag consumed by the streaming state machine.
 #[derive(Debug, Default)]
 pub struct OutputController {
     continuous_enabled: bool,
 }
 
 impl OutputController {
+    /// Returns a controller with continuous output disabled.
     pub fn new() -> Self {
         OutputController {
             continuous_enabled: false,
@@ -154,14 +175,17 @@ impl OutputController {
     // real continuous-output state machine lives in `MutableArtisanFormatter`
     // (driven by `emit_telemetry_stage` in tasks.rs); this type now only
     // tracks the enable flag feeding `CommandDispatcher::is_streaming`.
+    /// Enables continuous (`#`-line) telemetry output.
     pub fn enable_continuous_output(&mut self) {
         self.continuous_enabled = true;
     }
 
+    /// Disables continuous telemetry output.
     pub fn disable_continuous_output(&mut self) {
         self.continuous_enabled = false;
     }
 
+    /// Returns the current continuous-output enable flag.
     pub fn is_continuous_enabled(&self) -> bool {
         self.continuous_enabled
     }

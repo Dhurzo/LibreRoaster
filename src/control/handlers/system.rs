@@ -1,3 +1,8 @@
+//! System command handler for roaster control.
+//!
+//! Handles `Reset`: zeroes telemetry/control state while preserving the
+//! safety latch (`fault_condition`).
+
 // System command handler for roaster control
 //
 // This module handles system-level commands:
@@ -9,9 +14,8 @@ use crate::config::{RoasterCommand, SystemStatus};
 use crate::control::{RoasterCommandHandler, RoasterError};
 use log::info;
 
-/// System command handler
-///
-/// Manages system-level commands for roaster control
+/// Handles the `Reset` command, clearing telemetry/control state while
+/// preserving the safety latch.
 pub struct SystemCommandHandler;
 
 impl RoasterCommandHandler for SystemCommandHandler {

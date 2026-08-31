@@ -1,3 +1,10 @@
+//! UART reader task and legacy command-processing helpers.
+//!
+//! Implements the `RxSource` trait for UART, defines the static transport
+//! config/state, and exposes the thin `uart_reader_task` wrapper plus the
+//! multiplexer-aware response/stream senders and the legacy direct-processing
+//! path used by tests.
+
 use crate::application::queue_metrics::record_queue_depth;
 use crate::application::service_container::ServiceContainer;
 use crate::hardware::transport_tasks::{

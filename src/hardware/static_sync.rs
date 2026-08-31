@@ -1,3 +1,9 @@
+//! Sync wrapper for static mutable driver singletons.
+//!
+//! Provides `SyncCell`, an `UnsafeCell` wrapper that is `Sync` on the
+//! single-core ESP32-C3 so driver raw pointers can live in `static`s behind an
+//! async `Mutex`. All dereferences occur inside a mutex guard.
+
 use core::cell::UnsafeCell;
 
 /// Shared SyncCell wrapper for static mutable data

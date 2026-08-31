@@ -1,3 +1,9 @@
+//! Command idempotence and bounds tests.
+//!
+//! Verifies START/STOP are idempotent, manual `SetHeater`/`SetFan` reject
+//! out-of-range input without side effects, and the READ formatter is
+//! deterministic across repeated calls and boundary temperatures.
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(deprecated)]
 
@@ -12,6 +18,7 @@ use libreroaster::output::artisan::ArtisanFormatter;
 use std::boxed::Box;
 use tests_common::{build_test_control, StubFan, StubHeater};
 
+/// Build a stub `RoasterControl` with the SSR marked `Available`.
 fn build_control() -> RoasterControl {
     let heater = StubHeater::new();
     heater.set_status(SsrHardwareStatus::Available);

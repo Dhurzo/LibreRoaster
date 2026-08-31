@@ -1,3 +1,10 @@
+//! HIL Test: SSR LEDC channel on ESP32-C3 (GPIO10, Channel1, Timer0, 5 Hz).
+//!
+//! Verifies the SSR PWM channel initialises, reads back duty = 0 from the hardware
+//! register, reads the GPIO1 heat-detection pin, and re-asserts the zero-duty
+//! safe-shutdown path. SAFE mode only — duty never exceeds 0 %, so no heater is
+//! energised. Reports results as `TEST:` lines over serial (esp-println).
+
 #![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
 
@@ -23,6 +30,7 @@ use static_cell::StaticCell;
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 
+/// Read the current duty from an LEDC channel hardware register (ticks, value << 4).
 #[cfg(target_arch = "riscv32")]
 fn read_ledc_duty(channel_number: usize) -> u16 {
     let regs = unsafe { &*LEDC::ptr() };
@@ -30,6 +38,8 @@ fn read_ledc_duty(channel_number: usize) -> u16 {
     (raw >> 4) as u16
 }
 
+/// HIL scenario: initialise the SSR LEDC channel, verify zero-duty readback, read the
+/// GPIO1 heat pin, and re-assert the safe-shutdown (zero-duty) path; print the suite result.
 #[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {

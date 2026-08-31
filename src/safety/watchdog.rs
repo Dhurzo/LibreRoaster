@@ -1,10 +1,11 @@
-/// Dual-layer watchdog: software counter (telemetry) + hardware RTC WDT (CPU reset).
-/// The software watchdog provides status telemetry via the STATUS command.
-/// The hardware watchdog resets the CPU if the control loop hangs for >2 seconds.
-///
-/// On ESP32-C3, the RTC Watchdog Timer (RWDT) is fed in the control loop.
-/// If the Embassy executor hangs, the RWDT triggers a full system reset
-/// independently of CPU state. On host builds, the hardware WDT is a no-op.
+//! Dual-layer watchdog: software counter (telemetry) + hardware RTC WDT (CPU reset).
+//! The software watchdog provides status telemetry via the STATUS command.
+//! The hardware watchdog resets the CPU if the control loop hangs for >2 seconds.
+//!
+//! On ESP32-C3, the RTC Watchdog Timer (RWDT) is fed in the control loop.
+//! If the Embassy executor hangs, the RWDT triggers a full system reset
+//! independently of CPU state. On host builds, the hardware WDT is a no-op.
+
 /// Watchdog feeder errors exposed to higher-level services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchdogError {
@@ -265,6 +266,7 @@ mod hw_watchdog {
     pub fn init() {}
 }
 
+/// Re-export of the hardware RTC watchdog feed/init for the control loop.
 pub use hw_watchdog::{feed as feed_hw_watchdog, init as init_hw_watchdog};
 
 #[cfg(test)]

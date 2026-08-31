@@ -46,7 +46,7 @@ impl Default for RoastCurve {
 }
 
 impl RoastCurve {
-    /// Create an empty curve. Use [`Self::add_point`] to build it up.
+    /// Create an empty curve. Use `add_point` to build it up.
     pub fn new() -> Self {
         Self {
             points: heapless::Vec::new(),
@@ -464,7 +464,7 @@ impl RoastCurve {
 
 /// Runtime state for the synthetic temperature generator.
 ///
-/// Tracks elapsed time and produces temperatures from a [`RoastCurve`]
+/// Tracks elapsed time and produces temperatures from a `RoastCurve`
 /// at the control-loop cadence.
 pub struct SimulatedSensorSource {
     curve: RoastCurve,

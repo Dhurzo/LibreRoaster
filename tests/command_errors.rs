@@ -1,3 +1,10 @@
+//! Parser error-path integration tests.
+//!
+//! Drives raw bytes through `process_command_data` and asserts the produced
+//! `ERR <code> <message>` wire lines and that no command reaches the artisan
+//! channel on malformed/out-of-range/unknown input. Shared helpers serialize
+//! execution against the global `ServiceContainer` channels.
+
 #![cfg(all(test, not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used)]
 
@@ -20,6 +27,7 @@ fn acquire_serial() -> std::sync::MutexGuard<'static, ()> {
     TEST_MUTEX.lock().expect("test mutex poisoned")
 }
 
+/// Drain both the artisan and output channels so each test starts clean.
 fn reset_channels() {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     while cmd_channel.try_receive().is_ok() {}
@@ -28,6 +36,7 @@ fn reset_channels() {
     while output_channel.try_receive().is_ok() {}
 }
 
+/// Drain the artisan channel, returning every `ArtisanCommand` enqueued so far.
 fn collect_commands() -> Vec<ArtisanCommand> {
     let channel = ServiceContainer::get_artisan_channel();
     let mut commands = Vec::new();
@@ -39,6 +48,7 @@ fn collect_commands() -> Vec<ArtisanCommand> {
     commands
 }
 
+/// Drain the output channel, skipping internal `TRACE,` lines, returning wire messages.
 fn collect_output() -> Vec<StdString> {
     let output_channel = ServiceContainer::get_output_channel();
     let mut messages = Vec::new();
@@ -53,6 +63,7 @@ fn collect_output() -> Vec<StdString> {
     messages
 }
 
+/// Assert an `ERR` line has exactly `ERR <code> <message>` (3 whitespace tokens).
 fn assert_err_tokens(output: &str, expected_code: &str, expected_message: &str) {
     let parts: Vec<&str> = output.split_whitespace().collect();
     assert_eq!(parts.len(), 3, "ERR output should have 3 tokens");
@@ -61,6 +72,7 @@ fn assert_err_tokens(output: &str, expected_code: &str, expected_message: &str) 
     assert_eq!(parts[2], expected_message, "Unexpected error message");
 }
 
+/// Build and register a stub `RoasterControl` + `ArtisanInput` once per process.
 pub fn init_test_service_container() {
     use libreroaster::common::{StubFan, StubHeater};
     use libreroaster::control::RoasterControl;

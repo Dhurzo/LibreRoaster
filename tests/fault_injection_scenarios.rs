@@ -22,6 +22,7 @@ use libreroaster::control::RoasterControl;
 use libreroaster::hardware::sensors::SensorConversionHub;
 use std::boxed::Box;
 
+/// Build a stub `RoasterControl` for fault-injection scenarios.
 fn make_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),
@@ -31,6 +32,7 @@ fn make_control() -> RoasterControl {
     .expect("test control should build")
 }
 
+/// Run one sensor-update + control-tick pair at the given instant.
 fn tick(ctrl: &mut RoasterControl, bt: f32, et: f32, now: Instant) {
     ctrl.update_temperatures(bt, et, now).expect("temps");
     let _ = ctrl.update_control(now);

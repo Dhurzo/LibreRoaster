@@ -1,3 +1,9 @@
+//! HIL Test: MAX31856 thermocouple reads on ESP32-C3 (SPI2 over GPIO6/7/5, CS GPIO4/GPIO3).
+//!
+//! Initialises the shared SPI bus and both `Max31856` sensors (bean / environment),
+//! performs raw temperature reads, ambient-range and dual-channel checks, fault-register
+//! validation, and a 3-sample stability measurement, printing `TEST:` lines over serial.
+
 #![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
 
@@ -29,6 +35,8 @@ use libreroaster::hardware::sensors::conversion::convert_raw_temp;
 #[cfg(target_arch = "riscv32")]
 use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 
+/// HIL scenario: drive both MAX31856 sensors through init, raw conversion, ambient and
+/// dual-channel checks, fault-register validation, and a 3-sample stability sweep; print the suite result.
 #[cfg(target_arch = "riscv32")]
 #[expect(
     deprecated,

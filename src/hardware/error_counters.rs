@@ -1,7 +1,9 @@
-use core::cell::Cell;
+//! Per-transport comms error counters (UART / USB) feeding STATUS telemetry.
+//!
+//! On `riscv32imc` (ESP32-C3), `AtomicU32::fetch_add` is not available, so the
+//! counters use a `critical_section` + `Cell` guard for cross-task updates.
 
-// On riscv32imc (ESP32-C3), AtomicU32::fetch_add is not available.
-// We use critical_section + Cell for safe cross-task counter updates.
+use core::cell::Cell;
 
 #[derive(Clone, Copy)]
 struct CommsErrorCounters {

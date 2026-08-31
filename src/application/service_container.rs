@@ -27,16 +27,23 @@ use embassy_sync::mutex::Mutex as EmbassyMutex;
 use esp_hal::gpio::Output;
 use heapless::String;
 
+/// Singleton owning `RoasterControl` and the command/output channels, plus
+/// watchdog and (embedded-only) status-LED handles.
+///
+/// Constructed once via `get_instance()`; components are injected single-
+/// threaded by `AppBuilder::build()` before the executor starts.
 pub struct ServiceContainer {
     /// Single async-mutex ownership slot for RoasterControl, shared by sync
     /// and async paths. Sync init uses `try_lock()` (single-threaded, no
     /// contention); async runtime uses `.lock().await` (concurrent callers
     /// queue rather than fail).
     pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
+    /// Parsed Artisan input state (targets, PID setpoints) for the active session.
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
     // Bug DRA-2 (2026-07-26): the `multiplexer` field was removed — it was
     // NEVER read or written (always None). The real multiplexer lives in the
     // `ARTISAN_MULTIPLEXER` static, accessed via `get_multiplexer()`.
+    /// RTC watchdog feeder handle; `None` until `AppBuilder::build()` installs it.
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
     /// BUG-06 (2026-08-21): the status LED's single long-lived owner. Stored
     /// here so the control-loop task can drive the pattern and
@@ -56,7 +63,9 @@ pub struct ServiceContainer {
 // tick rate-limit branch is intentionally inert — the bounded channel itself
 // caps the work per tick, and the old 8-command budget silently discarded
 // the 9th..16th commands of a burst.
+/// Capacity of the Artisan command channel and of the per-tick command budget.
 pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 16;
+/// Capacity of the Artisan output channel drained by `dual_output_task`.
 pub const ARTISAN_OUTPUT_CHANNEL_SIZE: usize = 16;
 static ARTISAN_CMD_CHANNEL: Channel<
     CriticalSectionRawMutex,
@@ -72,11 +81,13 @@ static ARTISAN_MULTIPLEXER: Mutex<RefCell<Option<CommandMultiplexer>>> =
     Mutex::new(RefCell::new(None));
 
 impl ServiceContainer {
+    /// Returns the static command channel feeding `drain_commands`.
     pub fn get_artisan_channel(
     ) -> &'static Channel<CriticalSectionRawMutex, TracedCommand, ARTISAN_CMD_CHANNEL_SIZE> {
         &ARTISAN_CMD_CHANNEL
     }
 
+    /// Returns the static output channel consumed by `dual_output_task`.
     pub fn get_output_channel() -> &'static Channel<
         CriticalSectionRawMutex,
         String<TRACE_EVENT_MAX_LEN>,
@@ -85,11 +96,13 @@ impl ServiceContainer {
         &ARTISAN_OUTPUT_CHANNEL
     }
 
+    /// Returns the static command multiplexer tracking the active transport.
     pub fn get_multiplexer() -> &'static critical_section::Mutex<RefCell<Option<CommandMultiplexer>>>
     {
         &ARTISAN_MULTIPLEXER
     }
 
+    /// Installs a fresh `CommandMultiplexer` before the executor starts.
     pub fn init_multiplexer() {
         critical_section::with(|cs| {
             let multiplexer = CommandMultiplexer::new();
@@ -97,6 +110,7 @@ impl ServiceContainer {
         });
     }
 
+    /// Installs the RTC watchdog feeder into the container.
     pub fn init_watchdog(&self, feeder: WatchdogFeeder) {
         critical_section::with(|cs| {
             self.watchdog_feeder.borrow(cs).replace(Some(feeder));
@@ -137,6 +151,7 @@ impl ServiceContainer {
         });
     }
 
+    /// Runs `f` against the watchdog feeder, or `WatchdogUninitialized` if absent.
     pub fn with_watchdog<R, F>(&self, f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut WatchdogFeeder) -> Result<R, WatchdogError>,
@@ -151,10 +166,12 @@ impl ServiceContainer {
         })
     }
 
+    /// Returns true once a watchdog feeder has been installed.
     pub fn watchdog_available(&self) -> bool {
         critical_section::with(|cs| self.watchdog_feeder.borrow(cs).borrow().is_some())
     }
 
+    /// Returns the compile-time-initialized singleton container.
     pub fn get_instance() -> &'static ServiceContainer {
         // Compile-time initialized singleton. The EmbassyMutex starts empty
         // (None); `init_roaster` fills it before the executor runs.
@@ -196,6 +213,7 @@ impl ServiceContainer {
         })
     }
 
+    /// Best-effort check that both RoasterControl and ArtisanInput are installed.
     pub fn is_initialized() -> bool {
         // Use try_lock for a non-async snapshot. Returns NotInitialized-style
         // false if the slot is empty or (transiently) contended; callers use
@@ -254,10 +272,12 @@ impl ServiceContainer {
         }
     }
 
+    /// Async snapshot of the current bean (BT) temperature.
     pub async fn read_bean_temperature() -> Result<f32, ContainerError> {
         Self::with_roaster_async(|roaster| roaster.get_status().bean_temp).await
     }
 
+    /// Async snapshot of the current environment (ET) temperature.
     pub async fn read_env_temperature() -> Result<f32, ContainerError> {
         Self::with_roaster_async(|roaster| roaster.get_status().env_temp).await
     }
@@ -304,6 +324,7 @@ impl ServiceContainer {
         })
     }
 
+    /// Runs `f` against the Artisan input state, or `NotInitialized` if absent.
     pub fn with_artisan_input<R, F>(f: F) -> Result<R, ContainerError>
     where
         F: FnOnce(&mut ArtisanInput) -> R,
@@ -317,6 +338,7 @@ impl ServiceContainer {
         })
     }
 
+    /// Returns a sender half for pushing parsed commands into the command channel.
     pub fn get_command_sender() -> embassy_sync::channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -327,11 +349,16 @@ impl ServiceContainer {
     }
 }
 
+/// Errors surfaced when accessing service-container-owned resources.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContainerError {
+    /// RoasterControl or a required component was not installed yet.
     NotInitialized,
+    /// `init_watchdog` was never called before a feed was attempted.
     WatchdogUninitialized,
+    /// The watchdog feeder returned an error during a feed.
     Watchdog(WatchdogError),
+    /// A sensor read failed; `reason` is the underlying error token.
     SensorError { reason: &'static str },
 }
 
@@ -407,6 +434,7 @@ mod async_lock_depth {
     pub fn reset_async_lock_metrics_for_tests() {}
 }
 
+/// Re-exports the (test/metrics) async-lock depth helpers.
 pub use async_lock_depth::{async_lock_depth_max_for_tests, reset_async_lock_metrics_for_tests};
 
 #[cfg(test)]

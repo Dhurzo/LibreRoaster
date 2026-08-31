@@ -1,3 +1,9 @@
+//! Unified application error type (`AppError`) and subsystem error enums.
+//!
+//! Maps subsystem failures (temperature, control, hardware, comms, init, safety)
+//! into a single error surface with recoverability/severity classification and
+//! `From` conversions from the lower-level `RoasterError`/driver errors.
+
 use crate::input::InputError;
 use crate::memory::ERROR_MSG_MAX_LEN;
 use core::fmt;
@@ -5,77 +11,102 @@ use core::fmt;
 extern crate std;
 use alloc::string::String;
 
+/// Top-level error type surfaced across LibreRoaster subsystems.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppError {
+    /// Temperature subsystem failure (sensor read/range/fault).
     Temperature {
         message: heapless::String<ERROR_MSG_MAX_LEN>,
         source: TemperatureError,
     },
 
-    Control {
-        source: ControlError,
-    },
+    /// Control-loop / PID failure.
+    Control { source: ControlError },
 
-    Hardware {
-        source: HardwareError,
-    },
+    /// Hardware-subsystem failure (SSR/fan/UART driver).
+    Hardware { source: HardwareError },
 
-    Communication {
-        source: CommunicationError,
-    },
+    /// Communication (UART/protocol/timeout) failure.
+    Communication { source: CommunicationError },
 
-    Initialization {
-        source: InitError,
-    },
+    /// Startup initialisation failure.
+    Initialization { source: InitError },
 
-    Safety {
-        severity: SafetyLevel,
-    },
+    /// Safety latch/emergency condition with a severity level.
+    Safety { severity: SafetyLevel },
 }
 
+/// Temperature-subsystem errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TemperatureError {
+    /// Reading outside the valid/operational range.
     OutOfRange,
+    /// MAX31856 reported a fault bit (open/shorted probe).
     SensorFault,
+    /// Sensor read did not complete within `TEMP_VALIDITY_TIMEOUT_MS`.
     ReadingTimeout,
+    /// Reading was non-finite or otherwise unusable.
     InvalidValue,
 }
 
+/// Control-loop / PID errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ControlError {
+    /// PID computation failure.
     PidError,
+    /// Invalid roaster state for the requested operation.
     InvalidState,
+    /// A control command could not be applied.
     CommandFailed,
+    /// Actuator output (SSR/fan) write failure.
     OutputError,
+    /// An emergency shutdown was triggered.
     EmergencyShutdown,
 }
 
+/// Hardware-subsystem errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareError {
+    /// UART driver error.
     UartError,
+    /// Fan PWM write error.
     FanError,
+    /// SSR heater write/availability error.
     SsrError,
 }
 
+/// Communication-subsystem errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommunicationError {
+    /// UART transport error.
     UartError,
+    /// Malformed/unsupported serial protocol frame.
     ProtocolError,
+    /// No command/response within the expected window.
     TimeoutError,
 }
 
+/// Startup initialisation errors (carry a human-readable reason).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitError {
+    /// `ServiceContainer` construction failed.
     ServiceContainer { what: &'static str, reason: String },
+    /// Hardware peripheral init failed.
     HardwareInit { what: &'static str, reason: String },
+    /// Embassy task spawn failed.
     TaskSpawn { what: &'static str, reason: String },
+    /// Heap allocation during init failed.
     MemoryAllocation { what: &'static str, reason: String },
 }
 
+/// Severity of a safety condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SafetyLevel {
+    /// Non-latching warning.
     Warning,
+    /// Critical: latched fault requiring operator intervention.
     Critical,
+    /// Emergency: immediate shutdown required.
     Emergency,
 }
 
@@ -294,7 +325,6 @@ mod tests {
     use crate::control::RoasterError;
     use crate::hardware::fan::FanError;
     use crate::hardware::ssr::SsrError;
-    use crate::input::InputError;
 
     #[test]
     fn test_error_categorization() {

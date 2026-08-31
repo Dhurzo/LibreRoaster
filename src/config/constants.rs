@@ -1,3 +1,10 @@
+//! Configuration constants and shared control/state types for LibreRoaster.
+//!
+//! Pin assignments, PWM/SSR timing, PID sample and sensor-conversion windows,
+//! safety thresholds (overtemp, RoR guards, probe-stuck, comms-idle, watchdog),
+//! and the `ArtisanCommand`/`RoasterCommand`/`RoasterState` protocol + state
+//! enums plus the `SystemStatus`/`TemperatureSettings` telemetry structures.
+
 // GPIO Pin Assignments for LibreRoaster ESP32-C3
 // These pins are optimized for the ESP32-C3 capabilities and coffee roaster application
 // Note: ESP32-C3 has strapping pins (GPIO2, GPIO8, GPIO9). GPIO2 must be avoided.
@@ -215,47 +222,78 @@ pub const LEDC_GUARD_TIMEOUT_MS: u64 = 10;
 /// so 15s without any command indicates Artisan has crashed or disconnected.
 pub const COMMS_IDLE_TIMEOUT_MS: u64 = 15000;
 
+/// Roaster operating state reported in `SystemStatus` and surfaced to Artisan.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RoasterState {
+    /// Idle: no roast in progress, heater and fan at rest.
     Idle,
+    /// Preheating: ramping to target before a roast starts.
     Preheating,
+    /// Heating: active roast, heater energised under control.
     Heating,
+    /// Stable: temperature held near setpoint (PID regulating).
     Stable,
     // Audit M-A7 (2026-08-11): `Cooling`, `Fault` and `EmergencyStop` removed
     // — zero references existed; every failure transition uses `Error`.
+    /// Error: a fault/latch condition; all failures transition here.
     Error,
 }
 
+/// Serial commands parsed from the Artisan/TC4 wire protocol.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArtisanCommand {
+    /// `READ` — request a TC4-style temperature status line.
     ReadStatus,
+    /// `STATUS`/`#` — request an extended status report.
     StatusReport,
+    /// `START` — begin a roast.
     StartRoast,
+    /// `OT1` — set heater output directly (manual %, 0-100).
     SetHeater(u8),
+    /// `OT2` — set fan output directly (manual %, 0-100).
     SetFan(u8),
+    /// `OT2` with ramp flag — set fan speed with ramp enable.
     SetFanSpeed(u8, bool),
+    /// `STOP` — terminate the roast (operator-initiated).
     Stop,
+    /// `ESTOP` — operator emergency stop.
     EmergencyStop,
+    /// Increment heater output one step.
     IncreaseHeater,
+    /// Decrement heater output one step.
     DecreaseHeater,
+    /// `CHAN` — configure reported channel count.
     Chan(u16),
+    /// `UNITS` — select temperature display units.
     Units(bool),
+    /// `FILT` — set the filtering/EMA coefficient Artisan requests.
     Filt(u8),
+    /// `REG` — run a hardware regression/self-test sequence.
     RunRegression,
+    /// `PID;P`/`PID;I`/`PID;D` — set PID gains.
     SetPidGain(f32, f32, f32),
+    /// `SETTARGET`/`PID;SV` — set the control target temperature (°C).
     SetTargetTemp(f32),
+    /// `PROFILE` — load a roast temperature profile.
     SetProfile,
+    /// `DUMP` — dump the roast log/ring buffer.
     DumpLog,
+    /// `PREHEAT` — ramp to a preheat target temperature (°C).
     Preheat(f32),
+    /// `FANPROFILE` — load a fan speed profile.
     SetFanProfile,
-    SetPidChannel(u8),            // PID;CHAN;2 — 1=ET, 2=BT (default)
-    SetPidCycleTime(u32),         // PID;CT;1000 — cycle time in ms
+    /// PID;CHAN — select the PID feedback channel.
+    SetPidChannel(u8), // PID;CHAN;2 — 1=ET, 2=BT (default)
+    /// PID;CT — set the PID cycle time in ms.
+    SetPidCycleTime(u32), // PID;CT;1000 — cycle time in ms
+    /// PID;LIMIT — set PID output min/max bounds (%).
     SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
     // BUG-08 (2026-08-21): opt-in continuous telemetry. `STREAM;ON` enables
     // the spontaneous 1 Hz `#<t>,ET,BT,ROR,Gas` stream; `STREAM;OFF` (and
     // any STOP) disables it. Off by default — the stream used to be a side
     // effect of START/OT1/OT2/PID;SV, and its spontaneous lines could occupy
     // the READ response slot on the shared wire.
+    /// STREAM;ON/OFF — enable or disable the spontaneous `#` telemetry stream.
     SetStreaming(bool), // STREAM;ON / STREAM;OFF
 }
 
@@ -366,6 +404,7 @@ pub struct FanSetpoint {
     pub fan_speed: u8,
 }
 
+/// Fan speed profile received from Artisan as a sequence of time→% setpoints.
 pub struct FanProfile {
     pub setpoints: heapless::Vec<FanSetpoint, MAX_PROFILE_SETPOINTS>,
 }
@@ -715,26 +754,42 @@ mod tests {
     }
 }
 
+/// Internal control commands dispatched to `RoasterControl` (from Artisan or host).
 #[derive(Debug, Clone, Copy)]
 pub enum RoasterCommand {
+    /// Begin a roast at the given target temperature (°C).
     StartRoast(f32),
+    /// Stop the active roast (internal equivalent of STOP).
     StopRoast,
+    /// Set the control target temperature (°C).
     SetTemperature(f32),
+    /// Internal emergency stop.
     EmergencyStop,
+    /// Reset the controller to idle.
     Reset,
+    /// Set heater output manually (%).
     SetHeaterManual(u8),
+    /// Set fan output manually (%).
     SetFanManual(u8),
+    /// Emergency stop triggered by Artisan disconnect/idle timeout.
     ArtisanEmergencyStop,
+    /// Increment heater output one step.
     IncreaseHeater,
+    /// Decrement heater output one step.
     DecreaseHeater,
+    /// Set display units (true = °F, false = °C).
     SetUnits(bool), // true = Fahrenheit, false = Celsius
 }
 
+/// Detected availability of the SSR heater hardware (current-sense circuit).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SsrHardwareStatus {
+    /// SSR present and available to energise.
     Available,
     #[default]
+    /// SSR not detected at boot (no current-sense signal).
     NotDetected,
+    /// SSR in an error/unavailable state.
     Error,
 }
 
@@ -817,24 +872,37 @@ pub struct SystemStatus {
     pub artisan_control: bool,
     pub fault_condition: bool,
     pub ssr_hardware_status: SsrHardwareStatus,
+    /// Last commanded-vs-actual SSR duty delta, in raw LEDC ticks.
     pub ssr_last_duty_delta_ticks: i16,
     pub ssr_retry_count: u8,
+    /// Absolute ms (system clock) until which the SSR cycle guard blocks updates.
     pub ssr_cycle_guard_busy_until_ms: u64,
     pub watchdog_feed_ok: bool,
     pub watchdog_last_failure: Option<&'static str>,
     pub watchdog_consecutive_failures: u8,
     pub ledc_guard_timeouts: u16,
+    /// True while the over-temperature regression run is executing.
     pub overtemp_regression_active: bool,
+    /// PID process value (measured temperature, °C).
     pub pv: f32,
+    /// PID manipulated value (computed output, %).
     pub mv: f32,
+    /// PID integrator accumulator value.
     pub integrator_value: f32,
+    /// PID derivative term rate.
     pub derivative_rate: f32,
+    /// True when the PID output is clamped at a limit.
     pub saturation_active: bool,
+    /// True when the integrator is anti-windup clamped.
     pub integrator_clamped: bool,
+    /// True when a usable derivative term is available.
     pub derivative_available: bool,
+    /// Last measured Artisan command-processing latency, in microseconds.
     pub command_latency_us: u32,
+    /// Worst observed Artisan command-processing latency, in microseconds.
     pub max_command_latency_us: u32,
     pub temperature_settings: TemperatureSettings,
+    /// True once a bean-charge (`#CHARGE`) drop has been detected this roast.
     pub charge_detected: bool,
     pub pid_channel: u8,        // 1=ET, 2=BT, default=2
     pub pid_cycle_time_ms: u32, // default=100 (PID_SAMPLE_TIME_MS)

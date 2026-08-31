@@ -20,12 +20,15 @@ use esp_hal::gpio::{Input, InputConfig, Pull};
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 
+/// Print a single `TEST:<name>:<PASS|FAIL>:<detail>` line over serial.
 #[cfg(target_arch = "riscv32")]
 fn report(name: &str, passed: bool, detail: &str) {
     let status = if passed { "PASS" } else { "FAIL" };
     esp_println::println!("TEST:{}:{}:{}", name, status, detail);
 }
 
+/// HIL scenario: configure GPIO1 (heat-detection) as input with pull-up, report the pin
+/// state, verify it stays consistent across 10 samples, then print the GPIO suite result.
 #[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {

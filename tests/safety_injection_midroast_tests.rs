@@ -34,6 +34,7 @@ use libreroaster::control::RoasterControl;
 use libreroaster::hardware::sensors::{SensorConversionHub, SensorFault};
 use libreroaster::hardware::test_mocks::{MockFan, MockSsr};
 
+/// Build a `RoasterControl` with the supplied heater/fan and a fresh `SensorConversionHub`.
 fn make_control_with(
     heater: Box<dyn libreroaster::control::traits::Heater + Send>,
     fan: Box<dyn libreroaster::control::traits::Fan + Send>,

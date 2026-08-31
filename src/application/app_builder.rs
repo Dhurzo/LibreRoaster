@@ -1,3 +1,10 @@
+//! Application builder and orchestration entry point.
+//!
+//! `AppBuilder` collects hardware handles (heater, fan, sensors, UART, status
+//! LED) and assembles them into a `RoasterControl` plus the `ServiceContainer`
+//! singletons, all before the Embassy executor spawns. `Application` then
+//! verifies initialization and (on embedded) starts the five long-lived tasks.
+
 use crate::application::service_container::ServiceContainer;
 use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterControl;
@@ -21,6 +28,7 @@ use log::info;
 #[cfg(feature = "simulated-sensors")]
 use crate::hardware::sensors::SimulatedSensorSource;
 
+/// Fluent builder collecting hardware handles and producing an `Application`.
 pub struct AppBuilder {
     #[cfg(target_arch = "riscv32")]
     uart0: Option<UART0<'static>>,
@@ -43,6 +51,7 @@ impl Default for AppBuilder {
 }
 
 impl AppBuilder {
+    /// Returns an empty builder; call `with_*` setters before `build`.
     pub fn new() -> Self {
         Self {
             #[cfg(target_arch = "riscv32")]
@@ -67,12 +76,14 @@ impl AppBuilder {
         self
     }
 
+    /// Attaches the UART0 peripheral used by the UART reader task.
     #[cfg(target_arch = "riscv32")]
     pub fn with_uart(mut self, uart0: UART0<'static>) -> Self {
         self.uart0 = Some(uart0);
         self
     }
 
+    /// Attaches the UART RX/TX GPIO pins (GPIO20/GPIO21) for the UART transport.
     #[cfg(target_arch = "riscv32")]
     pub fn with_uart_pins(
         mut self,
@@ -84,6 +95,7 @@ impl AppBuilder {
         self
     }
 
+    /// Installs the real SSR heater actuator (boxed as a `Heater`).
     pub fn with_real_ssr<H>(mut self, ssr: H) -> Self
     where
         H: Heater + Send + 'static,
@@ -92,6 +104,7 @@ impl AppBuilder {
         self
     }
 
+    /// Installs the PWM fan actuator (boxed as a `Fan`).
     pub fn with_fan_control<F>(mut self, fan: F) -> Self
     where
         F: Fan + Send + 'static,
@@ -100,6 +113,7 @@ impl AppBuilder {
         self
     }
 
+    /// Installs the two MAX31856 thermocouples (bean + environment) on real SPI.
     #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
     pub fn with_temperature_sensors(
         self,
@@ -110,6 +124,7 @@ impl AppBuilder {
         self.with_sensor_conversion_hub(hub)
     }
 
+    /// Installs synthetic temperature curves for host-side L3 pipeline tests.
     #[cfg(feature = "simulated-sensors")]
     pub fn with_simulated_sensors(self) -> Self {
         let source = SimulatedSensorSource::default_curve();
@@ -117,11 +132,13 @@ impl AppBuilder {
         self.with_sensor_conversion_hub(hub)
     }
 
+    /// Installs a pre-built `SensorConversionHub`.
     pub fn with_sensor_conversion_hub(mut self, hub: SensorConversionHub) -> Self {
         self.sensor_hub = Some(hub);
         self
     }
 
+    /// Assembles `RoasterControl` + container singletons and returns an `Application`.
     pub fn build(self) -> Result<Application, BuildError> {
         #[cfg(target_arch = "riscv32")]
         if let (Some(uart0), Some(rx), Some(tx)) = (self.uart0, self.uart_rx, self.uart_tx) {
@@ -163,11 +180,13 @@ impl AppBuilder {
     }
 }
 
+/// Built application: holds the verified init flag used by `start_tasks`.
 pub struct Application {
     built: bool,
 }
 
 impl Application {
+    /// Confirms the builder ran and the service container is fully initialized.
     pub fn verify_initialization(&self) -> Result<(), VerificationError> {
         if !self.built {
             return Err(VerificationError::NotBuilt);
@@ -180,6 +199,7 @@ impl Application {
         Ok(())
     }
 
+    /// Spawns the USB/UART readers, dual-output, control loop, and regression tasks.
     #[cfg(target_arch = "riscv32")]
     pub async fn start_tasks(&self, spawner: Spawner) -> Result<(), TaskError> {
         use crate::hardware::uart::tasks::uart_reader_task;
@@ -212,13 +232,20 @@ impl Application {
     }
 }
 
+/// Failure kinds returned by `AppBuilder::build`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuildError {
+    /// UART subsystem initialization failed.
     UartInit(crate::hardware::uart::UartError),
+    /// `RoasterControl::new` failed.
     RoasterInit(crate::control::RoasterError),
+    /// Artisan input parser initialization failed.
     ArtisanInit(crate::input::InputError),
+    /// RTC watchdog initialization failed.
     WatchdogInit(WatchdogError),
+    /// A container install step failed (reason token).
     ContainerInit(&'static str),
+    /// A required peripheral/actuator was not supplied via `with_*`.
     MissingPeripheral(&'static str),
 }
 
@@ -239,9 +266,12 @@ impl core::fmt::Display for BuildError {
     }
 }
 
+/// Failure kinds returned by `Application::verify_initialization`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerificationError {
+    /// `build` was never called (no `Application` produced).
     NotBuilt,
+    /// The service container is missing a required component.
     ServicesNotInitialized,
 }
 
@@ -254,9 +284,12 @@ impl core::fmt::Display for VerificationError {
     }
 }
 
+/// Failure kinds returned by `Application::start_tasks`.
 #[derive(Debug)]
 pub enum TaskError {
+    /// `verify_initialization` rejected the start request.
     VerificationFailed(VerificationError),
+    /// An Embassy `spawn` call returned an error.
     SpawnFailed(embassy_executor::SpawnError),
 }
 

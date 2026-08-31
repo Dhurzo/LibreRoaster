@@ -1,3 +1,9 @@
+//! Fan output serialization tests.
+//!
+//! Verifies that applied fan duty set via `SetFan` is reflected consistently in
+//! `SystemStatus::fan_output` across telemetry reads, `update_control`, and the
+//! emergency-stop cooldown path, using a tracking stub fan that records calls.
+
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 
 extern crate std;
@@ -12,7 +18,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod tests_common;
 use tests_common::{build_test_control, StubHeater};
 
-/// Thread-local tracking of guard state for serialization verification
+/// Shared flag tracking whether the simulated LEDC guard is currently held,
+/// used to detect fan serialization conflicts across test threads.
 static GUARD_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Stub fan that tracks calls for serialization verification

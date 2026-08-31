@@ -132,12 +132,15 @@ impl CoolingCurve {
 
 // ── Simulation helpers ────────────────────────────────────────────────────
 
+/// Drives the host-side roast simulation: owns a `RoasterControl` plus the
+/// active temperature curve, advancing BT/ET each tick and issuing commands.
 struct SimulationContext {
     roaster: RoasterControl,
     curve: RoastSimCurve,
     step: usize,
 }
 
+/// Selects which temperature curve the simulation feeds into `RoasterControl`.
 enum RoastSimCurve {
     Idle,
     Preheating(PreheatCurve),
