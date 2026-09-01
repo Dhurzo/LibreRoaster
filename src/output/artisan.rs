@@ -5,20 +5,8 @@
 //! and the °C/°F display-scale conversion. `ArtisanFormatter` holds the pure
 //! shared helpers; `MutableArtisanFormatter` keeps per-session RoR state.
 
-// Artisan protocol formatter for LibreRoaster
-//
-// This module handles formatting of temperature data and commands according to the
-// Artisan roasting software protocol. Delegates to specialized formatters.
-//
-// # Memory Strategy
-//
-// This module is classified as **HOT PATH**:
-// - All formatting operations occur during real-time temperature reporting
-// - Delegates to formatters module with heapless types
-// - No dynamic memory allocation during normal operation
-//
-// ## Memory Usage
-//
+// Internal delegation note: pure helpers live in `ArtisanFormatter` (shared,
+// stateless); per-session RoR state lives in `MutableArtisanFormatter`.
 // Bug L13 (2026-08-10): these doc values had drifted from the real
 // constants (5→10, 32→64, 8→16).
 // - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (10 samples)

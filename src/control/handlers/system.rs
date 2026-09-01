@@ -1,7 +1,9 @@
 //! System command handler for roaster control.
 //!
 //! Handles `Reset`: zeroes telemetry/control state while preserving the
-//! safety latch (`fault_condition`).
+//! safety latch (`fault_condition`). `Reset` is currently unreachable on the
+//! wire — no parser produces `RoasterCommand::Reset` — but the handler is
+//! retained as a latent recovery primitive; see Bug R5 below.
 
 // System command handler for roaster control
 //

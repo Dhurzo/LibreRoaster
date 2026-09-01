@@ -30,16 +30,19 @@ use crate::hardware::sensors::SimulatedSensorSource;
 
 /// Fluent builder collecting hardware handles and producing an `Application`.
 pub struct AppBuilder {
+    /// UART0 peripheral — `None` on host or before `with_uart`; `Some` on embedded after.
     #[cfg(target_arch = "riscv32")]
     uart0: Option<UART0<'static>>,
+    /// UART RX pin (GPIO20) — `None` until `with_uart_pins`.
     #[cfg(target_arch = "riscv32")]
     uart_rx: Option<esp_hal::peripherals::GPIO20<'static>>,
+    /// UART TX pin (GPIO21) — `None` until `with_uart_pins`.
     #[cfg(target_arch = "riscv32")]
     uart_tx: Option<esp_hal::peripherals::GPIO21<'static>>,
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
     sensor_hub: Option<SensorConversionHub>,
-    /// BUG-06: status LED handle (embedded-only).
+    /// BUG-06: status LED handle (embedded-only) — `None` until `with_status_led`.
     #[cfg(target_arch = "riscv32")]
     status_led: Option<Output<'static>>,
 }

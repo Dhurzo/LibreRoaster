@@ -24,7 +24,9 @@ use super::simulated::SimulatedSensorSource;
 pub const MAX31856_LSB: f32 = 0.0078125;
 
 /// Maximum consecutive sensor read fallbacks before reporting error.
-/// At 100ms control loop cadence, 5 fallbacks = 500ms of stale data.
+/// At the real tick cadence (~310 ms: 100 ms timer + 210 ms
+/// `MAX31856_CONVERSION_TIME_MS`), 5 fallbacks ≈ 1.55 s of stale data before
+/// `resolve_channel` returns `HardwareError`.
 const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
 
 /// Exponential moving average alpha for temperature filtering.
@@ -54,8 +56,8 @@ pub fn convert_raw_temp(raw_temp: u32) -> f32 {
 pub struct SensorFault {
     /// bit 0 (0x01) — Open / Thermocouple open-circuit fault.
     pub open_circuit: bool,
-    /// bit 1 (0x02) — OVUV (Over/Under Voltage input fault). Kept under the
-    /// legacy name `short_to_vcc` for backwards compatibility.
+    /// bit 1 (0x02) — OVUV (Over/Under Voltage input fault). Legacy alias
+    /// `short_to_vcc` (MAX6675 name) for bit 1; see MAX31856 datasheet §7.
     pub short_to_vcc: bool,
     /// bit 2 (0x04) — TC Low (thermocouple below the user fault threshold).
     pub tc_low: bool,
@@ -412,10 +414,10 @@ impl SensorConversionHub {
 
         // Wait once for both conversions to complete.
         // Bug #B1: 50 Hz-filtered conversions take up to 185 ms (datasheet);
-        // use the dedicated `MAX31856_CONVERSION_TIME_MS` (190 ms) wait
-        // rather than `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which was
-        // shorter than the actual conversion time and could silently return
-        // the previous conversion's result.
+        // use the dedicated `MAX31856_CONVERSION_TIME_MS` (210 ms, 185 ms +
+        // 25 ms margin) wait rather than `TEMPERATURE_READ_INTERVAL_MS`
+        // (160 ms), which was shorter than the actual conversion time and
+        // could silently return the previous conversion's result.
         embassy_time::Timer::after(embassy_time::Duration::from_millis(
             crate::config::constants::MAX31856_CONVERSION_TIME_MS,
         ))

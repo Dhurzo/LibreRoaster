@@ -16,16 +16,27 @@
 //   FSPID   (MOSI) : GPIO7
 //   FSPIQ   (MISO) : GPIO2 (strapping, avoid) → use GPIO5 via GPIO Matrix
 
+/// SPI clock — FSPI SCK on GPIO6 (IO MUX).
 pub const SPI_SCLK_PIN: u8 = 6;
+/// SPI MOSI — FSPI D (MOSI) on GPIO7 (IO MUX).
 pub const SPI_MOSI_PIN: u8 = 7;
+/// SPI MISO — routed to GPIO5 via GPIO Matrix to avoid FSPIQ strap GPIO2.
 pub const SPI_MISO_PIN: u8 = 5;
+/// Chip-select for bean (BT) MAX31856 on GPIO4.
 pub const THERMOCOUPLE_BT_CS_PIN: u8 = 4;
+/// Chip-select for env (ET) MAX31856 on GPIO3.
 pub const THERMOCOUPLE_ET_CS_PIN: u8 = 3;
+/// SSR zero-cross heater drive — LEDC 5 Hz PWM on GPIO10.
 pub const SSR_CONTROL_PIN: u8 = 10;
+/// Heat-current sense input on GPIO1 — `Pull::Up`, `LOW = heat` (current flowing).
 pub const HEAT_DETECTION_PIN: u8 = 1;
+/// Fan drive — LEDC 25 kHz PWM on GPIO9 (strapping pin; external driver must not pull low at boot).
 pub const FAN_PWM_PIN: u8 = 9;
+/// Status LED on GPIO8 — active-high (`Level::High` = on, see `status_led::pattern_for`).
 pub const STATUS_LED_PIN: u8 = 8;
+/// UART0 TX on GPIO21.
 pub const UART_TX_PIN: u8 = 21;
+/// UART0 RX on GPIO20.
 pub const UART_RX_PIN: u8 = 20;
 
 pub const FAN_PWM_FREQUENCY_HZ: u32 = 25000;
@@ -85,10 +96,13 @@ pub const MIN_VALID_TEMP: f32 = -50.0;
 pub const MAX_VALID_TEMP: f32 = 350.0;
 
 /// PID control loop sample time in milliseconds.
-/// Sensor reads (~160ms) may exceed this interval, see stale-data guard in update_control().
+/// Sensor conversion (~210 ms, `MAX31856_CONVERSION_TIME_MS`) exceeds this
+/// interval; see stale-data guard in `update_control()` (`TEMP_VALIDITY_TIMEOUT_MS`).
 pub const PID_SAMPLE_TIME_MS: u32 = 100;
-/// MAX31856 thermocouple read time in milliseconds (SPI + conversion latency).
-/// Exceeds PID_SAMPLE_TIME_MS; stale-data guard prevents PID from using old readings.
+/// MAX31856 thermocouple read time in milliseconds (legacy interval).
+/// Kept for API compatibility; the real one-shot wait is
+/// `MAX31856_CONVERSION_TIME_MS` (210 ms). Exceeds `PID_SAMPLE_TIME_MS`;
+/// stale-data guard prevents PID from using old readings.
 pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 /// MAX31856 one-shot conversion wait at 50 Hz notch filter, in milliseconds.
 ///
@@ -102,7 +116,15 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 // while the constant is 210 ms — updated to describe the actual value.
 pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 
+/// Safety: over-temperature emergency cutoff in °C.
+/// Triggers `emergency_shutdown("Overtemp")`. 40 °C below `MAX_TEMP` (300 °C)
+/// and 90 °C below `MAX_VALID_TEMP` (350 °C); 35 °C above the default
+/// target (225 °C) to avoid false trips on dark-roast profiles. See
+/// `SafetyController::check_overtemp` and `roaster_control::update_control`.
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
+/// Maximum age of a temperature sample before the PID treats it as stale
+/// and forces a safety hold. Covers ~3 ticks of missed sensor reads
+/// (`CONTROL_LOOP_TICK_MS` ≈ 310 ms).
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 
 /// Bean temperature (°C) below which the post-STOP cooldown fan latch
@@ -337,8 +359,9 @@ pub const CHARGE_HISTORY_CAPACITY: u32 = 10;
 /// cadence (see `CHARGE_SAMPLE_TICK_DIV`).
 pub const CONTROL_LOOP_PERIOD_MS: u32 = 100;
 /// Real embedded control-loop cadence in milliseconds: the sensor
-/// conversion wait (210 ms) plus the 100 ms post-tick timer plus small
-/// overhead (command drain, telemetry emit) ≈ 330 ms.
+/// conversion wait (210 ms, `MAX31856_CONVERSION_TIME_MS`) plus the 100 ms
+/// post-tick timer (`CONTROL_LOOP_PERIOD_MS`) plus small overhead (command
+/// drain, telemetry emit) ≈ 310–330 ms.
 /// Bug audit 2026-08-02: the charge-window derivation previously used
 /// `CONTROL_LOOP_PERIOD_MS` (100 ms), so with `CHARGE_SAMPLE_TICK_DIV = 3`
 /// the deque actually spanned 10 × 3 × 330 ms ≈ 9.9 s instead of the

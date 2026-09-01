@@ -112,12 +112,13 @@ struct TickState {
     /// Timestamp of last telemetry emission (`None` → never emitted).
     /// Bug M1 (2026-07-25): the previous design throttled telemetry by tick
     /// count assuming every tick was exactly 100 ms. The control loop spends
-    /// ≈ 190 ms waiting for the MAX31856 conversion every tick, so the real
-    /// tick period is ~290 ms; a 10-tick gate therefore emitted every ≈ 2.9 s
-    /// — telemetry 3× slower than documented and `#DUMP` drainage 3× slower
-    /// than the comment claimed. We gate by elapsed wall-clock instead, so
-    /// the rate is `DEFAULT_OUTPUT_INTERVAL_MS` regardless of how the tick
-    /// budget is spent.
+    /// ≈ 210 ms waiting for the MAX31856 conversion every tick
+    /// (`MAX31856_CONVERSION_TIME_MS`), so the real tick period is
+    /// ~310–330 ms (`CONTROL_LOOP_TICK_MS` + overhead); a 10-tick gate
+    /// therefore emitted every ≈ 3.1 s — telemetry 3× slower than documented
+    /// and `#DUMP` drainage 3× slower than the comment claimed. We gate by
+    /// elapsed wall-clock instead, so the rate is
+    /// `DEFAULT_OUTPUT_INTERVAL_MS` regardless of how the tick budget is spent.
     last_telemetry_emit: Option<Instant>,
     // Bug V2-8: the roast epoch (`time_s` base for `#DUMP` and the ring
     // logger) is now OWNED by `RoastLogger` itself — set by its
@@ -801,9 +802,10 @@ async fn emit_telemetry_stage(
 
     // Bug M1 (2026-07-25): respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for
     // telemetry by checking elapsed wall-clock from the *last emission*
-    // instead of a tick counter. The control loop spends ≈ 190 ms of every
-    // tick waiting for MAX31856 conversion, so a tick-count gate emitted
-    // every 2.9 s of real time and the `#DUMP` drain ran 3× slower than the
+    // instead of a tick counter. The control loop spends ≈ 210 ms of every
+    // tick waiting for MAX31856 conversion (`MAX31856_CONVERSION_TIME_MS`),
+    // so the real tick period is ~310–330 ms and a tick-count gate emitted
+    // every ≈ 3.1 s of real time — the `#DUMP` drain ran 3× slower than the
     // previous comment claimed.
     let should_emit = match tick_state.last_telemetry_emit {
         None => true,

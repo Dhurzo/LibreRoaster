@@ -513,15 +513,15 @@ where
 
 // SAFETY(v5.1): Sound on single-core ESP32-C3 (cooperative Embassy tasks).
 // If porting to multi-core ESP32 (e.g., ESP32-S3 dual-core), review ref-counting
-// of the LEDC Timer reference held by ChannelIFace. The Timer is stored in the
-// static LedcBus and outlives all Channel users on single-core.
+// of the LEDC Timer reference held by ChannelIFace.
 // SAFETY: SsrControlSimple owns its peripheral handles exclusively.
 // On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
 // task executes at a time. The type is moved into a `Box<dyn Heater + Send>`
 // and passed to a single task via ServiceContainer, so no concurrent access
 // occurs. The LEDC ChannelIFace is !Send by default because it holds a
-// reference to the Timer; we vouch that the Timer outlives all Channel users
-// (it is stored in the static LedcBus).
+// `&'a Timer`; we vouch that the Timer is `'static` (stored in the static
+// `LedcBus` via `StaticCell` in `hardware::init`) and thus outlives all Channel
+// users for the lifetime of the firmware — no use-after-free across tasks.
 unsafe impl<'a, DETECT, PWM> Send for SsrControlSimple<'a, DETECT, PWM>
 where
     DETECT: InputPin,
@@ -570,15 +570,15 @@ where
 
 // SAFETY(v5.1): Sound on single-core ESP32-C3 (cooperative Embassy tasks).
 // If porting to multi-core ESP32 (e.g., ESP32-S3 dual-core), review ref-counting
-// of the LEDC Timer reference held by ChannelIFace. The Timer is stored in the
-// static LedcBus and outlives all Channel users on single-core.
+// of the LEDC Timer reference held by ChannelIFace.
 // SAFETY: SsrControl owns its peripheral handles exclusively.
 // On the single-core ESP32-C3, Embassy tasks run cooperatively — only one
 // task executes at a time. The type is moved into a `Box<dyn Heater + Send>`
 // and passed to a single task via ServiceContainer, so no concurrent access
 // occurs. The LEDC ChannelIFace is !Send by default because it holds a
-// reference to the Timer; we vouch that the Timer outlives all Channel users
-// (it is stored in the static LedcBus).
+// `&'a Timer`; we vouch that the Timer is `'static` (stored in the static
+// `LedcBus` via `StaticCell` in `hardware::init`) and thus outlives all Channel
+// users for the lifetime of the firmware — no use-after-free across tasks.
 unsafe impl<'a, PIN, DETECT, PWM> Send for SsrControl<'a, PIN, DETECT, PWM>
 where
     PIN: OutputPin,

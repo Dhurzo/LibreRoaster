@@ -45,10 +45,13 @@ pub struct FanController<'a> {
     current_speed: f32,
 }
 
+/// Duty delta below which the fan writes directly; above it fades.
+/// 12 ticks ≈ 4.7 % of the 8-bit range (255) — small steps avoid audible chirps.
 const FADE_THRESHOLD_DUTY: u8 = 12;
 
 impl<'a> FanController<'a> {
     /// Create a placeholder controller with no LEDC hardware attached.
+    /// `info!`-logs that fan control is disabled — safe for host tests.
     pub fn new() -> Result<Self, FanError> {
         info!("No LEDC peripherals available - fan control disabled");
         Ok(Self {
@@ -57,7 +60,7 @@ impl<'a> FanController<'a> {
         })
     }
 
-    /// Create a controller driving the supplied LEDC channel handle.
+    /// Create a controller driving the supplied LEDC channel handle (real hardware).
     pub fn with_handle(handle: LedcChannelHandle<'a>) -> Result<Self, FanError> {
         info!("Fan controller attached to LEDC bus");
         Ok(Self {

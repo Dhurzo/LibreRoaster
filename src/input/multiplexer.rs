@@ -39,10 +39,12 @@ impl Instant {
     }
 }
 
-// NOTE: Handshake (CHAN → UNITS → FILT) is DISABLED for Artisan Scope compatibility.
-// Artisan Scope does not perform handshake — it sends commands immediately.
-// The `# ` acknowledgment documented in README is therefore not sent.
-// If re-enabling, restore init_state.rs and uncomment init flow.
+// NOTE: Session handshake *ACK* (Artisan sends `CHAN` → firmware replies `#…`)
+// is DISABLED for Artisan Scope compatibility (Scope sends commands immediately
+// without waiting for `#OK`). The *receive* path still accepts `CHAN`/`UNITS`/`FILT`
+// while the safety latch is armed (see `input::parser` and `roaster_control`),
+// so a reconnecting Artisan can re-send its handshake even when latched.
+// If re-enabling the ACK, restore `init_state.rs` and uncomment the init flow.
 
 /// Seconds of command inactivity before the active channel resets to `None`.
 pub const IDLE_TIMEOUT_SECS: u64 = 60;

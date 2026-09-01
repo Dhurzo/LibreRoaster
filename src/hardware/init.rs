@@ -195,7 +195,9 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
         peripherals.gpio3,
     )?;
 
-    // Initialize heat detection
+    // Heat-current sense on GPIO1 — external circuit pulls LOW when SSR current flows.
+    // `Pull::Up` keeps the pin HIGH (= no heat) when the SSR is off or the sense
+    // circuit is absent; see `HEAT_DETECTION_PIN` and `ssr_logic::detect_heat_source`.
     let heat_detection_pin = Input::new(
         peripherals.gpio1,
         InputConfig::default().with_pull(Pull::Up),
@@ -216,6 +218,9 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
         reason: format!("{:?}", e),
     })?;
 
+    // Status LED on GPIO8 — active-high (High = on). Driven once per tick via
+    // `status_led::pattern_for` (see BUG-06); `Peripherals::steal()` fallback
+    // in `enter_safe_shutdown` only after tasks are dead.
     let status_led = Output::new(peripherals.gpio8, Level::High, OutputConfig::default());
 
     Ok(HardwareHandles {

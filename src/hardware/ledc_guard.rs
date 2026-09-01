@@ -45,6 +45,10 @@ impl LedcGuard {
 
     /// Attempts to acquire the guard with a short timeout.
     ///
+    /// Not re-entrant: calling `try_acquire` from the same task before
+    /// `drop`-ing the `LedcGuardToken` will spin until `LEDC_GUARD_TIMEOUT_MS`
+    /// and return `Err` — by design, to surface the logic bug.
+    ///
     /// # Notes on spin-loop safety (single-core Embassy)
     ///
     /// On the ESP32-C3 with Embassy cooperative multitasking, the lock holder

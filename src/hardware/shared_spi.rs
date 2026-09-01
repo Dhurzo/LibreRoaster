@@ -1,7 +1,11 @@
 //! Shared SPI bus abstractions for the MAX31856 thermocouples.
 //!
-//! `SharedSpiDevice` arbitrates a single `SpiBus` behind a `critical_section`
-//! `Mutex<RefCell<_>>` so both amplifiers can share one SPI peripheral.
+//! `SharedSpiDevice` arbitrates a single `SpiBus` behind a
+//! `critical_section::Mutex<RefCell<_>>` so both amplifiers can share one SPI
+//! peripheral. `critical_section` (not `embassy_sync::Mutex`) is used because
+//! the bus is held across a single `transaction` without `.await` — CS must
+//! not interleave even if an interrupt fires mid-transaction, and the lock is
+//! ISR-safe and non-async.
 //! `SpiDeviceWithCs` layers per-device chip-select and the MAX31856 tCS hold.
 
 use core::cell::RefCell;
