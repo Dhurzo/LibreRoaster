@@ -14,3 +14,8 @@ pub use conversion::{convert_raw_temp, SensorConversionHub, SensorFault, SensorS
 #[cfg(feature = "simulated-sensors")]
 /// Re-exports of the simulated-sensor API (feature `simulated-sensors`).
 pub use simulated::{CurvePoint, RoastCurve, SimulatedSensorSource};
+#[cfg(feature = "simulated-sensors")]
+/// Realistic thermal plant model (feature `simulated-sensors`).
+pub mod thermal_model;
+#[cfg(feature = "simulated-sensors")]
+pub use thermal_model::{ThermalPlant, ThermalPlantConfig};

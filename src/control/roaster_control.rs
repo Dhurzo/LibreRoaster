@@ -1158,6 +1158,13 @@ impl RoasterControl {
             );
         }
 
+        #[cfg(feature = "simulated-sensors")]
+        {
+            // Closed-loop plant: next sensor sample reflects this tick's heater/fan.
+            self.sensor
+                .set_simulated_actuators(self.status.ssr_output, self.status.fan_output);
+        }
+
         Ok(applied_output)
     }
 
@@ -1173,6 +1180,12 @@ impl RoasterControl {
     /// Mutable shared access to the continuous-output `OutputController`.
     pub fn get_output_manager_mut(&mut self) -> &mut crate::control::OutputController {
         self.dispatch.get_output_manager_mut()
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Inject a bean charge dip in plant mode (test/HIL helper).
+    pub fn inject_plant_charge(&mut self, bean_drop_c: f32) {
+        self.sensor.inject_simulated_charge(bean_drop_c);
     }
 
     /// Process one parsed Artisan command; rejects re-energizing commands while latched.

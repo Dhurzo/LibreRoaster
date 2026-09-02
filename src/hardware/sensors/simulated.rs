@@ -19,6 +19,9 @@
 
 use embassy_time::Instant;
 
+#[cfg(feature = "simulated-sensors")]
+use super::thermal_model::{ThermalPlant, ThermalPlantConfig};
+
 /// Maximum number of waypoints in a synthetic curve.
 pub const MAX_CURVE_POINTS: usize = 32;
 
@@ -465,7 +468,9 @@ impl RoastCurve {
 /// Runtime state for the synthetic temperature generator.
 ///
 /// Tracks elapsed time and produces temperatures from a `RoastCurve`
-/// at the control-loop cadence.
+/// at the control-loop cadence. When a `ThermalPlant` is attached
+/// (`with_thermal_plant`), temperatures are driven by heater/fan via
+/// the plant model (closed-loop) instead of pure time interpolation.
 pub struct SimulatedSensorSource {
     curve: RoastCurve,
     start_instant: Instant,
@@ -474,6 +479,11 @@ pub struct SimulatedSensorSource {
     noise_amplitude: f32,
     /// Running counter for noise phase.
     tick_count: u32,
+    /// When `Some`, closed-loop plant drives temps (heater/fan aware).
+    plant: Option<ThermalPlant>,
+    last_heater_pct: f32,
+    last_fan_pct: f32,
+    last_update_instant: Option<Instant>,
 }
 
 impl SimulatedSensorSource {
@@ -484,6 +494,10 @@ impl SimulatedSensorSource {
             start_instant: Instant::now(),
             noise_amplitude: 0.0,
             tick_count: 0,
+            plant: None,
+            last_heater_pct: 0.0,
+            last_fan_pct: 0.0,
+            last_update_instant: None,
         }
     }
 
@@ -498,15 +512,143 @@ impl SimulatedSensorSource {
         self
     }
 
+    /// Attach a realistic thermal plant (closed-loop). Temperatures will be
+    /// driven by heater/fan instead of pure waypoint time. Call
+    /// `set_heater_fan` after each `update_control` tick.
+    pub fn with_thermal_plant(mut self, config: ThermalPlantConfig) -> Self {
+        let plant = ThermalPlant::new(config);
+        self.plant = Some(plant);
+        self.last_update_instant = Some(Instant::now());
+        self
+    }
+
+    /// Attach thermal plant with explicit initial temps (e.g. after charge).
+    pub fn with_thermal_plant_and_initial(
+        mut self,
+        config: ThermalPlantConfig,
+        bean_true: f32,
+        et_true: f32,
+    ) -> Self {
+        let plant = ThermalPlant::new_with_initial(config, bean_true, et_true);
+        self.plant = Some(plant);
+        self.last_update_instant = Some(Instant::now());
+        self
+    }
+
+    /// Update the plant's actuator inputs (heater 0..100%, fan 0..100%).
+    /// The next `current_temperatures()` will advance the plant using these
+    /// values and elapsed dt. No-op when no plant attached.
+    pub fn set_heater_fan(&mut self, heater_pct: f32, fan_pct: f32) {
+        self.last_heater_pct = heater_pct.clamp(0.0, 100.0);
+        self.last_fan_pct = fan_pct.clamp(0.0, 100.0);
+    }
+
+    /// Simulate a cold bean charge: drops BT true, ET less. No-op without plant.
+    pub fn inject_charge(&mut self, bean_drop_c: f32) {
+        if let Some(p) = self.plant.as_mut() {
+            p.inject_charge(bean_drop_c);
+        }
+    }
+
+    /// Whether this source is in closed-loop plant mode.
+    pub fn has_plant(&self) -> bool {
+        self.plant.is_some()
+    }
+
+    /// Advance plant with explicit dt (s) without noise. Useful for
+    /// deterministic tests (`Instant` wall-clock would otherwise quantise to
+    /// seconds via `temperatures_at`).
+    pub fn plant_advance(&mut self, heater_pct: f32, fan_pct: f32, dt_secs: f32) -> (f32, f32) {
+        if let Some(p) = self.plant.as_mut() {
+            let (mut bean, mut env) = p.update(heater_pct, fan_pct, dt_secs);
+            if self.noise_amplitude > 0.0 {
+                bean += self.noise(self.tick_count, 0);
+                env += self.noise(self.tick_count, 1);
+            }
+            self.tick_count = self.tick_count.wrapping_add(1);
+            self.last_heater_pct = heater_pct.clamp(0.0, 100.0);
+            self.last_fan_pct = fan_pct.clamp(0.0, 100.0);
+            // Keep wall-clock anchor coherent for HIL (`not(test)` uses
+            // wall-clock dt). In `cfg(test)` dt is fixed (`CONTROL_LOOP_TICK_MS`),
+            // so do NOT advance wall-clock — otherwise a subsequent
+            // `current_temperatures()` would see dt≈0 and suppress evolution
+            // for one tick, breaking mixed `plant_advance`→`current_temperatures`
+            // sequences used in some L3 tests. Advance logical anchor instead.
+            #[cfg(not(test))]
+            {
+                self.last_update_instant = Some(Instant::now());
+            }
+            #[cfg(test)]
+            {
+                if let Some(last) = self.last_update_instant {
+                    self.last_update_instant =
+                        Some(last + embassy_time::Duration::from_millis((dt_secs * 1000.0) as u64));
+                } else {
+                    self.last_update_instant = Some(Instant::now());
+                }
+            }
+            (bean, env)
+        } else {
+            self.current_temperatures()
+        }
+    }
+
     /// Reset the simulation to t=0.
     pub fn reset(&mut self) {
         self.start_instant = Instant::now();
         self.tick_count = 0;
+        self.last_update_instant = Some(Instant::now());
+        self.last_heater_pct = 0.0;
+        self.last_fan_pct = 0.0;
+        if let Some(p) = self.plant.as_mut() {
+            p.reset();
+        }
     }
 
     /// Compute the current (bean_temp, env_temp) from the curve at the
     /// current elapsed time, with optional noise applied.
+    /// In plant mode, advances the `ThermalPlant` by elapsed dt since last
+    /// call using the last `heater/fan` values, so closed-loop heat truly
+    /// moves BT/ET with realistic lag (drum τ~12s, bean τ~18s, probe τ~4s /
+    /// 1.5s, moisture plateau, crack exotherm).
     pub fn current_temperatures(&mut self) -> (f32, f32) {
+        if let Some(plant) = self.plant.as_mut() {
+            // Deterministic dt in tests (`cfg(test)` → 0.31s = CONTROL_LOOP_TICK_MS)
+            // eliminates wall-clock flakiness for L3/thermal tests that drive
+            // `current_temperatures()` directly (see `plant_advance` for explicit
+            // dt). On non-test builds (HIL/embedded with `simulated-sensors`)
+            // keep wall-clock jitter handling.
+            let dt_secs: f32 = {
+                #[cfg(test)]
+                {
+                    // Use the real tick constant so HIL calibration stays valid.
+                    crate::config::constants::CONTROL_LOOP_TICK_MS as f32 / 1000.0
+                }
+                #[cfg(not(test))]
+                {
+                    let now_tmp = Instant::now();
+                    if let Some(last) = self.last_update_instant {
+                        let elapsed_secs =
+                            now_tmp.saturating_duration_since(last).as_millis() as f32 / 1000.0;
+                        // Clamp to plausible tick (0.02..2.0s) to avoid wall-clock jumps
+                        // on host (e.g. debugger pause) blowing up the integrator.
+                        elapsed_secs.clamp(0.02, 2.0)
+                    } else {
+                        crate::config::constants::CONTROL_LOOP_TICK_MS as f32 / 1000.0
+                    }
+                }
+            };
+            self.last_update_instant = Some(Instant::now());
+            let (mut bean, mut env) =
+                plant.update(self.last_heater_pct, self.last_fan_pct, dt_secs);
+            if self.noise_amplitude > 0.0 {
+                bean += self.noise(self.tick_count, 0);
+                env += self.noise(self.tick_count, 1);
+            }
+            self.tick_count = self.tick_count.wrapping_add(1);
+            return (bean, env);
+        }
+
         let elapsed_ms = self.start_instant.elapsed().as_millis();
         let elapsed_secs = (elapsed_ms / 1000) as u32;
         let (mut bean, mut env) = self.curve.temperatures_at(elapsed_secs);

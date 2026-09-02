@@ -113,6 +113,18 @@ impl SensorController {
         }
     }
 
+    #[cfg(feature = "simulated-sensors")]
+    /// Forward heater/fan to thermal plant (closed-loop). No-op without plant.
+    pub fn set_simulated_actuators(&mut self, heater_pct: f32, fan_pct: f32) {
+        self.sensor_hub.set_simulated_actuators(heater_pct, fan_pct);
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Simulate bean charge dip (plant mode only).
+    pub fn inject_simulated_charge(&mut self, bean_drop_c: f32) {
+        self.sensor_hub.inject_simulated_charge(bean_drop_c);
+    }
+
     /// Sample both channels and update `status` (debounced faults, held/poisoned temps).
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;

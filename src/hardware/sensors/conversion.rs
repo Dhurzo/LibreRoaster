@@ -255,6 +255,26 @@ impl SensorConversionHub {
         }
     }
 
+    /// Feed heater/fan to the thermal plant (closed-loop). No-op in open-loop
+    /// curve mode or without `simulated-sensors`. Call after `update_control`.
+    #[cfg(feature = "simulated-sensors")]
+    pub fn set_simulated_actuators(&mut self, heater_pct: f32, fan_pct: f32) {
+        self.simulated_source.set_heater_fan(heater_pct, fan_pct);
+    }
+
+    /// Simulate bean charge dip (plant mode only). Drop BT ~90°C, ET less.
+    #[cfg(feature = "simulated-sensors")]
+    pub fn inject_simulated_charge(&mut self, bean_drop_c: f32) {
+        self.simulated_source.inject_charge(bean_drop_c);
+    }
+
+    /// Deterministic plant advance for tests (bypasses wall-clock).
+    #[cfg(feature = "simulated-sensors")]
+    pub fn plant_advance(&mut self, heater_pct: f32, fan_pct: f32, dt_secs: f32) -> (f32, f32) {
+        self.simulated_source
+            .plant_advance(heater_pct, fan_pct, dt_secs)
+    }
+
     #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
     pub fn new() -> Self {
         Self {
