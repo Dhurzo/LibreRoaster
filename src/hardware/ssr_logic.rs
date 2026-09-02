@@ -1,13 +1,7 @@
 //! Pure decision logic for SSR heat-source detection and availability.
 //!
 //! Kept in its own un-gated module (compiled on BOTH host and embedded) so
-//! the decision logic is covered by host unit tests — the hardware modules
-//! (`hardware::ssr`) are stubbed on host, which is how the previous
-//! single-sample flip survived CI. The extraction (audit M1, 2026-08-21)
-//! moves `SsrControlBase` out of the riscv32-gated `ssr.rs` so BUG-02's
-//! one-way latch can be pinned by host tests: for every reachable state
-//! there must exist a sequence of inputs that returns the status to
-//! `Available`.
+//! the decision logic is covered by host unit tests.
 
 #[cfg(not(feature = "no-heat-sense"))]
 use crate::config::constants::SSR_PWM_RESOLUTION;
@@ -132,24 +126,7 @@ impl SsrControlBase {
         }
     }
 
-    /// BUG-02 (2026-08-21): re-arms the SSR availability state machine.
-    ///
-    /// `NotDetected`/`Error` force the heater output to 0 % (see
-    /// `roaster_control.rs`), and the only automatic transition back to
-    /// `Available` requires either a trustworthy LOW sample (H5) or duty
-    /// ≥ 50 % — which a forced 0 % output can never reach. Without this
-    /// re-arm, any latch (typically a build without the optional current-
-    /// sense circuit on GPIO1: the pin floats HIGH with the internal pull-up
-    /// and reads "no heat" at ≥ 50 % duty) leaves the heater dead until a
-    /// power cycle.
-    ///
-    /// Invoked ONLY by explicit operator recovery (`OFF`/`START`/`PREHEAT`/
-    /// `StopRoast` paths via `clear_emergency_explicit` or `handle_stop`).
-    /// Internal stop paths (`stop_streaming`, `EmergencyStop`) deliberately
-    /// do NOT re-arm. A real physical fault is re-detected within
-    /// `HEAT_ABSENT_DEBOUNCE` samples (≈ 1.7 s at the real tick cadence)
-    /// once the heater is driven ≥ 50 % again, so the re-arm removes the
-    /// irreversibility, not the protection.
+    /// Re-arms the SSR availability state machine.
     pub fn rearm(&mut self) {
         if self.hardware_status != SsrHardwareStatus::Available {
             info!(
@@ -190,10 +167,6 @@ impl SsrControlBase {
     where
         F: FnMut() -> Result<bool, E>,
     {
-        // BUG-02: builds without the optional current-sense circuit (feature
-        // `no-heat-sense`) skip heat-source interpretation entirely; the
-        // other safety layers (overtemp, RoR, staleness, frozen probe,
-        // comms-idle, max-roast-time, fan floor) remain active.
         #[cfg(feature = "no-heat-sense")]
         {
             let _ = (_current_time, read_pin);
@@ -552,9 +525,6 @@ mod tests {
         }
     }
 
-    /// BUG-02 property: for every reachable latch state there exists an input
-    /// sequence returning the status to `Available` (explicit re-arm, or a
-    /// trustworthy LOW sample at any duty).
     #[test]
     fn property_every_latched_state_is_recoverable() {
         for latched in [SsrHardwareStatus::NotDetected, SsrHardwareStatus::Error] {

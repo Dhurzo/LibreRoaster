@@ -42,7 +42,6 @@ pub struct AppBuilder {
     heater: Option<Box<dyn Heater + Send>>,
     fan: Option<Box<dyn Fan + Send>>,
     sensor_hub: Option<SensorConversionHub>,
-    /// BUG-06: status LED handle (embedded-only) — `None` until `with_status_led`.
     #[cfg(target_arch = "riscv32")]
     status_led: Option<Output<'static>>,
 }
@@ -71,7 +70,7 @@ impl AppBuilder {
         }
     }
 
-    /// BUG-06: hand the status LED handle to the service container so the
+    /// Hand the status LED handle to the service container so the
     /// control-loop task can drive it (embedded-only).
     #[cfg(target_arch = "riscv32")]
     pub fn with_status_led(mut self, led: Output<'static>) -> Self {
@@ -167,7 +166,6 @@ impl AppBuilder {
         ServiceContainer::init_roaster(roaster);
         ServiceContainer::init_artisan_input(artisan_input);
 
-        // BUG-06: install the status LED into the container (embedded-only).
         #[cfg(target_arch = "riscv32")]
         if let Some(led) = self.status_led {
             ServiceContainer::init_status_led(led);

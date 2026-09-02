@@ -449,13 +449,12 @@ mod tests {
             assert!(pid.set_target(-50.0).is_ok());
         }
 
-        // e) Fase 3 (BUG-CATCH-PLAN.md): hostile but FINITE inputs (huge
+        // Hostile but FINITE inputs (huge
         // magnitudes, f32::MAX, subnormals, negative) must always produce a
         // finite output clamped into [output_min, output_max]. The NaN-input
         // boundary is documented separately (`nan_current_temp_produces_nan`,
         // unit test below): NaN propagates NaN out of the PID, and the
-        // controller layer must reject it (NaN PV → emergency, roaster_
-        // control.rs:679-682). This property proves every OTHER input class
+        // controller layer must reject it. This property proves every OTHER input class
         // cannot unclamp or poison the output.
         #[test]
         fn pid_output_finite_and_clamped_for_hostile_finite_inputs(

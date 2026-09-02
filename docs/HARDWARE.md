@@ -95,7 +95,7 @@ These values shape both roast behavior and failure behavior. If you change them,
 
 GPIO1 is used as a pulled-up input to detect heater-side activity. Its value feeds safety reasoning about whether the commanded heater state matches observed behavior.
 
-**BUG-02 (2026-08-21): the current-sense circuit on GPIO1 is OPTIONAL but strongly recommended.** The expected circuit: a current sensor on the heater
+The expected circuit: a current sensor on the heater
 load whose output pulls GPIO1 LOW while the heater conducts (open-collector
 or optocoupler in the load path); at rest the internal pull-up keeps the pin
 HIGH. The exact sensor (current transformer, optocoupler) is builder's

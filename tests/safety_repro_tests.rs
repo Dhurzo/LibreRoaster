@@ -1,5 +1,4 @@
-//! S1–S8 reproduction tests for the critical-safety bug hunt
-//! (BUG-CATCH-PLAN.md, Fase 1).
+//! S1–S8 reproduction tests for the critical-safety bug hunt.
 //!
 //! Each test documents a candidate finding. Tests that document current
 //! (possibly undesirable) behaviour PASS and serve as evidence for the report;

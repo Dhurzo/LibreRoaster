@@ -112,13 +112,6 @@ pub struct RoasterControl {
         heapless::String<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>,
         { crate::logging::roast_logger::LOG_CAPACITY + 1 },
     >,
-    /// BUG-04 (2026-08-21): rising-edge gate for the FAN-FLOOR interlock
-    /// warn. The interlock is a PERSISTENT condition (re-evaluated every
-    /// tick because `fan_output` is recomputed from `artisan_manual_fan()`,
-    /// which is 0.0 by default), and a per-tick `warn!` injected ≈3 lines/s
-    /// into the same physical channel that carries the Artisan protocol
-    /// (esp-println `auto` → USB-Serial-JTAG / UART0, both shared),
-    /// corrupting READ/STATUS responses. Log once per activation episode.
     fan_floor_gate: EdgeLogGate,
 }
 
@@ -390,8 +383,7 @@ impl RoasterControl {
             // and `pid_enabled = false`) made a mid-roast slider move drop
             // the heater by disabling PID and falling into manual mode with
             // no manual heater set. The physical fan write remains the only
-            // side effect (BUG-08: telemetry is opt-in via STREAM;ON, not a
-            // side effect of slider moves).
+            // side effect.
 
             // Bug S6 (2026-08-05): the `FAN_MIN_SAFETY_PCT` interlock floor
             // used to live only in the control tick, so an `OT2 0` (or any
@@ -402,9 +394,6 @@ impl RoasterControl {
             // The tick-level floor remains as a second line of defense.
             let mut fan = fan;
             if self.status.ssr_output > 0.0 && fan < FAN_MIN_SAFETY_PCT {
-                // BUG-04: warn once per activation episode (edge gate) — the
-                // interlock is persistent across ticks and a per-tick warn!
-                // corrupts the protocol channel.
                 if self.fan_floor_gate.rising(true) {
                     warn!(
                         "SAFETY FAN-FLOOR: heater at {:.1}% with fan command {:.1}% — raising fan to minimum {:.0}%",
@@ -576,15 +565,6 @@ impl RoasterControl {
         // Bug B3: explicit recovery also drops the cooldown latch — the
         // operator is taking over, so airflow returns to operator control.
         self.cooling_active = false;
-        // BUG-02 (2026-08-21): explicit operator recovery also re-arms the
-        // SSR availability state machine. Without this, a `NotDetected`/
-        // `Error` latch survives the recovery — the only automatic
-        // transitions back to `Available` require either a trustworthy LOW
-        // sample or duty ≥ 50 %, and a non-`Available` status forces the
-        // duty to 0 % every tick. A real physical fault (if any) is
-        // re-detected within the debounce window (~1.7 s at the real tick
-        // cadence) once the heater is driven ≥ 50 % again, so the re-arm
-        // removes the irreversibility, not the protection.
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
@@ -1020,9 +1000,6 @@ impl RoasterControl {
         // Explicit operator values at or above the floor pass through untouched.
         let mut fan_output = fan_output;
         if desired_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT {
-            // BUG-04: warn once per activation episode (edge gate) — see the
-            // command-path FAN-FLOOR site for the protocol-corruption
-            // rationale.
             if self.fan_floor_gate.rising(true) {
                 warn!(
                     "SAFETY FAN-FLOOR: heater at {:.1}% with fan at {:.1}% — raising fan to minimum {:.0}%",
@@ -1237,9 +1214,6 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::Chan(_)
                 | crate::config::ArtisanCommand::Units(_)
                 | crate::config::ArtisanCommand::Filt(_)
-                // BUG-08: STREAM is a pure output-state command with zero
-                // actuator side effects — same whitelist rationale as
-                // CHAN/UNITS/FILT (Artisan reconnect while latched).
                 | crate::config::ArtisanCommand::SetStreaming(_) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
@@ -1417,10 +1391,6 @@ impl RoasterControl {
                 );
             }
             crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
-            // BUG-08 (2026-08-21): START no longer enables the spontaneous
-            // telemetry stream — that is opt-in via `STREAM;ON`. The
-            // `#DUMP` ring-buffer feed is driven by the roast logger state
-            // (see `emit_telemetry_stage`), not by the stream flag.
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
             self.state = crate::config::constants::RoasterState::Heating;
             self.status.state = self.state;
@@ -1478,15 +1448,6 @@ impl RoasterControl {
         info!("Artisan+ STOP - stopping roast");
         self.stop_streaming()?;
         crate::logging::roast_logger::stop_roast();
-        // BUG-02 (2026-08-21): a plain STOP (no fault/emergency latched) is
-        // also an explicit operator action — re-arm the SSR availability
-        // state machine here too. `clear_emergency_explicit` covers the
-        // latched paths (STOP-with-fault, START, PREHEAT, StopRoast); this
-        // covers the common case where heat detection latched
-        // `NotDetected`/`Error` WITHOUT arming the emergency latch (e.g. a
-        // build without the optional GPIO1 current-sense circuit), in which
-        // the `Stop` path above never calls `clear_emergency_explicit` and
-        // the heater would otherwise stay dead until a power cycle.
         self.actuator.rearm_heater_hardware_status(&mut self.status);
         Ok(())
     }
@@ -1640,15 +1601,6 @@ impl RoasterControl {
         result
     }
 
-    /// BUG-08 (2026-08-21): opt-in continuous telemetry.
-    ///
-    /// The spontaneous 1 Hz `#<t>,ET,BT,ROR,Gas` stream is OFF by default and
-    /// is enabled only by an explicit `STREAM;ON` (this handler), never as a
-    /// side effect of START/OT1/OT2/PID;SV. Artisan polls `READ` and does not
-    /// need the stream; a spontaneous line could otherwise occupy the
-    /// response slot between `flush()` and `readline()` in the ArduinoTC4
-    /// driver. `STOP`/`OFF`/`stop_streaming` clear the STREAM state (session
-    /// scope), same as PID/manual state.
     fn handle_set_streaming(&mut self, enabled: bool) -> Result<(), RoasterError> {
         if enabled {
             self.dispatch

@@ -37,9 +37,6 @@ fn start_stop_idempotent() {
         .expect("first START succeeds");
 
     let started = control.get_status();
-    // BUG-08 (2026-08-21): telemetry is opt-in — START must NOT enable the
-    // spontaneous stream (it used to, and its `#` lines could occupy the
-    // READ response slot).
     assert!(!control.get_output_manager().is_continuous_enabled());
     assert!(started.pid_enabled);
     assert_eq!(started.state, RoasterState::Heating);
@@ -115,8 +112,6 @@ fn manual_bounds_and_reset() {
         .expect("manual fan within bounds should apply");
     let status_manual_fan = control.get_status();
     assert_eq!(status_manual_fan.fan_output, 60.0);
-    // BUG-08 (2026-08-21): slider commands must NOT auto-enable the
-    // spontaneous telemetry stream (opt-in via STREAM;ON only).
     assert!(!control.get_output_manager().is_continuous_enabled());
 
     control

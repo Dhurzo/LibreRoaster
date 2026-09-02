@@ -126,8 +126,8 @@ LibreRoaster does **not** currently present itself as:
 - an artisan.plus synchronization peer,
 - a full vendor-driver implementation.
 
-**BUG-08 (2026-08-21): the spontaneous `#` telemetry stream is opt-in
-(`STREAM;ON`) and OFF by default.** Artisan needs nothing beyond its own
+The spontaneous `#` telemetry stream is opt-in
+(`STREAM;ON`) and OFF by default. Artisan needs nothing beyond its own
 `READ` polling — do not configure `STREAM;ON` for Artisan sessions; the
 stream is a LibreRoaster extension for custom clients. The `#`-prefixed
 handshake acks (`#1200`, `#OK`) are unrelated and always emitted.

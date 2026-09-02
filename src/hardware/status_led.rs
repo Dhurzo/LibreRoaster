@@ -1,12 +1,5 @@
 //! Status LED pattern logic (pure, host-testable).
 //!
-//! BUG-06 (2026-08-21): the status LED handle was created in
-//! `init_hardware` and never consumed, while `enter_safe_shutdown` created a
-//! second `Output` on the same GPIO8 via `Peripherals::steal()` — two live,
-//! aliased handles in violation of the esp-hal ownership model, and the only
-//! local indicator of a screen-less device did nothing during normal
-//! operation.
-//!
 //! The GPIO write lives in the control-loop task (embedded-only); the
 //! decision logic lives here, un-gated, so the pattern table is pinned by
 //! host unit tests.

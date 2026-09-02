@@ -154,7 +154,7 @@ Field map:
 
 ### Continuous telemetry (opt-in, `STREAM;ON`)
 
-**BUG-08 (2026-08-21): the spontaneous telemetry stream is OFF by default.**
+The spontaneous telemetry stream is OFF by default.
 It is enabled only by an explicit `STREAM;ON` and disabled by `STREAM;OFF`
 or any `STOP`/`OFF` (the stream state is session-scoped). `START`, `OT1`,
 `OT2` and `PID;SV` do **not** enable it.

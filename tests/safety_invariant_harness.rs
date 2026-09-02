@@ -1,4 +1,4 @@
-//! Fase 4 (BUG-CATCH-PLAN.md) — Harness de invariantes de seguridad.
+//! Harness de invariantes de seguridad.
 //!
 //! Ejecuta roasts simulados con secuencias aleatorias de comandos Artisan +
 //! perfiles de fallo (sonda muerta, desconexión, overtemp, writes fallando,

@@ -1,19 +1,4 @@
 //! Edge-triggered log gating for persistent conditions.
-//!
-//! BUG-04 (2026-08-21): several safety interlocks evaluate a PERSISTENT
-//! condition every control tick (~310–330 ms) and used to emit a `warn!` on
-//! every evaluation — ≈3 lines/s of log traffic injected into the same
-//! physical channel that carries the Artisan protocol when the `esp-println`
-//! `auto` feature is active (writes to USB-Serial-JTAG when a host is
-//! attached, else UART0 — both shared with the protocol wire; host `test`
-//! builds do not use `esp-println`). Interleaved log lines corrupt
-//! READ/STATUS responses. `EdgeLogGate` reduces the emission to one `warn!`
-//! per rising edge (the condition becoming active), with the remaining ticks
-//! downgraded to `debug!`, and re-arms itself when the condition clears.
-//!
-//! The structural fix (a dedicated log sink on a spare UART) is tracked
-//! separately; this gate closes the per-tick corruption class for the known
-//! high-frequency warn sites.
 
 /// Rising-edge detector for a boolean condition.
 #[derive(Debug, Clone, Copy, Default)]

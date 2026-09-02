@@ -219,7 +219,7 @@ pub fn init_hardware(peripherals: InitPeripherals) -> Result<HardwareHandles, In
     })?;
 
     // Status LED on GPIO8 — active-high (High = on). Driven once per tick via
-    // `status_led::pattern_for` (see BUG-06); `Peripherals::steal()` fallback
+    // `status_led::pattern_for`; `Peripherals::steal()` fallback
     // in `enter_safe_shutdown` only after tasks are dead.
     let status_led = Output::new(peripherals.gpio8, Level::High, OutputConfig::default());
 
@@ -290,10 +290,6 @@ fn init_spi_sensors(
     let et_cs = Output::new(gpio3, Level::High, OutputConfig::default());
     let et_spi = SpiDeviceWithCs::new(spi_mutex, et_cs);
 
-    // BUG-07 (2026-08-21): tolerant boot. A single absent/unsoldered
-    // MAX31856 degrades that channel (fault debounce → NaN → hold at
-    // runtime) instead of halting the whole firmware; BOTH dead is a
-    // genuine no-go (no temperature → no safe control) and still aborts.
     let (bean_sensor, bt_ok) = Max31856::new_tolerant(bt_spi);
     let (env_sensor, et_ok) = Max31856::new_tolerant(et_spi);
 

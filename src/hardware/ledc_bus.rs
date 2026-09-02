@@ -18,9 +18,6 @@ struct ChannelEntry<'a> {
     number: channel::Number,
     name: &'static str,
     duty: Cell<u16>,
-    /// BUG-04 (2026-08-21): rising-edge gate for the LEDC-GUARD timeout
-    /// warn — one `warn!` per busy episode instead of one per rejected
-    /// write (protocol channel integrity). Re-arms on a successful acquire.
     guard_timeout_warned: Cell<bool>,
 }
 
@@ -95,8 +92,6 @@ impl<'a> LedcBus<'a> {
         let guard = match self.guard.try_acquire(entry.name) {
             Ok(guard) => guard,
             Err(err) => {
-                // BUG-04: warn once per busy episode; re-armed on the next
-                // successful acquire.
                 if !entry.guard_timeout_warned.replace(true) {
                     warn!("SAFETY LEDC-GUARD timeout for {}", err.channel());
                 }

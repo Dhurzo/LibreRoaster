@@ -27,8 +27,6 @@ pub struct ActuatorController {
     slewing_output: f32,
     /// Timestamp of the last slew step; `None` forces a direct apply next write.
     last_slew_update: Option<Instant>,
-    /// BUG-04: rising-edge gate for the "SSR cycle busy" warn (one warn per
-    /// busy episode; re-arms when a write is accepted).
     cycle_busy_gate: EdgeLogGate,
 }
 
@@ -126,9 +124,6 @@ impl ActuatorController {
                 status.saturation_active = true;
                 status.integrator_clamped = true;
                 status.ssr_cycle_guard_busy_until_ms = Self::busy_window_ms(now, busy_until);
-                // BUG-04: the guard can stay busy across several ticks while
-                // the control loop keeps retrying; warn once per busy
-                // episode instead of every tick (protocol channel integrity).
                 if self.cycle_busy_gate.rising(true) {
                     warn!("SSR cycle busy until {:?}", busy_until);
                 } else {
@@ -294,10 +289,6 @@ impl ActuatorController {
         self.heater.get_status()
     }
 
-    /// BUG-02 (2026-08-21): propagate the explicit-recovery re-arm to the
-    /// heater driver and refresh the status published in telemetry. Called
-    /// only from `clear_emergency_explicit` / `handle_stop` (operator
-    /// recovery), never from internal stop paths.
     pub fn rearm_heater_hardware_status(&mut self, status: &mut SystemStatus) {
         self.heater.rearm_hardware_status();
         status.ssr_hardware_status = self.heater.get_status();
@@ -364,13 +355,9 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            /// Fase 3 (BUG-CATCH-PLAN.md): hostile but FINITE `desired`
+            /// Hostile but FINITE `desired`
             /// outputs (huge magnitudes, f32::MAX, subnormals, negatives,
-            /// ±0.0) must never poison `status.ssr_output`. The NaN boundary
-            /// is documented by the S5 reproduction test
-            /// (`safety_repro_tests.rs`, currently fails — NaN propagates and
-            /// disarms the comms-idle / MAX_ROAST_TIME backstops because
-            /// `NaN > 0.0 == false`). Every finite input class must clamp
+            /// ±0.0) must never poison `status.ssr_output`. Every finite input class must clamp
             /// into [0, 100] and stay finite.
             #[test]
             fn guarded_heater_output_stays_finite_and_clamped(

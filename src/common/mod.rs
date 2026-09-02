@@ -34,7 +34,6 @@ pub enum HeaterCall {
     SetPower(f32),
     /// get_status was called
     GetStatus,
-    /// rearm_hardware_status was called (BUG-02 explicit recovery)
     RearmHardwareStatus,
 }
 

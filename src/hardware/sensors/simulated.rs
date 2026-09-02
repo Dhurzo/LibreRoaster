@@ -548,13 +548,12 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Fase 3 (BUG-CATCH-PLAN.md): ANY waypoint set — including
+        /// ANY waypoint set — including
         /// degenerate curves (empty, single point, coincident times =
         /// zero-range, unsorted times, huge values) — must answer
         /// `temperatures_at` without panicking, always returning a FINITE
         /// pair, and (for non-empty curves) a pair inside the authored
-        /// temperature envelope. Zero-range waypoints were a real bug
-        /// (C4b); this property keeps the interpolation total.
+        /// temperature envelope. Zero-range waypoints are handled; this property keeps the interpolation total.
         #[test]
         fn temperatures_at_never_panics_and_stays_bounded(
             times in prop::collection::vec(0u32..86_400, 0..16),

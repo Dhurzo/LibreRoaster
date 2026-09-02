@@ -189,10 +189,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::StartRoast(target_temp) => {
-                // BUG-08 (2026-08-21): the "already active" gate keys on
-                // CONTROL state only — `is_continuous_enabled()` was dropped
-                // because the telemetry stream is now opt-in (STREAM;ON) and
-                // must not block a roast start.
                 if status.pid_enabled || status.artisan_control {
                     info!("Artisan+ start requested but already active; keeping current session");
                     return Ok(());
@@ -203,9 +199,6 @@ impl RoasterCommandHandler for TemperatureCommandHandler {
                 status.target_temp = target_temp;
                 status.pid_enabled = true;
                 status.artisan_control = false;
-
-                // BUG-08 (2026-08-21): PID;SV no longer enables the
-                // continuous telemetry stream — opt-in via `STREAM;ON`.
 
                 info!(
                     "Artisan+ control started with target temperature: {:.1}°C",

@@ -1,4 +1,4 @@
-//! Fault injection MID-ROAST — Fase 2 del plan BUG-CATCH-PLAN.md.
+//! Fault injection MID-ROAST.
 //!
 //! These tests inject hardware faults into a live `RoasterControl` session
 //! (after the roast started) and assert the safety escalation. They close the

@@ -177,8 +177,6 @@ fn start_ot1_io3_stop_sequence_updates_state() {
     drain_and_process_commands();
 
     let started = current_status();
-    // BUG-08 (2026-08-21): START must NOT auto-enable the spontaneous
-    // telemetry stream (opt-in via STREAM;ON).
     assert!(!continuous_output_enabled());
     assert!(started.pid_enabled);
     assert_eq!(started.state, RoasterState::Heating);

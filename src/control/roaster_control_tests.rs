@@ -455,16 +455,8 @@ fn stop_streaming_does_not_clear_state_while_latched() {
     assert_eq!(ctrl.get_status().state, RoasterState::Error);
 }
 
-// ── BUG-02: SSR availability latch must be re-armed by operator recovery ─
-
 #[test]
 fn off_rearms_ssr_hardware_status_without_fault() {
-    // BUG-02 (2026-08-21): heat detection latches `NotDetected`/`Error`
-    // WITHOUT arming the emergency latch (periodic_health_check swallows
-    // the error). A plain `OFF` then bypasses `clear_emergency_explicit`
-    // (no fault) — `handle_stop` must still re-arm the heater, or the
-    // build without the GPIO1 current-sense circuit dead-locks the
-    // heater until a power cycle.
     let heater = StubHeater::new();
     heater.set_status(SsrHardwareStatus::NotDetected);
     let mut ctrl = make_control_with_stubs(heater, StubFan::new());
@@ -546,8 +538,6 @@ fn start_with_latch_rearms_ssr_hardware_status() {
 
 #[test]
 fn heater_command_works_after_rearm() {
-    // End-to-end BUG-02: after the re-arm, a heater command is actually
-    // applied (no more forced 0 % output).
     let heater = StubHeater::new();
     heater.set_status(SsrHardwareStatus::NotDetected);
     let mut ctrl = make_control_with_stubs(heater, StubFan::new());
@@ -562,8 +552,6 @@ fn heater_command_works_after_rearm() {
         heater_after
     );
 }
-
-// ── BUG-08: telemetry stream is opt-in (STREAM;ON/OFF) ──────────
 
 #[test]
 fn stream_command_toggles_telemetry() {
@@ -617,8 +605,6 @@ fn stop_clears_telemetry_stream() {
 
 #[test]
 fn stream_accepted_while_latched() {
-    // BUG-08: STREAM has zero actuator side effects — allowed while the
-    // safety latch is armed (same rationale as CHAN/UNITS/FILT).
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
     assert!(ctrl.safety().is_emergency_active());

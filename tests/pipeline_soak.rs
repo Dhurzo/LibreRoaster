@@ -112,8 +112,6 @@ const COMMANDS: &[&str] = &[
     "UNITS;C",
     "UNITS;F",
     "PID;OFF",
-    // BUG-08 (2026-08-21): telemetry is opt-in — keep the stream enabled in
-    // the soak so the '#'-line wire validation keeps being exercised.
     "STREAM;ON",
     "STREAM;OFF",
     "STREAM;ON",

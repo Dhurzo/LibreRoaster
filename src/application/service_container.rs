@@ -45,10 +45,7 @@ pub struct ServiceContainer {
     // `ARTISAN_MULTIPLEXER` static, accessed via `get_multiplexer()`.
     /// RTC watchdog feeder handle; `None` until `AppBuilder::build()` installs it.
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
-    /// BUG-06 (2026-08-21): the status LED's single long-lived owner. Stored
-    /// here so the control-loop task can drive the pattern and
-    /// `enter_safe_shutdown` can keep using the LED if the container was
-    /// populated before the failure. Embedded-only (esp-hal `Output` does
+    /// The status LED's single long-lived owner. Embedded-only (esp-hal `Output` does
     /// not exist on host).
     #[cfg(target_arch = "riscv32")]
     pub status_led: Mutex<RefCell<Option<Output<'static>>>>,
@@ -185,7 +182,7 @@ impl ServiceContainer {
         &SERVICE
     }
 
-    /// BUG-06: install the status LED handle (embedded-only, called once by
+    /// Install the status LED handle (embedded-only, called once by
     /// `AppBuilder::build()` before the executor runs).
     #[cfg(target_arch = "riscv32")]
     pub fn init_status_led(led: Output<'static>) {
@@ -198,7 +195,7 @@ impl ServiceContainer {
         });
     }
 
-    /// BUG-06: run `f` on the status LED if installed. Returns `None` when
+    /// Run `f` on the status LED if installed. Returns `None` when
     /// the LED was never installed (host builds, or init failed before the
     /// builder ran). The closure runs inside the critical section so the
     /// GPIO write is not interleaved.

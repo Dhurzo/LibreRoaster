@@ -165,7 +165,6 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
-                // BUG-08 (2026-08-21): opt-in continuous telemetry.
                 "STREAM" => Some(match args.trim().to_ascii_uppercase().as_str() {
                     "ON" => Ok(ArtisanCommand::SetStreaming(true)),
                     "OFF" => Ok(ArtisanCommand::SetStreaming(false)),
@@ -753,7 +752,7 @@ mod tests {
         }
 
         proptest! {
-            /// Fase 3 (BUG-CATCH-PLAN.md): hostile byte soup (NUL, non-UTF8,
+            /// Hostile byte soup (NUL, non-UTF8,
             /// control chars, delimiters, huge numbers) must never panic the
             /// parser, and any actuator command that DOES parse must carry a
             /// clamped value (<= 100). A parse of garbage into
@@ -827,8 +826,6 @@ mod tests {
         let result = parse_artisan_command("START");
         assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
     }
-
-    // ── BUG-08: STREAM;ON / STREAM;OFF (opt-in telemetry) ──────────────
 
     #[test]
     fn test_parse_stream_on() {

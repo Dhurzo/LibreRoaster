@@ -92,11 +92,6 @@ where
     SPI: SpiDevice,
 {
     pub fn new(spi: SPI) -> Result<Self, Max31856Error> {
-        // BUG-07 (2026-08-21): `new` delegates to the tolerant path and keeps
-        // its hard-fail contract for callers that need a verified device
-        // (HIL examples). `init_spi_sensors` uses `new_tolerant` directly so
-        // a single absent/unsoldered MAX31856 degrades the channel instead of
-        // halting the whole firmware.
         let (dev, verified) = Self::new_tolerant(spi);
         if verified {
             Ok(dev)
@@ -107,22 +102,12 @@ where
         }
     }
 
-    /// BUG-07 (2026-08-21): configure the device WITHOUT conditioning boot
-    /// on the CR1 read-back.
+    /// Configure the device without conditioning boot on the CR1 read-back.
     ///
     /// Returns `(device, verified)`. A device with `verified == false` is
     /// still usable: every read passes through the fault register and the
     /// `SENSOR_FAULT_DEBOUNCE` → NaN → hold path already degrades a dead
-    /// channel safely at runtime (see the bug B-Q comment in
-    /// `SensorController::update_temperatures`, which documents the supported
-    /// BT-only config with ET unplugged).
-    ///
-    /// Boot must NOT abort because one amplifier is absent: that turns a
-    /// cold solder joint into a mute device with no diagnostics, and makes
-    /// the single-probe and pure-logger configurations documented in
-    /// PHILOSOPHY.md impossible. The firmware-level backstop (NaN → sensor
-    /// fault → emergency on both channels dead) still prevents regulating
-    /// against a dead channel.
+    /// channel safely at runtime.
     pub fn new_tolerant(spi: SPI) -> (Self, bool) {
         let mut max31856 = Max31856 { spi };
 
@@ -153,7 +138,7 @@ where
             ok = false;
         }
 
-        // Perform boot self-test (informational on failure — see BUG-07).
+        // Perform boot self-test (informational on failure).
         if ok {
             if let Err(e) = max31856.self_test() {
                 log::warn!(
@@ -469,12 +454,7 @@ where
     }
 }
 
-/// BUG-07 (2026-08-21): boot decision for the dual-channel thermocouple setup.
-///
-/// A single dead channel degrades (the firmware logs the reason and keeps
-/// running on the other channel); BOTH dead is a genuine no-go — without any
-/// temperature there is no safe control — so `init_spi_sensors` aborts only
-/// in that case. Kept here (un-gated module) so the policy is host-tested.
+/// Boot decision for the dual-channel thermocouple setup.
 pub fn boot_policy(bt_ok: bool, et_ok: bool) -> Result<(), Max31856Error> {
     if bt_ok || et_ok {
         Ok(())
@@ -504,8 +484,6 @@ mod tests {
         let err = Max31856Error::CommunicationError { source: "test" };
         assert!(matches!(err.kind(), embedded_hal::spi::ErrorKind::Other));
     }
-
-    // ── BUG-07: tolerant boot tests with a scripted SPI device ──────────
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct SpiFault;

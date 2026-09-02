@@ -46,7 +46,7 @@ pub mod error_counters;
 pub mod static_sync;
 /// Status LED pattern logic (pure, host-testable).
 pub mod status_led;
-// Fase 2 (BUG-CATCH-PLAN.md): the mocks use `alloc::sync::Arc` +
+// The mocks use `alloc::sync::Arc` +
 // `critical_section::Mutex`, which require `target_has_atomic = "ptr"` —
 // unavailable on riscv32imc (no atomic extension). Nothing outside the test
 // surface references the mocks, so gate the module to host test builds.

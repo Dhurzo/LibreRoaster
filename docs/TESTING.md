@@ -256,7 +256,7 @@ Using `picocom` (or `screen`) instead of `espflash --monitor` lets you send comm
 
 The firmware boots successfully and displays log messages, but emits **no telemetry** because continuous output is **disabled by default** (`OutputController::continuous_enabled = false` in `src/control/abstractions.rs`). Telemetry is only emitted every ~1 s when continuous output is enabled.
 
-**BUG-08 (2026-08-21):** continuous output is **opt-in** and enabled only by the explicit command:
+Continuous output is **opt-in** and enabled only by the explicit command:
 
 - `STREAM;ON` — enable the spontaneous `#` telemetry stream (LibreRoaster extension for custom clients; Artisan does not need it)
 

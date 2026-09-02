@@ -1252,14 +1252,12 @@ mod tests {
     }
 
     proptest! {
-        /// Fase 3 (BUG-CATCH-PLAN.md): formatting a `SystemStatus` whose
+        /// Formatting a `SystemStatus` whose
         /// numeric fields carry NaN / ±Inf / huge / negative values must
         /// never panic and must never emit a literal "NaN" / "inf" token
         /// that could corrupt Artisan's numeric parsing of the READ line.
         ///
-        /// S10 (DEFENSIVO, FIX 2026-08-05): pre-fix this property FAILED on
-        /// huge-but-finite values. `normalize_read_value` mapped only
-        /// non-finite values to 0.0; a huge finite value (e.g. f32::MAX)
+        /// Huge-but-finite values (e.g. f32::MAX)
         /// formatted to ~40 chars and the fixed-size
         /// `HeaplessString<REPORT_BUFFER_SIZE>` TRUNCATED mid-number,
         /// producing a corrupt line (counterexample: "0.0,42404414...0,-"
