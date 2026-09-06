@@ -1,6 +1,6 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-09-06 — pin map triple-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
 
 This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
 
@@ -17,20 +17,23 @@ The firmware is opinionated about this topology. It is adaptable, but not dynami
 
 ## 2. Pin map used by the firmware
 
-The constants and hardware init code define this effective mapping:
+The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:20-40`, enforced at boot by `src/hardware/init.rs:84-112`):
 
 | Signal | GPIO | Notes |
 |---|---:|---|
-| ET thermocouple chip select | 3 | shared SPI bus |
-| BT thermocouple chip select | 4 | shared SPI bus |
-| SPI MISO | 5 | routed through GPIO matrix to avoid strap conflict |
-| SPI SCLK | 6 | FSPI clock |
-| SPI MOSI | 7 | FSPI data out |
-| Fan PWM | 9 | strapping pin; external circuit must not break boot |
-| SSR control PWM | 10 | heater output path |
-| Heat detection input | 1 | pull-up enabled |
-| UART RX | 20 | serial ingress from host adapter |
-| UART TX | 21 | serial egress to host adapter |
+| Heat detection input | 1 | input, internal pull-up; LOW = SSR conducting |
+| ET thermocouple chip select | 3 | output, shared SPI bus |
+| BT thermocouple chip select | 4 | output, shared SPI bus |
+| SPI MISO | 5 | input, routed through GPIO matrix to avoid GPIO2 strap conflict |
+| SPI SCLK | 6 | output, FSPI clock |
+| SPI MOSI | 7 | output, FSPI data out |
+| Status LED | 8 | output, push-pull, active-high; not sampled for normal boot (see §8) |
+| Fan PWM | 9 | output, LEDC 25 kHz; **strapping pin** — external pull-up 10 kΩ → 3.3 V mandatory on custom boards |
+| SSR control PWM | 10 | output, LEDC 5 Hz zero-cross, 14-bit |
+| UART RX | 20 | input, 3.3 V only, 115200 baud |
+| UART TX | 21 | output, 3.3 V only, 115200 baud |
+
+> USB D+/D− is internal to ESP32-C3 (native USB CDC) — no external GPIO.
 
 ## 3. Why the SPI pins look unusual
 
@@ -69,10 +72,12 @@ Because GPIO9 is a strapping pin, the external fan stage must be designed so it 
 
 ## 6. PWM and timer topology
 
-The hardware init code configures two low-speed LEDC timers:
+The hardware init code (`src/hardware/init.rs:122-146`) configures two low-speed LEDC timers:
 
-- one timer for the SSR at **5 Hz** (zero-cross compatible),
-- one timer for the fan at **25 kHz**.
+- Timer0 for the SSR at **5 Hz** (zero-cross compatible, `SSR_PWM_RESOLUTION = 14` bit, `SSR_LEDC_CHANNEL = 1`), and
+- Timer1 for the fan at **25 kHz** (`FAN_PWM_RESOLUTION = 8` bit, `FAN_LEDC_CHANNEL = 0`).
+
+Channel/timer numbers are fixed by `src/config/constants.rs:49-56`.
 
 ## 7. Timing values that matter physically
 
@@ -113,20 +118,23 @@ choice — the only contract is the polarity above.
 
 ### Status LED (GPIO8)
 
-The status LED is a real runtime indicator (single owner: the service
-container). Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in
-`Heating`/`Stable`, 4 Hz blink on `Error` or any fault. The safe-shutdown
-path (init failure) takes GPIO8 via `Peripherals::steal()` and blinks it
-3×400 ms — by then all application tasks are dead, so the steal is the final
-owner.
+GPIO8 is **not** a strapping pin for normal flash boot (see `docs/pinout.md`); it is safe as a
+push-pull status indicator. Single owner: the service container, driven once per tick via
+`src/hardware/status_led.rs:26-48`.
+
+Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in `Heating`/`Stable`, 4 Hz blink on
+`Error` or any fault. The safe-shutdown path (init failure) takes GPIO8 via `Peripherals::steal()`
+and blinks it 3×400 ms — by then all application tasks are dead, so the steal is the final owner.
+Use a 330 Ω series resistor; never open-drain.
 
 ### Strapping pins
 
 The project documentation must always keep these points visible:
 
-- avoid GPIO2 for SPI MISO in this design,
-- treat GPIO9 carefully because it is a strap pin used for fan PWM,
-- avoid external circuitry that forces invalid boot levels.
+- avoid GPIO2 for SPI MISO in this design (VDD_SPI strap; see `docs/pinout.md` ⚠️ GPIO2),
+- treat GPIO9 carefully because it is a strap pin used for fan PWM — internal 45 kΩ weak pull-up boots correctly when floating; external 10 kΩ → 3.3 V is mandatory on custom boards/bare modules and with any external driver that could pull low at reset (see `docs/CONNECTION_TYPES.md:102-166`),
+- GPIO8 is ignored for normal SPI-boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW matters),
+- avoid external circuitry that forces invalid boot levels on any strap.
 
 ### High-voltage separation
 

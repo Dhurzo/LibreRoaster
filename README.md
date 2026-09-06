@@ -1,4 +1,8 @@
-# LibreRoaster ☕🔥
+# LibreRoaster
+
+<p align="center">
+  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="160" height="160">
+</p>
 
 **Open Source Coffee Bean Roaster**  
 Firmware written in **Rust** for the ESP32-C3
@@ -162,22 +166,23 @@ If you need the exact field ordering and command grammar, use the deeper protoco
 
 ## 🔌 Hardware model
 
-LibreRoaster assumes a simple two-sensor / two-actuator hardware topology:
+LibreRoaster assumes a simple two-sensor / two-actuator hardware topology (see `src/config/constants.rs:20-40`):
 
+- **Heat detection input:** GPIO1 (pull-up, LOW = heat)
 - **ET sensor chip select:** GPIO3
 - **BT sensor chip select:** GPIO4
 - **SPI clock / MOSI / MISO:** GPIO6 / GPIO7 / GPIO5
-- **Fan PWM:** GPIO9
-- **SSR control:** GPIO10
-- **Heat detection input:** GPIO1
-- **UART RX / TX:** GPIO20 / GPIO21
+- **Status LED:** GPIO8 (push-pull, not a strap for normal boot)
+- **Fan PWM:** GPIO9 (LEDC 25 kHz)
+- **SSR control:** GPIO10 (LEDC 5 Hz zero-cross, 14-bit)
+- **UART RX / TX:** GPIO20 / GPIO21 (3.3 V, 115200 baud)
 
 Two constraints matter operationally:
 
 1. **GPIO9 is a strapping pin** — it determines boot mode at reset. **Official ESP32-C3 dev boards** (DevKitC-02, DevKitM-1, RUST-1) include the pull-up already — no extra resistor needed. **Custom boards** (like LibreRoaster) need a **10kΩ pull-up to 3.3V**. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md).
+For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:84-112` asserts).
 
 ---
 

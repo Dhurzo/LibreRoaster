@@ -190,14 +190,14 @@ fn main() -> ! {
     }
     let timer1 = TIMER1.init(timer1);
 
-    // --- SSR Timer (Timer0, 310 Hz, 8-bit) ---
+    // --- SSR Timer (Timer0, 5 Hz zero-cross, 14-bit) — must match src/hardware/init.rs:122-128 ---
     static TIMER0: StaticCell<esp_hal::ledc::timer::Timer<'static, LowSpeed>> = StaticCell::new();
     let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     if timer0
         .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty8Bit,
+            duty: timer::config::Duty::Duty14Bit,
             clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_hz(1),
+            frequency: Rate::from_hz(5),
         })
         .is_err()
     {
@@ -232,7 +232,7 @@ fn main() -> ! {
         }
     }
 
-    // --- GPIO10: SSR PWM (LEDC Ch1, Timer0, 310 Hz, PushPull) ---
+    // --- GPIO10: SSR PWM (LEDC Ch1, Timer0, 5 Hz zero-cross 14-bit, PushPull) ---
     let ssr_pin = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
     let mut ssr_ch = ledc.channel(channel::Number::Channel1, ssr_pin);
     if ssr_ch
@@ -249,7 +249,7 @@ fn main() -> ! {
         delay_ms(1);
         let duty = read_ledc_duty(1);
         if duty == 0 {
-            esp_println::println!("TEST:gpio_10_ssr:PASS:ch1_310hz_duty=0");
+            esp_println::println!("TEST:gpio_10_ssr:PASS:ch1_5hz_duty=0");
             passed += 1;
         } else {
             esp_println::println!("TEST:gpio_10_ssr:FAIL:initial_duty={}:expected=0", duty);
