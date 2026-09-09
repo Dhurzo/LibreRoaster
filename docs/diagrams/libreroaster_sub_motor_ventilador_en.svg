@@ -41,7 +41,7 @@
   <text x="430" y="214" class="p">G (gate) ← 1kΩ</text>
   <text x="430" y="238" class="p">D (drain) → Fan(−)</text>
   <text x="430" y="262" class="p">S (source) → GND</text>
-  <text x="430" y="288" class="n">opt. Zener 12V G–S</text>
+  <text x="430" y="288" class="n">opt. Zener 3.6V G–S (logic-level clamp; see pinout.md)</text>
   <line x1="370" y1="180" x2="420" y2="206" class="wire" stroke="#FF5722"/>
 
   <!-- gate pulldown 100k -->

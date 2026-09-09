@@ -30,12 +30,12 @@ The project is aimed at builders who want an inspectable roasting controller rat
 |-----------|--------|
 | Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
 | Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 741 host-side unit + integration tests | ✅ All pass (incl. SSR scheduler) |
+| 735 host-side unit + integration tests (502 lib + 233 integration) | ✅ All pass (incl. SSR scheduler) |
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
 | PID control, profiles, safety interlocks | ✅ **Implemented — 11 critical bugs fixed (see below)** |
 
-> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (741 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
+> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (735 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
 | Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
 | End-to-end roast with real Artisan | ❌ Not yet tested |
 | Real coffee roasted using LibreRoaster | ❌ Not yet |
@@ -71,7 +71,7 @@ The guide is **currently in progress** and will be published once validated. If 
 - **`no-heat-sense` feature:** build without the optional GPIO1 current-sense circuit (see `docs/HARDWARE.md` §8)
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 - **Focused controllers:** SensorController, ActuatorController (heater + fan together), SafetyController, CommandDispatcher (v5.4)
-- **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (line-coverage target: ≥80% for production code)
+- **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (no fixed % gate in CI)
 
 ---
 
@@ -102,7 +102,7 @@ The embedded build starts these long-lived tasks:
 - **Dual output task** — routes formatted output to the currently active transport
 - **Regression task** — handles explicit over-temperature regression runs on embedded targets
 
-> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is a single command channel per transport, no intermediate queue-processor stage.
+> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is one shared command channel for both transports, no intermediate queue-processor stage.
 
 ### Shared application model
 
@@ -209,7 +209,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **741 unit + integration tests** run on x86_64 (747 including doctests):
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **735 unit + integration tests** run on x86_64 (502 lib + 233 integration in `--lib --tests`):
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test
@@ -226,7 +226,7 @@ GitHub Actions runs 7 parallel jobs on every push/PR to `develop` and `main`:
 | Clippy (ESP32-C3) | `cargo clippy --release --locked --target riscv32imc-unknown-none-elf --features embedded -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` |
 | Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` (plus doctests via `--doc`) |
 | Regression tests | `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` |
-| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features test --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
+| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
 | Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
 
 ### Embedded build & flash

@@ -1,6 +1,6 @@
 # LibreRoaster Architecture Guide
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-09-09
 
 This document describes the current firmware architecture of LibreRoaster from the implementation outward. It is written for engineers who need to reason about runtime behavior, ownership boundaries, timing, and the points where protocol handling meets real hardware.
 
@@ -58,12 +58,10 @@ also means the `ServiceContainer` becomes the central ownership hub.
 
 ### 3.2 ServiceContainer
 
-`ServiceContainer` is the process-wide service locator. It owns exactly three
-fields:
-
-- `roaster`: async-mutex guarded control state,
-- `artisan_input`,
-- `watchdog_feeder`.
+`ServiceContainer` is the process-wide service locator. It owns three
+fields on host (`roaster`: async-mutex guarded control state,
+`artisan_input`, `watchdog_feeder`), plus a fourth embedded-only field
+`status_led` on `riscv32` (`service_container.rs:35-52`):
 
 The command channel (`ARTISAN_CMD_CHANNEL`), the output channel, and the
 command multiplexer are module-level `static`s that the container accesses
@@ -79,7 +77,10 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 
 ## 4. Task graph
 
-The embedded system is built around a fixed task graph.
+The embedded system is built around a fixed task graph: 5 long-lived worker
+tasks spawned by `Application::start_tasks` (`app_builder.rs:212-229`) plus
+the `async_main_task` supervisor spawned by the executor in `main.rs:266-268`
+(6 Embassy tasks total; docs count the 5 workers).
 
 ### Input side
 
@@ -163,16 +164,16 @@ But the architectural truth remains the same: `RoasterControl` is the single obj
 
 ### State model
 
-The high-level firmware states are:
+The high-level firmware states are (`src/config/constants.rs:249-262`):
 
 - `Idle`
 - `Preheating`
 - `Heating`
 - `Stable`
-- `Cooling`
-- `Fault`
-- `EmergencyStop`
 - `Error`
+
+Audit M-A7 (2026-08-11): `Cooling`, `Fault` and `EmergencyStop` were removed
+— zero references existed; every failure transition uses `Error`.
 
 These are not UI-only states. They influence how commands are interpreted, whether PID is active, and whether the heater is allowed to drive power.
 
@@ -242,7 +243,7 @@ Several timing constants define the system, but the implementation has important
 ### Nominal cadences
 
 - control loop period: 100 ms timer (`CONTROL_LOOP_PERIOD_MS`)
-- watchdog feed cadence: 100 ms nominal
+- watchdog feed cadence: once per control tick (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms, fed in `tasks.rs:610-746`), not 100 ms
 - output interval: 1000 ms default
 - stale-reading timeout: 1000 ms
 

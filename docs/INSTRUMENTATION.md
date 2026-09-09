@@ -1,6 +1,6 @@
 # Instrumentation and Telemetry Guide
 
-**Last Updated:** 2026-08-04
+**Last Updated:** 2026-09-09
 **Purpose:** Complete reference for LibreRoaster's instrumentation, telemetry, and safety monitoring capabilities.
 
 ---
@@ -65,14 +65,14 @@ Indicates whether the watchdog feed succeeded during the last control loop tick.
 - **Value `1`**: Watchdog was successfully fed in the last control-loop tick
 - **Value `0`**: Watchdog feed failed or timed out
 
-**Implementation:** The control loop task calls `WatchdogFeeder::feed_async(bean_temp)`
+**Implementation:** The control loop task calls `WatchdogFeeder::feed(bean_temp)`
 once per control tick (through `ServiceContainer::with_watchdog`). The software
 watchdog timeout is 1000 ms, sized for the real tick cadence: the loop timer is
 100 ms but each tick also waits for a MAX31856 one-shot conversion (210 ms), so
 the observed cadence is ~310-330 ms. If feeding fails or times out,
 `watchdog_feed_ok` is set to `false`.
 
-**Code Reference:** `src/safety/watchdog.rs`, `src/application/tasks.rs`
+**Code Reference:** `src/safety/watchdog.rs`, `src/application/tasks.rs` (file; note `src/application/tasks/` directory holds stage helpers)
 
 ---
 
@@ -435,7 +435,7 @@ PID internal state fields enable data‑driven tuning:
 
 ---
 
-*Last Updated: 2026-08-04*
+*Last Updated: 2026-09-09*
 
 ## TRACE Stream & Parser
 

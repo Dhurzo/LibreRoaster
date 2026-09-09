@@ -1,6 +1,6 @@
 # LibreRoaster Protocol Reference
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-09-09
 
 This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the firmware currently accepts and emits, how the session behaves, and where compatibility with the official Artisan application starts and stops.
 
@@ -272,7 +272,7 @@ Increment or decrement heater output in 5% steps.
 Emergency stop path. Heater is cut and fan is forced to 100%.
 
 `STOP` arms the safety latch: while latched, only `READ`, `STATUS`, `STOP`,
-`START`, `PREHEAT` and the handshake commands `CHAN`/`UNITS`/`FILT` are
+`EmergencyStop`, `START`, `PREHEAT`, `STREAM` and the handshake commands `CHAN`/`UNITS`/`FILT` are
 accepted (other commands return
 `ERR handler_failed:fault_condition_active`). `CHAN`/`UNITS`/`FILT` are
 admitted deliberately: they have no actuator side effects, and rejecting
@@ -294,7 +294,7 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 
 ### Supported forms
 
-- `PID;ON`
+- `PID;ON` (alias for `START` — begins a roast, not just "PID on")
 - `PID;OFF`
 - `PID;SV;<temp>`
 - `PID;T;<kp>;<ki>;<kd>`
@@ -409,13 +409,6 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 > spike (~3 s at 0.6 °C/s) therefore does not trip, while a genuine runaway
 > still aborts within ~1 s. Both thresholds are provisional pending HIL
 > calibration.
-- `ERR probe_stuck_warning` — manual / Artisan software-PID mode only
-  (Audit A-TC4-C): the bean probe has been flat (≤ 1 °C movement) for 120 s
-  with the heater on. This is a WARNING, not a latch: the roast keeps
-  running (a legitimately slow finish can hold BT flat for 2 min at low
-  duty). If the probe stays flat for 300 s total, the detector escalates to
-  the real latch, announced by `ERR safety_fault Probe stuck`. The warning
-  is emitted once per stuck episode (reset by probe movement or heater off).
 
 ## 11. Protocol edge cases that matter
 

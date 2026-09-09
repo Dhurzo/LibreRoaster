@@ -1,6 +1,6 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-09-06 — pin map triple-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
+**Last updated:** 2026-09-09 — pin map triple-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
 
 This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
 
@@ -17,7 +17,7 @@ The firmware is opinionated about this topology. It is adaptable, but not dynami
 
 ## 2. Pin map used by the firmware
 
-The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:20-40`, enforced at boot by `src/hardware/init.rs:84-112`):
+The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:19-40`, enforced at boot by `src/hardware/init.rs:86-112`):
 
 | Signal | GPIO | Notes |
 |---|---:|---|
@@ -72,12 +72,12 @@ Because GPIO9 is a strapping pin, the external fan stage must be designed so it 
 
 ## 6. PWM and timer topology
 
-The hardware init code (`src/hardware/init.rs:122-146`) configures two low-speed LEDC timers:
+The hardware init code (`src/hardware/init.rs:122-183`) configures two low-speed LEDC timers:
 
 - Timer0 for the SSR at **5 Hz** (zero-cross compatible, `SSR_PWM_RESOLUTION = 14` bit, `SSR_LEDC_CHANNEL = 1`), and
 - Timer1 for the fan at **25 kHz** (`FAN_PWM_RESOLUTION = 8` bit, `FAN_LEDC_CHANNEL = 0`).
 
-Channel/timer numbers are fixed by `src/config/constants.rs:49-56`.
+Channel/timer numbers are fixed by `src/config/constants.rs:42-56`.
 
 ## 7. Timing values that matter physically
 
@@ -87,8 +87,8 @@ The firmware currently relies on these operational assumptions:
   **≈ 310–330 ms** because each tick also waits for the MAX31856 conversion
   (`MAX31856_CONVERSION_TIME_MS = 210`),
 - MAX31856 one-shot conversion wait **210 ms** (datasheet 185 ms + margin),
-- watchdog feed interval **100 ms**,
-- hardware watchdog timeout **2 s**,
+- watchdog feed interval **once per control tick** (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms),
+- hardware watchdog timeout **≈ 2.2 s nominal** (`HW_WATCHDOG_STAGE0_CYCLES = 300000` / 136 kHz ≈ 2206 ms; efuse shift can shorten it),
 - LEDC guard timeout **10 ms**,
 - temperature validity timeout **1000 ms**.
 
@@ -119,12 +119,13 @@ choice — the only contract is the polarity above.
 ### Status LED (GPIO8)
 
 GPIO8 is **not** a strapping pin for normal flash boot (see `docs/pinout.md`); it is safe as a
-push-pull status indicator. Single owner: the service container, driven once per tick via
-`src/hardware/status_led.rs:26-48`.
+push-pull status indicator. Single owner: the service container, pattern logic in
+`src/hardware/status_led.rs:26-48`, GPIO write driven once per tick by the control loop
+(`update_status_led_stage` in `src/application/tasks.rs:1005-1024`, riscv32-only).
 
 Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in `Heating`/`Stable`, 4 Hz blink on
 `Error` or any fault. The safe-shutdown path (init failure) takes GPIO8 via `Peripherals::steal()`
-and blinks it 3×400 ms — by then all application tasks are dead, so the steal is the final owner.
+and blinks it 3×200 ms + 1 s pause (`src/main.rs:89-94`) — by then all application tasks are dead, so the steal is the final owner.
 Use a 330 Ω series resistor; never open-drain.
 
 ### Strapping pins

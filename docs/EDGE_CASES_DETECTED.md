@@ -1,9 +1,9 @@
 # LibreRoaster — Casos Borde Detectados (Auditoría E2E)
 
-**Fecha:** 2026-08-04
+**Fecha:** 2026-08-04 (snapshot; conteos y líneas actualizados el 2026-09-09)
 **Método:** Auditoría E2E de verificación estricta (3 perspectivas: flujo de datos, cumplimiento de contratos, casos borde/fallos).
-**Resultado global:** ✅ Sin bloqueadores de ejecución. 646/646 tests host pasan, clippy estricto limpio, build embedded `riscv32imc-unknown-none-elf` OK.
-**Estado:** Los hallazgos marcados como (RESUELTO) están cerrados en el working tree; los marcados como (ABIERTO) son mejoras defensivas pendientes.
+**Resultado global:** ✅ Sin bloqueadores de ejecución. 735/735 tests host pasan (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests`, 502 lib + 233 integración; era 646/646 el 2026-08-04), clippy estricto limpio, build embedded `riscv32imc-unknown-none-elf` OK.
+**Estado:** Los hallazgos marcados como (RESUELTO) están cerrados en el working tree; los marcados como (ABIERTO) son mejoras defensivas pendientes. Referencias `transport_tasks.rs` son pre-F5.3 (lectores actuales: `usb_cdc/tasks.rs`, `uart/tasks.rs`); `roaster_control.rs` se dividió en v5.4 (`controllers/sensor|actuator|safety|dispatch.rs` + `ssr_logic.rs`).
 
 ---
 
@@ -25,7 +25,7 @@ El sistema funciona de punta a punta en un escenario real (Artisan + USB CDC / U
 | EC-06 | Handshake Artisan (UNITS/FILT) | ✅ `#OK` con prefijo `#` (requisito del driver ArduinoTC4); antes `OK` rompía la inicialización | `src/control/roaster_control.rs:1345-1378`; `src/output/artisan.rs:312-316` (Bug P-TC4, RESUELTO) |
 | EC-07 | Delimitadores `OT1,75` / `IO3=50` / `OT1;75` | ✅ Los 4 delimitadores (espacio, `;`, `,`, `=`) aceptados solo para actuadores; no corrompe FILT/PROFILE/PID,ON | `src/input/parser.rs:154-179` (Bug P-TC4, RESUELTO) |
 | EC-08 | OT2 fuera de rango (ej. 150, -5, 50.5) | ✅ Redondeo ±0.5, clamp 0-100, `ERR OT2_CLAMPED fan=<n> heater_unchanged`; heater/PID intactos | `src/input/parser.rs:460-485` (Bug L10); `src/control/roaster_control.rs:1193-1217` |
-| EC-09 | STOP con heater encendido | ✅ Latch armado (estado Error), heater 0, fan 100% persistente (cooldown latch); solo READ/STATUS/STOP/START/PREHEAT aceptados durante fault | `src/control/roaster_control.rs:1226-1259, 991-1006` |
+| EC-09 | STOP con heater encendido | ✅ Latch armado (estado Error), heater 0, fan 100% persistente (cooldown latch); durante fault se aceptan READ/STATUS/STOP/EmergencyStop/START/PREHEAT/CHAN/UNITS/FILT/STREAM (`roaster_control.rs:1232-1251`) | `src/control/roaster_control.rs:1226-1259, 991-1006` |
 | EC-10 | STOP → recuperación | ✅ `PID;OFF` y `START`/`PREHEAT` desarman el latch (antes solo un camino sin productor de protocolo, brick permanente) | `src/control/roaster_control.rs:1035-1038, 1112-1114, 1499-1501` (P3/V2-1) |
 | EC-11 | START duplicado durante roast activo | ✅ Ignorado; `profile_start_time` original intacto (no reinicia el reloj del roast) | `src/control/roaster_control.rs:1089-1094` |
 | EC-12 | PREHEAT → START (handoff B14) | ✅ Transición limpia; `profile_start_time` fijado; backstops temporales activos | `src/control/roaster_control.rs:1096-1170` |
@@ -48,9 +48,9 @@ El sistema funciona de punta a punta en un escenario real (Artisan + USB CDC / U
 | EC-29 | Host USB desaparece (Artisan muerto, cable fuera) | ✅ USB write con timeout 50+20 ms (A2); línea descartada, siguiente tick lleva dato fresco; UART sigue operativo | `src/hardware/usb_cdc/driver.rs:59-90` |
 | EC-30 | READ respuesta duplicada | ✅ Solo `drain_commands` emite; `handle_read_status` solo valida el formato (histórico Bug #3) | `src/application/tasks.rs:324-339`; `src/control/roaster_control.rs:1292-1313` |
 | EC-31 | Turnaround light-roast dispara RoR falso (0.6 °C/s ~3 s tras carga) | ✅ Guard RoR en dos bandas (A-TC4-D): banda blanda 0.5–1.0 °C/s exige 12 ticks sostenidos (~3.7 s); banda dura > 1.0 °C/s conserva el latch de 3 ticks. Valores provisionales pendientes de HIL | `src/control/controllers/sensor.rs` (`tiered_ror_trip`); `src/config/constants.rs` (`MAX_BT_RATE_OF_RISE_HARD`, `ROR_SOFT_DEBOUNCE_LIMIT`) |
-| EC-31 | Segundo `#DUMP` mid-drain | ✅ `dump_pending.clear()` al inicio; no se empalman dumps | `src/control/roaster_control.rs:1468-1493` (V2-7) |
-| EC-32 | Canal de salida lleno durante #DUMP | ✅ Re-push al frente del deque; ninguna fila se pierde (FIFO preservado) | `src/application/tasks.rs:849-864` (V2-7); `src/control/roaster_control.rs:1454-1466` |
-| EC-33 | Ráfaga de inicio de Artisan (10-15 líneas) | ✅ Canal 16 (antes 8): ráfaga residente dentro de una ventana de tick; rate-limit 8/tick con bypass de emergencia | `src/application/service_container.rs:41-49` (E1); `src/application/tasks.rs:247-266` |
+| EC-32 | Segundo `#DUMP` mid-drain | ✅ `dump_pending.clear()` al inicio; no se empalman dumps | `src/control/roaster_control.rs:1468-1493` (V2-7) |
+| EC-33 | Canal de salida lleno durante #DUMP | ✅ Re-push al frente del deque; ninguna fila se pierde (FIFO preservado) | `src/application/tasks.rs:849-864` (V2-7); `src/control/roaster_control.rs:1454-1466` |
+| EC-34 | Ráfaga de inicio de Artisan (10-15 líneas) | ✅ Canal 16 (antes 8): ráfaga residente dentro de una ventana de tick; `MAX_COMMANDS_PER_TICK == ARTISAN_CMD_CHANNEL_SIZE == 16` con bypass de emergencia | `src/application/service_container.rs:41-49` (E1); `src/application/tasks.rs:247-266` |
 
 ---
 
@@ -79,7 +79,7 @@ Resultado de las fases 0–4 (baseline, repros estáticos, inyección mid-roast,
 | **S9** | LATENTE (LOW) | Sentinel del SW watchdog: `LAST_FEED_MS == 0` es a la vez "nunca alimentado" y timestamp real → un feed en t=0 desarma el timeout para siempre | `software_watchdog_times_out_after_missed_feeds` | ✅ **RESUELTO**: sentinel `NEVER_FED = u64::MAX` (watchdog.rs) |
 | **S10** | LATENTE | `normalize_read_value` solo mapeaba no-finitos a 0.0; un finito enorme trunca el buffer READ a mitad de número → token corrupto ("-") | `src/output/artisan.rs::format_read_never_panics_with_hostile_status` (des-ignorado, VERDE) | ✅ **RESUELTO**: clamp ±1000 en `normalize_read_value` (artisan.rs) |
 
-**Veredicto del bug hunt**: 674 tests host verdes (0 fallos, 0 ignored), clippy estricto limpio, build embedded OK. Ningún bug BLOQUEANTE abierto. **Los 10 hallazgos corregibles (S1, S3–S10) están RESUELTOS con test de reproducción verde**; S2 se mantiene como decisión de diseño. La re-verificación post-fix (harness 1000 roasts + suite completa) no introdujo nuevos bugs. Detalle, fixes y decisiones en `docs/SAFETY_BUGS.md`.
+**Veredicto del bug hunt**: 735 tests host verdes (0 fallos, 0 ignored; era 674 el 2026-08-05), clippy estricto limpio, build embedded OK. Ningún bug BLOQUEANTE abierto. **Los 10 hallazgos corregibles (S1, S3–S10) están RESUELTOS con test de reproducción verde**; S2 se mantiene como decisión de diseño. La re-verificación post-fix (harness 1000 roasts + suite completa) no introdujo nuevos bugs. Detalle, fixes y decisiones en `docs/SAFETY_BUGS.md`.
 
 ### EC-A2 — UART TX sin timeout (asimetría con USB) — ✅ RESUELTO (S8, 2026-08-05)
 - **Evidencia**: `src/hardware/uart/driver.rs:49-58` (`write_bytes` sin `with_timeout`) vs `src/hardware/usb_cdc/driver.rs:70-89` (timeout 50+20 ms, Bug A2).
@@ -123,7 +123,7 @@ Resultado de las fases 0–4 (baseline, repros estáticos, inyección mid-roast,
 2. **Contratos**: cada comando/parámetro/respuesta contrastado contra `docs/PROTOCOL.md` (última actualización 2026-08-04).
 3. **Casos borde**: simulación de condiciones de fallo, concurrencia (mutex async, `ssr_cycle_busy`), latencia (tick 310 ms), excepciones (NaN/Inf) y estados intermedios (latch, cooldown).
 4. **Quality gates ejecutados**:
-   - `cargo fmt --all -- --check` → OK
-   - `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` → OK
-   - `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` → **646 passed, 0 failed**
-   - `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` → OK
+    - `cargo fmt --all -- --check` → OK
+    - `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` → OK
+    - `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` → **735 passed, 0 failed (era 646 el 2026-08-04)**
+    - `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` → OK

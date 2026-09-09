@@ -1,8 +1,10 @@
 # Auditoría de Calidad de Código Rust — LibreRoaster
 
-**Fecha:** 2026-08-11
+**Fecha:** 2026-08-11 (snapshot; actualizado 2026-09-09 — ver nota)
 **Alcance:** `src/` completo (94 archivos, ~24.068 líneas), `tests/`, `Cargo.toml`, configuración clippy
 **Método:** Auditoría paralela multi-agente (8 dimensiones) + verificación manual de hallazgos clave + gates objetivo
+
+> Nota 2026-09-09: snapshot histórico. Conteos actuales: **735 tests** (`502 lib + 233 integración`, era 631); `roaster_control.rs` ≈ 2098 líneas (era 3229, tras v5.4 split en `controllers/` + `ssr_logic.rs`); `OutputController` ya es flag funcional (`abstractions.rs:161-190`, M-A5 remediado); dump 66 KB parcialmente remediado (filas ~33-40 B). Ver `docs/TESTING.md` para el gate canónico.
 
 ---
 
@@ -17,7 +19,7 @@
 | Protocolo/parser | ✅ **Robusto** | Sin CRITICAL/HIGH; hostilidad de entrada bien cubierta (fuzz proptest) |
 | Rendimiento embebido | 🟡 **Aceptable** | Bucle no está limitado por CPU sino por sueño (210 ms serializados); 1 problema de RAM estática (66 KB) |
 | Arquitectura | 🟡 **Incompleta** | "Cáscara descompuesta alrededor de un núcleo sin descomponer": `RoasterControl` sigue siendo god-module |
-| Tests (631) | 🟡 **Fuerte con grietas** | Excelente profundidad en paths críticos; 1 tautología real, 1 test vacuo, cfg que excluye los tests numéricos más fuertes |
+| Tests (735; era 631 el 2026-08-11) | 🟡 **Fuerte con grietas** | Excelente profundidad en paths críticos; 1 tautología real, 1 test vacuo, cfg que excluye los tests numéricos más fuertes |
 | Documentación API | 🔴 **Débil** | ~705 items `pub`, ~30% documentados; `missing_docs` fallaría en 300+ |
 
 **Totales:** 0 CRITICAL · 10 HIGH · 26 MEDIUM · 22 LOW
@@ -36,7 +38,7 @@
 |---|---|
 | `cargo fmt --all -- --check` | ✅ PASS |
 | `cargo clippy --locked --all-targets` | ✅ 0 warnings (denies: `unwrap_used`, `expect_used`, `panic`, `fallible_impl_from`) |
-| Tests host (`--features test`) | 631 passing (claims en CONTEXT.md; ver hallazgo T-3: cfg `regression` excluido del gate) |
+| Tests host (`--features test`) | 735 passing (era 631 el 2026-08-11; ver hallazgo T-3: cfg `regression` excluido del gate) |
 | `unsafe` | 10 archivos; ~29 apariciones — verificado: acceso a registros PAC (`RTC_CNTL`, `EFUSE`), `WDT` con unlock/relock correcto, `static_cell` |
 | `unwrap`/`expect`/`panic` en código de producción | **0** (las 116 apariciones están en módulos `#[cfg(test)]`; única excepción: `unimplemented!()` intencional en `conversion.rs:262` gated a configuración inalcanzable) |
 | `#[allow]` | 33, todos justificados (test code / casos documentados) |
@@ -192,7 +194,7 @@ Autopsia manual directa (grep + lectura):
 16. **[M-P4] Helpers legacy USB/UART**: alinear con la ruta de producción o eliminar; re-apuntar tests integración.
 17. **[M-R3] `debug!` con awaits**: snapshots de temperatura antes del macro.
 
-### Fase 3 — Estructural (1-2 semanas, con la suite de 631 tests como red)
+### Fase 3 — Estructural (1-2 semanas, con la suite de 735 tests como red)
 18. **[H-2] Extraer `OrchestrationPolicy`/`RoastStateMachine`** de `update_control` y los handlers artisan; `RoasterControl` → fachada delgada (<1.500 líneas). La suite de regresión protege la extracción — semántica byte-idéntica.
 19. **[H-4/M-A4] Unificar interfaces de handler** en un solo router dentro de `CommandDispatcher`; respuesta de comandos dentro del flujo de proceso.
 20. **[H-3] Encapsulación**: `status_mut()` privado, métodos tipados para watchdog/latencia/guard, campos del contenedor privatizados con accessors.
@@ -205,6 +207,6 @@ Autopsia manual directa (grep + lectura):
 
 ## 8. Veredicto Final
 
-**LibreRoaster es código embebido de calidad superior a la media del sector**: gates impecables (fmt + clippy 0 warnings con denies estrictos), cero `unwrap` en producción, cero TODO/FIXME, protección en profundidad real en las capas de seguridad, parser endurecido contra entrada hostil con fuzz, cultura de comentarios de bug extraordinaria, y una suite de 631 tests que ha demostrado atrapar bugs reales.
+**LibreRoaster es código embebido de calidad superior a la media del sector**: gates impecables (fmt + clippy 0 warnings con denies estrictos), cero `unwrap` en producción, cero TODO/FIXME, protección en profundidad real en las capas de seguridad, parser endurecido contra entrada hostil con fuzz, cultura de comentarios de bug extraordinaria, y una suite de 735 tests (era 631) que ha demostrado atrapar bugs reales.
 
 Las deudas son de **estructura, no de comportamiento**: un god-module central que concentra toda la política de control, una API pública 3× más grande de lo necesario con 30% documentada, dos huecos de observabilidad en el canal de salida, 66 KB de RAM estática para un dump, una espera serializada de 210 ms que define el tick real (~330 ms), y algunos tests que sobrevenden lo que verifican. Ninguno de los hallazgos puede causar sobre-temperatura, heater descontrolado o pérdida del hardware — las capas de emergencia y watchdog son el backstop final y están verificadas.

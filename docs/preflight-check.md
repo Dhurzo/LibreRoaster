@@ -3,7 +3,7 @@
 **Purpose:** Mandatory verification before first power-on with real hardware.
 Complete every item in order. Do NOT skip steps.
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-09-09
 
 ---
 
@@ -15,7 +15,7 @@ Run these commands before touching hardware.
 # 1. Embedded build must compile clean (zero warnings)
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
-# 2. Host test suite (expect all pass — 741 tests, 0 failures)
+# 2. Host test suite (expect all pass — 735 tests, 0 failures)
 cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
 
 # 3. Format + clippy gate
@@ -23,7 +23,7 @@ cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::
 ```
 
 - [ ] Embedded build: **zero errors, zero warnings**
-- [ ] Host tests: **741 passed, 0 failed** (any failure = regression)
+- [ ] Host tests: **735 passed, 0 failed** (any failure = regression)
 - [ ] Clippy: clean
 
 ---
@@ -73,10 +73,10 @@ Verify wiring matches the **firmware pinout** (not any other document):
 
 ### Strapping Pin Protection
 
-- [ ] **GPIO 9**: 10 kΩ pull-up to 3.3V installed
-- [ ] **GPIO 9**: Fan MOSFET gate has pull-down (keeps fan OFF during boot)
-- [ ] **GPIO 10**: 10 kΩ pull-down to GND installed (keeps SSR OFF during boot)
-- [ ] **GPIO 8**: LED circuit does NOT pull LOW during boot (push-pull safe)
+- [ ] **GPIO 9**: 10 kΩ pull-up to 3.3V installed (mandatory on custom boards/bare modules; official dev boards already include it)
+- [ ] **GPIO 9**: Fan MOSFET gate driver is high-impedance at reset (must not pull GPIO9 LOW during boot; 1 kΩ series + 100 kΩ weak gate→GND)
+- [ ] **GPIO 10**: no strapping function (SSR PWM safe); external pull-down optional, not required by firmware
+- [ ] **GPIO 8**: LED circuit does NOT force download-mode combo (GPIO8=HIGH + GPIO9=LOW); push-pull safe for normal boot
 - [ ] **GPIO 2**: Nothing connected (strapping pin, avoided)
 
 ### Communication
@@ -107,7 +107,7 @@ Verify wiring matches the **firmware pinout** (not any other document):
 - [ ] See `USB CDC initialized`
 - [ ] See `Wake the f*** up samurai we have beans to burn!`
 - [ ] NO panic messages
-- [ ] LED on GPIO8 turns ON (steady, not blinking)
+- [ ] LED on GPIO8 follows state pattern (`status_led.rs`: Off in `Idle`, 1 Hz in `Preheating`, solid in `Heating`/`Stable`, 4 Hz on fault) — not simply steady
 
 3. GPIO state verification with multimeter:
 
@@ -205,7 +205,7 @@ STOP
 ```
 
 - [ ] After STOP: GPIO10 goes LOW (heater off)
-- [ ] Fan goes to 100% briefly then off (emergency behavior)
+- [ ] Fan goes to 100% sticky (cooldown latch, stays until BT < 60 °C; not "briefly then off")
 - [ ] STATUS shows field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
   (note: the run state itself is not part of the STATUS line — it is visible in the
   serial log `info!` output; `STATUS` is a numeric 20-field CSV)
@@ -266,8 +266,8 @@ STOP
 ```
 
 - [ ] Heater cuts immediately
-- [ ] Fan goes to emergency speed
-- [ ] System enters `EmergencyStop` state (visible in serial log)
+- [ ] Fan goes to emergency speed (100% sticky)
+- [ ] System enters `Error` state (all failures use `Error`; `Cooling`/`Fault`/`EmergencyStop` removed M-A7 — visible in serial log)
 - [ ] STATUS confirms field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
 
 ---
@@ -284,8 +284,8 @@ STOP
 | `OT1 0` | Heater off | *(no response — silent)* |
 | `STOP` | Emergency stop | *(no response — silent)* |
 | `CHAN;1200` | Handshake | `#1200` |
-| `UNITS;C` | Celsius mode | `OK` |
-| `FILT;70,70,70,70` | Filter config | `OK` |
+| `UNITS;C` | Celsius mode | `#OK` (not bare `OK` — Artisan handshake requires `#`-prefix) |
+| `FILT;70,70,70,70` | Filter config | `#OK` (not bare `OK`) |
 
 ---
 

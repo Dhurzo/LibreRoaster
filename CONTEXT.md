@@ -28,7 +28,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy tasks:
+The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks plus the `async_main_task` supervisor (`src/main.rs:266-268`):
 
 1. **USB reader** — gathers bytes from native USB CDC and parses commands
 2. **UART reader** — gathers bytes from UART0 and parses commands
@@ -57,14 +57,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
 - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
- - ✅ All host tests pass (**741 as of 2026-08-21** — 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+ - ✅ All host tests pass (**735 as of 2026-09-09** — 502 lib + 233 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
-- ServiceContainer DI migration (constructor injection instead of `static_cell` singleton)
+- ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 693 host tests pass, ESP32 build warning-free
+- All 735 host tests pass, ESP32 build warning-free
 
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
 - `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. Internal stop paths never re-arm. New `no-heat-sense` cargo feature for builds without the GPIO1 current-sense circuit (guards in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
@@ -165,4 +165,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-08-21. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-09-09. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

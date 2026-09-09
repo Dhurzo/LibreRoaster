@@ -67,13 +67,13 @@ The ESP32-C3's UART0 is available on GPIO20 (RX) and GPIO21 (TX) for connection 
 
 Without a pull-up resistor, GPIO9 behavior depends on the board's USB-serial chip:
 
-**Boards with native USB only** (ESP32-C3-DevKitC-02, RUST-1): GPIO9 is floating, boot mode is **unpredictable**:
+**Boards with native USB only** (ESP32-C3-DevKitC-02, RUST-1): GPIO9 relies on the internal 45 kΩ weak pull-up and boots from flash deterministically when truly floating (see §4). Unpredictable boot only occurs if external circuitry loads the pin at reset.
 
 ```
-# Sometimes HIGH → boot from flash ✅
+# Floating (no external load) → HIGH via internal 45 kΩ → boot from flash ✅
 rst:0x1 (POWERON), boot:0xc (SPI_FAST_FLASH_BOOT)
 
-# Sometimes LOW → download mode ❌
+# Externally driven LOW at reset → download mode ❌
 rst:0x1 (POWERON), boot:0x4 (DOWNLOAD(USB/UART0/1))
 waiting for download
 ```
@@ -188,9 +188,9 @@ Even though both methods benefit from the pull-up resistor, USB has practical ad
 
 ---
 
-## 6. Both connections work simultaneously
+## 6. Both transports listened concurrently (multiplexer-latched)
 
-The firmware runs USB CDC and UART transport tasks concurrently. You can connect both cables. Artisan will use whichever channel sends the first command. The `dual output task` routes formatted output to the active transport.
+The firmware runs USB CDC and UART transport tasks concurrently. You can connect both cables. Both are listened to, but commands are accepted on the latched channel only: the multiplexer latches the first channel with valid traffic and resets after 60 s idle (`src/input/multiplexer.rs`). The `dual output task` routes formatted output to the active transport.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -240,7 +240,7 @@ The firmware runs USB CDC and UART transport tasks concurrently. You can connect
 | Extra hardware | **None** | USB-UART adapter + wiring |
 | GPIO9 pull-up needed (custom board)? | **Yes — 10kΩ to 3.3V** | **Yes — 10kΩ to 3.3V** |
 | GPIO9 pull-up needed (official dev board)? | **No — already on board** | **No — already on board** |
-| Boot without pull-up (floating pin — bare module) | Sometimes works (floating = random) | Sometimes works (same) |
+| Boot without pull-up (floating pin — bare module, no external load) | Boots via internal 45 kΩ (deterministic HIGH) — external 10 kΩ still recommended | Same |
 | Boot without pull-up (CH9102 board — AI-C3, etc.) | ❌ Always `boot:0x4` (RTS pulls GPIO9 LOW) | ❌ Always `boot:0x4` (same) |
 | Boot with pull-up | ✅ Always | ✅ Always |
 | Flash firmware | ✅ | ✅ |

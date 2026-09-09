@@ -44,7 +44,7 @@
     <circle cx="800" cy="372" r="4" fill="#D32F2F"/><text x="788" y="376" class="pinw">SSR PWM · GPIO10</text>
     <circle cx="800" cy="402" r="4" fill="#795548"/><text x="788" y="406" class="pinw">HEAT DET · GPIO1</text>
     <circle cx="800" cy="446" r="4" fill="#FF5722"/><text x="788" y="450" class="pinw">FAN PWM · GPIO9 ⚠</text>
-    <circle cx="800" cy="492" r="4" fill="#607D8B"/><text x="788" y="496" class="pinw">LED · GPIO8 ⚠</text>
+    <circle cx="800" cy="492" r="4" fill="#607D8B"/><text x="788" y="496" class="pinw">LED · GPIO8</text>
     <circle cx="800" cy="560" r="4" fill="#00897B"/><text x="788" y="564" class="pinw">UART TX · GPIO21</text>
     <circle cx="800" cy="588" r="4" fill="#00ACC1"/><text x="788" y="592" class="pinw">UART RX · GPIO20</text>
     <circle cx="800" cy="640" r="4" fill="#3949AB"/><text x="788" y="644" class="pinw">USB-C (native CDC)</text>
@@ -215,7 +215,7 @@
     <line x1="410" y1="772" x2="440" y2="772" stroke="#3949AB" stroke-width="3"/><text x="446" y="776" class="lbl">USB-C (CDC)</text>
     <line x1="580" y1="772" x2="610" y2="772" stroke="#c0392b" stroke-width="3"/><text x="616" y="776" class="lbl">AC mains ⚠</text>
   </g>
-  <text x="74" y="798" class="warn" font-size="10.5">⚠ The repo's SVG (docs/libreroaster_wiring.svg) has SPI permuted and a non-existent microphone — use this diagram instead.</text>
+  <text x="74" y="798" class="warn" font-size="10.5">Historical note (pre-2026-08-08): SPI was permuted + mic shown in docs/libreroaster_wiring.svg — now fixed. This diagram remains the canonical build reference.</text>
 
-  <text x="660" y="980" text-anchor="middle" class="net" font-size="10">Claude Opus 4.8 · 2026-05-29 · Full netlist and BOM in wiring-verified-opus-4-8_en.md · Audit in resume-opus-4-8.md</text>
+  <text x="660" y="980" text-anchor="middle" class="net" font-size="10">Verified 2026-09-09 vs src/config/constants.rs + src/hardware/init.rs · Netlist: this SVG + docs/libreroaster_pinviz.yaml · BOM: docs/libreroaster_pinviz.yaml</text>
 </svg>

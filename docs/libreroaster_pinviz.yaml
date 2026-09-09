@@ -1,7 +1,7 @@
 # LibreRoaster — Realistic Hardware Pinout (aligned with firmware v0.1)
 # Board: ESP32-C3 (RISC-V, 160MHz, 400KB SRAM, 4MB Flash)
 # Sources: src/config/constants.rs, docs/HARDWARE.md, docs/pinout.md
-# Last aligned: 2026-08-04
+# Last aligned: 2026-09-06 — pinout.svg resistor fix (100k weak) + timer docs
 
 board: esp32c3_devkit_m1
 title: "LibreRoaster v0.1 — Complete Wiring Diagram (ESP32-C3)"
@@ -131,10 +131,10 @@ devices:
     label: "MOSFET Driver (IRF520 / IRLZ44N)"
     position: { x: 420, y: 180 }
     pins:
-      - { name: "GATE",  gpio: 9,  note: "PWM signal → ESP32 GPIO9 (25kHz), series 100Ω resistor recommended" }
+      - { name: "GATE",  gpio: 9,  note: "PWM signal → ESP32 GPIO9 (25kHz), series 1kΩ resistor to gate" }
       - { name: "DRAIN", note: "Fan (–) — low-side switching" }
       - { name: "SOURCE", voltage: "GND", note: "Common ground" }
-      - { name: "GATE-GND", note: "10kΩ pull-down resistor (prevents floating gate during boot)" }
+      - { name: "GATE-GND", note: "100kΩ weak pull-down gate→GND (does not load GPIO9 strapping; separated by 1kΩ)" }
 
   - id: dc_fan
     label: "DC Fan (12V/24V, PWM @ 25kHz)"
@@ -297,7 +297,7 @@ annotations:
     pins: [9, 10]
     severity: info
 
-  - text: "USB CDC (native ESP32-C3 USB) is the PRIMARY Artisan connection. UART0 (GPIO20/21) is SECONDARY — both channels active simultaneously via Embassy async."
+  - text: "USB CDC (native ESP32-C3 USB) is the PRIMARY Artisan connection. UART0 (GPIO20/21) is SECONDARY — both transports listened concurrently; commands accepted on the latched channel only (multiplexer, 60 s idle reset)."
     pins: [20, 21]
     severity: info
 
@@ -335,7 +335,7 @@ bom:
   - { qty: 1, part: "Heating Element",                 spec: "AC, 800-2000W (depends on roaster size)",           cost: "$10-30" }
   - { qty: 1, part: "12V Power Supply",               spec: "5A minimum (for fan + logic)",                      cost: "$10-20" }
   - { qty: 1, part: "USB-UART Adapter",               spec: "FTDI/CH340/CP2102, 3.3V logic",                    cost: "$3-8" }
-  - { qty: 1, part: "Resistor Kit",                   spec: "100Ω, 10kΩ (gate, pull-down)",                     cost: "$2" }
+  - { qty: 1, part: "Resistor Kit",                   spec: "1kΩ (series), 10kΩ (GPIO9→3.3V), 100kΩ weak (gate→GND), 330Ω (LED)", cost: "$2" }
   - { qty: 1, part: "Terminal Blocks / Wiring",        spec: "AC-rated for heater connections",                   cost: "$5" }
   - { qty: 1, part: "Electret Mic + MAX4466 (opt.)",   spec: "Analog, for first-crack detector",                  cost: "$3-5" }
 

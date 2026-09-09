@@ -1,6 +1,6 @@
 # Testing — LibreRoaster
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-09-09
 
 This document describes every test layer in the project, what each covers, its current status, and how to run it.
 
@@ -21,7 +21,7 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 python3 scripts/serial_integration_test.py --port /dev/ttyUSB0
 ```
 
-**Current status:** host-side test suite is fully green — **693 tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-08-12, tras la auditoría de compatibilidad Artisan A-TC4 + verificación light-roast A-TC4-D). The suite holds **487 unit + 255 integration test functions**; the difference vs. the 693 passing in this gate are the regression/feature-gated tests (see §2.7 and §6). Includes the safety hunt suites (`safety_repro_tests.rs`, `safety_injection_midroast_tests.rs`, `safety_invariant_harness.rs` — 1000 roasts aleatorios), the in-crate transport byte-drip tests (T-B1..T-B4), the Artisan golden-transcript replay suite (`artisan_transcript_replay.rs`), the pipeline soak (`pipeline_soak.rs`), the light-roast verification suite (A-TC4-D, see §2.2), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
+**Current status:** host-side test suite is fully green — **735 tests pass** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast`), 0 failures (2026-09-09). The suite holds **502 lib + 233 integration test functions**; gated suites compile to 0 in this gate (see §2.7 and §6: `sensor_conversion`/`regression_status`/`fault_injection_scenarios` require `--features regression`, `thermal_closed_loop` requires `--features simulated-sensors`). Includes the safety hunt suites (`safety_repro_tests.rs`, `safety_injection_midroast_tests.rs`, `safety_invariant_harness.rs` — 1000 roasts aleatorios), the in-crate transport byte-drip tests (T-B1..T-B4), the Artisan golden-transcript replay suite (`artisan_transcript_replay.rs`), the pipeline soak (`pipeline_soak.rs`), the light-roast verification suite (A-TC4-D, see §2.2), and the extended proptests (parser/PID/actuador/RoastCurve/formatters).
 
 > Note: the previous edition of this document hard-coded a count of "218 unit + 133 integration" plus "3 pre-existing doctest failures in `src/memory/strategy.rs`". The count drifted out of date and the "pre-existing failures" did not exist on `develop`. Both claims have been removed in favour of running the suite.
 
@@ -56,7 +56,7 @@ These live inside the library crate, co-located with the code they test. They ve
 | `src/hardware/*.rs` (ssr, init, max31856, fan, mod) | 8 | SSR PWM, hardware init validation, MAX31856 register math, fan duty mapping | ✅ All pass |
 | `src/memory/constants.rs`, `src/host_time_driver.rs` | 2 | Memory/allocation constants; host Embassy time driver | ✅ All pass |
 
-**Totals:** 487 unit tests across 32 files in `src/`.
+**Totals:** 502 lib tests across `src/` (see `cargo test --lib` output for per-module breakdown).
 
 ---
 
@@ -68,7 +68,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| All integration test files | 255 | ✅ All pass (693 pass in the default `--features test` gate; 33 more are regression-gated, §2.7) |
+| All integration test files | 233 | ✅ All pass in the default `--features test` gate (735 total with lib; regression-gated suites compile to 0 here, §2.7) |
 
 ### 2.1 Protocol & Command Handling
 
@@ -94,7 +94,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/fault_injection_scenarios.rs` | 4 | Overtemp/emergency-latch/STOP-recovery fault injection (requires `--features regression`). Note: watchdog-timeout and mid-roast hardware faults live in `tests/safety_injection_midroast_tests.rs` (see below) | ✅ All pass |
+| `tests/fault_injection_scenarios.rs` | 0 in default gate (4 with `--features regression`) | Overtemp/emergency-latch/STOP-recovery fault injection (requires `--features regression`). Note: watchdog-timeout and mid-roast hardware faults live in `tests/safety_injection_midroast_tests.rs` (see below) | ✅ Pass with `regression` |
 | `tests/safety_injection_midroast_tests.rs` | 6 | Mid-roast fault injection (requires `--features test`): heater-write failure (Bug B escalation), fan-write failure, sensor disconnect (F4.11 debounce → NaN → latched emergency), **software watchdog timeout** (watchdog.rs:78-81, formerly untested), interleaved USB/UART routing, SSR-not-available gating | ✅ All pass |
 | `tests/error_integration_tests.rs` | 5 | Cross-cutting error integration: error types through dispatch, safety handler error mapping, error recovery strategies | ✅ All pass |
 
@@ -112,7 +112,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/sensor_conversion.rs` | 16 | Sensor temperature conversion: raw-to-celsius, fault register parsing, edge-case temperatures (fixture rows require `--features regression`) | ✅ All pass |
+| `tests/sensor_conversion.rs` | 0 in default gate (16 with `--features regression`) | Sensor temperature conversion: raw-to-celsius, fault register parsing, edge-case temperatures (fixture rows require `--features regression`) | ✅ Pass with `regression` |
 | `tests/concurrent_sensor_test.rs` | 1 | Concurrent sensor access: async sensor read under concurrent command processing | ✅ All pass |
 | `tests/fan_serialization.rs` | 6 | Fan state serialization: fan speed set/get through status, fan OutputFormatter integration | ✅ All pass |
 | `tests/ssr_scheduler.rs` | 3 | SSR scheduler: duty cycle timing, cycle-guard window enforcement | ✅ All pass |
@@ -128,7 +128,7 @@ All integration tests live as top-level files directly in `tests/` with mocked h
 
 | File | Tests | Focus | Status |
 |------|-------|-------|--------|
-| `tests/regression_status.rs` | 13 | Regression mode status reporting: formatting STATUS with regression active flag, snapshot fixture replay (requires `--features regression`) | ✅ All pass |
+| `tests/regression_status.rs` | 0 in default gate (13 with `--features regression`) | Regression mode status reporting: formatting STATUS with regression active flag, snapshot fixture replay (requires `--features regression`) | ✅ Pass with `regression` |
 
 ---
 
@@ -310,7 +310,7 @@ Fields: `#<time_s>,ET,BT,ROR,Gas`.
 | `CHAN;1200` | polling rate | Artisan's channel-map handshake: the rate is recorded in `chan_poll_rate_hz` and acknowledged with `#<rate>`. It does NOT select a transport (USB/UART routing is owned by the command multiplexer). |
 | `UNITS;C` / `UNITS;F` | temp scale | Set Celsius or Fahrenheit |
 | `SETTARGET 200` | target °C | Set PID target temperature |
-| `START` | **no args** | Begin roast, enable PID and continuous output |
+| `START` | **no args** | Begin roast, enable PID (does **NOT** enable continuous output — send `STREAM;ON` separately) |
 | `STOP` | none | Emergency stop, disable PID and output |
 | `OT1 75` | 0-100 | Manual heater at given percentage |
 | `IO3 75` | 0-100 | Manual fan at given percentage |

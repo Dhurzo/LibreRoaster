@@ -1,9 +1,11 @@
 # SAFETY_BUGS.md — Informe de caza de bugs críticos (seguridad de tostado)
 
-**Fecha:** 2026-08-05 (bug hunt + fixes)
+**Fecha:** 2026-08-05 (snapshot; conteos actualizados 2026-09-09 — ver nota)
 **Plan:** `BUG-CATCH-PLAN.md` (fases 0–4 y 6 ejecutadas; fase 5 pendiente de placa sin instrumentos)
-**Suite:** 674 tests host verdes, 0 fallos, 0 ignored · clippy estricto limpio · fmt limpio · build embedded `riscv32imc-unknown-none-elf` OK
+**Suite:** 735 tests host verdes (era 674 el 2026-08-05), 0 fallos, 0 ignored · clippy estricto limpio · fmt limpio · build embedded `riscv32imc-unknown-none-elf` OK
 **Repros rojos:** 0 — los 2 repros `#[ignore]` (S5, S10) fueron des-ignorados y pasan tras los fixes.
+
+> Nota 2026-09-09: este informe es un snapshot histórico. Tras v5.4 la lógica citada como `roaster_control.rs` vive en `controllers/sensor|actuator|safety|dispatch.rs` + `ssr_logic.rs`; el feed es `WatchdogFeeder::feed()` (no `feed_async`); `PROBE_STUCK_HEATER_MIN_PCT = 50` se conserva como constante pero el gate es `ssr_output > 0.0` (S1).
 
 ---
 
@@ -78,7 +80,7 @@ Seams explotados: traits `Heater`/`Fan` (inyectables), `update_temperatures_with
 
 #### S9 — Sentinel del SW watchdog: feed en t=0 desarma el timeout para siempre (RESUELTO)
 - `LAST_FEED_MS == 0` era a la vez sentinel y timestamp real; un feed en el primer ms del baseline desarmaba el timeout para siempre.
-- **Fix**: sentinel explícito `NEVER_FED = u64::MAX` (watchdog.rs: `LAST_FEED_MS` arranca y se reinicializa a `NEVER_FED`; guards `last != NEVER_FED` en `feed_async`/`is_alive`).
+- **Fix**: sentinel explícito `NEVER_FED = u64::MAX` (watchdog.rs: `LAST_FEED_MS` arranca y se reinicializa a `NEVER_FED`; guards `last != NEVER_FED` en `feed`/`is_alive`).
 - **Repro**: `software_watchdog_times_out_after_missed_feeds` (con el sentinel fijo ya no necesita el priming para escapar la ventana; sigue pasando).
 
 #### S10 — Formato READ trunca números finitos enormes → token corrupto en el wire (RESUELTO)
@@ -98,7 +100,7 @@ Seams explotados: traits `Heater`/`Fan` (inyectables), `update_temperatures_with
 
 | # | Decisión | Estado |
 |---|---|---|
-| S2 | START/PREHEAT/OFF desarman el latch de emergencia y re-energizan (whitelist roaster_control.rs:1004-1019, 1125-1127). Es la puerta de recovery del operador (Bug P3) | **Mantener** (compatibilidad con el flujo manual de Artisan; el latch no es una barrera contra el host serial por diseño). Documentar en PROTOCOL.md: "el host serial es el operador; la seguridad física depende de supervisión humana + backstops temporales". Repro: `s2_serial_start_clears_latched_emergency_and_reenergizes` |
+| S2 | START/PREHEAT/`PID;OFF` desarman el latch de emergencia y re-energizan (whitelist `roaster_control.rs:1232-1251` + `clear_emergency_explicit`). Es la puerta de recovery del operador (Bug P3) | **Mantener** (compatibilidad con el flujo manual de Artisan; el latch no es una barrera contra el host serial por diseño). Documentar en PROTOCOL.md: "el host serial es el operador; la seguridad física depende de supervisión humana + backstops temporales". Repro: `s2_serial_start_clears_latched_emergency_and_reenergizes` |
 | S1 | Manual mode confía en el operador | **Corregido** con el detector probe-stuck a cualquier duty (fail-safe); la exposición de 2 min a BT plano con heater on queda cubierta |
 | S4 | Trampas internas no escalaban el fallo de fan | **Corregido**: ahora propagan `HardwareError(emergency_fan_failed)` |
 
@@ -130,7 +132,7 @@ Pendiente de ejecución con la placa real (no requiere osciloscopio):
 | S9 | sentinel `NEVER_FED = u64::MAX` en SW watchdog | src/safety/watchdog.rs | `software_watchdog_times_out_after_missed_feeds` |
 | S10 | clamp ±1000 en `normalize_read_value` | src/output/artisan.rs | proptest `format_read_never_panics_with_hostile_status` (verde) |
 
-**Re-verificación post-fix (sin nuevos bugs)**: suite completa 674/674 (0 failed, 0 ignored), clippy estricto 0 warnings, fmt limpio, build embedded release OK, harness 1000 roasts aleatorios con 0 violaciones de las 7 invariantes.
+**Re-verificación post-fix (sin nuevos bugs)**: suite completa 735/735 (era 674 el 2026-08-05; 0 failed, 0 ignored), clippy estricto 0 warnings, fmt limpio, build embedded release OK, harness 1000 roasts aleatorios con 0 violaciones de las 7 invariantes.
 
 ---
 
