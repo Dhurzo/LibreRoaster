@@ -3,7 +3,7 @@
 //! Handles `Reset`: zeroes telemetry/control state while preserving the
 //! safety latch (`fault_condition`). `Reset` is currently unreachable on the
 //! wire — no parser produces `RoasterCommand::Reset` — but the handler is
-//! retained as a latent recovery primitive; see Bug R5 below.
+//! retained as a latent recovery primitive.
 
 // System command handler for roaster control
 //
@@ -44,13 +44,11 @@ impl RoasterCommandHandler for SystemCommandHandler {
     ) -> Result<(), RoasterError> {
         match command {
             RoasterCommand::Reset => {
-                // Bug R5 (2026-07-26): the previous `*status = SystemStatus::default()`
-                // wiped `fault_condition` and the safety latch — a `Reset`
-                // (dead on the wire today — no parser produces it — but
-                // latent) would have cleared an armed emergency as a side
-                // effect. Reset only telemetry/control data; the safety latch
-                // is released exclusively via the explicit recovery path
-                // (`clear_emergency_explicit`).
+                // Reset only telemetry/control data; the safety latch is
+                // released exclusively via the explicit recovery path
+                // (`clear_emergency_explicit`). `Reset` is latent (no parser
+                // produces it) but must never clear an armed emergency as a
+                // side effect.
                 status.bean_temp = 0.0;
                 status.env_temp = 0.0;
                 status.target_temp = 0.0;

@@ -41,14 +41,9 @@ impl fmt::Display for UartError {
     }
 }
 
-/// Bug #9 fix: split the UART driver into two independent halves with their
-/// own mutexes. Previously a single `UART_MUTEX` guarded both halves, and the
-/// reader task retained it across its `.await` (only released when bytes
-/// actually arrived), indefinitely blocking the writer. That meant every
-/// protocol response arrived one poll late and unsolicited telemetry could
-/// stall forever on an idle line. With separate mutexes the RX task can wait
-/// for incoming bytes while the TX task concurrently emits responses and
-/// continuous telemetry.
+/// Split UART driver: two independent halves with their own mutexes, so the
+/// reader task can wait for incoming bytes while the TX task concurrently
+/// emits responses and continuous telemetry.
 pub struct UartTxDriver {
     tx: UartTx<'static, esp_hal::Async>,
 }
@@ -61,20 +56,15 @@ impl UartTxDriver {
 
     /// Transmit `data` over UART, bounding each phase at 50 ms (see in-body notes).
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UartError> {
-        // Bug S8 (2026-08-05): symmetric with the USB CDC driver (Bug A2).
         // `Write::write`/`Write::flush` on the async UART can stall if the
-        // peripheral wedges; with no timeout the `dual_output_task` froze
-        // forever holding the TX mutex, killing ALL output (including the
-        // UART fallback during a USB session). Bound each phase at 50 ms and
-        // treat a timeout as a dropped line — the next telemetry tick carries
-        // fresh data anyway.
+        // peripheral wedges; with no timeout the `dual_output_task` would
+        // freeze holding the TX mutex, killing ALL output. Bound each phase
+        // at 50 ms and treat a timeout as a dropped line — the next telemetry
+        // tick carries fresh data anyway.
         //
-        // Bug M2 (2026-08-10): `Write::write` is a PARTIAL write by contract
-        // (esp-hal writes `min(128 - fifo_count, len)` bytes and returns the
-        // count). The old `Ok(Ok(_)) => {}` discarded that count, silently
-        // truncating any line longer than the FIFO space free (a wide STATUS,
-        // a `#DUMP` row, a long `ERR`). Use `write_all`, which loops until
-        // the whole buffer is out.
+        // `Write::write` is a PARTIAL write by contract (esp-hal writes
+        // `min(128 - fifo_count, len)` bytes and returns the count). Use
+        // `write_all`, which loops until the whole buffer is out.
         use embassy_time::{with_timeout, Duration};
         match with_timeout(Duration::from_millis(50), self.tx.write_all(data)).await {
             Ok(Ok(())) => {}
@@ -175,9 +165,7 @@ pub async fn uart_read_bytes(buffer: &mut [u8]) -> Result<usize, UartError> {
 }
 
 #[cfg(test)]
-/// Internal accessor for tests that need to interact with the UART driver
-/// directly. The driver is now split, so the old single accessor is gone;
-/// this stub returns None to keep any historical caller compiling.
+/// Internal accessor for tests that need to interact with the UART driver directly.
 pub fn get_uart_driver() -> Option<&'static ()> {
     None
 }

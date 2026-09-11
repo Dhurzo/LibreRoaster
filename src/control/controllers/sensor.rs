@@ -13,11 +13,9 @@ use log::warn;
 
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
-/// Audit A-TC4-D (2026-08-12): two-tier rate-of-rise debounce (light-roast
-/// verification). Aggressive light-roast turnarounds legitimately climb
-/// 0.5-1.0 °C/s for a few seconds right after charge; the old single
-/// 3-tick / 0.5 °C/s rule latched a false emergency on them in firmware-PID
-/// mode. The guard now runs two bands:
+/// Two-tier rate-of-rise debounce (light-roast verification). Aggressive
+/// light-roast turnarounds can legitimately climb 0.5-1.0 °C/s for a few
+/// seconds right after charge. The guard runs two bands:
 ///
 /// - HARD (> `MAX_BT_RATE_OF_RISE_HARD`): a genuine runaway — latches after
 ///   `ROR_EXCEEDED_CONSECUTIVE_LIMIT` consecutive ticks (~1 s).
@@ -58,37 +56,22 @@ pub struct SensorController {
     last_pv_sample_time: Option<Instant>,
     /// IIR-filtered PV derivative state (`DERIVATIVE_FILTER_ALPHA` smoothing).
     last_filtered_derivative: f32,
-    /// Bug M4 (2026-07-25): dedicated sample pair for the BT-only RoR guard.
-    /// The previous design keyed the runaway guard on `status.derivative_rate`
-    /// which is the PV (BT or ET) derivative chosen by `update_pid_control`.
-    /// With `PID;CHAN;1` (ET as PV — supported and tested downstream), the
-    /// 0.5 °C/s threshold (calibrated for the sluggish BT) is applied to ET
-    /// (which climbs much faster), causing a latched emergency on a healthy
-    /// roast while a real BT runaway goes unguarded. Keep the guard on BT
-    /// always and the PID feed on whatever PV is configured; they are now
-    /// independent measurements.
+    /// Dedicated sample pair for the BT-only RoR guard. The guard stays on
+    /// BT always while the PID feed follows whatever PV is configured; they
+    /// are independent measurements. With `PID;CHAN;1` (ET as PV) the
+    /// 0.5 °C/s threshold calibrated for the sluggish BT would otherwise be
+    /// applied to the faster ET, tripping on a healthy roast while a real BT
+    /// runaway goes unguarded.
     last_bt_guard_sample: Option<(f32, Instant)>,
     /// Filtered BT rate-of-rise (°C/s) consumed by `check_bt_rate`.
     bt_guard_derivative: f32,
-    /// Bug R1 (2026-07-26): debounce counter for the legacy PV-RoR check
-    /// (`check_rate_of_rise`). Previously a SINGLE `ror_exceeded_count` was
-    /// shared with the BT-only runaway guard (`check_bt_rate`, bug M4): with
-    /// `PID;CHAN;1` (ET as PV) a healthy ET tick reset the shared counter
-    /// every tick, so a genuine BT runaway never accumulated to
-    /// `ROR_EXCEEDED_CONSECUTIVE_LIMIT` — the BT guard was silently neutered
-    /// in the exact configuration it was built for. Each guard now owns its
-    /// own counter.
+    /// Debounce counter for the legacy PV-RoR check (`check_rate_of_rise`).
+    /// Each guard owns its own counter.
     pv_ror_exceeded_count: u8,
-    /// Bug R1: dedicated counter for the BT-only runaway guard
-    /// (`check_bt_rate`). Independent of `pv_ror_exceeded_count`.
+    /// Dedicated counter for the BT-only runaway guard (`check_bt_rate`).
+    /// Independent of `pv_ror_exceeded_count`.
     bt_ror_exceeded_count: u8,
-    // Bug V2-3 / B7 residual: per-channel fault counters. A single shared
-    // counter fed with `bean_fault || env_fault` was defeated by a chronically
-    // disconnected ET (a single-probe configuration the code itself supports):
-    // the shared counter sat permanently >= threshold, so the FIRST transient
-    // BT glitch immediately met `bean_fault && count >= DEBOUNCE` and poisoned
-    // bean_temp with NaN in the same tick — exactly the spurious emergency B7
-    // was supposed to eliminate. Each channel now debounces against its OWN
+    // Per-channel fault counters. Each channel debounces against its OWN
     // counter, so a faulted-but-unused channel cannot arm the other channel's
     // NaN decision.
     consecutive_bean_faults: u8,
@@ -128,7 +111,7 @@ impl SensorController {
     /// Sample both channels and update `status` (debounced faults, held/poisoned temps).
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
-        // F4.11 (Gap #3) + V2-3: debounce each channel against its own counter.
+        // Debounce each channel against its own counter.
         self.apply_fault_debounce(
             sample.bean_fault.has_fault(),
             sample.env_fault.has_fault(),
@@ -144,25 +127,20 @@ impl SensorController {
         )
     }
 
-    /// F4.11 (Gap #3) + V2-3: per-channel debounce. Each channel increments
-    /// its own counter only on its own fault and resets only on its own clean
-    /// read, so a chronically faulted-but-unused channel cannot push the other
-    /// channel's counter to the NaN threshold.
+    /// Per-channel debounce. Each channel increments its own counter only on
+    /// its own fault and resets only on its own clean read, so a chronically
+    /// faulted-but-unused channel cannot push the other channel's counter to
+    /// the NaN threshold.
     ///
-    /// Bug P2 (2026-08-03): `fault_condition` now latches ONLY when the
-    /// chronically faulted channel is the ACTIVE PID input (`pid_channel`):
-    /// 1 = ET, anything else = BT (see the PV selector in
-    /// `RoasterControl::update_control`). The single-probe configuration the
-    /// code explicitly supports (V2-3/B7: BT-only with ET unplugged) used to
-    /// latch the GLOBAL fault after 5 ET-fault ticks, which rejected every
-    /// subsequent START/OT1/PREHEAT with `fault_condition_active` — the
-    /// device became inoperable while the fault was in a channel the control
-    /// loop never reads. An unused channel's persistent fault still advances
-    /// its own debounce counter (so switching `pid_channel` to it re-arms the
-    /// latch) and still poisons its own temperature with NaN, but it no
-    /// longer blocks the whole device. Other paths that set
-    /// `fault_condition` (overtemp in `update_temperatures`, manual
-    /// emergency, RWDT) are not affected.
+    /// `fault_condition` latches ONLY when the chronically faulted channel is
+    /// the ACTIVE PID input (`pid_channel`): 1 = ET, anything else = BT (see
+    /// the PV selector in `RoasterControl::update_control`). The supported
+    /// single-probe configuration (BT-only with ET unplugged) stays operable:
+    /// an unused channel's persistent fault still advances its own debounce
+    /// counter (so switching `pid_channel` to it re-arms the latch) and still
+    /// poisons its own temperature with NaN, but it no longer blocks the whole
+    /// device. Other paths that set `fault_condition` (overtemp in
+    /// `update_temperatures`, manual emergency, RWDT) are not affected.
     pub fn apply_fault_debounce(
         &mut self,
         bean_fault: bool,
@@ -219,20 +197,10 @@ impl SensorController {
             });
         }
 
-        // Bug V2-2 / B7 residual: "hold last value" was NOT implemented. The
-        // previous code wrote `status.bean_temp = bean_temp + OFFSET`
-        // UNCONDITIONALLY here, BEFORE the fault gate below. So during the
-        // pre-debounce window the value "held" was THIS faulted sample's raw
-        // garbage (typically 0 from an open thermocouple), not the last valid
-        // one — and the comment claiming "hold the last valid value" was
-        // false. The PID/RoR/overtemp guards then operated on that garbage
-        // for up to ~0.5-0.8 s until the 5th fault sample finally poisoned
-        // the value with NaN.
-        //
-        // Fix: write `status.*_temp` ONLY when the channel is not faulted;
-        // if the channel is faulted AND its own debounce counter has reached
-        // the threshold, poison with NaN; otherwise leave the previous value
-        // in `status.*_temp` untouched — a REAL hold of the last valid reading.
+        // Write `status.*_temp` ONLY when the channel is not faulted; if the
+        // channel is faulted AND its own debounce counter has reached the
+        // threshold, poison with NaN; otherwise leave the previous value in
+        // `status.*_temp` untouched — a real hold of the last valid reading.
         if !bean_fault.has_fault() {
             status.bean_temp = bean_temp + BT_THERMOCOUPLE_OFFSET;
         } else if self.consecutive_bean_faults >= SENSOR_FAULT_DEBOUNCE {
@@ -247,18 +215,17 @@ impl SensorController {
         }
         // else: status.env_temp keeps the last valid value (real hold).
 
-        // Bug B-Q (2026-08-04): only mark the read as fresh when at least one
-        // channel delivered a clean sample. When BOTH channels are faulted the
-        // sample carried no new information (the V2-2 hold keeps the last
-        // valid temperature in `status.*_temp`), so refreshing
-        // `last_temp_read` here would make `update_control`'s staleness guard
-        // treat the held value as fresh and let the PID keep integrating
-        // against stale data — worst case at boot: PV stuck at 0.0 while the
-        // heater ramps toward 100 %. Freezing the timestamp sends the PID
-        // into the stale-hold branch (`is_stale`), which holds the last
-        // APPLIED output instead of ramping. A single-channel fault (e.g. the
-        // supported BT-only config with ET unplugged) still refreshes the
-        // timestamp because the other channel is usable.
+        // Only mark the read as fresh when at least one channel delivered a
+        // clean sample. When BOTH channels are faulted the sample carries no
+        // new information (the hold above keeps the last valid temperature in
+        // `status.*_temp`), so refreshing `last_temp_read` would make
+        // `update_control`'s staleness guard treat the held value as fresh and
+        // let the PID keep integrating against stale data. Freezing the
+        // timestamp sends the PID into the stale-hold branch (`is_stale`),
+        // which holds the last APPLIED output instead of ramping. A
+        // single-channel fault (e.g. the supported BT-only config with ET
+        // unplugged) still refreshes the timestamp because the other channel
+        // is usable.
         if !(bean_fault.has_fault() && env_fault.has_fault()) {
             self.last_temp_read = Some(current_time);
         }
@@ -366,11 +333,11 @@ impl SensorController {
                 }
             );
             if tiered_ror_trip(status.derivative_rate, self.pv_ror_exceeded_count) {
-                // Bug M10 (2026-08-10): reset the debounce counter before
-                // firing, exactly like `check_bt_rate` does. Without this the
-                // counter stayed pinned at the limit through the latched
-                // period and the recovery, so the NEXT roast tripped on a
-                // SINGLE tick above the threshold — no 3-sample confirmation.
+                // Reset the debounce counter before firing, exactly like
+                // `check_bt_rate`. Otherwise the counter stays pinned at the
+                // limit through the latched period and the recovery, so the
+                // next roast would trip on a single tick above the threshold
+                // with no multi-sample confirmation.
                 self.pv_ror_exceeded_count = 0;
                 return Err(RoasterError::TemperatureOutOfRange {
                     source: Some("rate_of_rise_exceeded"),
@@ -383,12 +350,12 @@ impl SensorController {
         Ok(())
     }
 
-    /// Bug M4 (2026-07-25): refresh the BT-only rate-of-rise dedicated for the
-    /// runaway guard. `update_temperatures` already gates BT in
-    /// `status.bean_temp`, and `update_control` calls this every tick with
-    /// the canonical BT reading (independent of the active PV channel). The
-    /// IIR-filtered slope is consumed by the guard below (`check_bt_rate`),
-    /// never by the PID feed path that uses `refresh_filtered_derivative`.
+    /// Refresh the BT-only rate-of-rise dedicated for the runaway guard.
+    /// `update_temperatures` already gates BT in `status.bean_temp`, and
+    /// `update_control` calls this every tick with the canonical BT reading
+    /// (independent of the active PV channel). The IIR-filtered slope is
+    /// consumed by the guard below (`check_bt_rate`), never by the PID feed
+    /// path that uses `refresh_filtered_derivative`.
     ///
     /// Returns `None` on the first sample (no prior pair), when BT is
     /// non-finite (NaN during the post-debounce poison window), or when the
@@ -411,10 +378,10 @@ impl SensorController {
         out
     }
 
-    /// Bug M4 (2026-07-25): the BT-only runaway guard. Threshold semantics
-    /// match `check_rate_of_rise` (consecutive-count-style debounce) but
-    /// consume the BT-only derivative so a healthy ET-as-PV roast never
-    /// trips the BT guard while a genuine BT runaway still does.
+    /// The BT-only runaway guard. Threshold semantics match
+    /// `check_rate_of_rise` (consecutive-count-style debounce) but consume
+    /// the BT-only derivative so a healthy ET-as-PV roast never trips the BT
+    /// guard while a genuine BT runaway still does.
     pub fn check_bt_rate(&mut self, bt_rate: f32) -> Result<(), RoasterError> {
         if bt_rate > MAX_BT_RATE_OF_RISE {
             self.bt_ror_exceeded_count = self.bt_ror_exceeded_count.saturating_add(1);
@@ -525,12 +492,12 @@ mod tests {
             ..SensorFault::default()
         };
 
-        // V2-2 fix: a faulted BT channel must NOT overwrite status.bean_temp
-        // with its raw garbage. Seed a valid prior reading, then drive faulted
-        // samples that carry a *distinct* garbage value (999.0 — out of the
-        // valid range yet still not NaN) below the debounce threshold. The
-        // last valid value (150.0 + offset) must be retained — NOT 999.0 and
-        // NOT NaN — proving the "hold last value" comment now tells the truth.
+        // A faulted BT channel must NOT overwrite status.bean_temp with its
+        // raw garbage. Seed a valid prior reading, then drive faulted samples
+        // that carry a *distinct* garbage value (999.0 — out of the valid
+        // range yet still not NaN) below the debounce threshold. The last
+        // valid value (150.0 + offset) must be retained — NOT 999.0 and NOT
+        // NaN — proving the hold-last-value behaviour.
         ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, now, &mut status)
             .expect("seed clean reading");
         let last_valid_bt = status.bean_temp;
@@ -575,14 +542,14 @@ mod tests {
             ..SensorFault::default()
         };
 
-        // V2-2 fix: seed a valid env_temp, then drive faulted ET samples with
-        // a distinct garbage value (888.0) below the debounce threshold. The
+        // Seed a valid env_temp, then drive faulted ET samples with a
+        // distinct garbage value (888.0) below the debounce threshold. The
         // last valid value must be retained — NOT 888.0 and NOT NaN.
         ctrl.update_temperatures(150.0, 120.0, no_fault, no_fault, now, &mut status)
             .expect("seed clean reading");
         let last_valid_et = status.env_temp;
 
-        // Bug B7: a SINGLE faulty ET read must not poison env_temp. The PID
+        // A SINGLE faulty ET read must not poison env_temp. The PID
         // downstream treats NaN as an emergency; debouncing before poisoning
         // prevents a transient SPI glitch from latching one.
         ctrl.update_temperatures(150.0, 888.0, no_fault, env_fault, now, &mut status)
@@ -609,8 +576,8 @@ mod tests {
         assert!(status.env_temp.is_nan());
     }
 
-    // V2-3: per-channel counters — a chronically faulted ET must NOT push the
-    // BT counter to the NaN threshold, so the first transient BT glitch does
+    // Per-channel counters — a chronically faulted ET must NOT push the BT
+    // counter to the NaN threshold, so the first transient BT glitch does
     // NOT poison BT in the same tick.
     #[test]
     fn single_chronic_env_fault_does_not_poison_bean_on_bt_glitch() {
@@ -639,11 +606,11 @@ mod tests {
         for _ in 0..10 {
             ctrl.apply_fault_debounce(false, true, &mut status);
         }
-        // Bug P2 (2026-08-03): with the default `pid_channel = 2` (BT is the
-        // PV), a chronic ET fault must NOT latch the GLOBAL fault_condition —
-        // the old behaviour bricked single-probe configs by rejecting every
-        // START/OT1/PREHEAT. The env counter is at threshold (so switching
-        // pid_channel to 1 re-arms the latch) but the device stays operable.
+        // With the default `pid_channel = 2` (BT is the PV), a chronic ET
+        // fault must NOT latch the GLOBAL fault_condition — otherwise
+        // single-probe configs reject every START/OT1/PREHEAT. The env
+        // counter is at threshold (so switching pid_channel to 1 re-arms the
+        // latch) but the device stays operable.
         assert!(
             !status.fault_condition,
             "P2: a chronically faulted non-PV channel must not latch fault_condition"
@@ -651,10 +618,9 @@ mod tests {
         assert_eq!(ctrl.consecutive_bean_faults, 0);
         assert!(ctrl.consecutive_env_faults >= SENSOR_FAULT_DEBOUNCE);
 
-        // First transient BT glitch: with a SHARED counter the bean NaN
-        // decision would have fired immediately. With per-channel counters,
-        // the BT counter has just incremented to 1 (< DEBOUNCE), so bean_temp
-        // retains its last valid value — no NaN, no emergency this tick.
+        // First transient BT glitch: with per-channel counters the BT counter
+        // has just incremented to 1 (< DEBOUNCE), so bean_temp retains its
+        // last valid value — no NaN, no emergency this tick.
         ctrl.apply_fault_debounce(true, true, &mut status);
         ctrl.update_temperatures(999.0, 888.0, bean_fault, env_fault, now, &mut status)
             .expect("faulted read");
@@ -697,9 +663,9 @@ mod tests {
         assert_eq!(ctrl.pv_ror_exceeded_count, 1);
     }
 
-    /// Audit A-TC4-D (2026-08-12): the SOFT band (0.5..=1.0 °C/s — where
-    /// aggressive light-roast turnarounds live) must require the extended
-    /// debounce: 11 consecutive soft ticks stay tolerated, the 12th latches.
+    /// The SOFT band (0.5..=1.0 °C/s — where aggressive light-roast
+    /// turnarounds live) requires the extended debounce: 11 consecutive soft
+    /// ticks stay tolerated, the 12th latches.
     #[test]
     fn check_rate_of_rise_soft_band_requires_extended_debounce() {
         let hub = SensorConversionHub::new();
@@ -804,11 +770,11 @@ mod tests {
         assert_eq!(ctrl.pv_ror_exceeded_count, 1);
     }
 
-    /// Bug R1 (2026-07-26): the BT runaway guard and the legacy PV-RoR check
-    /// must use SEPARATE debounce counters. Previously one shared counter
-    /// meant a healthy ET-as-PV tick (which resets the PV counter every tick)
-    /// also reset the BT guard counter, so a genuine BT runaway never reached
-    /// `ROR_EXCEEDED_CONSECUTIVE_LIMIT` in `PID;CHAN;1` mode.
+    /// The BT runaway guard and the legacy PV-RoR check use SEPARATE
+    /// debounce counters, so a healthy ET-as-PV tick (which resets the PV
+    /// counter every tick) never resets the BT guard counter and a genuine
+    /// BT runaway still reaches `ROR_EXCEEDED_CONSECUTIVE_LIMIT` in
+    /// `PID;CHAN;1` mode.
     #[test]
     fn bt_guard_counter_independent_of_pv_check() {
         let hub = SensorConversionHub::new();
@@ -824,7 +790,7 @@ mod tests {
 
         // BT is genuinely running away: its guard must accumulate despite the
         // healthy PV checks interleaved between ticks. 1.1 °C/s sits in the
-        // HARD band (Audit A-TC4-D), so the fast 3-tick debounce applies.
+        // HARD band, so the fast 3-tick debounce applies.
         assert!(ctrl.check_bt_rate(1.1).is_ok());
         assert_eq!(ctrl.bt_ror_exceeded_count, 1);
         assert!(ctrl.check_rate_of_rise(&status).is_ok()); // healthy ET tick
@@ -862,7 +828,7 @@ mod tests {
         ));
     }
 
-    // ── F4.11 (Gap #3) + V2-3: fault_condition debounce, per-channel ──────
+    // ── fault_condition debounce, per-channel ──────
 
     #[test]
     fn fault_debounce_single_transient_does_not_latch() {
@@ -958,15 +924,15 @@ mod tests {
 
     #[test]
     fn fault_debounce_independent_channels() {
-        // V2-3: a fault on one channel must not advance the other's counter.
+        // A fault on one channel must not advance the other's counter.
         let hub = SensorConversionHub::new();
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
 
-        // 10 ticks with only ET faulted: bean counter stays 0, and (Bug P2:
-        // default pid_channel=2 → BT is the PV) the GLOBAL fault_condition
-        // must NOT latch — a single-probe (BT-only) configuration stays
-        // operable with ET unplugged.
+        // 10 ticks with only ET faulted: bean counter stays 0, and (default
+        // pid_channel=2 → BT is the PV) the GLOBAL fault_condition must NOT
+        // latch — a single-probe (BT-only) configuration stays operable with
+        // ET unplugged.
         for _ in 0..10 {
             ctrl.apply_fault_debounce(false, true, &mut status);
         }
@@ -986,7 +952,7 @@ mod tests {
         assert_eq!(ctrl.consecutive_env_faults, 0);
     }
 
-    // ── Bug P2 (2026-08-03): fault_condition latches only on the ACTIVE PV ──
+    // ── fault_condition latches only on the ACTIVE PV ──
 
     #[test]
     fn env_fault_latch_does_not_arm_when_pid_channel_is_bt() {
@@ -1044,18 +1010,17 @@ mod tests {
         assert!(status.fault_condition);
     }
 
-    // ── Bug B-Q (2026-08-04): a fully-faulted read must not refresh the ────
-    // ── freshness timestamp (`last_temp_read`) ─────────────────────────────
+    // ── A fully-faulted read must not refresh the freshness ────
+    // ── timestamp (`last_temp_read`) ─────────────────────────────
 
     #[test]
     fn both_channels_faulted_does_not_refresh_last_temp_read() {
-        // Bug B-Q: when BOTH channels are faulted the sample carries no new
-        // information (V2-2 hold keeps the last valid temperature). Refreshing
-        // `last_temp_read` made `update_control`'s staleness guard treat the
-        // held value as fresh, letting the PID integrate against stale data —
-        // worst case at boot: PV stuck at 0.0 with the heater ramping toward
-        // 100 %. The timestamp must stay frozen so the PID enters the
-        // stale-hold branch instead.
+        // When BOTH channels are faulted the sample carries no new
+        // information (the hold keeps the last valid temperature).
+        // Refreshing `last_temp_read` would make `update_control`'s staleness
+        // guard treat the held value as fresh, letting the PID integrate
+        // against stale data. The timestamp must stay frozen so the PID
+        // enters the stale-hold branch instead.
         let hub = SensorConversionHub::new();
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();

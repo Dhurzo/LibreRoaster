@@ -15,7 +15,7 @@ use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::LowSpeed;
 use log::{debug, error, info, warn};
 
-// M1 (2026-08-21): the pure decision logic (error type, hardware status,
+// The pure decision logic (error type, hardware status,
 // `SsrControlBase` state machine, `StatusGetters`) lives in the un-gated
 // `ssr_logic` module so host unit tests cover it — this module is replaced
 // by `ssr_stub.rs` on host builds. Re-exported so existing callers keep
@@ -205,12 +205,12 @@ where
                 source: "set_duty_failed",
             })?;
 
-        // Bug H6 (2026-08-10): record the commanded duty BEFORE the readback
+        // Record the commanded duty BEFORE the readback
         // verification. `set_duty_raw` succeeded — the duty IS in the LEDC.
         // If only the re-read fails (DUTY_R lag / mismatch after retry), the
-        // `?` below used to skip this assignment, leaving `current_duty`
-        // stale: telemetry reported a false duty and the observability gate
-        // + heat cross-check evaluated safety against a duty the hardware is
+        // `?` below would skip this assignment, leaving `current_duty`
+        // stale: telemetry would report a false duty and the observability gate
+        // + heat cross-check would evaluate safety against a duty the hardware is
         // not applying. The cache must track the commanded value, not the
         // verification outcome.
         self.base.current_duty = ledc_duty;
@@ -269,8 +269,7 @@ where
         // expected OFF state). The `detect_heat_source` runs from
         // `periodic_check` once enough duty is commanded for the pin read to
         // be meaningful. `SsrControlBase::new` already initializes the
-        // hardware status to `Available` to avoid the dead-lock the report
-        // flags.
+        // hardware status to `Available` to avoid boot dead-lock.
         info!(
             "SSR control initialized (simple mode) - heat source: {:?}",
             ssr.base.hardware_status
@@ -293,14 +292,11 @@ where
 
     /// Run heat detection and the stuck-on cross-check for the simple controller.
     pub fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
-        // No throttle (bug audit 2026-08-02): consecutive detects must stay
-        // one control-loop tick apart (~330 ms → ~130 ms of PWM phase
-        // separation, provably in the (100, 200) ms band the
-        // `HEAT_ABSENT_DEBOUNCE` run-bound analysis relies on). The previous
-        // 1000 ms gate made the separation depend on the tick multiple — up
-        // to 3 ticks — where the OFF window could alias with the phase and
-        // produce long spurious "no heat" runs. A GPIO read is negligible;
-        // the per-tick cadence also matches `cross_check_heat_detection`.
+        // No throttle: consecutive detects stay one control-loop tick apart
+        // (~330 ms → ~130 ms of PWM phase separation, in the (100, 200) ms
+        // band the `HEAT_ABSENT_DEBOUNCE` run-bound analysis relies on).
+        // A GPIO read is negligible; the per-tick cadence also matches
+        // `cross_check_heat_detection`.
         self.detect_heat_source(current_time)?;
 
         self.base
@@ -323,7 +319,7 @@ where
                 source: "set_duty_failed",
             })?;
 
-        // Bug H6 (2026-08-10): record the commanded duty BEFORE the readback
+        // Record the commanded duty BEFORE the readback
         // verification — the write reached the LEDC; a failed re-read must
         // not leave the duty cache stale (see SsrControl::set_percentage).
         self.base.current_duty = ledc_duty;
@@ -415,7 +411,7 @@ where
 {
     fn periodic_check(&mut self, current_time: u32) -> Result<(), SsrError> {
         // No throttle — see SsrControlSimple::periodic_check for the
-        // phase-separation argument (bug audit 2026-08-02).
+        // phase-separation argument.
         self.detect_heat_source(current_time)?;
 
         Ok(())
@@ -620,13 +616,6 @@ mod tests {
         assert_eq!(SSR_DUTY_TOLERANCE_TICKS, 128);
     }
 
-    // The `test_digital_error_kind` test that lived here was removed: it
-    // constructed `SsrError::OutputError` without the required `source` field
-    // (E0063) and was dead code only compiled under `#[cfg(test)]` on the
-    // riscv32 target. The underlying behaviour — `SsrError: embedded_hal::
-    // digital::Error` returning `ErrorKind::Other` — is exercised trivially by
-    // the trait impl at lines 84-88 above and needs no dedicated test.
-    //
     // Note: this module is replaced by `ssr_stub.rs` on host builds, so the
     // tests here only compile on the riscv32 target. The heat-source
     // detection debounce logic therefore lives in `heat_presence.rs` (an

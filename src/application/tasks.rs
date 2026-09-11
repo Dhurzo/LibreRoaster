@@ -95,11 +95,9 @@ struct WatchdogSnapshot {
 struct TickState {
     formatter: MutableArtisanFormatter,
     was_continuous: bool,
-    /// L2: tracks the rising edge of `roast_logger::is_logging_active()` so
-    /// the formatter epoch resets on START itself (sharing the roast
-    /// logger's epoch), not just on the continuous-output rising edge
-    /// (which also fires on pre-roast OT1/OT2 and would desynchronise
-    /// the stream's `time_s` from the `#DUMP` `time_s`).
+    /// Tracks the rising edge of `roast_logger::is_logging_active()` so the
+    /// formatter epoch resets on START itself (sharing the roast logger's
+    /// epoch), keeping the stream's `time_s` aligned with the `#DUMP` `time_s`.
     was_roast_active: bool,
     last_guard_total_timeouts: u16,
     stage_tracker: StageTracker,
@@ -110,25 +108,10 @@ struct TickState {
     sensor_err: Option<ContainerError>,
     consecutive_sensor_errors: u8,
     /// Timestamp of last telemetry emission (`None` → never emitted).
-    /// Bug M1 (2026-07-25): the previous design throttled telemetry by tick
-    /// count assuming every tick was exactly 100 ms. The control loop spends
-    /// ≈ 210 ms waiting for the MAX31856 conversion every tick
-    /// (`MAX31856_CONVERSION_TIME_MS`), so the real tick period is
-    /// ~310–330 ms (`CONTROL_LOOP_TICK_MS` + overhead); a 10-tick gate
-    /// therefore emitted every ≈ 3.1 s — telemetry 3× slower than documented
-    /// and `#DUMP` drainage 3× slower than the comment claimed. We gate by
-    /// elapsed wall-clock instead, so the rate is
-    /// `DEFAULT_OUTPUT_INTERVAL_MS` regardless of how the tick budget is spent.
+    /// Gated by elapsed wall-clock so the rate stays at
+    /// `DEFAULT_OUTPUT_INTERVAL_MS` regardless of how the tick budget is
+    /// spent (real tick ≈ 310–330 ms with the MAX31856 conversion wait).
     last_telemetry_emit: Option<Instant>,
-    // Bug V2-8: the roast epoch (`time_s` base for `#DUMP` and the ring
-    // logger) is now OWNED by `RoastLogger` itself — set by its
-    // `start_roast(now)`, called from `handle_start_roast`. The per-task
-    // `roast_start: Option<Instant>` field and the rising-edge
-    // `mark_continuous_started` are gone: capturing the epoch on the
-    // continuous-telemetry rising edge was wrong (manual `OT1`/`OT2` also
-    // fire that edge, shifting the time base by minutes) and the field was
-    // never reset between roasts (the second roast inherited the first's
-    // uptime). The logger's internal `start` fixes both.
 }
 
 impl TickState {
@@ -148,10 +131,6 @@ impl TickState {
             last_telemetry_emit: None,
         }
     }
-
-    // Bug V2-8: `mark_continuous_started` removed — the epoch is owned by
-    // `RoastLogger::start_roast` (called from `handle_start_roast`), no
-    // longer captured on the continuous-telemetry rising edge.
 }
 
 #[cfg(any(feature = "instrumentation", feature = "test"))]
@@ -242,16 +221,8 @@ fn report_stage_with_failure(
 
 async fn drain_commands(tick_state: &mut TickState) {
     let cmd_channel = ServiceContainer::get_artisan_channel();
-    // Bug L14 (2026-08-10): wire the multiplexer's 60 s idle failover into
-    // the control loop. `is_idle`/`reset` were previously only exercised by
-    // tests; the arrival-based reset inside `on_command_received` only fired
-    // when a NEW command arrived, so a dead session kept the active channel
-    // latched and the dual-output task kept writing (and timing out at 50 ms
-    // per line) to a vanished host. This releases the channel after
-    // `IDLE_TIMEOUT_SECS` of silence; the next command on either wire
-    // re-activates it. On the host test build the mocked `Instant` reports
-    // zero elapsed time, so the check is inert there (never idle once a
-    // command was seen; a fresh `None` mux resets to `None` — a no-op).
+    // Release the multiplexer channel after `IDLE_TIMEOUT_SECS` of silence;
+    // the next command on either wire re-activates it.
     critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let mut guard = multiplexer.borrow(cs).borrow_mut();
@@ -261,31 +232,12 @@ async fn drain_commands(tick_state: &mut TickState) {
             }
         }
     });
-    // Bug B26: the previous comment claimed a fallback pattern that does NOT
-    // exist — when the artisan channel is full, `try_send` in
-    // `transport_tasks::handle_parsed_command` returns Err, and the only
-    // surfacing was `send_channel_full_error` emitting
-    // `ERR channel_full command_dropped` to the host. The previous wording
-    // ("fallback pattern... prevents silent drops") implied an internal
-    // retry path that we never implemented. The host is now told explicitly
-    // when a command is dropped due to backpressure, which is the contract
-    // Artisan uses to retry. Further hardening (priority eviction of older
-    // commands when STOP/EmergencyStop arrives) is documented but out of
-    // scope for this audit — touch only when adding pre-emptive priority
-    // support.
-    // Audit M-X2 (2026-08-11): the per-tick rate-limit branch
-    // (`cmds_this_tick > MAX_COMMANDS_PER_TICK` → `ERR rate_limited`) was
-    // unreachable: `MAX_COMMANDS_PER_TICK == ARTISAN_CMD_CHANNEL_SIZE == 16`
-    // (constants.rs), so a 16-slot channel can never deliver 17 commands in
-    // one tick. Real backpressure is the channel capacity itself, surfaced to
-    // the host as `ERR channel_full command_dropped` in transport_tasks.rs.
-    // The misleading branch was removed; do NOT re-add unless the constant is
-    // lowered below the channel size first.
+    // When the artisan channel is full, `try_send` returns Err, surfaced to
+    // the host as `ERR channel_full command_dropped` so Artisan can retry.
+    // Real backpressure is the channel capacity itself.
     while let Ok(traced_command) = cmd_channel.try_receive() {
         if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
-            // Bug M9 (2026-07-26): the previous `continue` here skipped the
-            // normal dispatch, so REG produced NO output — Artisan had zero
-            // feedback. `request_regression()` starts the runner (embedded +
+            // `request_regression()` starts the runner (embedded +
             // `regression` feature) or is a no-op stub (host); the command
             // then flows through the normal handler path so
             // `handle_run_regression` emits `OK regression_started` or
@@ -400,20 +352,9 @@ async fn read_sensors(
     );
 
     if tick_state.sensor_err.is_none() {
-        // Audit MR-3 (2026-08-11): snapshot BT/ET with a SINGLE
-        // `with_roaster_async` acquisition BEFORE the debug! macro. The
-        // previous form put `ServiceContainer::read_bean_temperature().await`
-        // and `…::read_env_temperature().await` directly in the macro args,
-        // which (a) expanded to TWO extra async-mutex lock acquisitions per
-        // tick (a 210 ms-worth of lock churn in an already lock-heavy tick),
-        // and (b) instrumented the system by distorting the very timing the
-        // Diagnostic/`instrumentation` build exists to measure. The macro
-        // gate makes this a no-op at the production `Warn` filter, but the
-        // `.await`-in-args trap is a latent hazard for future maintainers.
-        // Audit CI (2026-08-11): `.unwrap_or` (NOT `.unwrap()`) — the
-        // embedded-target clippy flagged the hand-rolled match as
-        // `manual_unwrap_or`; `unwrap_or` is not `unwrap_used` (deny applies
-        // only to `.unwrap()`).
+        // Snapshot BT/ET with a single `with_roaster_async` acquisition
+        // before the debug! macro to avoid extra lock acquisitions per tick.
+        // Use `.unwrap_or`, not `.unwrap()`.
         let (bt, et) = ServiceContainer::with_roaster_async(|roaster| {
             let status = roaster.get_status();
             (status.bean_temp, status.env_temp)
@@ -776,14 +717,9 @@ async fn emit_telemetry_stage(
     if is_continuous_now != tick_state.was_continuous {
         tick_state.formatter.reset();
         tick_state.was_continuous = is_continuous_now;
-        // Bug V2-8: the roast epoch is now owned by `RoastLogger` (set by
-        // its `start_roast(now)` from `handle_start_roast`). The per-task
-        // rising-edge capture (`mark_continuous_started`) is gone — it fired
-        // on manual OT1/OT2 too and was never reset between roasts.
     }
 
-    // L2: also align the FORMATTER's epoch with the START event itself,
-    // not only with the continuous-output rising edge. Otherwise manual
+    // Align the formatter's epoch with the START event itself, not only with
     // OT1/OT2 before START lets the formatter accumulate time while the
     // roast logger sits at 0s — start_streaming after the START produces
     // a #timestamp for the ARTISAN line that disagrees with the #DUMP
@@ -794,13 +730,8 @@ async fn emit_telemetry_stage(
     }
     tick_state.was_roast_active = roast_active_now;
 
-    // Bug M1 (2026-07-25): respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for
-    // telemetry by checking elapsed wall-clock from the *last emission*
-    // instead of a tick counter. The control loop spends ≈ 210 ms of every
-    // tick waiting for MAX31856 conversion (`MAX31856_CONVERSION_TIME_MS`),
-    // so the real tick period is ~310–330 ms and a tick-count gate emitted
-    // every ≈ 3.1 s of real time — the `#DUMP` drain ran 3× slower than the
-    // previous comment claimed.
+    // Respect DEFAULT_OUTPUT_INTERVAL_MS (1000 ms) for telemetry by
+    // checking elapsed wall-clock from the last emission.
     let should_emit = match tick_state.last_telemetry_emit {
         None => true,
         Some(last) => {
@@ -812,33 +743,23 @@ async fn emit_telemetry_stage(
         tick_state.last_telemetry_emit = Some(tick_start);
     }
 
-    // Bug B17: feed the ring-buffer roast logger ONLY on the 1 Hz telemetry
-    // tick. The previous code ran `log_sample` on every ~100 ms control tick
-    // (regardless of `should_emit`), so 256 samples covered ~25.6 s instead
-    // of the intended ~256 s — a roast that survived a Disconnect/#DUMP
-    // recovery lost the most recent data because the ring had already cycled.
+    // Feed the ring-buffer roast logger only on the 1 Hz telemetry tick,
+    // so 256 samples cover ~256 s.
     if should_emit {
         if let Some(status) = status_for_logger {
-            // Bug V2-8: the `time_s` column is derived INSIDE the logger from
-            // its own epoch (`start`, set by `start_roast`) and this `now`.
-            // The caller no longer owns the time base. M8: feed the `#DUMP`
-            // `ror` column in °C/min (the unit the column header declares),
-            // not the internal °C/s — `LogSampleData.ror` is documented in
-            // roast_logger.rs as "°C/min".
+            // The `time_s` column is derived inside the logger from its own
+            // epoch (`start`, set by `start_roast`) and this `now`. Feed the
+            // `#DUMP` `ror` column in °C/min (the unit the column header
+            // declares).
             //
-            // Bug DRA-1 (2026-07-26): the buffer used to store raw INTERNAL
-            // °C (and °C/min RoR) regardless of the active display scale,
-            // while the live stream (`ArtisanFormatter`) converts to the
-            // host's scale. After a Disconnect/#DUMP recovery in °F mode the
-            // dump showed °C values — 1.8×+32 off from the live curve.
-            // Apply the same conversion as the live formatter so dump and
-            // stream agree.
+            // The buffer stores display-scale values: apply the same
+            // conversion as the live formatter so dump and stream agree.
             let ts = &status.temperature_settings;
             let bt = ts.convert_to_display(status.bean_temp);
             let et = ts.convert_to_display(status.env_temp);
             let target = ts.convert_to_display(status.target_temp);
-            // M8 established °C/min for the ror column; in °F mode mirror the
-            // live formatter (°C/s × 9/5 × 60 = °F/min).
+            // In °F mode mirror the live formatter
+            // (°C/s × 9/5 × 60 = °F/min).
             let ror = if ts.is_fahrenheit() {
                 status.derivative_rate * (9.0 / 5.0) * 60.0
             } else {
@@ -874,14 +795,11 @@ async fn emit_telemetry_stage(
         }
     }
 
-    // Bug V2-7: drain `#DUMP` rows OUTSIDE the 1 Hz `should_emit` gate so a
-    // full roast (up to LOG_CAPACITY rows) drains in ~6 s, not ~256 s. The
-    // previous design popped one row per 1 Hz tick and dropped the row
-    // silently if `try_send` failed (channel full). Here we drain up to
-    // `MAX_DUMP_ROWS_PER_TICK` rows per 100 ms tick and RE-PUSH a row to
-    // the front of the deque if the output channel is full, so no row is
-    // lost. `with_roaster_async` is `.await`-able but its closure is sync —
-    // we take+send+repush via three short lock acquisitions.
+    // Drain `#DUMP` rows outside the 1 Hz `should_emit` gate so a full roast
+    // drains in ~6 s. Drain up to `MAX_DUMP_ROWS_PER_TICK` rows per tick and
+    // re-push a row to the front of the deque if the output channel is full,
+    // so no row is lost. `with_roaster_async` is `.await`-able but its
+    // closure is sync — take+send+repush via three short lock acquisitions.
     const MAX_DUMP_ROWS_PER_TICK: usize = 4;
     for _ in 0..MAX_DUMP_ROWS_PER_TICK {
         let row_opt = ServiceContainer::with_roaster_async(|roaster| roaster.take_dump_row())
@@ -889,10 +807,9 @@ async fn emit_telemetry_stage(
             .ok()
             .flatten();
         let Some(row) = row_opt else { break };
-        // Audit H-5 (2026-08-11): dump rows are `String<DUMP_ROW_CAPACITY=128>`
-        // (roast_logger.rs) while the output channel messages are
-        // `String<TRACE_EVENT_MAX_LEN=256>` — widen here. Infallible by
-        // construction (128 < 256); the else arm is defensive only.
+        // Dump rows are `String<DUMP_ROW_CAPACITY=128>` while the output
+        // channel messages are `String<TRACE_EVENT_MAX_LEN=256>` — widen
+        // here (128 < 256).
         let Ok(msg) = String::<TRACE_EVENT_MAX_LEN>::try_from(row.as_str()) else {
             let _ =
                 ServiceContainer::with_roaster_async(|roaster| roaster.push_dump_row_front(row))
@@ -1090,10 +1007,7 @@ async fn control_loop_tick(tick_state: &mut TickState, output_channel: &OutputCh
     .await;
 
     if let Some(e) = tick_state.sensor_err.take() {
-        // Bug #11: this error originates from `roaster_async_sensor_read`
-        // (set into `tick_state.sensor_err` earlier in the tick), not from
-        // a ServiceContainer access. The previous message pointed at the
-        // wrong subsystem during debugging.
+        // This error originates from `roaster_async_sensor_read`.
         info!("Sensor read error in control loop: {:?}", e);
     }
 
@@ -1132,11 +1046,6 @@ pub async fn control_loop_task() {
 
     loop {
         control_loop_tick(&mut tick_state, output_channel).await;
-        // Bug L10 (2026-08-10): reference the constant instead of the raw
-        // literal — `CHARGE_SAMPLE_TICK_DIV` derives from
-        // `CONTROL_LOOP_TICK_MS = CONTROL_LOOP_PERIOD_MS + …`, so a constant
-        // change silently shifted the charge window while the loop kept the
-        // stale `100` here.
         Timer::after(Duration::from_millis(
             crate::config::constants::CONTROL_LOOP_PERIOD_MS as u64,
         ))
@@ -1170,13 +1079,8 @@ fn send_handler_error(
 ///
 /// Does NOT include the `Timer::after(5ms)` — that's the caller's responsibility.
 ///
-/// Bug E2 (2026-08-03): drains up to `MAX_MESSAGES_PER_TICK` per invocation
-/// instead of exactly one. A `#DUMP` backlog (up to 256 rows pushed at 4 rows
-/// per control tick) used to monopolize the channel: with one `try_receive`
-/// per 5 ms tick every SAFETY/ERR/STATUS message produced behind the dump was
-/// dropped silently (`try_send` on a full channel). Draining up to 4 messages
-/// per 5 ms tick still bounds the USB/UART write blocking per tick while
-/// clearing the dump backlog ~4× faster, cutting the silent-drop window.
+/// Drains up to `MAX_MESSAGES_PER_TICK` per invocation to bound the USB/UART
+/// write blocking per tick while clearing dump backlogs faster.
 const MAX_MESSAGES_PER_TICK: usize = 4;
 
 async fn dual_output_tick(output_channel: &OutputChannel) {
@@ -1197,12 +1101,9 @@ async fn dual_output_tick(output_channel: &OutputChannel) {
         });
 
         if let Some(bytes) = data_to_write {
-            // Audit H-1 (2026-08-11): write failures used to vanish (`let _`).
-            // The message is already dequeued — no retry is possible — but the
-            // failure must now be counted (per transport) and logged (bounded:
-            // one warn! per failed write, at most one per 5 ms tick, and only
-            // while a transport is genuinely failing). The counters are
-            // exposed via `hardware::error_counters`.
+            // The message is already dequeued — no retry is possible — but
+            // failures are counted (per transport) and logged. The counters
+            // are exposed via `hardware::error_counters`.
             match channel {
                 CommChannel::Usb => {
                     if let Err(e) =
@@ -1249,10 +1150,8 @@ pub async fn dual_output_task() {
 }
 
 fn append_crlf(payload: &str) -> heapless::Vec<u8, 300> {
-    // Audit M-R4 (2026-08-11): the output channel carries at most
-    // `String<TRACE_EVENT_MAX_LEN=256>` messages, so payload + CRLF is
-    // ≤ 258 bytes. The previous `Vec<u8, 1024>` burned 4× the needed stack
-    // per message (up to 4 KB churn per output tick on the task stack).
+    // The output channel carries at most `String<TRACE_EVENT_MAX_LEN=256>`
+    // messages, so payload + CRLF is ≤ 258 bytes.
     let mut bytes = heapless::Vec::<u8, 300>::new();
     if bytes.extend_from_slice(payload.as_bytes()).is_ok() {
         let _ = bytes.extend_from_slice(b"\r\n");

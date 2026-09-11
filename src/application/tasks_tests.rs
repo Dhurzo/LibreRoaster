@@ -263,24 +263,22 @@ fn control_loop_tick_empty_tick_completes() {
     );
 }
 // ── L3: full pipeline with simulated sensors (wall clock) ──────────
-// Audit L3 (2026-08-11): exercises the REAL control-loop pipeline on
-// host — `control_loop_tick` with a `SensorConversionHub` backed by
-// `SimulatedSensorSource` (advances by wall clock), READ commands
-// flowing in through the artisan channel and TC4 responses out through
-// the output channel. Gated behind `simulated-sensors`; the embedded
-// 210 ms MAX31856 wait does not exist on this path, so ticks are fast
-// and real time drives the curve. This is a smoke run (short window of
-// the default medium roast curve), not a full roast — the full roast is
-// covered deterministically at L1 in tests/full_roast_verification.rs.
+// Exercises the real control-loop pipeline on host — `control_loop_tick`
+// with a `SensorConversionHub` backed by `SimulatedSensorSource` (advances
+// by wall clock), READ commands in through the artisan channel and TC4
+// responses out through the output channel. Gated behind
+// `simulated-sensors`. This is a smoke run (short window of the default
+// medium roast curve); the full roast is covered deterministically at L1
+// in tests/full_roast_verification.rs.
 #[cfg(all(test, feature = "simulated-sensors", not(target_arch = "riscv32")))]
 #[test]
 fn control_loop_tick_simulated_sensors_full_pipeline() {
     let _guard = acquire_test_lock();
     let roaster = build_test_roaster();
     init_container_with_roaster(roaster);
-    // The real boot wires the watchdog feeder (app_builder.rs); the
-    // container helper does not — without it the second tick would trip
-    // the 2-consecutive-failures emergency on `WatchdogUninitialized`.
+    // The container helper does not install the watchdog feeder — without it
+    // the second tick would trip the 2-consecutive-failures emergency on
+    // `WatchdogUninitialized`.
     ServiceContainer::get_instance()
         .init_watchdog(crate::safety::watchdog::WatchdogFeeder::initialize().expect("wd"));
     drain_all_channels();
@@ -633,7 +631,7 @@ fn drain_stage_reports(channel: &OutputChannel) -> usize {
     }
     count
 }
-// ── Bug P7 (2026-08-03): comms read errors are channel-aware ──────────
+// ── Comms read errors are channel-aware ──────────
 #[test]
 fn should_count_read_error_only_active_channel() {
     use crate::hardware::transport_tasks::should_count_read_error;
@@ -661,7 +659,7 @@ fn should_count_read_error_only_active_channel() {
         CommChannel::Usb
     ));
 }
-// ── Bug P8 (2026-08-03): garbage must not hijack the multiplexer ───────
+// ── Garbage must not hijack the multiplexer ───────
 #[test]
 fn garbage_line_does_not_hijack_channel() {
     use crate::hardware::transport_tasks::{send_parse_error, TransportConfig};

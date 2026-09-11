@@ -7,32 +7,27 @@ use critical_section::Mutex;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
 
-/// Capacity of the ring buffer in samples. Bug V2-7: exposed as `pub` so the
+/// Capacity of the ring buffer in samples. Exposed as `pub` so the
 /// `RoasterControl.dump_pending` deque can be sized to the same number of
 /// rows (the queue must hold a full-ring dump without losing any row).
 pub const LOG_CAPACITY: usize = 256;
 const SAMPLE_CAPACITY: usize = 128;
 /// Header written at the start of a dump.
 const CSV_HEADER: &str = "time_s,bt,et,heater,fan,target,ror";
-// F3.6 (Gap #1): aggregate dump buffer. Was 4096 (truncated long roasts);
-// bumped to 8192. Bug M13 (2026-08-10): the previous comment claimed "typical
-// 10-15 min roasts at 1 Hz fit comfortably" — they do NOT: the ring holds
-// LOG_CAPACITY = 256 samples ≈ 256 s ≈ 4.3 min at 1 Hz, and the dump buffer
-// fits ~227 rows (~33-36 B each) ≈ 3.8 min, discarding the OLDEST rows
-// (charge, dry-end, first crack) on a mid-roast reconnect. A 15 min ring
-// would need ~43 KB of RAM (beyond the 72 KB heap), so this documents the
-// real envelope: a reconnect dump covers the last ~4 min. If longer coverage
-// is needed, lower the log cadence (e.g. one sample every 4 s → ~17 min at
-// the same footprint).
+// Aggregate dump buffer. The ring holds LOG_CAPACITY = 256 samples ≈ 256 s
+// ≈ 4.3 min at 1 Hz, and the dump buffer fits ~227 rows (~33-36 B each)
+// ≈ 3.8 min, discarding the oldest rows on a mid-roast reconnect. A
+// reconnect dump covers the last ~4 min. If longer coverage is needed,
+// lower the log cadence (e.g. one sample every 4 s → ~17 min at the same
+// footprint).
 /// Per-row truncation still happens in `handle_dump_log` via `DUMP_ROW_CAPACITY`.
 pub const DUMP_BUFFER_SIZE: usize = 8192;
 
-/// Audit H-5 (2026-08-11): max length of a single `#DUMP` row as queued in
+/// Max length of a single `#DUMP` row as queued in
 /// `RoasterControl.dump_pending`. Dump rows come from ring entries of
-/// `String<SAMPLE_CAPACITY>` plus the CSV header, so 128 is the true upper
-/// bound — sizing the queue with 256 wasted ~132 B × 257 slots (~34 KB
-/// static) for rows that are 33-40 B. Do NOT shrink below this: a row longer
-/// than the capacity is silently dropped by `try_from` in `handle_dump_log`.
+/// `String<SAMPLE_CAPACITY>` plus the CSV header, so 128 is the upper bound.
+/// Do not shrink below this: a longer row is silently dropped by `try_from`
+/// in `handle_dump_log`.
 pub const DUMP_ROW_CAPACITY: usize = SAMPLE_CAPACITY;
 
 /// Data for a single log sample.
@@ -48,8 +43,8 @@ pub struct LogSampleData {
     pub fan: f32,
     /// Target temperature (°C).
     pub target: f32,
-    /// Rate of rise (display scale: °C/min or °F/min — Bug DRA-1: the caller
-    /// converts from internal °C/s using the active display scale).
+    /// Rate of rise (display scale: °C/min or °F/min — the caller converts
+    /// from internal °C/s using the active display scale).
     pub ror: f32,
 }
 
@@ -58,13 +53,9 @@ static ROAST_LOGGER: Mutex<RefCell<RoastLogger>> =
 
 /// Start logging a new roast.
 ///
-/// Bug V2-8: the epoch is now owned by the logger. The previous design took
-/// `now: Instant` and discarded it, then relied on a per-task `roast_start`
-/// captured from the *continuous-telemetry rising edge* (which also fires on
-/// manual `OT1`/`OT2`) and never reset it between roasts — a second roast on
-/// the same boot inherited the first roast's uptime as its `time_s` base.
-/// Storing `start` here means the epoch is fixed exactly when START happens
-/// (the only caller is `handle_start_roast`) and is reset on every START.
+/// The epoch is owned by the logger. Storing `start` here fixes the epoch
+/// exactly when START happens (the only caller is `handle_start_roast`)
+/// and resets it on every START.
 pub fn start_roast(now: Instant) {
     critical_section::with(|cs| ROAST_LOGGER.borrow(cs).borrow_mut().start_roast(now));
 }
@@ -74,10 +65,8 @@ pub fn stop_roast() {
     critical_section::with(|cs| ROAST_LOGGER.borrow(cs).borrow_mut().stop_roast());
 }
 
-/// Log a sample to the ring buffer. Bug V2-8: the sample's `time_s` column is
-/// derived from the logger's own epoch (`start`) and the supplied `now`,
-/// NOT from a caller-provided `elapsed_secs`. The caller (the telemetry task)
-/// no longer owns the time base.
+/// Log a sample to the ring buffer. The sample's `time_s` column is derived
+/// from the logger's own epoch (`start`) and the supplied `now`.
 pub fn log_sample(data: LogSampleData, now: Instant) {
     critical_section::with(|cs| {
         ROAST_LOGGER.borrow(cs).borrow_mut().log_sample(data, now);
@@ -98,10 +87,8 @@ pub fn is_logging_active() -> bool {
 pub struct RoastLogger {
     buffer: Deque<HeaplessString<SAMPLE_CAPACITY>, LOG_CAPACITY>,
     active: bool,
-    /// Bug V2-8: epoch fixed by `start_roast(now)`. `None` until the first
-    /// START; `log_sample` falls back to `0` for samples logged before a
-    /// START (defensive — should not happen in practice, since the task only
-    /// logs while `active`, which only the START path sets).
+    /// Epoch fixed by `start_roast(now)`. `None` until the first START;
+    /// `log_sample` falls back to `0` for samples logged before a START.
     start: Option<Instant>,
 }
 
@@ -128,8 +115,8 @@ impl RoastLogger {
     pub fn start_roast(&mut self, now: Instant) {
         self.active = true;
         self.buffer.clear();
-        // Bug V2-8: own the epoch. Every START resets it, so a second roast
-        // on the same boot does not inherit the first roast's uptime.
+        // Every START resets the epoch, so a second roast does not inherit
+        // the first roast's uptime.
         self.start = Some(now);
     }
 
@@ -144,15 +131,11 @@ impl RoastLogger {
     }
 
     /// Append a CSV-formatted sample. Oldest sample is evicted if buffer is full.
-    /// Bug V2-8: derive `time_s` from `self.start` and `now`, not the caller.
-    /// Bug A1 (2026-07-25): `Instant::duration_since` panics on `now < self.start`
-    /// (embassy-time's `Instant` is a saturating-checking `Instant` that
-    /// `unwrap!`-s the underlying subtraction). On the tick where `START` is
-    /// processed, the control loop's `tick_start` can be slightly EARLIER
-    /// than the `Instant::now()` captured inside `start_roast`, producing
-    /// `now < self.start` and a panic that locks the duty holding its last
-    /// value until the RTC WDT resets the device. Use saturating arithmetic
-    /// so out-of-order `now` reads degrade to 0 elapsed instead of panicking.
+    /// Derive `time_s` from `self.start` and `now`. Use saturating arithmetic
+    /// so out-of-order `now` reads degrade to 0 elapsed instead of panicking
+    /// (`Instant::duration_since` would panic on `now < self.start`; the
+    /// control loop's `tick_start` can be slightly earlier than the
+    /// `Instant::now()` captured in `start_roast`).
     pub fn log_sample(&mut self, data: LogSampleData, now: Instant) {
         if !self.active {
             return;
@@ -183,14 +166,10 @@ impl RoastLogger {
 
     /// Dump all buffered samples as a CSV string with header row.
     ///
-    /// Bug V2-7(4) / B17 residual: the previous iteration walked
-    /// `front.iter().chain(back.iter())` (oldest-first) and `break`-ed when
-    /// the output buffer filled — so a long roast lost the **newest** rows
-    /// (the end of the roast, the most valuable part). This version first
-    /// plans which rows fit by walking **newest → oldest** and accumulating
-    /// their lengths, then emits the selected rows in **chronological order**
+    /// Plan which rows fit by walking newest → oldest and accumulating their
+    /// lengths, then emit the selected rows in chronological order
     /// (oldest-first). The tail of the roast is always preserved at the cost
-    /// of the oldest pre-charge samples.
+    /// of the oldest samples.
     pub fn dump(&self) -> HeaplessString<DUMP_BUFFER_SIZE> {
         let (front, back) = self.buffer.as_slices();
         let total = front.len() + back.len();
@@ -199,11 +178,8 @@ impl RoastLogger {
         // holds the selected chronological positions in newest-first order.
         // We use a heapless::Vec so the array lives on the stack with a fixed
         // upper bound = LOG_CAPACITY; no allocation.
-        //
-        // Bug V2-7(4): reserve room for the `#DUMP `+CSV_HEADER+`\n` line the
-        // emitter writes BEFORE the rows. Otherwise the plan would select one
-        // row too many and the phase-2 emit would silently truncate the last
-        // row (the newest — the most important one).
+        // Reserve room for the `#DUMP `+CSV_HEADER+`\n` line the emitter
+        // writes before the rows.
         const HEADER_LEN: usize = 6 /* "#DUMP " */ + CSV_HEADER.len() + 1 /* '\n' */;
         let mut indices: heapless::Vec<usize, LOG_CAPACITY> = heapless::Vec::new();
         let mut accumulated: usize = HEADER_LEN;
@@ -282,9 +258,7 @@ mod tests {
     use super::*;
 
     /// Helper: a generic sample whose individual fields are irrelevant to
-    /// the time-base tests. Bug V2-8 moved `elapsed_secs` out of `LogSampleData`
-    /// (the logger derives it from `start` + `now`), so this helper takes no
-    /// elapsed argument.
+    /// the time-base tests.
     fn sample() -> LogSampleData {
         LogSampleData {
             bt: 100.0,
@@ -368,9 +342,7 @@ mod tests {
         assert!(!logger.is_active());
     }
 
-    /// Bug V2-8(a): a second roast on the same boot must reset the time base.
-    /// The previous design never reset `TickState.roast_start`, so the second
-    /// roast's `#DUMP` started at the accumulated uptime (minutes in).
+    /// A second roast on the same boot must reset the time base.
     #[test]
     fn second_roast_resets_epoch() {
         let mut logger = RoastLogger::new();
@@ -406,9 +378,8 @@ mod tests {
         );
     }
 
-    /// Bug V2-8: the logger computes `time_s` from its own epoch, ignoring any
-    /// caller-provided notion of elapsed. A sample logged at now=start+5s must
-    /// be tagged `time_s=5` regardless of how the caller may have computed it.
+    /// The logger computes `time_s` from its own epoch. A sample logged at
+    /// now=start+5s must be tagged `time_s=5`.
     #[test]
     fn log_sample_uses_internal_epoch() {
         let mut logger = RoastLogger::new();
@@ -434,10 +405,8 @@ mod tests {
         );
     }
 
-    /// Bug V2-7(4) / B17: `dump()` used to lose the NEWEST rows when the
-    /// output buffer filled (it walked oldest-first and `break`-ed). A long
-    /// roast (more rows than fit in DUMP_BUFFER_SIZE) must keep the TAIL —
-    /// the end of the roast — at the cost of the oldest pre-charge samples.
+    /// A long roast (more rows than fit in DUMP_BUFFER_SIZE) must keep the
+    /// tail — the end of the roast — at the cost of the oldest samples.
     #[test]
     fn dump_preserves_tail_of_long_roast() {
         let mut logger = RoastLogger::new();

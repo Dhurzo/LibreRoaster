@@ -84,12 +84,12 @@ impl TemperatureCommandHandler {
         self.pid_controller.enable();
     }
 
-    /// Bug A3 (2026-07-25): expose the PID-enabled state so `enable_pid` in
-    /// `CommandDispatcher` can decide whether to (re-)enable the controller
-    /// or just update the target. Artisan's ramp/soak driver fires `PID;SV`
-    /// on every setpoint change; each call MUST NOT poke `enable()` because
-    /// that resets the integrator and the previous-derivative history,
-    /// defeating the I-term and causing visible droop on every update.
+    /// Expose the PID-enabled state so `enable_pid` in `CommandDispatcher`
+    /// can decide whether to (re-)enable the controller or just update the
+    /// target. Artisan's ramp/soak driver fires `PID;SV` on every setpoint
+    /// change; each call must NOT reset the integrator and the
+    /// previous-derivative history, which would defeat the I-term and cause
+    /// visible droop on every update.
     pub fn pid_is_enabled(&self) -> bool {
         self.pid_controller.is_enabled()
     }
@@ -138,10 +138,10 @@ impl TemperatureCommandHandler {
                 source: Some("negative_pid_gain"),
             });
         }
-        // Bug B5: mutate in place via `set_gains` instead of rebuilding the
-        // whole controller with `with_gains` (which produced `enabled: false`
-        // and `target: 0.0` — silently disabling the PID and dropping the
-        // heater while `status.pid_enabled` still reported true).
+        // Mutate in place via `set_gains` instead of rebuilding the whole
+        // controller (which would produce `enabled: false` and `target: 0.0`
+        // — silently disabling the PID and dropping the heater while
+        // `status.pid_enabled` still reports true).
         self.pid_controller.set_gains(kp, ki, kd);
         Ok(())
     }

@@ -36,23 +36,19 @@ mod software_watchdog {
     use core::sync::atomic::Ordering;
     use portable_atomic::AtomicU64;
 
-    /// Sentinel meaning "never fed yet". `u64::MAX` on purpose: the previous
-    /// sentinel was `0`, but a feed landing in the first millisecond of the
-    /// time driver's baseline (real `Instant::now()` = 0 ms — always the case
-    /// in host tests, theoretically possible after a boot that feeds before
-    /// the counter advances) was stored as `0` and became indistinguishable
-    /// from "never fed", making `is_alive()` return `true` forever (Bug S9,
-    /// 2026-08-05). A real ms timestamp can never reach `u64::MAX`, so the
+    /// Sentinel meaning "never fed yet". `u64::MAX` on purpose: a feed
+    /// landing in the first millisecond of the time driver's baseline
+    /// (real `Instant::now()` = 0 ms — always the case in host tests,
+    /// theoretically possible after a boot that feeds before the counter
+    /// advances) is stored as `0` and must stay distinguishable from
+    /// "never fed". A real ms timestamp can never reach `u64::MAX`, so the
     /// sentinel is unambiguous.
     const NEVER_FED: u64 = u64::MAX;
 
     /// Timestamp of last successful feed in milliseconds
     static LAST_FEED_MS: AtomicU64 = AtomicU64::new(NEVER_FED);
-    // Bug audit 2026-08-02: the previous 500 ms assumed a ~100 ms loop
-    // cadence ("5 missed ticks"). The real cadence is one tick per
-    // MAX31856 conversion wait (210 ms) + 100 ms timer + overhead ≈ 330 ms,
-    // leaving only ~170 ms of margin — two slightly delayed ticks tripped a
-    // false emergency shutdown mid-roast. 1000 ms covers three full ticks
+    // The real cadence is one tick per MAX31856 conversion wait (210 ms) +
+    // 100 ms timer + overhead ≈ 330 ms. 1000 ms covers three full ticks
     // (~990 ms) plus margin, while still failing well before the 2.2 s HW
     // RWDT (which, unlike the software path, resets the chip without the
     // orderly `SAFETY WATCHDOG` escalation + shutdown).
@@ -69,31 +65,28 @@ mod software_watchdog {
         }
 
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
-            // Audit M-T3 (2026-08-11): `bean_temp` is reserved for a future
-            // overtemp-gated feed (Artisan's convention: stop feeding during
-            // an overtemp crisis so the RWDT trips). Deliberately UNUSED
-            // today — the feed is unconditional, per Bug B18 below.
-            // Bug B18: feed the HW WDT unconditionally FIRST. The fact that we
-            // are executing this at all proves the control loop is alive — even
-            // a degraded-but-alive loop (gap > 500ms) must keep the RWDT fed,
-            // otherwise (with B2 fixed) the chip resets at ~2.2s and skips the
-            // designed `SAFETY WATCHDOG` escalation + orderly shutdown.
+            // `bean_temp` is reserved for a future overtemp-gated feed
+            // (Artisan's convention: stop feeding during an overtemp crisis
+            // so the RWDT trips). Deliberately UNUSED today — the feed is
+            // unconditional.
+            // Feed the HW WDT unconditionally FIRST. The fact that we are
+            // executing this at all proves the control loop is alive — even
+            // a degraded-but-alive loop must keep the RWDT fed, otherwise
+            // the chip resets at ~2.2s and skips the designed
+            // `SAFETY WATCHDOG` escalation + orderly shutdown.
             super::hw_watchdog::feed();
 
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.swap(now, Ordering::SeqCst);
-            // Bug L7 (2026-07-25): saturating subtraction. With
-            // `overflow-checks = true` (release builds may still opt-in for
-            // `embedded`), `now - last` would underflow if the embassy-time
-            // clock were to wrap or two test threads interleaved so that the
-            // new `now` is older than `last`. Saturate to 0 so a transient
-            // out-of-order pair NEVER panics; if `now - last` is 0 the
-            // timeout branch is taken conservatively (correct: a clock that
-            // wrapped is unreliable).
-            // Bug S9: the `last > 0` guard (which skipped the gap check for
-            // "never fed") is replaced by the unambiguous `NEVER_FED`
-            // sentinel, so a genuine first-millisecond feed is checked like
-            // any other.
+            // Saturating subtraction. With `overflow-checks = true` (release
+            // builds may still opt-in for `embedded`), `now - last` would
+            // underflow if the embassy-time clock were to wrap or two test
+            // threads interleaved so that the new `now` is older than `last`.
+            // Saturate to 0 so a transient out-of-order pair NEVER panics; if
+            // `now - last` is 0 the timeout branch is taken conservatively
+            // (correct: a clock that wrapped is unreliable).
+            // The unambiguous `NEVER_FED` sentinel means a genuine
+            // first-millisecond feed is checked like any other.
             if last != NEVER_FED && now.saturating_sub(last) > WATCHDOG_TIMEOUT_MS {
                 self.last_failure = Some("watchdog_timeout");
                 return Err(WatchdogError::FeedFailed("watchdog_timeout"));
@@ -109,10 +102,10 @@ mod software_watchdog {
         pub fn is_alive(&self) -> bool {
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
-            // Audit L-6 (2026-08-11): `NEVER_FED` counts as alive BY DESIGN —
-            // before the first feed the loop is starting up, not hung. The
-            // real enforcement is the gap check inside `feed_async` and the
-            // HW RWDT, both of which fire on a genuinely dead loop.
+            // `NEVER_FED` counts as alive BY DESIGN — before the first feed
+            // the loop is starting up, not hung. The real enforcement is the
+            // gap check inside `feed_async` and the HW RWDT, both of which
+            // fire on a genuinely dead loop.
             last == NEVER_FED || now.saturating_sub(last) <= WATCHDOG_TIMEOUT_MS
         }
     }
@@ -166,8 +159,8 @@ mod hw_watchdog {
             .wdtwprotect()
             .write(|w| unsafe { w.wdt_wkey().bits(WDT_UNLOCK_KEY) });
         rtc_cntl.wdtfeed().write(|w| w.wdt_feed().set_bit());
-        // Bug B2: re-lock the WDT protect register after feeding. Leaving it
-        // unlocked meant stray writes (or a stuck task) could reconfigure the
+        // Re-lock the WDT protect register after feeding. Leaving it
+        // unlocked would let stray writes (or a stuck task) reconfigure the
         // WDT silently. This pairs with the same write at the end of init().
         rtc_cntl
             .wdtwprotect()
@@ -180,7 +173,7 @@ mod hw_watchdog {
     /// the C3 is ~136 kHz, not 150 kHz) and resets the system if the control
     /// loop stops feeding it.
     ///
-    /// Bug A5 (2026-07-25): the effective HOLD written into the register is
+    /// The effective HOLD written into the register is
     /// `HOLD << (1 + WDT_DELAY_SEL)` where `WDT_DELAY_SEL ∈ {0,1,2,3}` is
     /// stored in efuse `RD_REPEAT_DATA1`. With the typical value `0`, the
     /// actual timeout is 2× the value we write — so naively writing 300 000
@@ -198,8 +191,8 @@ mod hw_watchdog {
     pub fn init() {
         const WDT_UNLOCK_KEY: u32 = 0x50D8_3AA1;
         // RTC_SLOW_CLK ≈ 136 kHz → ~2.2 s nominal = 300 000 cycles.
-        // Bug M6 (2026-08-10): shared with config::constants so the margin
-        // assertion there bounds the value actually programmed here.
+        // Shared with config::constants so the margin assertion there bounds
+        // the value actually programmed here.
         const WDT_STAGE0_HOLD_NOMINAL: u32 = crate::config::constants::HW_WATCHDOG_STAGE0_CYCLES;
         // 7 ≈ 3.2 µs reset pulse — mirror esp-hal defaults so the WD timeout
         // reliably latches the system into reset instead of producing a
@@ -230,10 +223,9 @@ mod hw_watchdog {
             w.wdt_en()
                 .set_bit()
                 .wdt_stg0()
-                // Bug B2: 3 = ResetSystem (full chip reset, peripherals back to
-                // reset state). The previous value `1` selected Interrupt —
-                // and no RWDT interrupt handler exists in this firmware, so a
-                // timeout did nothing: the safety net was effectively absent.
+                // 3 = ResetSystem (full chip reset, peripherals back to reset
+                // state). No RWDT interrupt handler exists in this firmware,
+                // so the Interrupt stage would leave a timeout unhandled.
                 // esp-hal `RwdtStageAction`: Off=0, Interrupt=1, ResetCpu=2,
                 // ResetSystem=3, ResetRtc=4.
                 .bits(3)
@@ -241,15 +233,14 @@ mod hw_watchdog {
                 .bits(WDT_RESET_PULSE_LEN)
                 .wdt_cpu_reset_length()
                 .bits(WDT_RESET_PULSE_LEN)
-                // Bug M4 (2026-08-10): the TRM (§12.2.2.4) and BOTH vendor HALs
-                // clear `wdt_flashboot_mod_en` after boot, before configuring
-                // the RWDT in software: esp-hal writes `.bit(false)`
+                // The TRM (§12.2.2.4) and BOTH vendor HALs clear
+                // `wdt_flashboot_mod_en` after boot, before configuring the
+                // RWDT in software: esp-hal writes `.bit(false)`
                 // (rtc_cntl/mod.rs) and ESP-IDF's `rtc_wdt_disable` does
-                // `REG_CLR_BIT(..., RTC_CNTL_WDT_FLASHBOOT_MOD_EN)`. The
-                // previous `set_bit()` kept a second enable path (flashboot
-                // mode) active in the one safety net of the roast; it adds
-                // nothing (`wdt_en` already arms the watchdog) and diverges
-                // from the documented boot sequence.
+                // `REG_CLR_BIT(..., RTC_CNTL_WDT_FLASHBOOT_MOD_EN)`. Keeping
+                // the flashboot-mode enable path active adds nothing
+                // (`wdt_en` already arms the watchdog) and diverges from the
+                // documented boot sequence.
                 .wdt_flashboot_mod_en()
                 .clear_bit()
         });
@@ -407,7 +398,7 @@ mod tests {
         let mut feeder = WatchdogFeeder::initialize().unwrap();
         // The bean_temp parameter is reserved (see feed_async doc) and must
         // not cause failures with any value. There is deliberately NO
-        // overtemp gating today — the feed is unconditional (Bug B18).
+        // overtemp gating today — the feed is unconditional.
         assert!(feeder.feed_async(-1.0).is_ok());
         assert!(feeder.feed_async(0.0).is_ok());
         assert!(feeder.feed_async(100.0).is_ok());

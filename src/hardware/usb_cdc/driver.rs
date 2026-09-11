@@ -53,12 +53,9 @@ impl fmt::Display for UsbCdcError {
 }
 
 #[cfg(target_arch = "riscv32")]
-/// Bug #9 fix: the USB CDC driver is split into TX and RX halves with
-/// independent mutexes, so the reader task waiting on `Read::read().await`
-/// does not block the writer from emitting protocol responses or telemetry.
-/// Previously a single `USB_CDC_MUTEX` guarded the whole `UsbSerialJtag`,
-/// and the reader retained it across its `.await`, stalling every response
-/// until the next inbound byte.
+/// Split USB CDC driver: TX and RX halves with independent mutexes, so the
+/// reader task waiting on `Read::read().await` does not block the writer from
+/// emitting protocol responses or telemetry.
 pub struct UsbCdcTxDriver {
     usb: UsbSerialJtagTx<'static, esp_hal::Async>,
 }
@@ -72,23 +69,18 @@ impl UsbCdcTxDriver {
 
     /// Transmit `data` over USB CDC, bounding each phase at 50 ms (see in-body notes).
     pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), UsbCdcError> {
-        // Bug A2 (2026-07-25): `UsbSerialJtagTx::write_async` only completes
-        // when the host reads from the endpoint. If the host disappears mid-
-        // roast (Artisan killed, USB unplugged, …) the awaited write blocks
-        // FOREVER with the TX mutex held, and every subsequent output line
-        // (including telemetry that would have fallen back to UART) is
-        // dropped silently because the channel fills. Bound the write at 50 ms
-        // and treat the timeout as "line discarded" — the next telemetry tick
-        // already carries a fresh sample, and the roaster cannot be allowed to
-        // depend on a reader being present at all times.
+        // `UsbSerialJtagTx::write_async` only completes when the host reads
+        // from the endpoint. If the host disappears mid-roast the awaited
+        // write would block with the TX mutex held, dropping every subsequent
+        // output line. Bound the write at 50 ms and treat the timeout as
+        // "line discarded" — the next telemetry tick already carries a fresh
+        // sample, and the roaster cannot depend on a reader being present.
         use embedded_io_async::Write;
-        // Bug L6 (2026-08-10): the write is PARTIAL by contract and the
-        // previous `Write::write` + `Ok(Ok(_))` discarded the byte count, so
-        // a line longer than the FIFO space was silently truncated mid-line.
-        // Use `write_all` to loop until the whole line is queued; on a
-        // timeout some bytes may already have reached the host, so terminate
-        // the partial line best-effort — otherwise the host parser would
-        // concatenate its tail with the next line's head.
+        // The write is PARTIAL by contract: use `write_all` to loop until the
+        // whole line is queued; on a timeout some bytes may already have
+        // reached the host, so terminate the partial line best-effort —
+        // otherwise the host parser would concatenate its tail with the next
+        // line's head.
         match with_timeout(
             EmbassyDuration::from_millis(50),
             Write::write_all(&mut self.usb, data),
@@ -172,10 +164,10 @@ static USB_CDC_RX_DRIVER: StaticCell<UsbCdcRxDriver> = StaticCell::new();
 #[cfg(target_arch = "riscv32")]
 static USB_CDC_RX_DRIVER_PTR: SyncCell<*mut UsbCdcRxDriver> = SyncCell::new(core::ptr::null_mut());
 
-/// Async mutex guarding USB CDC TX only (Bug #9 split).
+/// Async mutex guarding USB CDC TX only.
 #[cfg(target_arch = "riscv32")]
 static USB_CDC_TX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
-/// Async mutex guarding USB CDC RX only (Bug #9 split).
+/// Async mutex guarding USB CDC RX only.
 #[cfg(target_arch = "riscv32")]
 static USB_CDC_RX_MUTEX: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 

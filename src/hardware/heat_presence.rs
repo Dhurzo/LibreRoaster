@@ -2,8 +2,7 @@
 //!
 //! Kept in its own un-gated module (compiled on BOTH host and embedded) so
 //! the decision logic is covered by host unit tests — the hardware modules
-//! (`hardware::ssr`) are stubbed on host, which is how the previous
-//! single-sample flip survived CI.
+//! (`hardware::ssr`) are stubbed on host.
 //!
 //! # Why the debounce is needed
 //!
@@ -15,12 +14,9 @@
 //! stays below 400 ms), so a functioning SSR can produce runs of AT MOST 2
 //! consecutive "no heat" samples regardless of phase drift or jitter.
 //!
-//! Bug audit 2026-08-02: the previous one-sample flip latched `NotDetected`
-//! mid-roast whenever a single sample landed in the PWM OFF window (phase
-//! drift between the ~1 s detect cadence and the 200 ms PWM makes this
-//! inevitable at duty 50–90 %). Because `NotDetected` forces the heater to
-//! 0 % and duty 0 falls below the observability gate, the heater dead-locked
-//! until power cycle.
+//! A single sample can land in the PWM OFF window; because `NotDetected`
+//! forces the heater to 0 % and duty 0 falls below the observability gate,
+//! a single-sample flip would dead-lock the heater until power cycle.
 
 /// Number of consecutive "no heat" samples (each with duty ≥ 50 %) required
 /// before the caller transitions to `NotDetected`.

@@ -55,17 +55,14 @@ pub const SSR_PWM_RESOLUTION: u8 = 14;
 /// Fan LEDC duty resolution in bits (8-bit → 256 steps).
 pub const FAN_PWM_RESOLUTION: u8 = 8;
 
-/// Bug A (2026-08-03): minimum fan speed (%) enforced whenever the heater is
-/// energized. The fan selector in `update_control` otherwise falls through to
-/// `artisan_manual_fan()` — which defaults to 0.0 when the operator sent no
-/// `OT2` / `FANPROFILE` — so a documented PID roast (SETTARGET+START, or
-/// PREHEAT without a fan profile) ran the SSR at up to 100 % with ZERO airflow
-/// every tick. The firmware's own standard treats 'no fan' as unsafe
-/// (`stop_streaming`: "no fan means unsafe to continue"); this floor applies
-/// that standard to the energizing path too. It is a one-way safety valve on
-/// heater-on / fan-off only: any commanded fan at or above the floor passes
-/// through untouched, and fan control below this value while the heater fires
-/// is simply not permitted (an explicit `OT2 0` with heat on is overridden).
+/// Minimum fan speed (%) enforced whenever the heater is energized. With no
+/// `OT2` / `FANPROFILE` the manual fan selector defaults to 0.0, so a PID
+/// roast (SETTARGET+START, or PREHEAT without a fan profile) could otherwise
+/// run the SSR at up to 100 % with zero airflow every tick. This floor is a
+/// one-way safety valve on heater-on / fan-off only: any commanded fan at or
+/// above the floor passes through untouched, and fan control below this value
+/// while the heater fires is not permitted (an explicit `OT2 0` with heat
+/// on is overridden).
 pub const FAN_MIN_SAFETY_PCT: f32 = 20.0;
 /// Minimum interval between SSR duty updates in ms.
 pub const SSR_CYCLE_GUARD_MS: u32 = 100;
@@ -74,23 +71,18 @@ pub const SSR_CYCLE_GUARD_MS: u32 = 100;
 pub const SSR_DUTY_TOLERANCE_TICKS: u16 = 128;
 /// Minimum non-zero duty in raw ticks. At 14-bit / 5 Hz, one full PWM
 /// cycle is 200 ms; one AC half-cycle at 50 Hz mains is 10 ms. With a
-/// non-zero-cross-synchronised LEDC output, a ~2.4 ms ON pulse (193 ticks,
-/// the previous value) only coincides with a zero crossing ~25-30 % of the
-/// time, so a zero-cross SSR fires erratically at the minimum commanded
-/// power. Bug B28: raise the floor to one AC half-cycle (10 ms ≈ 820 ticks
-/// at 14-bit / 5 Hz) so a zero-cross SSR reliably lands at least one
-/// half-cycle of mains on every active PWM period, giving a deterministic
-/// minimum delivered power. Use 1639 (a full 20 ms mains cycle) if DC bias
-/// across the mains is a concern on the target SSR.
+/// non-zero-cross-synchronised LEDC output, a ~2.4 ms ON pulse (193 ticks)
+/// only coincides with a zero crossing ~25-30 % of the time, so a zero-cross
+/// SSR fires erratically at very low commanded power. The floor is one AC
+/// half-cycle (10 ms ≈ 820 ticks at 14-bit / 5 Hz) so a zero-cross SSR
+/// reliably lands at least one half-cycle of mains on every active PWM
+/// period, giving a deterministic minimum delivered power. Use 1639 (a full
+/// 20 ms mains cycle) if DC bias across the mains is a concern on the target SSR.
 pub const SSR_MIN_DUTY_TICKS: u16 = 820;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
-// Bug M7 (2026-08-10): `MAX_SAFE_TEMP`/`MIN_TEMP` were dead — nothing
-// applied them, and the REAL control-target range was a hand-written literal
-// in `is_valid_target_temp` (below). A "maximum safe temperature" constant
-// that no code enforces is worse than none: removed. `MAX_TEMP` now feeds
-// `MAX_TARGET_TEMP`, so editing it actually changes what SETTARGET/PREHEAT/
-// PROFILE accept.
+// `MAX_TEMP` feeds `MAX_TARGET_TEMP`, so editing it changes what
+// SETTARGET/PREHEAT/PROFILE accept.
 pub const MAX_TEMP: f32 = 300.0;
 pub const MIN_VALID_TEMP: f32 = -50.0;
 pub const MAX_VALID_TEMP: f32 = 350.0;
@@ -108,12 +100,9 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 ///
 /// The datasheet specifies up to 185 ms for a 50 Hz-filtered conversion. We
 /// add a margin (25 ms) to ensure the conversion-complete bit is set before
-/// we read the result registers. Bug #B1: the previous wait used
-/// `TEMPERATURE_READ_INTERVAL_MS` (160 ms), which is shorter than 50 Hz
-/// conversion time — meaning each read could silently return the *previous*
-/// conversion's temperature (stale data with no error indication).
-// Bug L17 (2026-08-10): the comment claimed a "190 ms" margin for years
-// while the constant is 210 ms — updated to describe the actual value.
+/// we read the result registers. The wait must exceed the 50 Hz conversion
+/// time — reading earlier returns the *previous* conversion's temperature
+/// (stale data with no error indication).
 pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 
 /// Safety: over-temperature emergency cutoff in °C.
@@ -128,7 +117,7 @@ pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 
 /// Bean temperature (°C) below which the post-STOP cooldown fan latch
-/// releases (bug B3). Beans below this temperature are cool enough that
+/// releases. Beans below this temperature are cool enough that
 /// forced airflow is no longer safety-critical, so the operator may resume
 /// manual fan control. While the cooldown latch is active the fan stays at
 /// 100% every tick regardless of the manual setting or fan profile.
@@ -143,8 +132,8 @@ pub const COOLING_RELEASE_BEAN_TEMP_C: f32 = 60.0;
 pub const MAX_BT_RATE_OF_RISE: f32 = 0.5;
 /// Hard RoR guard threshold in °C/s (1.0 °C/s = 60 °C/min). No legitimate
 /// roast phase sustains this: rates above it latch after the FAST debounce
-/// (`ROR_EXCEEDED_CONSECUTIVE_LIMIT`). Audit A-TC4-D (2026-08-12): both
-/// thresholds are provisional pending hardware calibration (HIL).
+/// (`ROR_EXCEEDED_CONSECUTIVE_LIMIT`). Both thresholds are provisional
+/// pending hardware calibration (HIL).
 pub const MAX_BT_RATE_OF_RISE_HARD: f32 = 1.0;
 /// Consecutive RoR exceedances required before emergency shutdown in the
 /// HARD band (> `MAX_BT_RATE_OF_RISE_HARD`) — ~1 s at the ~310 ms control
@@ -152,41 +141,39 @@ pub const MAX_BT_RATE_OF_RISE_HARD: f32 = 1.0;
 pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
 /// Consecutive RoR exceedances required before emergency shutdown in the
 /// SOFT band (`MAX_BT_RATE_OF_RISE`..=`MAX_BT_RATE_OF_RISE_HARD`) — ~3.7 s
-/// sustained at the ~310 ms control cadence. Audit A-TC4-D (2026-08-12): a
-/// brief light-roast turnaround spike stays tolerated; a sustained marginal
-/// climb still aborts. Provisional pending hardware calibration (HIL).
+/// sustained at the ~310 ms control cadence. A brief light-roast turnaround
+/// spike stays tolerated; a sustained marginal climb still aborts.
+/// Provisional pending hardware calibration (HIL).
 pub const ROR_SOFT_DEBOUNCE_LIMIT: u8 = 12;
 
-/// Bug P5 (2026-08-03): probe-stuck detector — the heater output at or above
-/// this percentage arms the detector: a heater this hot must move the BT
-/// probe. If a probe holds a flat temperature while the heater runs this hot
-/// for `PROBE_STUCK_TIMEOUT_SECS`, the thermocouple is shorted or broken and
+/// Probe-stuck detector — the heater output at or above this percentage
+/// arms the detector: a heater this hot must move the BT probe. If a probe
+/// holds a flat temperature while the heater runs this hot for
+/// `PROBE_STUCK_TIMEOUT_SECS`, the thermocouple is shorted or broken and
 /// `emergency_shutdown("Probe stuck")` fires.
 pub const PROBE_STUCK_HEATER_MIN_PCT: f32 = 50.0;
-/// Bug P5: the BT reading must vary by more than this many °C to count as a
+/// The BT reading must vary by more than this many °C to count as a
 /// live probe. A shorted thermocouple reads a flat ~0 °C — a VALID
 /// temperature with no MAX31856 fault bit; a broken probe holds any flat
 /// value. 1 °C over 2 minutes is far less than any real probe moves at
 /// ≥ 50 % heater.
 pub const PROBE_STUCK_VARIATION_C: f32 = 1.0;
-/// Bug P5: consecutive seconds of flat BT with the heater on before the
+/// Consecutive seconds of flat BT with the heater on before the
 /// probe-stuck detector reacts. In firmware-PID mode this is the emergency
-/// latch threshold; in manual / Artisan software-PID mode (Audit A-TC4-C,
-/// 2026-08-12) it is the WIRE-WARNING threshold — the latch lands at
+/// latch threshold; in manual / Artisan software-PID mode it is the
+/// WIRE-WARNING threshold — the latch lands at
 /// `PROBE_STUCK_MANUAL_LATCH_SECS` instead.
 pub const PROBE_STUCK_TIMEOUT_SECS: u64 = 120;
-/// Audit A-TC4-C (2026-08-12): in manual / Artisan software-PID mode the
-/// probe-stuck detector is two-stage: the wire warning fires at
-/// `PROBE_STUCK_TIMEOUT_SECS`; the emergency latch only after this many
-/// consecutive seconds of flat BT with the heater on. A legitimately slow
-/// finish can hold BT < 1 °C for 2 min at low duty, but 5 min of flat BT
-/// with heat applied is never a healthy roast — the dead-probe backstop
-/// (Bug S1) stays closed with worst-case exposure at 5 min, still far under
-/// `MAX_ROAST_TIME_SECS`.
+/// In manual / Artisan software-PID mode the probe-stuck detector is
+/// two-stage: the wire warning fires at `PROBE_STUCK_TIMEOUT_SECS`; the
+/// emergency latch only after this many consecutive seconds of flat BT with
+/// the heater on. A legitimately slow finish can hold BT < 1 °C for 2 min at
+/// low duty, but 5 min of flat BT with heat applied is never a healthy roast
+/// — the dead-probe backstop stays closed with worst-case exposure at 5 min,
+/// still far under `MAX_ROAST_TIME_SECS`.
 pub const PROBE_STUCK_MANUAL_LATCH_SECS: u64 = 300;
-/// Bug P5 (2026-08-03): the detector disarms while the PID is legitimately
-/// REGULATING within this many °C of the setpoint. A stable roast holds BT
-/// nearly flat by design (that is the PID's job), and on a cold ambient /
+/// The detector disarms while the PID is legitimately REGULATING within
+/// this many °C of the setpoint. A stable roast holds BT nearly flat by design (that is the PID's job), and on a cold ambient /
 /// big drum the equilibrium duty can sit at or above
 /// `PROBE_STUCK_HEATER_MIN_PCT` — without this margin a healthy steady-state
 /// roast would trip a false "Probe stuck" emergency. The stuck-probe
@@ -201,10 +188,9 @@ pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
 /// Number of retry attempts to force the fan to 100 % during emergency
 /// shutdown / emergency stop.
 ///
-/// Bug B-L / B-H (2026-08-04): the fan previously got a single attempt while
-/// the heater got `EMERGENCY_HEATER_OFF_RETRIES`. A failed fan write with a
-/// hot bean mass is the exact "no fan = unsafe to continue" condition, so
-/// cooling gets the same retry discipline as heater cut-off.
+/// Cooling gets the same retry discipline as heater cut-off: a failed fan
+/// write with a hot bean mass is the exact "no fan = unsafe to continue"
+/// condition.
 pub const EMERGENCY_FAN_RETRIES: u8 = 3;
 
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
@@ -215,12 +201,11 @@ pub const MAX_CONSECUTIVE_SENSOR_ERRORS: u8 = 5;
 
 /// Control loop is expected to feed the Task Watchdog at this cadence.
 ///
-/// Bug M6 (2026-08-10): used to claim `100` (the loop-timer period), but the
-/// real cadence is `CONTROL_LOOP_TICK_MS` — one tick additionally waits
-/// `MAX31856_CONVERSION_TIME_MS` for the sensor conversion. The compile-time
-/// margin assertion below must bound the REAL cadence, or a future change to
-/// the conversion time (it has happened once) could reset the chip every tick
-/// with nothing flagging it.
+/// The cadence is `CONTROL_LOOP_TICK_MS` — one tick additionally waits
+/// `MAX31856_CONVERSION_TIME_MS` for the sensor conversion on top of the
+/// loop-timer period. The compile-time margin assertion below must bound the
+/// REAL cadence, or a future change to the conversion time could reset the
+/// chip every tick with nothing flagging it.
 pub const WATCHDOG_FEED_INTERVAL_MS: u64 = CONTROL_LOOP_TICK_MS as u64;
 /// HW RWDT stage-0 hold in RC_SLOW_CLK cycles, as programmed by
 /// `safety::watchdog::init` (single source of truth — was a local literal).
@@ -255,8 +240,6 @@ pub enum RoasterState {
     Heating,
     /// Stable: temperature held near setpoint (PID regulating).
     Stable,
-    // Audit M-A7 (2026-08-11): `Cooling`, `Fault` and `EmergencyStop` removed
-    // — zero references existed; every failure transition uses `Error`.
     /// Error: a fault/latch condition; all failures transition here.
     Error,
 }
@@ -315,29 +298,18 @@ pub enum ArtisanCommand {
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
-// Bug H3 (2026-08-10): the rate limiter in `drain_commands` DISCARDED
-// commands beyond this budget (`try_receive` already removed them from the
-// channel, then `continue` dropped them) — a burst of 12 commands with a
-// `START` at position 12 silently lost the START. The bounded channel
-// (ARTISAN_CMD_CHANNEL_SIZE = 16) already caps the work per tick; the extra
-// budget only bought silent loss. Equalise so every command the channel can
-// hold is also processed in the same tick (the emergency bypass stays).
+// The bounded channel (ARTISAN_CMD_CHANNEL_SIZE = 16) caps the work per tick;
+// the per-tick budget equals the channel size so every command the channel
+// can hold is also processed in the same tick (the emergency bypass stays).
 pub const MAX_COMMANDS_PER_TICK: usize =
     crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
-// Bug M2 (2026-07-25): the previous `20.0` was unreachable with a real BT
-// probe (verified by simulation: a TC4-style drop is 2–3 °C/s, ≈ 6–9 °C in
-// the 3 s sampling window). Drop the threshold to a probe-attainable value
-// so `#CHARGE` fires reliably on the first real charge.
-// Bug P10 (2026-08-03): `8.0` was still marginal — the real sampling window
-// is `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`
-// ≈ 3.1 s, so 8 °C demanded ≈ 2.6 °C/s sustained, at the very top of the
-// typical 2–3 °C/s charge signature. `6.0` fires on a ≥ ~1.9 °C/s drop —
-// comfortably inside the physical range with margin for a sluggish first
-// charge.
+// The threshold is probe-attainable: the real sampling window is
+// `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`
+// ≈ 3.1 s, so 6.0 °C fires on a ≥ ~1.9 °C/s drop — comfortably inside the
+// physical 2–3 °C/s charge signature with margin for a sluggish first charge.
 pub const CHARGE_DROP_THRESHOLD_C: f32 = 6.0;
-/// Bug B23: intended charge-detection window in seconds. The bean-drop
-/// detector samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>)
-/// once every `CHARGE_SAMPLE_TICK_DIV` control ticks (real cadence
+/// Intended charge-detection window in seconds. The bean-drop detector
+/// samples `bt_charge_history` (Deque<`CHARGE_HISTORY_CAPACITY`>) once every `CHARGE_SAMPLE_TICK_DIV` control ticks (real cadence
 /// `CONTROL_LOOP_TICK_MS`/tick), so the deque spans
 /// `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`.
 /// A >`CHARGE_DROP_THRESHOLD_C` °C BT drop in 3 s is the physical signature
@@ -357,15 +329,14 @@ pub const CONTROL_LOOP_PERIOD_MS: u32 = 100;
 /// conversion wait (210 ms, `MAX31856_CONVERSION_TIME_MS`) plus the 100 ms
 /// post-tick timer (`CONTROL_LOOP_PERIOD_MS`) plus small overhead (command
 /// drain, telemetry emit) ≈ 310–330 ms.
-/// Bug audit 2026-08-02: the charge-window derivation previously used
-/// `CONTROL_LOOP_PERIOD_MS` (100 ms), so with `CHARGE_SAMPLE_TICK_DIV = 3`
-/// the deque actually spanned 10 × 3 × 330 ms ≈ 9.9 s instead of the
-/// intended 3 s — a real TC4 charge drop (2–3 °C/s) was diluted over the
-/// window and `#CHARGE` could silently never fire.
+/// The charge-window derivation must use this tick cadence, not
+/// `CONTROL_LOOP_PERIOD_MS` (100 ms): with `CHARGE_SAMPLE_TICK_DIV = 3` the
+/// deque would otherwise span 10 × 3 × 330 ms ≈ 9.9 s instead of the
+/// intended 3 s — a real TC4 charge drop (2–3 °C/s) diluted over the window,
+/// so `#CHARGE` could never fire.
 pub const CONTROL_LOOP_TICK_MS: u32 = CONTROL_LOOP_PERIOD_MS + MAX31856_CONVERSION_TIME_MS as u32;
-/// Bug B23 (V2-15): number of control ticks between charge-history samples.
-/// Now DERIVED from `CHARGE_DETECTION_WINDOW_S` so the window is a single
-/// source of truth — `WINDOW_S × 1000 ms/s = CAP × TICK_DIV × TICK_MS`,
+/// Number of control ticks between charge-history samples. DERIVED from
+/// `CHARGE_DETECTION_WINDOW_S` so the window is a single source of truth — `WINDOW_S × 1000 ms/s = CAP × TICK_DIV × TICK_MS`,
 /// hence `TICK_DIV = WINDOW_S × 1000 / (CAP × TICK_MS)`, floored at 1.
 /// With (3, 10, 310) the result is `3000 / 3100 → 0 → 1` (a ≈ 3.1 s window
 /// spanned by 10 samples taken once per tick ≈ 330 ms apart). Changing the
@@ -388,13 +359,11 @@ pub const MAX_ROAST_TIME_SECS: u32 = 1800;
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
 /// Lower bound of the valid control-target range (°C).
-/// Bug M7 (2026-08-10): extracted from the hand-written literal in
-/// `is_valid_target_temp` so the applied range is a named constant.
+/// Named constant for the applied range (see `is_valid_target_temp`).
 pub const MIN_TARGET_TEMP: f32 = 50.0;
 /// Upper bound of the valid control-target range (°C) — derived from
-/// `MAX_TEMP` so editing the documented limit actually changes what
-/// SETTARGET/PREHEAT/PROFILE accept (the old literal stayed 300 even after
-/// lowering `MAX_TEMP`, leaving the "safety" edit half-done).
+/// `MAX_TEMP` so editing the documented limit changes what
+/// SETTARGET/PREHEAT/PROFILE accept.
 pub const MAX_TARGET_TEMP: f32 = MAX_TEMP;
 
 /// Returns true if the given temperature is a valid control target.
@@ -762,10 +731,10 @@ mod tests {
             assert!(MAX_BT_RATE_OF_RISE > 0.0);
             assert!(MAX_ROAST_TIME_SECS > 0);
         };
-        // Bug M6 (2026-08-10): the feed interval and the HW timeout are now
-        // the REAL values (tick cadence vs programmed RWDT hold), so this
-        // assertion can actually fail — a tick longer than half the RWDT
-        // timeout would reset the chip before the loop re-feeds it.
+        // The feed interval and the HW timeout are the real values (tick
+        // cadence vs programmed RWDT hold), so this assertion can actually
+        // fail — a tick longer than half the RWDT timeout would reset the
+        // chip before the loop re-feeds it.
         const {
             assert!(WATCHDOG_FEED_INTERVAL_MS * 2 < HW_WATCHDOG_TIMEOUT_MS);
         }
@@ -861,9 +830,7 @@ impl TemperatureSettings {
     /// Used when receiving a setpoint over the serial protocol from Artisan:
     /// Artisan reports the setpoint in its own display units, so when it is in
     /// °F mode the firmware must convert the value to °C *before* validating
-    /// and storing it as `target_temp`. Storing the raw Fahrenheit value as
-    /// Celsius (the previous behaviour: `PID;SV;250` with units = °F was read
-    /// as 250 °C and the PID chased a 250 °C target) is a critical-safety bug.
+    /// and storing it as `target_temp`.
     pub fn convert_from_display(&self, temp: f32) -> f32 {
         match self.scale {
             TemperatureScale::Fahrenheit => (temp - 32.0) * 5.0 / 9.0,
@@ -929,13 +896,12 @@ pub struct SystemStatus {
     /// Millis-since-boot timestamp of the last received Artisan command.
     /// Used by the comms idle timeout safety check. 0 = no command yet.
     pub last_command_received_at_ms: u64,
-    /// Bug DRA-7 (2026-07-26): Artisan `CHAN` polling-rate request (Hz),
-    /// recorded by `handle_chan`. Informational for now — the telemetry
-    /// emitter keeps its own 1 Hz cadence.
+    /// Artisan `CHAN` polling-rate request (Hz), recorded by `handle_chan`.
+    /// Informational for now — the telemetry emitter keeps its own 1 Hz cadence.
     pub chan_poll_rate_hz: u16,
-    /// Bug DRA-7 (2026-07-26): Artisan `FILT` filter request, recorded by
-    /// `handle_filt`. The firmware applies its own internal EMA alpha; the
-    /// host's request is preserved for observability.
+    /// Artisan `FILT` filter request, recorded by `handle_filt`. The
+    /// firmware applies its own internal EMA alpha; the host's request is
+    /// preserved for observability.
     pub requested_filter: u8,
 }
 

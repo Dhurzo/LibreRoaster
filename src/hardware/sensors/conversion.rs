@@ -75,14 +75,11 @@ pub struct SensorFault {
     pub communication_error: bool,
     pub invalid_temperature: bool,
     /// Aggregated flag: any bit in the fault register is set, *including*
-    /// CJ High / TC Range / CJ Range (0x20 / 0x40 / 0x80) which the previous
-    /// `has_fault = fault & 0x1F` masked out — a real cold-junction
-    /// overtemperature next to a roaster would have been silently swallowed.
+    /// CJ High / TC Range / CJ Range (0x20 / 0x40 / 0x80).
     pub fault_detected: bool,
     /// Back-compat alias. The MAX31856 has no dedicated "short to GND" bit
-    /// (that name comes from the older MAX6675). Kept as a NoOp so historical
-    /// field accesses keep compiling while callers migrate to the
-    /// correctly-named `tc_low` / `cj_range_fault` etc.
+    /// (that name comes from the older MAX6675). Kept as a NoOp for
+    /// compatibility; prefer the correctly-named `tc_low` / `cj_range_fault` etc.
     #[deprecated(note = "MAX31856 has no short-to-GND bit; use tc_low or cj_range_fault")]
     pub short_to_gnd: bool,
 }
@@ -99,10 +96,6 @@ impl SensorFault {
         //   0x20 (bit 5) = CJ High — Cold-junction above threshold
         //   0x40 (bit 6) = TC Range — Linearized TC out of range
         //   0x80 (bit 7) = CJ Range — Cold-junction out of range
-        //
-        // The previous implementation masked with 0x1F, dropping bits 5/6/7
-        // (CJ High / TC Range / CJ Range), and mislabeled bits 2/3 as
-        // "short_to_gnd"/"cold_junction_high". Both bugs are fixed here.
         Self {
             open_circuit: fault & 0x01 != 0,
             short_to_vcc: fault & 0x02 != 0,
@@ -112,7 +105,7 @@ impl SensorFault {
             cold_junction_high: fault & 0x20 != 0,
             tc_range_fault: fault & 0x40 != 0,
             cj_range_fault: fault & 0x80 != 0,
-            // Any bit set is a fault — do NOT mask with 0x1F.
+            // Any bit set is a fault.
             fault_detected: fault != 0,
             short_to_gnd: false,
             invalid_temperature: (fault & 0x04 != 0) || (fault & 0x08 != 0),
@@ -288,13 +281,11 @@ impl SensorConversionHub {
         }
     }
 
-    /// Bug C4b (V2-6 residual, 2026-07-25): host-targeted `new()` that ALSO
-    /// initialises the `simulated_source` field. The `not(simulated-sensors)`
-    /// variant above has no such field; the `simulated-sensors` variant here
-    /// supplies the default curve. Both are named `new()` but are mutually
-    /// exclusive via cfg — exactly one compiles per host feature combination,
-    /// so the 53 test callers (gated variously under `test` and
-    /// `test,regression`) all resolve to a single definition.
+    /// Host-targeted `new()` that ALSO initialises the `simulated_source`
+    /// field. The `not(simulated-sensors)` variant above has no such field;
+    /// the `simulated-sensors` variant here supplies the default curve. Both
+    /// are named `new()` but are mutually exclusive via cfg — exactly one
+    /// compiles per host feature combination.
     #[cfg(all(not(target_arch = "riscv32"), feature = "simulated-sensors"))]
     pub fn new() -> Self {
         Self::new_simulated(SimulatedSensorSource::default_curve())
@@ -319,14 +310,9 @@ impl SensorConversionHub {
         Self::new_simulated(SimulatedSensorSource::default_curve())
     }
 
-    // Bug C4b (V2-6 residual, 2026-07-25): the host `new_uninit` used to be
-    // gated only on `not(target_arch = "riscv32")`, which collides with the
-    // `simulated-sensors` variant above when `--features test,regression`
-    // (regression implies simulated-sensors) builds the host target — Rust
-    // saw two `new_uninit` definitions and errored with E0592. Gate the host
-    // variant to `not(riscv32) AND not(simulated-sensors)` so exactly one
-    // definition is selected per feature combination; the simulated-sensors
-    // variant above handles the `test,regression` host build.
+    // Gate the host variant to `not(riscv32) AND not(simulated-sensors)` so
+    // exactly one definition is selected per feature combination; the
+    // simulated-sensors variant above handles the `test,regression` host build.
     #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
     #[allow(dead_code)]
     fn new_uninit() -> Self {
@@ -433,11 +419,8 @@ impl SensorConversionHub {
         let env_trigger_result = self.env_sensor.trigger_conversion();
 
         // Wait once for both conversions to complete.
-        // Bug #B1: 50 Hz-filtered conversions take up to 185 ms (datasheet);
-        // use the dedicated `MAX31856_CONVERSION_TIME_MS` (210 ms, 185 ms +
-        // 25 ms margin) wait rather than `TEMPERATURE_READ_INTERVAL_MS`
-        // (160 ms), which was shorter than the actual conversion time and
-        // could silently return the previous conversion's result.
+        // 50 Hz-filtered conversions take up to 185 ms (datasheet); use the
+        // dedicated `MAX31856_CONVERSION_TIME_MS` wait.
         embassy_time::Timer::after(embassy_time::Duration::from_millis(
             crate::config::constants::MAX31856_CONVERSION_TIME_MS,
         ))

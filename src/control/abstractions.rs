@@ -170,10 +170,8 @@ impl OutputController {
         }
     }
 
-    // Audit M-A5 (2026-08-11): the `process_status` no-op stub was removed —
-    // it returned `Ok(())` unconditionally (fake `OutputController` API). The
-    // real continuous-output state machine lives in `MutableArtisanFormatter`
-    // (driven by `emit_telemetry_stage` in tasks.rs); this type now only
+    // The continuous-output state machine lives in `MutableArtisanFormatter`
+    // (driven by `emit_telemetry_stage` in tasks.rs); this type only
     // tracks the enable flag feeding `CommandDispatcher::is_streaming`.
     /// Enables continuous (`#`-line) telemetry output.
     pub fn enable_continuous_output(&mut self) {

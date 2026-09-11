@@ -29,12 +29,9 @@ impl RxSource for UartRx {
     }
 }
 
-// L8: `UartTx` and `run_writer_task` were removed together (Bug L18,
-// 2026-08-10: the generic writer task and its command pipe were never
-// spawned — static RAM only). Output goes through `dual_output_task` via
-// the shared output channel, so leaving a second writer on the pipe is a
-// recipe for interleaved lines. The embedded driver `uart_write_bytes` is
-// still re-exported in case a future transport wants it directly.
+// Output goes through `dual_output_task` via the shared output channel;
+// the embedded driver `uart_write_bytes` is still re-exported in case a
+// future transport wants it directly.
 
 /// UART transport configuration.
 static UART_CONFIG: TransportConfig = TransportConfig {
@@ -53,13 +50,6 @@ static UART_STATE: TransportRxState = TransportRxState::new();
 pub async fn uart_reader_task() {
     run_reader_task(UartRx, &UART_STATE, &UART_CONFIG).await;
 }
-
-// L8: `uart_writer_task` was removed. Returning the same `run_writer_task`
-// wrapper would race `dual_output_task` (which owns the single output pipe
-// and is the only sanctioned writer) — the dead wrapper is replaced with
-// a compile-time assertion that the generic `run_writer_task` stays
-// available for current and future use, even though no spawner references
-// it today.
 
 /// Send a response via UART (multiplexer-aware).
 pub async fn send_response(response: &str) -> Result<(), crate::input::InputError> {
@@ -81,9 +71,7 @@ pub async fn send_stream(data: &str) -> Result<(), crate::input::InputError> {
 
 /// Process command data directly (legacy compatibility, mainly for tests).
 ///
-/// Bug L18 (2026-08-10): this used to `return` after the FIRST line
-/// terminator, silently dropping every later command in the buffer. It now
-/// processes each complete line in `data` in order; a trailing unterminated
+/// Processes each complete line in `data` in order; a trailing unterminated
 /// fragment is dropped (matching the event-queue path's behaviour), and a
 /// bare terminator still surfaces as an `EmptyCommand` parse error exactly
 /// once per empty line.
@@ -114,11 +102,11 @@ pub fn process_command_data(data: &[u8]) {
 
 /// Internal command handler for legacy/compatibility path.
 fn handle_command_data_internal(data: &[u8]) {
-    // Audit MP-1 (2026-08-11): skip parsing — and with it the parser-side
-    // PROFILE/FANPROFILE FIFO side effects — for lines the multiplexer gate
-    // would refuse (inactive transport). Mirrors the pre-parse gate in
+    // Skip parsing — and with it the parser-side PROFILE/FANPROFILE FIFO side
+    // effects — for lines the multiplexer gate would refuse (inactive
+    // transport). Mirrors the pre-parse gate in
     // `transport_tasks::process_event_queue`; `would_process_command` is a
-    // pure predicate that never activates the channel (P8 preserved).
+    // pure predicate that never activates the channel.
     let accepted = critical_section::with(|cs| {
         let multiplexer = ServiceContainer::get_multiplexer();
         let guard = multiplexer.borrow(cs).borrow();
@@ -177,10 +165,8 @@ fn handle_command_data_internal(data: &[u8]) {
 
 /// Send parse error (legacy compatibility).
 ///
-/// Audit MP-4 (2026-08-11): must NOT activate a channel from `None` — the
-/// P8 fix in `transport_tasks::send_parse_error` reserved activation for
-/// successfully parsed commands. Boot-time garbage on one wire can no
-/// longer hijack the session before a valid command arrives.
+/// Must NOT activate a channel from `None` — activation is reserved for
+/// successfully parsed commands.
 fn send_parse_error_internal(error: ParseError) {
     let mut should_write = true;
 

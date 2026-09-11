@@ -87,11 +87,11 @@ pub struct SsrControlBase {
     /// only when it reaches `HEAT_ABSENT_DEBOUNCE` does the status flip to
     /// `NotDetected`.
     ///
-    /// Bug audit 2026-08-02: a single OFF sample is ambiguous (the PWM OFF
-    /// window at duty ≥ 50 % reads HIGH even when the SSR is conducting) —
-    /// the previous one-sample flip latched `NotDetected` mid-roast, which
-    /// forces the heater to 0 % and (because duty 0 falls below the
-    /// observability gate) dead-locks the heater until power cycle.
+    /// A single OFF sample is ambiguous (the PWM OFF window at duty ≥ 50 %
+    /// reads HIGH even when the SSR is conducting) — a single-sample flip
+    /// would latch `NotDetected` mid-roast, which forces the heater to 0 %
+    /// and (because duty 0 falls below the observability gate) dead-locks
+    /// the heater until power cycle.
     heat_absent_count: u8,
     #[allow(dead_code)]
     heat_mismatch_count: u8,
@@ -100,7 +100,7 @@ pub struct SsrControlBase {
     /// the sensor reading hot long after the duty drops to zero. We require
     /// `HEAT_PRESENT_MISMATCH_MAX` consecutive mismatched samples before
     /// declaring the SSR stuck on, so a single transient does not trip the
-    /// safety interlock mid-roast (the bug closed by this change).
+    /// safety interlock mid-roast.
     #[allow(dead_code)]
     heat_present_count: u8,
 }
@@ -112,8 +112,7 @@ impl SsrControlBase {
         // LOW when SSR conducts) makes a single sample at boot uninformative.
         // Treating the heater as available at boot is necessary so manual and
         // PID commands are not silently masked out by a false NotDetected latch
-        // (caused by the dead-lock the report flags: 0% duty → pin HIGH →
-        // NotDetected → output forced to 0 → 0% duty forever).
+        // (0% duty → pin HIGH → NotDetected → output forced to 0 → 0% duty forever).
         SsrControlBase {
             hardware_status: SsrHardwareStatus::Available,
             current_duty: 0,
@@ -151,14 +150,13 @@ impl SsrControlBase {
     /// where the SSR could never become `Available` (0% duty → HIGH → NOTDET
     /// → output forced to 0 → never 50%+ duty → never Available).
     ///
-    /// Debounce (bug audit 2026-08-02): the OFF → `NotDetected` transition is
-    /// no longer a single-sample flip. At duty ≥ 50 % a HIGH sample is still
-    /// ambiguous (it may be the PWM OFF window), so it only accumulates via
-    /// `heat_presence::debounce_heat_absent`; the status flips after
-    /// `HEAT_ABSENT_DEBOUNCE` consecutive samples (see the module docs for
-    /// the run-bound argument that makes this aliasing-proof at the real tick
-    /// cadence). A LOW sample, by contrast, is trustworthy evidence of
-    /// current flow and restores `Available` immediately.
+    /// Debounce: the OFF → `NotDetected` transition requires
+    /// `HEAT_ABSENT_DEBOUNCE` consecutive samples. At duty ≥ 50 % a HIGH sample
+    /// is still ambiguous (it may be the PWM OFF window), so it only
+    /// accumulates via `heat_presence::debounce_heat_absent` (see the module
+    /// docs for the run-bound argument that makes this aliasing-proof at the
+    /// real tick cadence). A LOW sample, by contrast, is trustworthy evidence
+    /// of current flow and restores `Available` immediately.
     pub fn detect_heat_source<F, E>(
         &mut self,
         _current_time: u32,
@@ -184,15 +182,9 @@ impl SsrControlBase {
                 // Duty too low for the pin to be informative — and a low-power
                 // stretch must not accumulate toward NotDetected.
                 self.heat_absent_count = 0;
-                // Bug H5 (2026-08-10): the latch was terminal. `Available` could
-                // ONLY be re-written here on a `HeatDetected` outcome, which
-                // requires passing the duty-observability gate — but while the
-                // status is not `Available`, the control loop forces the output
-                // to 0 % every tick (roaster_control.rs), which is below the
-                // gate, so the pin was never read again and the heater stayed
-                // dead until power cycle. A single LOW sample is trustworthy
-                // evidence of current flow at ANY duty (the PWM OFF window can
-                // only produce HIGH), so honour it here as a re-detection.
+                // A single LOW sample is trustworthy evidence of current flow
+                // at ANY duty (the PWM OFF window can only produce HIGH), so
+                // honour it here as a re-detection.
                 if self.hardware_status != SsrHardwareStatus::Available
                     && matches!(read_pin(), Ok(true))
                 {
@@ -262,18 +254,11 @@ impl SsrControlBase {
                 Ok(is_detected) => {
                     let heat_detected = is_detected;
 
-                    // Bug B22: with the SSR driven by a 5 Hz LEDC PWM (200 ms
-                    // period) and `periodic_check` sampling once per ~100 ms
-                    // control-loop tick, there are exactly 2 samples per PWM
-                    // period in slowly drifting phase alignments. For duty
-                    // <50 % the ON window is shorter than the sampling
-                    // interval, so phase alignments exist where BOTH samples
-                    // of a period land in the OFF window even though the SSR
-                    // is functioning correctly. The previous `current_duty > 0`
-                    // gate counted those legitimate low-power ticks as
-                    // mismatches, reaching `HEAT_MISMATCH_MAX = 5` in ≤500 ms
-                    // and latching `hardware_status = Error` mid-roast during
-                    // normal low-power operation. Only declare a mismatch when
+                    // With the SSR driven by a 5 Hz LEDC PWM (200 ms
+                    // period), for duty < 50 % the ON window is shorter than
+                    // the sampling interval, so phase alignments exist where
+                    // samples land in the OFF window even though the SSR is
+                    // functioning correctly. Only declare a mismatch when
                     // the ON window is observably wide at this cadence
                     // (≥50 % duty = one full sample interval of ON per
                     // period), so the cross-check cannot alias with the PWM.
@@ -296,11 +281,8 @@ impl SsrControlBase {
                         }
                     } else if current_duty == 0 && heat_detected {
                         // Residual heat after cut-off — the metal mass stays
-                        // hot. Single-sample trips (the old behaviour) caused
-                        // spurious SSR shutdowns mid-roast. Require
-                        // HEAT_PRESENT_MISMATCH_MAX consecutive samples
-                        // (≈ 2 s at 100 ms/tick) before declaring the SSR
-                        // physically stuck on.
+                        // hot. Require HEAT_PRESENT_MISMATCH_MAX consecutive
+                        // samples before declaring the SSR physically stuck on.
                         self.heat_present_count = self.heat_present_count.saturating_add(1);
                         warn!(
                             "Heat present with heater off (count: {}/{}) — possible SSR stuck-on",

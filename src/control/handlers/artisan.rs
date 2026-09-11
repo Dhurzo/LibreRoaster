@@ -50,9 +50,8 @@ impl ArtisanCommandHandler {
     }
 
     /// Commit a manually-set heater value AFTER the hardware write was
-    /// accepted (Bug C, 2026-08-03). `evaluate` must NOT mutate
-    /// `manual_heater` — a `ssr_cycle_busy` rejection of the write would
-    /// otherwise leave the handler state ahead of the mode flags
+    /// accepted. `evaluate` must NOT mutate `manual_heater` — a rejected
+    /// write would otherwise leave the handler state ahead of the mode flags
     /// (`artisan_control`/`pid_enabled` still point at PID control) and the
     /// operator's value would be silently ignored for a tick. Committing here,
     /// post-write, keeps `manual_heater` in lockstep with what the SSR is
@@ -93,10 +92,9 @@ impl ArtisanCommandHandler {
     ///
     /// New heater value clamped to 0-100 range
     fn apply_heater_delta(current_value: f32, direction: i8) -> f32 {
-        // Bug R6 (2026-07-26): the previous `(current_value as i16 + delta as
-        // i16)` truncated fractional heater values (e.g. 47.6 → 47) on every
-        // UP/DOWN — a small error that accumulates across presses and drifts
-        // the displayed value from the applied one. Do the math in f32.
+        // Do the math in f32 so fractional heater values (e.g. 47.6) are not
+        // truncated on every UP/DOWN — a small error that would accumulate
+        // across presses and drift the displayed value from the applied one.
         let delta = (direction as f32) * (Self::HEATER_DELTA as f32);
         (current_value + delta).clamp(0.0, 100.0)
     }
@@ -131,18 +129,15 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                     return ManualPolicyOutcome::failed("Invalid heater value >100%");
                 }
 
-                // M10: defer state mutation (`manual_heater`, `pid_enabled`,
+                // Defer state mutation (`manual_heater`, `pid_enabled`,
                 // `artisan_control`) to the actuator's `apply_policy_outcome`,
                 // which ONLY commits if `apply_guarded_heater` accepts the
-                // write. Pre-fix, the typed policy outcome called
-                // `apply_to_status(status)` here (mutating `pid_enabled`/
-                // `artisan_control`/`manual_heater` *before* the hardware
-                // write), so a `reject_on_busy` `Err(ssr_cycle_busy)` left
+                // write. Mutating `pid_enabled`/`artisan_control`/
+                // `manual_heater` *before* the hardware write would leave
                 // Artisan with an "ERR" while the software state had already
-                // adopted the new value — the next tick applied it blindly.
-                // Bug C (2026-08-03): `manual_heater` itself no longer mutates
-                // here either — it is committed after the write succeeds via
-                // `self.commit_manual_heater(...)` in `apply_policy_outcome`.
+                // adopted the new value — the next tick would apply it blindly.
+                // `manual_heater` itself is committed after the write succeeds
+                // via `commit_manual_heater(...)` in `apply_policy_outcome`.
                 let outcome = ManualPolicyOutcome::heater(value as f32);
                 // NB: deliberate no `apply_to_status(status)` here. The
                 // state side-effects live in `apply_policy_outcome` after the
@@ -158,25 +153,13 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
                     return ManualPolicyOutcome::failed("Invalid fan value >100%");
                 }
 
-                // Bug C (2026-08-03): the `self.manual_fan` mutation moved to
-                // `commit_manual_fan` in `apply_policy_outcome` (post-write).
-                // Audit MA-8 (2026-08-11): the `outcome.apply_to_status(status)`
-                // that used to live here (writing `status.fan_output` BEFORE
-                // the hardware write) is REMOVED for full parity with the
-                // heater branch (M10 discipline). It had two defects:
-                //   1. On a fan-write failure (`set_fan_speed` → Err), the
-                //      status claimed the new value while the hardware never
-                //      received it — the exact "state ahead of hardware" bug
-                //      class Bug C fixed for the heater.
-                //   2. It wrote the UN-floored value: an `OT2 0` with the
-                //      heater energized briefly claimed 0 % before the
-                //      `FAN_MIN_SAFETY_PCT` floor in `apply_policy_outcome`
-                //      re-clamped it.
-                // `status.fan_output` is now published ONLY by
+                // The `manual_fan` mutation lives in `commit_manual_fan` in
+                // `apply_policy_outcome` (post-write), for full parity with
+                // the heater branch. `status.fan_output` is published ONLY by
                 // `ActuatorController::set_fan_speed` (success) with the
-                // floor applied, and `commit_manual_fan` commits the
-                // handler-local value post-write — single writer, same as
-                // the heater side.
+                // `FAN_MIN_SAFETY_PCT` floor applied, and `commit_manual_fan`
+                // commits the handler-local value post-write — single writer,
+                // same as the heater side.
                 let outcome = ManualPolicyOutcome::fan(value as f32);
 
                 info!("Artisan+ manual fan set to: {}%", value);
@@ -184,30 +167,28 @@ impl ManualCommandPolicy for ArtisanCommandHandler {
             }
 
             RoasterCommand::IncreaseHeater => {
-                // Bug #8: baseline on `self.manual_heater`, not `status.ssr_output`.
-                // Bug C: `manual_heater` holds the last COMMITTED value (only
-                // updated after the hardware accepts a write), so increases
-                // climb from what the SSR is actually applying.
+                // Baseline on `self.manual_heater`, which holds the last
+                // committed value (only updated after the hardware accepts a
+                // write), so increases climb from what the SSR is actually applying.
                 let current = self.manual_heater;
                 let new_value = Self::apply_heater_delta(current, 1);
 
                 let outcome = ManualPolicyOutcome::heater(new_value);
-                // M10: no `apply_to_status(status)` for heater; see comment
-                // in `SetHeaterManual` and the commit site in
-                // `RoasterControl::apply_policy_outcome`.
+                // No `apply_to_status(status)` for heater; the state
+                // side-effects live in `RoasterControl::apply_policy_outcome`
+                // after the hardware write succeeds.
 
                 info!("Artisan+ UP: heater increased to {:.0}%", new_value);
                 outcome
             }
 
             RoasterCommand::DecreaseHeater => {
-                // Bug C: baseline on the last committed `manual_heater`.
+                // Baseline on the last committed `manual_heater`.
                 let current = self.manual_heater;
                 let new_value = Self::apply_heater_delta(current, -1);
 
                 let outcome = ManualPolicyOutcome::heater(new_value);
-                // M10: no `apply_to_status(status)` for heater; see comment
-                // in `SetHeaterManual`.
+                // No `apply_to_status(status)` for heater; see `SetHeaterManual`.
 
                 info!("Artisan+ DOWN: heater decreased to {:.0}%", new_value);
                 outcome

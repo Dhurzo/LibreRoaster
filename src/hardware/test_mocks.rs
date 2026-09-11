@@ -263,10 +263,7 @@ impl MockFan {
         critical_section::with(|cs| self.shared.borrow(cs).borrow_mut().fail_next_speed_writes = n);
     }
 
-    /// Fail the next `n` `emergency_set_speed` calls (shared state). This is
-    /// the seam the safety paths need: `emergency_set_speed` used to be
-    /// infallible, so a fan that cannot reach 100 % on the emergency path
-    /// could never be simulated.
+    /// Fail the next `n` `emergency_set_speed` calls (shared state).
     pub fn fail_next_emergency_writes(&mut self, n: u32) {
         critical_section::with(|cs| {
             self.shared

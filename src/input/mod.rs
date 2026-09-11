@@ -17,13 +17,9 @@ pub use parser::parse_artisan_command;
 #[cfg(target_arch = "riscv32")]
 use crate::hardware::uart::{send_response, uart_reader_task};
 
-// Bug M1 (2026-07-26): `CommandQueue` / `COMMAND_QUEUE_SIZE` / `QueueError`
-// were removed — the F5.3 refactor moved the production command path to the
-// Embassy channel (`ServiceContainer::get_artisan_channel`,
-// ARTISAN_CMD_CHANNEL_SIZE = 8); the legacy queue was exercised ONLY by
-// `tests/transport_flood_test.rs`, giving false confidence in flood
-// robustness. Tests that want to exercise backpressure should target the
-// real channel.
+// Production command path uses the Embassy channel
+// (`ServiceContainer::get_artisan_channel`, ARTISAN_CMD_CHANNEL_SIZE = 8).
+// Tests that want to exercise backpressure should target the real channel.
 
 #[derive(Debug, Clone, PartialEq)]
 /// Errors arising from the Artisan input subsystem.

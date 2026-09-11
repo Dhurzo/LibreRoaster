@@ -9,12 +9,8 @@ use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
 use core::cell::RefCell;
 use critical_section::Mutex;
 
-/// Bug L9 (2026-08-10): the previous single-slot
-/// `Mutex<RefCell<Option<RoastProfile>>>` let a burst of two PROFILE lines
-/// overwrite the first profile before the control loop drained the channel —
-/// `SetProfile` then applied the SECOND profile twice (or the first was a
-/// no-op). A small FIFO (capacity 4) preserves bursts in order; overflow
-/// drops the oldest, keeping the newest command.
+/// A small FIFO (capacity 4) preserves bursts of PROFILE lines in order;
+/// overflow drops the oldest, keeping the newest command.
 static PARSED_PROFILE: Mutex<RefCell<heapless::Deque<RoastProfile, 4>>> =
     Mutex::new(RefCell::new(heapless::Deque::new()));
 
@@ -94,31 +90,21 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     // (CHAN;1200, UNITS;C, FILT;70, PID;SV;250, PROFILE;...) and a space for
     // operational commands (OT1 75, READ, STATUS). Some Artisan configurations
     // also send the operational form with a semicolon: `OT1;75`, `OT2;60`,
-    // `IO3;50`. The previous code only handled the ';' delimiter for a fixed
-    // whitelist (CHAN/UNITS/FILT/PROFILE/FANPROFILE/PID) and fell through to
-    // `split_whitespace()` on the *unmodified* string for anything else — but
-    // `split_whitespace` does not treat `;` as a delimiter, so `OT1;75`
-    // produced a single token `["OT1;75"]` and was rejected as
-    // `unknown_command`, even though the preceding comment claimed a
-    // fall-through. Cero tests covered it.
+    // `IO3;50`.
     //
-    // Fix: normalise the delimiter to a space BEFORE the init-command
-    // dispatch. init commands still match (`"CHAN 1200"` parses identically to
+    // Normalise the delimiter to a space BEFORE the init-command
+    // dispatch. Init commands still match (`"CHAN 1200"` parses identically to
     // `"CHAN;1200"` once we look for `split_once(' ')`), and `OT1;75` becomes
     // `OT1 75`, hitting the existing operational parser.
     let normalized: heapless::String<256> = {
         let mut s = heapless::String::new();
         for ch in trimmed.chars() {
-            // Bug B8: the transport layer accepts lines up to 255 bytes
-            // (`Vec<u8, 256>`, `CommandTooLong` only fires at ≥256) and
+            // The transport layer accepts lines up to 255 bytes
+            // (`Vec<u8, 256>`, `CommandTooLong` fires at ≥256) and
             // PROFILE/FANPROFILE commands routinely reach ~170 bytes with
-            // `MAX_PROFILE_SETPOINTS = 16`. The previous `String<128>` plus
-            // `let _ = s.push(ch)` silently dropped bytes past 128, splitting
-            // a number in two (rejected later as `out_of_range`) or accepting
-            // a truncated profile that pinned the roaster at an early
-            // setpoint for the entire roast. Use a 256-byte buffer matching
+            // `MAX_PROFILE_SETPOINTS = 16`. Use a 256-byte buffer matching
             // the transport ceiling, and surface overflow as an explicit
-            // `CommandTooLong` instead of swallowing it.
+            // `CommandTooLong` instead of truncating.
             let pushed = if ch == ';' { s.push(' ') } else { s.push(ch) };
             if pushed.is_err() {
                 return Err(ParseError::CommandTooLong);
@@ -150,10 +136,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                     // (e.g., "FILT;70,70,70,70") or a single value
                     // (e.g., "FILT;5"). The value is acknowledged but not
                     // used by the firmware — just extract the first token.
-                    // Audit L-4 (2026-08-11): garbage was silently coerced to
-                    // 0 (`unwrap_or(0)`) and out-of-range values accepted —
-                    // unlike every other numeric path. Reject loudly:
-                    // non-numeric or > 100 yields `ERR invalid_value`,
+                    // Non-numeric or > 100 yields `ERR invalid_value`,
                     // matching the parser's "reject, don't coerce" convention.
                     let first = args.trim().split(',').next().unwrap_or("").trim();
                     let val = first.parse::<u8>().map_err(|_| ParseError::InvalidValue)?;
@@ -181,10 +164,9 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     }
 
     // Operational commands: parse the normalised command by spaces. take(5)
-    // prevents heapless::Vec overflow on garbage input (>5 tokens).
-    // Bug L8 (2026-08-10): `take(4)` truncated a 5-token line
-    // (`PIDGAIN 1 2 3 junk`) to exactly 4 parts, so PIDGAIN's `len() == 4`
-    // arity check could not see the trailing junk and accepted it.
+    // prevents heapless::Vec overflow on garbage input (>5 tokens) while
+    // preserving trailing junk so arity checks (e.g. PIDGAIN `len() == 4`)
+    // can reject it.
     let parts: heapless::Vec<&str, 5> = trimmed.split_whitespace().take(5).collect();
 
     if parts.is_empty() {
@@ -196,8 +178,8 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     // above covers the semicolon, but classic actuator syntax documented for
     // aArtisan/firmware TC4 uses commas and equals: `OT1,75`, `IO3=50`,
     // `DCFAN,40`. With only whitespace splitting those arrive as a single
-    // token ("OT1,75") and were rejected as `unknown_command`, silently
-    // killing Artisan slider/button configs that follow the documented
+    // token ("OT1,75") rejected as `unknown_command`, breaking Artisan
+    // slider/button configs that follow the documented
     // syntax. Re-tokenise on [',','='] ONLY when the head of the first token
     // names an actuator command — a global comma split would corrupt the
     // comma-separated payloads of FILT (first-value extraction) and
@@ -281,20 +263,13 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             let kp = parse_float(parts[1])?;
             let ki = parse_float(parts[2])?;
             let kd = parse_float(parts[3])?;
-            // Bug B21: PIDGAIN accepts kp/ki/kd via `parse_float`, which
-            // happily parses "NaN"/"inf"/"-inf". A NaN gain yields a NaN MV
-            // (the PID clamping passes NaN through unchanged, and the SSR
-            // driver treats it as "anything"). Reject non-finite inputs here
-            // so the operator gets `ERR out_of_range` instead of an
-            // undefined heater command.
+            // Non-finite gains yield a NaN MV — reject here with
+            // `ERR out_of_range`.
             if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
                 return Err(ParseError::OutOfRange);
             }
-            // Audit L-5 (2026-08-11): PID;T rejects negative gains in the
-            // parser (`OutOfRange`); PIDGAIN let them through to the handler
-            // (`ERR handler_failed ...:negative_pid_gain`). One input should
-            // have one error token — mirror the PID;T check here. The handler
-            // check below remains as defense-in-depth.
+            // Negative gains are rejected here (`OutOfRange`), mirroring the
+            // PID;T check. The handler check remains as defense-in-depth.
             if kp < 0.0 || ki < 0.0 || kd < 0.0 {
                 return Err(ParseError::OutOfRange);
             }
@@ -315,13 +290,9 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             .trim()
             .parse::<f32>()
             .map_err(|_| ParseError::InvalidValue)?;
-        // Bug B9: drop the (50.0..=300.0) range check from the parser. The
-        // value is in *display units* (°C or °F depending on UNITS) here; the
-        // handler `handle_set_target_temp` converts to °C and validates the
-        // converted value. A °F user with `PID;SV;385` (~196 °C, a normal
-        // setpoint) was rejected here because 385 > 300, making PID roasts
-        // impossible for anyone running Artisan in Fahrenheit. Keep only the
-        // numeric sanity check.
+        // The value is in *display units* (°C or °F depending on UNITS);
+        // the handler `handle_set_target_temp` converts to °C and validates
+        // the converted value. Keep only the numeric sanity check here.
         if !target.is_finite() {
             return Err(ParseError::InvalidValue);
         }
@@ -329,9 +300,9 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.eq_ignore_ascii_case("PREHEAT") {
         if parts.len() == 2 {
             let temp = parse_float(parts[1])?;
-            // Bug B9: same as PID;SV — the handler converts display units to
-            // °C and validates the converted value, so the parser must not
-            // apply a °C range here.
+            // Same as PID;SV — the handler converts display units to
+            // °C and validates the converted value; keep only the finite
+            // sanity check here.
             if !temp.is_finite() {
                 return Err(ParseError::InvalidValue);
             }
@@ -342,7 +313,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
             let target = parse_float(parts[1])?;
-            // Bug B9: same as PID;SV — the handler validates after the
+            // Same as PID;SV — the handler validates after the
             // display→°C conversion; keep only the finite sanity check here.
             if !target.is_finite() {
                 return Err(ParseError::InvalidValue);
@@ -360,12 +331,9 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
     // Accept both ';' and ' ' as segment delimiters: the caller pre-normalises
     // ';' to ' ' for some paths, so we split on either to stay robust under
     // both `PID;SV;250` and `PID SV 250` style inputs.
-    // Bug M11 (2026-08-10): the caller normalises EVERY ';' to a space, so a
-    // legal spaced form like `PID; SV; 250` arrived as `PID  SV  250` — the
-    // un-filtered split produced empty segments and `parts[1]` was "" for
-    // `SV`/`CHAN`/`CT`, rejecting a TC4-legal command (`PROTOCOL.md`:
-    // comma/space/semicolon/equals are all legal separators "for every
-    // command"). Mirror `parse_profile_args` and skip empty segments.
+    // The caller normalises every ';' to a space, so a legal spaced form
+    // like `PID; SV; 250` arrives as `PID  SV  250` — skip empty segments
+    // (mirroring `parse_profile_args`).
     let parts: heapless::Vec<&str, 8> = args
         .split([';', ' '])
         .map(str::trim)
@@ -380,9 +348,7 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
         "ON" => Ok(ArtisanCommand::StartRoast),
         "OFF" => Ok(ArtisanCommand::Stop),
         "SV" => {
-            // Bug L8 (2026-08-10): exact arity — `PID;SV;250;junk` used to
-            // parse OK because only `len() < 2` was checked and the junk in
-            // `parts[3]` was silently ignored.
+            // Require exact arity — trailing junk (`PID;SV;250;junk`) is rejected.
             if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
@@ -390,17 +356,14 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            // Bug B9: drop the (50.0..=300.0) range check — the value is in
-            // display units here; the handler converts to °C and validates.
+            // The value is in display units; the handler converts to °C and validates.
             if !target.is_finite() {
                 return Err(ParseError::InvalidValue);
             }
             Ok(ArtisanCommand::SetTargetTemp(target))
         }
         "T" => {
-            // Bug DRH-3 (2026-07-26): `parts.len() < 4` silently accepted
-            // extra tokens after kd (`parts[4..]` ignored). Require exactly
-            // `PID;T;kp;ki;kd` so a malformed command is rejected loudly
+            // Require exactly `PID;T;kp;ki;kd` — extra tokens are rejected
             // instead of partially applied.
             if parts.len() != 4 {
                 return Err(ParseError::InvalidValue);
@@ -417,12 +380,8 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            // Bug B21: `f32::from_str("NaN")/("inf")/("-inf")` parses cleanly
-            // into f32 — a NaN/Inf PID gain would propagate into
-            // `compute_output` and yield a NaN MV every tick, which the SSR
-            // driver then attempts to clamp, leaving heater power undefined.
-            // PROTO-1 already fixed the same class on PID;LIMIT; here we also
-            // apply the is_finite() check to PID;T and (below) PIDGAIN.
+            // Non-finite gains would yield a NaN MV every tick — reject
+            // with `OutOfRange` (same class already handled on PID;LIMIT and PIDGAIN).
             if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
                 return Err(ParseError::OutOfRange);
             }
@@ -432,7 +391,7 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
             Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
         }
         "CHAN" => {
-            // Bug L8 (2026-08-10): exact arity, same as SV.
+            // Require exact arity, same as SV.
             if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
@@ -440,18 +399,15 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<u8>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            // Bug P12 (2026-08-03): accept only `1..=2` — the firmware has
-            // exactly two thermocouples (1 = ET, 2 = BT). The previous `1..=4`
-            // accepted `PID;CHAN;3|4` and silently executed them as BT (the PV
-            // selector treats anything != 1 as BT), leaving the operator with
-            // no error and a control input they did not intend.
+            // Accept only `1..=2` — the firmware has exactly two
+            // thermocouples (1 = ET, 2 = BT).
             if !(1..=2).contains(&ch) {
                 return Err(ParseError::OutOfRange);
             }
             Ok(ArtisanCommand::SetPidChannel(ch))
         }
         "CT" => {
-            // Bug L8 (2026-08-10): exact arity, same as SV.
+            // Require exact arity, same as SV.
             if parts.len() != 2 {
                 return Err(ParseError::InvalidValue);
             }
@@ -459,21 +415,18 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<u32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            // Bug S3 (2026-08-05): the cycle time was previously bounded only
-            // below (10 ms). `PID;CT;4294967295` froze the PID throttle — the
-            // `cycle_ms` never elapsed, so `update_pid_control` held the last
-            // applied heater output indefinitely (regulation silently dead,
-            // backstopped only by the 30-min cap / comms-idle). Cap at 60 s:
-            // anything slower is a configuration error, and a PID that only
-            // updates once a minute has no regulatory value.
+            // Bound the cycle time to 10 ms..=60 s. An unbounded `cycle_ms`
+            // would stall `update_pid_control` on the last applied output
+            // (regulation dead); anything updating slower than once a minute
+            // has no regulatory value.
             if !(10..=60_000).contains(&ms) {
                 return Err(ParseError::OutOfRange);
             }
             Ok(ArtisanCommand::SetPidCycleTime(ms))
         }
         "LIMIT" => {
-            // Bug L8 (2026-08-10): exact arity — `PID;LIMIT;0;100;junk` must
-            // be rejected, not partially applied.
+            // Require exact arity — trailing junk (`PID;LIMIT;0;100;junk`)
+            // is rejected, not partially applied.
             if parts.len() != 3 {
                 return Err(ParseError::InvalidValue);
             }
@@ -485,7 +438,7 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
                 .trim()
                 .parse::<f32>()
                 .map_err(|_| ParseError::InvalidValue)?;
-            // PROTO-1: Reject NaN/Inf which would cause PID compute_output to panic
+            // Reject NaN/Inf which would cause PID compute_output to panic
             if !min.is_finite() || !max.is_finite() {
                 return Err(ParseError::InvalidValue);
             }
@@ -519,12 +472,8 @@ fn parse_float(value_str: &str) -> Result<f32, ParseError> {
 /// the clamping back to the caller via `was_clamped=true` so the control
 /// layer can emit an `ERR OT2_CLAMPED` notification.
 ///
-/// Bug L10 (2026-07-25): earlier drafts claimed that out-of-range OT2
-/// triggers a heater safety cutoff. That diverged from the implementation
-/// in `roaster_control.rs::handle_set_fan_speed` (Spec F4.8: OT2 is a
-/// fan-override command and must NOT change the heater or PID state). Docs
-/// and this doc-comment now describe what the code actually does: clamp
-/// the fan, leave the heater alone, notify the host.
+/// OT2 is a fan-override command and does not change heater or PID state.
+/// The fan is clamped, the heater is left alone, and the host is notified.
 ///
 /// - Decimals are rounded to the nearest integer
 /// - Out-of-range values are clamped to `[0, 100]` and `was_clamped` is set true
@@ -535,11 +484,9 @@ fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
         .parse::<f32>()
         .map_err(|_| ParseError::InvalidValue)?;
 
-    // M6: NaN / Inf parse as a valid f32, but for a safety actuator (cooling
-    // fan) they must be rejected outright — clamping `(NaN+0.5) as i32` would
-    // saturate to 0 and silently issue `SetFanSpeed(0, true)` with the heater
-    // still energised. Sister paths (PIDGAIN/PID;T/PID;LIMIT/SV/SETTARGET/
-    // PREHEAT) already do this; bring OT2 in line.
+    // Non-finite input is rejected outright — clamping `(NaN+0.5) as i32`
+    // would saturate to 0 and silently issue `SetFanSpeed(0, true)` with the
+    // heater still energised.
     if !value.is_finite() {
         return Err(ParseError::InvalidValue);
     }
@@ -579,15 +526,10 @@ fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
             .parse()
             .map_err(|_| ParseError::InvalidValue)?;
 
-        // Bug A4 (2026-07-25): the previous range check (50.0..=300.0) was
-        // applied to the RAW numeric value (whichever scale the host sent),
-        // but `handle_set_profile` converts to °C with
-        // `convert_from_display` first and validates in °C. With UNITS=F the
-        // raw °F values for any real roast easily exceed 300 (e.g. 400 °F
-        // ≈ 204 °C — a typical drop-BT) and got rejected with
-        // `ERR out_of_range` before the converter ever ran. Only reject
-        // numerical garbage here (NaN/Inf); range check belongs on the
-        // converted value in the handler.
+        // The raw value is in the host's display scale;
+        // `handle_set_profile` converts to °C with `convert_from_display`
+        // first and validates in °C. Only reject non-finite values here;
+        // range check belongs on the converted value in the handler.
         if !temperature.is_finite() {
             return Err(ParseError::InvalidValue);
         }
@@ -648,9 +590,9 @@ fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     Ok(ArtisanCommand::SetFanProfile)
 }
 
-/// Bug L9 (2026-08-10): FIFO queue for FANPROFILE, same rationale as
-/// `PARSED_PROFILE` (a burst of two FANPROFILE lines must not overwrite the
-/// first before the control loop drains it).
+/// FIFO queue for FANPROFILE: a burst of two FANPROFILE lines must not
+/// overwrite the first before the control loop drains it (same rationale
+/// as `PARSED_PROFILE`).
 static PARSED_FAN_PROFILE: Mutex<RefCell<heapless::Deque<FanProfile, 4>>> =
     Mutex::new(RefCell::new(heapless::Deque::new()));
 /// Stage a parsed FANPROFILE into the interrupt-safe FIFO for the control loop.
@@ -743,9 +685,8 @@ mod tests {
                 ];
 
                 let (input, expected_command) = command_table[index as usize % command_table.len()];
-                // Audit H-7 (2026-08-11): was `matches!(Ok(_expected_command))` —
-                // the `_`-prefixed binding matched ANY payload, so the table only
-                // proved "these strings parse", never "to the right command".
+                // Assert exact command equality so the table proves the
+                // mapping, not just successful parsing.
                 let result = super::parse_artisan_command(input);
                 assert_eq!(result, Ok(expected_command));
             }
@@ -1013,14 +954,14 @@ mod tests {
 
     #[test]
     fn test_parse_filt_command_non_numeric_rejected() {
-        // Audit L-4: garbage is rejected loudly, not coerced to 0.
+        // Garbage is rejected loudly, not coerced to 0.
         let result = parse_artisan_command("FILT;abc");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
     }
 
     #[test]
     fn test_parse_filt_command_out_of_range_rejected() {
-        // Audit L-4: values above 100 are out of range (0-100 filter %).
+        // Values above 100 are out of range (0-100 filter %).
         let result = parse_artisan_command("FILT;999");
         assert!(matches!(result, Err(ParseError::InvalidValue)));
         let result = parse_artisan_command("FILT; 101 ");
@@ -1267,7 +1208,7 @@ mod tests {
 
     #[test]
     fn test_parse_settarget_out_of_range() {
-        // Bug B9: the parser must NOT range-check display-unit setpoints —
+        // The parser does not range-check display-unit setpoints —
         // the handler validates after the °F→°C conversion. 350 °F is well
         // within °C target range (~177 °C), and the parser must pass it.
         let result = parse_artisan_command("SETTARGET 350");
@@ -1277,9 +1218,8 @@ mod tests {
 
     #[test]
     fn test_parse_settarget_too_low() {
-        // Bug B9: see `test_parse_settarget_out_of_range`. A small value
-        // like 40 °F (~4 °C) is parsed successfully; the handler decides
-        // whether the converted target is in the operational °C window.
+        // A small value like 40 °F (~4 °C) is parsed successfully; the
+        // handler decides whether the converted target is in range.
         let result = parse_artisan_command("SETTARGET 40");
         assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(v))
             if (v - 40.0).abs() < f32::EPSILON));
@@ -1321,7 +1261,7 @@ mod tests {
 
     #[test]
     fn test_preheat_too_low() {
-        // Bug B9: parser passes the value through; the handler validates
+        // The parser passes the value through; the handler validates
         // after the display→°C conversion.
         assert!(matches!(
             parse_artisan_command("PREHEAT 40"),
@@ -1331,8 +1271,8 @@ mod tests {
 
     #[test]
     fn test_preheat_too_high() {
-        // Bug B9: parser passes the value through (e.g. 350 °F ≈ 177 °C
-        // is a perfectly normal preheat). Handler validates post-conversion.
+        // The parser passes the value through (e.g. 350 °F ≈ 177 °C
+        // is a normal preheat). Handler validates post-conversion.
         assert!(matches!(
             parse_artisan_command("PREHEAT 350"),
             Ok(ArtisanCommand::Preheat(350.0))
@@ -1437,7 +1377,7 @@ mod tests {
 
     #[test]
     fn test_pid_sv_out_of_range() {
-        // Bug B9: parser no longer range-checks display-unit setpoints.
+        // The parser does not range-check display-unit setpoints.
         // 40 °F (~4 °C) and 350 °F (~177 °C) are both accepted; the handler
         // validates after the °F→°C conversion.
         assert!(matches!(
@@ -1486,7 +1426,7 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_sv_out_of_range() {
-        // Bug B9: parser no longer range-checks display-unit setpoints.
+        // The parser does not range-check display-unit setpoints.
         // 40 °F is parsed successfully; the handler validates post-conversion.
         assert!(matches!(
             parse_artisan_command("PID;SV;40"),
@@ -1544,9 +1484,8 @@ mod tests {
 
     #[test]
     fn test_pid_semicolon_chan_3_and_4_rejected() {
-        // Bug P12: the firmware has exactly two thermocouples (1 = ET, 2 =
-        // BT). The previous `1..=4` accepted 3|4 and silently executed them
-        // as BT (the PV selector treats anything != 1 as BT) — reject loudly.
+        // The firmware has exactly two thermocouples (1 = ET, 2 = BT) —
+        // 3|4 select no valid PV input and are rejected.
         assert!(matches!(
             parse_artisan_command("PID;CHAN;3"),
             Err(ParseError::OutOfRange)
@@ -1617,12 +1556,9 @@ mod tests {
         ));
     }
 
-    /// Bug #4 regression: Artisan's default slider syntax uses a semicolon,
-    /// not a space, for the operational commands `OT1`, `OT2`, `IO3`. The
-    /// previous parser rejected them with `ERR unknown_command` because it
-    /// only let `;` through for the init-command whitelist (CHAN/UNITS/FILT/
-    /// PROFILE/FANPROFILE/PID) and then `split_whitespace` left "OT1;75" as
-    /// a single token. These tests pin the fix that normalises `;`→` ` first.
+    /// Artisan's default slider syntax uses a semicolon, not a space, for
+    /// the operational commands `OT1`, `OT2`, `IO3`. The `;`→` ` normalisation
+    /// handles them.
     #[test]
     fn test_ot1_semicolon_parses_as_set_heater() {
         assert_eq!(
@@ -1647,13 +1583,12 @@ mod tests {
         );
     }
 
-    // ── TC4 classic comma/equals delimiters (Bug P-TC4) ─────────────
+    // ── TC4 classic comma/equals delimiters ─────────────
 
-    /// Bug P-TC4: the TC4 spec (aArtisan serial commands, note 2) permits
-    /// comma, space, semicolon OR equals as the parameter delimiter for every
-    /// command. Artisan slider/button configs documented in guides use the
-    /// classic comma form (`OT1,{v}`, `IO3,{v}`). Previously only `;` was
-    /// normalised, so these were rejected as `unknown_command`.
+    /// The TC4 spec (aArtisan serial commands, note 2) permits comma, space,
+    /// semicolon OR equals as the parameter delimiter for every command.
+    /// Artisan slider/button configs documented in guides use the classic
+    /// comma form (`OT1,{v}`, `IO3,{v}`).
     #[test]
     fn test_ot1_comma_parses_as_set_heater() {
         assert_eq!(
@@ -1694,8 +1629,8 @@ mod tests {
         );
     }
 
-    /// Bug P-TC4: `DCFAN,duty` is the TC4 fan command (added 13-Apr-2014 to
-    /// the aArtisan spec) and is implemented by the reference firmware.
+    /// `DCFAN,duty` is the TC4 fan command (added 13-Apr-2014 to the
+    /// aArtisan spec) and is implemented by the reference firmware.
     /// Maps to the same fan path as IO3.
     #[test]
     fn test_dcfan_comma_parses_as_set_fan() {
@@ -1747,8 +1682,8 @@ mod tests {
         );
     }
 
-    /// Bug P-TC4 regression: the comma re-tokenisation must NOT swallow the
-    /// legacy `PID,ON`/`PID,OFF`/`PID,SV,..` forms dispatched from `cmd`.
+    /// The comma re-tokenisation must NOT swallow the legacy
+    /// `PID,ON`/`PID,OFF`/`PID,SV,..` forms dispatched from `cmd`.
     #[test]
     fn test_pid_comma_forms_still_work_with_retokenise() {
         assert_eq!(
@@ -1762,8 +1697,8 @@ mod tests {
         );
     }
 
-    /// Bug P-TC4 regression: FILT's comma-separated payload must keep its
-    /// first-value extraction (no global comma splitting).
+    /// FILT's comma-separated payload keeps its first-value extraction
+    /// (no global comma splitting).
     #[test]
     fn test_filt_comma_payload_unaffected() {
         assert_eq!(
@@ -1772,8 +1707,7 @@ mod tests {
         );
     }
 
-    /// Bug P-TC4 regression: PROFILE `t,temp` pairs must stay intact (no
-    /// global comma splitting).
+    /// PROFILE `t,temp` pairs stay intact (no global comma splitting).
     #[test]
     fn test_profile_comma_pairs_unaffected() {
         assert_eq!(
@@ -1782,9 +1716,9 @@ mod tests {
         );
     }
 
-    /// Bug #4 regression: PID sub-commands must still parse after the `;`
-    /// normalisation — `PID;SV;250` becomes `PID SV 250`, so the pid
-    /// sub-parser must split on either delimiter.
+    /// PID sub-commands still parse after the `;` normalisation —
+    /// `PID;SV;250` becomes `PID SV 250`, so the pid sub-parser splits on
+    /// either delimiter.
     #[test]
     fn test_pid_sv_semicolon_parses_as_set_target() {
         assert_eq!(

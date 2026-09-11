@@ -81,9 +81,9 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
     let mut led = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
 
     loop {
-        // Bug B19: feed the RWDT (already armed by init_hw_watchdog at
-        // main.rs:178) so the safe-shutdown blink pattern is observable
-        // instead of causing a ~2.2s boot-loop once B2 is fixed.
+        // Feed the RWDT (already armed by init_hw_watchdog) so the
+        // safe-shutdown blink pattern stays observable instead of the
+        // ~2.2 s watchdog resetting the chip.
         libreroaster::safety::watchdog::feed_hw_watchdog();
         for _ in 0..3 {
             led.set_low();
@@ -122,10 +122,10 @@ fn run_init_or_panic<T>(result: Result<T, InitError>) -> T {
         Err(e) => {
             let error_msg = format_init_error(&e);
             log::error!("safe_shutdown: {} - halting", error_msg);
-            // Bug B19: the RWDT is armed in init_hw_watchdog() (called before
-            // builder.build()). Without feeding it, fixing B2 would turn this
-            // diagnostic halt into a ~2.2s boot-loop. Feed every iteration so
-            // the operator can read the error blink pattern.
+            // The RWDT is armed in init_hw_watchdog() (called before
+            // builder.build()). Feed every iteration so the operator can
+            // read the error blink pattern instead of the ~2.2 s watchdog
+            // resetting the chip.
             loop {
                 libreroaster::safety::watchdog::feed_hw_watchdog();
                 esp_hal::rom::ets_delay_us(1_000_000);
@@ -144,19 +144,18 @@ fn main() -> ! {
 
     // Initialize the esp-println logger before any info!() calls.
     //
-    // Bug #6 mitigation (partial): esp_println writes to the same physical
-    // channel as the Artisan protocol (USB-Serial-JTAG on the C3 by default,
-    // or UART0). In production we set the level filter to Warn so that the
-    // per-tick info!/debug! chatter (a ~6/s MAX31856 read dump, plus control
-    // loop telemetry) does NOT corrupt READ responses or continuous telemetry
-    // on the wire. The `instrumentation` feature on a debug build raises the
+    // esp_println writes to the same physical channel as the Artisan
+    // protocol (USB-Serial-JTAG on the C3 by default, or UART0). In
+    // production we set the level filter to Warn so that the per-tick
+    // info!/debug! chatter (a ~6/s MAX31856 read dump, plus control loop
+    // telemetry) does NOT corrupt READ responses or continuous telemetry on
+    // the wire. The `instrumentation` feature on a debug build raises the
     // filter to Debug — disable it for production flashes.
     //
-    // The complete fix (plan-informe F4 / LibreRoaster_11_Fixes_Criticos #6)
-    // is to install a custom `log::Log` that writes to a *separate* UART1 on
-    // GPIO2, so logs and protocol never share a wire. That change requires HW
-    // validation on the bench and is left for Fase 6, after the board is
-    // physically wired; reducing the level here is the safe interim.
+    // The long-term direction is a custom `log::Log` that writes to a
+    // *separate* UART1 on GPIO2, so logs and protocol never share a wire.
+    // That change requires HW validation on the bench and is left until the
+    // board is physically wired; reducing the level here is the safe interim.
     #[cfg(not(feature = "instrumentation"))]
     esp_println::logger::init_logger(log::LevelFilter::Warn);
     #[cfg(feature = "instrumentation")]
@@ -195,14 +194,11 @@ fn main() -> ! {
     libreroaster::safety::watchdog::init_hw_watchdog();
     info!("Hardware watchdog initialized (RTC WDT)");
 
-    // Audit MP-5 (2026-08-11): the init Result was discarded and "USB CDC
-    // initialized" was logged unconditionally — a failed init would leave the
-    // operator believing USB was up while Artisan-on-USB got nothing. Now the
-    // success log is emitted ONLY on Ok. On Err we log loudly but do NOT halt:
-    // UART0 remains a fully functional transport, and on riscv32
-    // `init_usb_cdc` is effectively infallible (StaticCell::init cannot fail),
-    // so this branch is defensive — halting here would brick a working UART
-    // session over an unreachable error.
+    // The success log is emitted ONLY on Ok. On Err we log loudly but do NOT
+    // halt: UART0 remains a fully functional transport, and on riscv32
+    // `init_usb_cdc` is effectively infallible (StaticCell::init cannot
+    // fail), so this branch is defensive — halting here would brick a
+    // working UART session over an unreachable error.
     match libreroaster::hardware::usb_cdc::initialize_usb_cdc_system(peripherals.USB_DEVICE) {
         Ok(()) => info!("USB CDC initialized"),
         Err(e) => log::error!(
@@ -236,10 +232,9 @@ fn main() -> ! {
             Ok(app) => app,
             Err(e) => {
                 log::error!("AppBuilder failed: {:?}", e);
-                // Bug B19: keep the RWDT fed while we halt so the error is
-                // observable. The RWDT is armed at main.rs:178 (before
-                // builder.build()), so without this feed a B2-correct
-                // watchdog would reset the system every ~2.2s.
+                // Keep the RWDT fed while we halt so the error stays
+                // observable instead of the watchdog resetting the system
+                // every ~2.2 s.
                 loop {
                     libreroaster::safety::watchdog::feed_hw_watchdog();
                     esp_hal::rom::ets_delay_us(1_000_000);

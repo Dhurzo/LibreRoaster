@@ -118,10 +118,7 @@ where
         // CR0 bit 0 (not CR1 bit 3); conversion time maxes at 185 ms (datasheet).
         let mut ok = max31856.write_register(0x80, 0x11).is_ok();
         // CR1 (0x81): AVGSEL=1 sample, TC TYPE = Type K (0011). Bits 3:0 = 0011.
-        // The 50/60 Hz filter is NOT a CR1 field; the old `0x0B` value was
-        // selecting "voltage mode with gain ×8" (TC TYPE = 1011) — no
-        // thermocouple linearization, garbage temperatures even if the
-        // readback had matched.
+        // The 50/60 Hz filter is NOT a CR1 field (it lives in CR0 bit 0).
         ok &= max31856.write_register(0x81, 0x03).is_ok();
         // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
         ok &= max31856.write_register(0x82, 0x00).is_ok();
@@ -178,8 +175,7 @@ where
         }
 
         // 3. Check fault register for open circuit (informational only).
-        // Per the MAX31856 datasheet, Open Circuit is bit 0 (value 0x01) —
-        // the previous code checked 0x40 (which is actually TC Range, bit 6).
+        // Per the MAX31856 datasheet, Open Circuit is bit 0 (value 0x01).
         let fault = self.read_register(0x0F).unwrap_or(0xFF);
         if fault & 0x01 != 0 {
             log::warn!(
@@ -200,11 +196,11 @@ where
             crate::config::constants::MAX31856_CONVERSION_TIME_MS
         );
 
-        // Spec F2.2: use Instant::elapsed() instead of fixed-iteration spin_loop.
-        // 50 Hz conversion time is ~185 ms per datasheet, but OCFAULT=01 adds
-        // ~10 ms for the open-circuit detection step (configured at init).
+        // Use `Instant::elapsed()` wall-clock wait for the conversion budget.
+        // 50 Hz conversion time is ~185 ms per datasheet, plus ~10 ms for
+        // the open-circuit detection step (OCFAULT=01, configured at init).
         // Use the project-wide `MAX31856_CONVERSION_TIME_MS` budget so all
-        // sensor reads agree — L5 lifts that constant to 210 ms.
+        // sensor reads agree.
         let start = Instant::now();
         while start.elapsed()
             < Duration::from_millis(crate::config::constants::MAX31856_CONVERSION_TIME_MS)
@@ -239,8 +235,7 @@ where
 
     /// Program the device for Type-K thermocouples (CR1 = 0x03).
     pub fn configure_type_k(&mut self) -> Result<(), Max31856Error> {
-        // Type K (TC TYPE = 0011). The 50 Hz filter lives in CR0 bit 0, not
-        // in CR1; the old `0x0B` value selected voltage mode ×8 (TC TYPE = 1011).
+        // Type K (TC TYPE = 0011). The 50 Hz filter lives in CR0 bit 0, not in CR1.
         self.write_register(0x81, 0x03)?;
         Ok(())
     }
@@ -266,15 +261,8 @@ where
             ((rx_buffer[0] as u32) << 16) | ((rx_buffer[1] as u32) << 8) | (rx_buffer[2] as u32);
         let fault = rx_buffer[3];
 
-        // Bug #6 mitigation: this line is HIT on EVERY sensor read (~6/s at the
-        // default control cadence, plus once per sensor per tick). An `info!`
-        // dump here floods the same physical UART/USB-Serial-JTAG channel that
-        // carries the Artisan protocol — corrupting READ responses and
-        // continuous telemetry in real sessions. Demoted to `debug!` so it
-        // only appears under the `instrumentation` feature (which raises the
-        // log level filter to Debug). A future, HW-validated fix installs a
-        // dedicated log sink (see plan-informe F4 / LibreRoaster_11_Fixes_Criticos
-        // fix #6).
+        // High-frequency read path (~6/s): keep at `debug!` level so routine
+        // reads do not flood the UART/USB channel carrying the Artisan protocol.
         log::debug!(
             "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] fault=0x{:02X} raw_temp={:#010x}",
             rx_buffer[0],
@@ -297,20 +285,13 @@ where
     /// harnesses and initialization paths.
     #[deprecated = "Use read_raw_temperature_async() in async contexts"]
     pub fn read_raw_temperature(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        // Bug #B29: the previous `0x80` value set CMODE (bit 7 = continuous
-        // conversion) and cleared OCFAULT/FILT50 — masking open-circuit
-        // faults and losing the 50 Hz filter. Use the same one-shot value
-        // as the async path (0x51 = 1SHOT | FILT50 | OCFAULT=01).
+        // One-shot value 0x51 (1SHOT | FILT50 | OCFAULT=01), same as the async path.
         self.write_register(0x80, 0x51)?;
 
-        // L4: wait wall-clock time (single sample `Instant::now` + spin
-        // until the elapsed budget is exceeded), like `self_test` already
-        // did. The previous uncalibrated spin of `DELAY_MS * 10000` (1.6M
-        // iterations per call) returned in ~12-25 ms on modern CPUs, so
-        // callers could read the previous conversion's result instead of
-        // the just-triggered one — without any error indication. The async
-        // path uses `Timer::after(...)`; this sync variant emulates it with
-        // the same `embassy_time::Instant` already imported above.
+        // Wait wall-clock conversion budget (`Instant::now` + spin until the
+        // elapsed budget is exceeded). The async path uses
+        // `Timer::after(...)`; this sync variant emulates it with the same
+        // `embassy_time::Instant` already imported above.
         let start = Instant::now();
         while start.elapsed()
             < Duration::from_millis(crate::config::constants::MAX31856_CONVERSION_TIME_MS)
@@ -326,8 +307,6 @@ where
         // CR0 with 1SHOT=1 (bit 6) triggers a single conversion in normally-off
         // mode. Preserve CMODE=0, OCFAULT settings from init, AND the 50 Hz
         // notch filter (bit 0 = FILT50). 0x51 = 0b0101_0001.
-        // Bug #B1: the previous value 0x50 dropped FILT50 on every one-shot,
-        // re-selecting 60 Hz mid-roast.
         self.write_register(0x80, 0x51)?;
         Ok(())
     }
@@ -339,12 +318,11 @@ where
 
     pub async fn read_raw_temperature_async(&mut self) -> Result<Max31856Reading, Max31856Error> {
         // Trigger one-shot conversion in normally-off mode (CMODE=0, 1SHOT=1,
-        // FILT50 preserved). Bug #B1: keep the 50 Hz filter (bit 0) on each shot.
+        // FILT50 preserved).
         self.write_register(0x80, 0x51)?;
 
-        // Bug #B1: 50 Hz conversion time is 185 ms max per datasheet. The
-        // previous TEMPERATURE_READ_INTERVAL_MS (160 ms) wait could return the
-        // *previous* conversion's result without any error indication.
+        // 50 Hz conversion time is 185 ms max per datasheet; wait the full
+        // `MAX31856_CONVERSION_TIME_MS` budget.
         Timer::after(Duration::from_millis(
             crate::config::constants::MAX31856_CONVERSION_TIME_MS,
         ))
@@ -358,8 +336,7 @@ where
         let reading = self.read_raw_temperature()?;
         // MAX31856 Fault Register (0x0F): Open(0x01), OVUV(0x02), TC Low(0x04),
         // TC High(0x08), CJ Low(0x10), CJ High(0x20), TC Range(0x40), CJ Range(0x80).
-        // Any bit set is a fault — the previous `& 0x7F` mask dropped CJ Range
-        // (0x80), which is a legitimate cold-junction out-of-range fault.
+        // Any bit set is a fault.
         if reading.fault != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",
@@ -383,7 +360,7 @@ where
         let reading = self.read_raw_temperature_async().await?;
         // MAX31856 Fault Register (0x0F): Open(0x01), OVUV(0x02), TC Low(0x04),
         // TC High(0x08), CJ Low(0x10), CJ High(0x20), TC Range(0x40), CJ Range(0x80).
-        // Any bit set is a fault — previously masked with 0x7F, dropping CJ Range.
+        // Any bit set is a fault.
         if reading.fault != 0 {
             return Err(Max31856Error::FaultDetected {
                 source: "fault_bit_set",

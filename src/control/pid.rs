@@ -46,12 +46,12 @@ pub struct CoffeeRoasterPid {
     kd: f32,
     integrator: f32,
     last_error: f32,
-    /// Bug #5: `last_error` is only meaningful after the controller has
-    /// observed at least one real sample. Before that, `(error - last_error)
-    /// / dt` would be `(error - 0) / dt` — a massive derivative spike that
-    /// injects a one-tick heater surge on PID enable. We gate the derivative
-    /// term behind this flag and skip it entirely on the first tick (setting
-    /// `last_error = error` so tick #2 onward computes a real slope).
+    /// `last_error` is only meaningful after the controller has observed
+    /// at least one real sample. Before that, `(error - last_error) / dt`
+    /// would be `(error - 0) / dt` — a massive derivative spike that
+    /// injects a one-tick heater surge on PID enable. The derivative term
+    /// is gated behind this flag and skipped entirely on the first tick
+    /// (setting `last_error = error` so tick #2 onward computes a real slope).
     last_error_initialized: bool,
     derivative_rate: f32,
     last_update_ms: Option<u32>,
@@ -106,14 +106,10 @@ impl CoffeeRoasterPid {
     /// `output_min/max`, `cycle_time_ms` and `derivative_rate`; resets the
     /// integrator and last-error baseline.
     ///
-    /// Bug B5: `set_pid_gains` (handlers/temperature.rs) used to replace the
-    /// whole controller with `CoffeeRoasterPid::with_gains(...)`, which
-    /// rebuilds with `enabled: false` and `target: 0.0`. The status field
-    /// `pid_enabled` was NOT touched, so telemetry kept reporting the PID as
-    /// active while `compute_output` returned 0.0 — silently cutting the
-    /// heater to 0% any time the operator tuned gains from Artisan's PID
-    /// dialog. Resetting the integrator here avoids a one-tick I-term jump
-    /// from the new gain on the already-accumulated error.
+    /// Rebuilding the whole controller would reset `enabled` and `target`,
+    /// leaving telemetry reporting the PID as active while `compute_output`
+    /// returns 0.0 and cuts the heater. Resetting the integrator here avoids
+    /// a one-tick I-term jump from the new gain on the already-accumulated error.
     pub fn set_gains(&mut self, kp: f32, ki: f32, kd: f32) {
         self.kp = kp;
         self.ki = ki;
@@ -128,11 +124,10 @@ impl CoffeeRoasterPid {
         self.enabled = true;
         self.integrator = 0.0;
         self.last_error = 0.0;
-        // Bug #5: defer derivative computation until we have observed one
-        // real error sample. compute_output seeds `last_error` from the
-        // first error it sees and returns derivative_rate = 0.0 on that
-        // tick, eliminating the spike that the previous `last_error = 0.0`
-        // baseline produced (e.g. (200-30)/0.1 = 1700 °C/s → 85% output).
+        // Defer derivative computation until one real error sample has been
+        // observed. compute_output seeds `last_error` from the first error
+        // it sees and returns derivative_rate = 0.0 on that tick, avoiding
+        // a one-shot spike (e.g. (200-30)/0.1 = 1700 °C/s → 85% output).
         self.last_error_initialized = false;
         self.derivative_rate = 0.0;
         self.last_update_ms = None;
@@ -219,17 +214,17 @@ impl CoffeeRoasterPid {
         let dt = self.delta_seconds(timestamp_ms);
         let error = self.target - current_temp;
 
-        // Bug B6: anti-windup must also see the PID's *own* output clamp, not
-        // just the actuator saturation reported via `should_integrate()`.
-        // In steady state at 100% (desired == applied == output_max) the
-        // actuator reports no saturation yet the integrator keeps accumulating
+        // Anti-windup also covers the PID's *own* output clamp, not just the
+        // actuator saturation reported via `should_integrate()`. In steady
+        // state at 100% (desired == applied == output_max) the actuator
+        // reports no saturation yet the integrator would keep accumulating
         // `error * dt` every tick. A 2-minute stuck-at-100% with a 150 °C
         // error winds the integrator to ~ki*18000 → a huge overshoot once the
         // target is approached (plausibly tripping OVERTEMP=260 °C).
-        // Compute the *predictive* unclamped MV (P+D plus the I-term we *would*
-        // add this tick) and refuse to integrate when it has already hit a
-        // rail in the direction of the error. This is the classic conditional
-        // integration anti-windup on the controller's own clamp.
+        // Compute the *predictive* unclamped MV (P+D plus the I-term that
+        // would be added this tick) and refuse to integrate when it has
+        // already hit a rail in the direction of the error. This is the
+        // classic conditional integration anti-windup on the controller's own clamp.
         let p_d = (self.kp * error) + (self.kd * self.estimate_derivative(error, dt));
         let unclamped = p_d + (self.ki * self.integrator);
         let clamped_hi = unclamped >= self.output_max && error > 0.0;
@@ -242,11 +237,11 @@ impl CoffeeRoasterPid {
             self.integrator_clamped = true;
         }
 
-        // Bug #5: skip the derivative term on the first tick after enable.
-        // Using `last_error = 0.0` as the baseline would produce a one-shot
-        // spike (e.g. (170 - 0) / 0.1 = 1700 °C/s → kd*derivative = 85%
-        // output surge). On the first tick we seed `last_error = error` so
-        // the next tick computes a real slope, and we emit derivative = 0.0.
+        // Skip the derivative term on the first tick after enable. Using
+        // `last_error = 0.0` as the baseline would produce a one-shot spike
+        // (e.g. (170 - 0) / 0.1 = 1700 °C/s → kd*derivative = 85% output
+        // surge). On the first tick seed `last_error = error` so the next
+        // tick computes a real slope, and emit derivative = 0.0.
         let derivative = if self.last_error_initialized && dt > 0.0 {
             let derivative = (error - self.last_error) / dt;
             self.derivative_rate = derivative;
@@ -297,16 +292,16 @@ impl CoffeeRoasterPid {
             .unwrap_or(true)
     }
 
-    /// Predictive derivative used by the B6 anti-windup pre-check.
+    /// Predictive derivative used by the anti-windup pre-check.
     ///
     /// `compute_output` needs the P+D term *before* it has computed this
-    /// tick's derivative (it has to decide whether to integrate first). We
-    /// re-use the previous tick's derivative as the predictor — exactly what
-    /// `derivative_rate` already holds. On the first tick after enable the
-    /// derivative is 0.0 (Bug #5), so the predictive P+D reduces to just
+    /// tick's derivative (it has to decide whether to integrate first).
+    /// The previous tick's derivative is re-used as the predictor — exactly
+    /// what `derivative_rate` already holds. On the first tick after enable
+    /// the derivative is 0.0, so the predictive P+D reduces to just
     /// `kp*error`, which is the right behaviour for the anti-windup rail
     /// check: a non-zero `error` plus an integrator that is *already* at the
-    /// rail is precisely the case where we must stop accumulating.
+    /// rail is precisely the case where accumulation must stop.
     fn estimate_derivative(&self, _error: f32, _dt: f32) -> f32 {
         self.derivative_rate
     }
@@ -315,15 +310,15 @@ impl CoffeeRoasterPid {
     fn bound_to_actuator(&mut self, mv: f32) -> f32 {
         // Only clamp to the configured output range. Anti-windup is already
         // applied in `should_integrate()` by checking `feedback.is_saturated()`,
-        // so we must NOT re-clamp the output to the actuator's previously
+        // so the output must NOT be re-clamped to the actuator's previously
         // applied value here — that would pin the output to the first slew
-        // step (~5%) for the whole roast (the bug closed by this change). The
-        // actuator's own slew-rate limiter (`SSR_SLEW_RATE_PER_SEC = 50.0`,
-        // ~5%/tick) physically bounds how fast the heater can ramp up. The PID
-        // now always returns its MV clamped to [output_min, output_max]; the
-        // actuator decides how much to apply. The PID rises, but does not wind
-        // up, because the integrator stops accumulating while the actuator is
-        // saturated (see `should_integrate`).
+        // step (~5%) for the whole roast. The actuator's own slew-rate limiter
+        // (`SSR_SLEW_RATE_PER_SEC = 50.0`, ~5%/tick) physically bounds how
+        // fast the heater can ramp up. The PID now always returns its MV
+        // clamped to [output_min, output_max]; the actuator decides how much
+        // to apply. The PID rises, but does not wind up, because the
+        // integrator stops accumulating while the actuator is saturated
+        // (see `should_integrate`).
         let clamped = mv.clamp(self.output_min, self.output_max);
 
         if let Some(feedback) = self.last_feedback {
@@ -627,13 +622,13 @@ mod tests {
         assert!(pid.is_saturation_active());
     }
 
-    // ── Bug B6: anti-windup must see the PID's own output clamp ──────────
+    // ── Anti-windup must see the PID's own output clamp ──────────
     //
     // Steady state at output_max with no actuator saturation feedback: the
-    // integrator must NOT keep accumulating `error * dt` indefinitely. The
-    // pre-fix code only gated on `should_integrate()` (actuator saturation),
-    // which is false in this scenario, so the integrator grew unbounded
-    // → large overshoot when the target was finally approached.
+    // integrator must NOT keep accumulating `error * dt` indefinitely.
+    // Gating only on `should_integrate()` (actuator saturation) misses this
+    // scenario, so the integrator would grow unbounded → large overshoot
+    // when the target is finally approached.
 
     #[test]
     fn b6_windup_clamps_at_output_max_in_steady_state() {
@@ -644,9 +639,9 @@ mod tests {
         pid.set_target(250.0).unwrap();
 
         // Simulate the plant stuck at 100 °C with the heater maxed: the
-        // actuator reports NO saturation (desired == applied == output_max)
-        // — exactly the regime B6 lived in. Pre-fix, the integrator would
-        // grow ~ki*error*dt each tick with no clamp.
+        // actuator reports NO saturation (desired == applied == output_max).
+        // The integrator must stop accumulating in this regime instead of
+        // growing ~ki*error*dt each tick with no clamp.
         let mut timestamp = 0u32;
         let mut max_integrator = 0.0f32;
         for _ in 0..200 {
@@ -657,7 +652,7 @@ mod tests {
             max_integrator = max_integrator.max(pid.integrator_value());
         }
         // The integrator must have stopped accumulating long before 200 ticks.
-        // Pre-fix it would reach ki*150*200*0.1 = 1500 — way over 1000.
+        // An unbounded integrator would reach ki*150*200*0.1 = 1500 — way over 1000.
         assert!(
             max_integrator <= 1000.0,
             "B6: integrator must be anti-windup bounded, max={max_integrator}"
