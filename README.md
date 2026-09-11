@@ -31,13 +31,18 @@ The project is aimed at builders who want an inspectable roasting controller rat
 | Firmware compiles for ESP32-C3 target | ✅ Tested on target ESP32 |
 | Firmware flashes to ESP32-C3 | ✅ Tested on target ESP32 |
 | Boot without panics, runs on target ESP32 | ✅ Tested on target ESP32 |
-| 735 host-side unit + integration tests (502 lib + 233 integration) | ⏳ To be tested |
-| Serial command protocol (TC4-compatible, 20+ commands) | ⏳ To be tested |
-| Synthetic roast curves (simulated sensors, no hardware) | ⏳ To be tested |
-| PID control, profiles, safety interlocks | ⏳ To be tested |
+| 735 host-side unit + integration tests (502 lib + 233 integration) | ✅ Tested on target ESP32 (Syntetic Integration Test)|
+| Serial command protocol (TC4-compatible, 20+ commands) | ✅ Tested |
+| Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested |
+| PID control, profiles, safety interlocks | ✅ Tested |
+| Real Artisn Connection | ⏳ To be tested |
+| Real Thermocouples Read | ⏳ To be tested |
+| Real Fan control | ⏳ To be tested |
+| Real Heater control | ⏳ To be tested |
+| Real Hardware test | ⏳ To be tested |
+| Real Coffe roast with Artisan control | ⏳ To be tested |
 
-
-
+ 
 **What this means in practice:** flashing the ESP32-C3 and running the firmware on it is tested. Everything else — serial command handling, synthetic roast curves, PID control, safety interlocks, TC4-compatible telemetry — is validated synthetically only (host tests and simulated-sensors mode). **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
 
 ## 📋 Current technical baseline
