@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="beanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4B2E2E"/>
+      <stop offset="50%" style="stop-color:#3D1F1F"/>
+      <stop offset="100%" style="stop-color:#2B1515"/>
+    </linearGradient>
+    <linearGradient id="heatGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:0.8"/>
+      <stop offset="50%" style="stop-color:#FF9F1C;stop-opacity:0.5"/>
+      <stop offset="100%" style="stop-color:#FFD93D;stop-opacity:0"/>
+    </linearGradient>
+    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#FFD93D;stop-opacity:0.3"/>
+      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1A0D0D" flood-opacity="0.4"/>
+    </filter>
+    <filter id="innerGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="118" fill="#1A1A2E" filter="url(#shadow)"/>
+
+  <!-- Subtle glow ring -->
+  <circle cx="128" cy="128" r="112" fill="none" stroke="url(#glowGrad)" stroke-width="3"/>
+
+  <!-- Heat waves rising -->
+  <g fill="url(#heatGrad)" opacity="0.6">
+    <path d="M128 180 Q110 150 128 120 Q146 150 128 180" filter="url(#innerGlow)"/>
+    <path d="M128 170 Q105 135 128 100 Q151 135 128 170" filter="url(#innerGlow)" style="animation-delay:0.2s"/>
+    <path d="M128 160 Q100 120 128 80 Q156 120 128 160" filter="url(#innerGlow)" style="animation-delay:0.4s"/>
+  </g>
+
+  <!-- Main coffee bean -->
+  <ellipse cx="128" cy="142" rx="38" ry="28" fill="url(#beanGrad)" filter="url(#shadow)">
+    <animateTransform attributeName="transform" type="scale" values="1;1.02;1" dur="3s" repeatCount="indefinite"/>
+  </ellipse>
+
+  <!-- Bean center line (the crease) -->
+  <path d="M128 120 Q126 132 125 145 Q123 155 128 165" 
+        fill="none" stroke="#1A0D0D" stroke-width="2.5" opacity="0.6"/>
+
+  <!-- Bean highlight -->
+  <ellipse cx="114" cy="132" rx="8" ry="5" fill="#5D3A3A" opacity="0.5"/>
+
+  <!-- ESP32-C3 chip representation -->
+  <g transform="translate(128, 200)">
+    <!-- PCB -->
+    <rect x="-22" y="-8" width="44" height="16" rx="3" fill="#1B2A1B" stroke="#2D5A2D" stroke-width="1.5"/>
+    <!-- ESP32 text -->
+    <text x="0" y="3" text-anchor="middle" font-family="monospace" font-size="7" font-weight="bold" fill="#4ADE80">ESP32-C3</text>
+    <!-- Pin indicators -->
+    <g stroke="#4ADE80" stroke-width="1.5" opacity="0.7">
+      <line x1="-20" y1="-8" x2="-20" y2="-12"/>
+      <line x1="-12" y1="-8" x2="-12" y2="-12"/>
+      <line x1="-4" y1="-8" x2="-4" y2="-12"/>
+      <line x1="4" y1="-8" x2="4" y2="-12"/>
+      <line x1="12" y1="-8" x2="12" y2="-12"/>
+      <line x1="20" y1="-8" x2="20" y2="-12"/>
+      <line x1="-20" y1="8" x2="-20" y2="12"/>
+      <line x1="-12" y1="8" x2="-12" y2="12"/>
+      <line x1="-4" y1="8" x2="-4" y2="12"/>
+      <line x1="4" y1="8" x2="4" y2="12"/>
+      <line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="20" y1="8" x2="20" y2="12"/>
+    </g>
+  </g>
+
+  <!-- Temperature sensor icons (thermocouples) -->
+  <g transform="translate(50, 100)" opacity="0.7">
+    <path d="M0 0 L0 -20 M-4 -20 L4 -20 M-3 -23 L3 -17 M-3 -17 L3 -23" 
+          stroke="#FF6B35" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <circle cx="0" cy="2" r="4" fill="#2D1B1B" stroke="#FF6B35" stroke-width="1.5"/>
+  </g>
+
+  <g transform="translate(206, 100)" opacity="0.7">
+    <path d="M0 0 L0 -20 M-4 -20 L4 -20 M-3 -23 L3 -17 M-3 -17 L3 -23" 
+          stroke="#FF6B35" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <circle cx="0" cy="2" r="4" fill="#2D1B1B" stroke="#FF6B35" stroke-width="1.5"/>
+  </g>
+
+  <!-- Rust gear/cog subtle indicator -->
+  <g transform="translate(220, 36)" opacity="0.5">
+    <circle cx="0" cy="0" r="12" fill="none" stroke="#E57324" stroke-width="1.5" stroke-dasharray="4 2"/>
+    <path d="M0 -10 L0 -14 M0 10 L0 14 M-10 0 L-14 0 M10 0 L14 0 
+             M-7 -7 L-10 -10 M7 -7 L10 -10 M-7 7 L-10 10 M7 7 L10 10"
+          stroke="#E57324" stroke-width="1.5" fill="none"/>
+  </g>
+
+  <!-- Version badge -->
+  <g transform="translate(128, 230)">
+    <rect x="-28" y="-6" width="56" height="12" rx="6" fill="#0D1B2A" stroke="#1E3A5F" stroke-width="1"/>
+    <text x="0" y="2" text-anchor="middle" font-family="monospace" font-size="6" font-weight="bold" fill="#4A9EFF">v0.0.1-α</text>
+  </g>
+</svg>

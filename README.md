@@ -1,4 +1,8 @@
-# LibreRoaster
+# ☕🔥 LibreRoaster
+
+<p align="center">
+  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="160" height="160">
+</p>
 
 **Open Source Coffee Bean Roaster**  
 Firmware written in **Rust** for the ESP32-C3
