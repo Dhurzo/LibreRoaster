@@ -1,0 +1,419 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="4920" viewBox="0 0 2000 4920" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif">
+<defs><filter id="card" x="-2%" y="-4%" width="104%" height="110%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#16202E" flood-opacity="0.10"/></filter></defs>
+<rect width="2000" height="4920" fill="#F4F6F9"/>
+<rect x="0" y="0" width="2000" height="200" fill="#16202E"/>
+<rect x="0" y="200" width="2000" height="4" fill="#C8A24B"/>
+<text x="90" y="60" fill="#8FA3BF" font-size="21" letter-spacing="3.5">LIBREROASTER · ESP32-C3 · EMBASSY ASYNC</text>
+<text x="90" y="114" fill="#FFFFFF" font-size="48" font-weight="800">Real-roast execution flow</text>
+<text x="90" y="156" fill="#C6D2E3" font-size="23">Which .rs file and which function runs at every step · boot → Artisan session → preheat → charge → mid-roast ticks → STOP → STREAM / #DUMP</text>
+<text x="1910" y="60" fill="#8FA3BF" font-size="20" text-anchor="end">DOC-EXEC-FLOW · v1.1 · 2026-09-11</text>
+<rect x="1618" y="80" width="292" height="40" rx="20" fill="none" stroke="#8FA3BF" stroke-width="1.5"/>
+<text x="1764" y="107" fill="#FFFFFF" font-size="22" font-weight="700" text-anchor="middle">TC4 · USB-CDC + UART0</text>
+<text x="1910" y="156" fill="#C6D2E3" font-size="20" text-anchor="end">tick ~310 ms · WDT 1 s / 2.2 s · two-tier RoR</text>
+<g font-size="19" font-weight="700">
+<rect x="90" y="224" width="22" height="22" rx="6" fill="#1F4E79"/>
+<text x="120" y="242" fill="#16202E">BOOT</text>
+<rect x="200" y="224" width="22" height="22" rx="6" fill="#7A5B00"/>
+<text x="230" y="242" fill="#16202E">TRANSPORT</text>
+<rect x="365" y="224" width="22" height="22" rx="6" fill="#5B2D8E"/>
+<text x="395" y="242" fill="#16202E">MUX·PARSER</text>
+<rect x="541" y="224" width="22" height="22" rx="6" fill="#0E4C92"/>
+<text x="571" y="242" fill="#16202E">CONTROL·LOOP</text>
+<rect x="739" y="224" width="22" height="22" rx="6" fill="#8A2B2B"/>
+<text x="769" y="242" fill="#16202E">SENSOR·SAFETY</text>
+<rect x="948" y="224" width="22" height="22" rx="6" fill="#0A7A5C"/>
+<text x="978" y="242" fill="#16202E">ACTUATOR</text>
+<rect x="1102" y="224" width="22" height="22" rx="6" fill="#556600"/>
+<text x="1132" y="242" fill="#16202E">OUTPUT·TEL</text>
+<rect x="1278" y="224" width="22" height="22" rx="6" fill="#7A1F1F"/>
+<text x="1308" y="242" fill="#16202E">WDT·LOG</text>
+</g>
+<rect x="90" y="268" width="1820" height="118" rx="14" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5" filter="url(#card)"/>
+<rect x="90" y="268" width="6" height="118" rx="3" fill="#C8A24B"/>
+<text x="118" y="300" fill="#5B6B82" font-size="18" font-weight="700" letter-spacing="2">ROAST CONSTANTS (src/config/constants.rs · src/safety/watchdog.rs)</text>
+<text x="118" y="330" fill="#5B6B82" font-size="16">Loop period</text>
+<text x="118" y="356" fill="#16202E" font-size="20" font-weight="800">100 ms</text>
+<text x="118" y="375" fill="#5B6B82" font-size="13.5">CONTROL_LOOP_PERIOD_MS</text>
+<text x="300" y="330" fill="#5B6B82" font-size="16">MAX31856 conv.</text>
+<text x="300" y="356" fill="#16202E" font-size="20" font-weight="800">210 ms</text>
+<text x="300" y="375" fill="#5B6B82" font-size="13.5">real tick ≈ 310–330 ms</text>
+<text x="482" y="330" fill="#5B6B82" font-size="16">SW WDT / stale</text>
+<text x="482" y="356" fill="#16202E" font-size="20" font-weight="800">1000 ms</text>
+<text x="482" y="375" fill="#5B6B82" font-size="13.5">3 ticks + margin</text>
+<text x="664" y="330" fill="#5B6B82" font-size="16">HW RWDT</text>
+<text x="664" y="356" fill="#16202E" font-size="20" font-weight="800">≈ 2.2 s</text>
+<text x="664" y="375" fill="#5B6B82" font-size="13.5">300 000 / 136 kHz</text>
+<text x="846" y="330" fill="#5B6B82" font-size="16">Telemetry</text>
+<text x="846" y="356" fill="#16202E" font-size="20" font-weight="800">1 Hz</text>
+<text x="846" y="375" fill="#5B6B82" font-size="13.5">DEFAULT_OUTPUT_INTERVAL</text>
+<text x="1028" y="330" fill="#5B6B82" font-size="16">DUMP</text>
+<text x="1028" y="356" fill="#16202E" font-size="20" font-weight="800">4 rows/tick</text>
+<text x="1028" y="375" fill="#5B6B82" font-size="13.5">~20 s per 256-row dump</text>
+<text x="1210" y="330" fill="#5B6B82" font-size="16">RoR soft/hard</text>
+<text x="1210" y="356" fill="#16202E" font-size="20" font-weight="800">0.5–1.0 / &gt;1.0 °C/s</text>
+<text x="1210" y="375" fill="#5B6B82" font-size="13.5">×12 / ×3 ticks</text>
+<text x="1392" y="330" fill="#5B6B82" font-size="16">Probe-stuck</text>
+<text x="1392" y="356" fill="#16202E" font-size="20" font-weight="800">120 s warn / 300 s latch</text>
+<text x="1392" y="375" fill="#5B6B82" font-size="13.5">PID: 120 s direct</text>
+<text x="1574" y="330" fill="#5B6B82" font-size="16">Comms-idle</text>
+<text x="1574" y="356" fill="#16202E" font-size="20" font-weight="800">15 s</text>
+<text x="1574" y="375" fill="#5B6B82" font-size="13.5">· Max roast 1800 s</text>
+<text x="1756" y="330" fill="#5B6B82" font-size="16">Mux session</text>
+<text x="1756" y="356" fill="#16202E" font-size="20" font-weight="800">60 s idle failover</text>
+<text x="1756" y="375" fill="#5B6B82" font-size="13.5">· Charge drop 6.0 °C</text>
+<rect x="90" y="406" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="406" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="433" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE A · BOOT + INIT</text>
+<g filter="url(#card)"><rect x="90" y="464" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="464" width="9" height="108" rx="4.5" fill="#1F4E79"/>
+<rect x="115" y="479" width="124" height="28" rx="14" fill="#1F4E79"/>
+<text x="177" y="499" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">BOOT</text>
+<text x="253" y="501" fill="#5B6B82" font-size="17" font-weight="700">01</text>
+<text x="298" y="501" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">main()</text>
+<text x="298" y="525" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/main.rs</text>
+<text x="298" y="552" fill="#16202E" font-size="17.5">esp_hal::init · heap · logger · init_hardware (LEDC/SPI/GPIO) · init_hw_watchdog (~2.2 s) · USB-CDC init</text></g>
+<line x1="1000" y1="574" x2="1000" y2="586" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="586" r="5.5" fill="#0E4C92"/>
+<polygon points="994,577 1006,577 1000,586" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="588" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="588" width="9" height="108" rx="4.5" fill="#1F4E79"/>
+<rect x="115" y="603" width="124" height="28" rx="14" fill="#1F4E79"/>
+<text x="177" y="623" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">BOOT</text>
+<text x="253" y="625" fill="#5B6B82" font-size="17" font-weight="700">02</text>
+<text x="298" y="625" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">AppBuilder::new() → build()</text>
+<text x="298" y="649" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/app_builder.rs</text>
+<text x="298" y="676" fill="#16202E" font-size="17.5">with_uart(20/21) · with_real_ssr · with_fan · with_temperature_sensors · RoasterControl::new · ArtisanInput · ServiceContainer::init_* · WatchdogFeeder::initialize</text></g>
+<line x1="1000" y1="698" x2="1000" y2="710" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="710" r="5.5" fill="#0E4C92"/>
+<polygon points="994,701 1006,701 1000,710" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="712" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="712" width="9" height="108" rx="4.5" fill="#1F4E79"/>
+<rect x="115" y="727" width="124" height="28" rx="14" fill="#1F4E79"/>
+<text x="177" y="747" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">BOOT</text>
+<text x="253" y="749" fill="#5B6B82" font-size="17" font-weight="700">03</text>
+<text x="298" y="749" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">executor.run → async_main_task</text>
+<text x="298" y="773" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/main.rs:99–116 · :261–263</text>
+<text x="298" y="800" fill="#16202E" font-size="17.5">verify_initialization → Application::start_tasks(spawner) — 5 Embassy tasks</text></g>
+<line x1="1000" y1="822" x2="1000" y2="834" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="834" r="5.5" fill="#0E4C92"/>
+<polygon points="994,825 1006,825 1000,834" fill="#0E4C92"/>
+<rect x="90" y="830" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="830" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="857" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE A · FIVE TASKS</text>
+<g filter="url(#card)"><rect x="90" y="888" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="888" width="9" height="108" rx="4.5" fill="#1F4E79"/>
+<rect x="115" y="903" width="124" height="28" rx="14" fill="#1F4E79"/>
+<text x="177" y="923" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">BOOT</text>
+<text x="253" y="925" fill="#5B6B82" font-size="17" font-weight="700">04</text>
+<text x="298" y="925" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">uart_reader_task · usb_reader_task · dual_output_task · control_loop_task · regression_task</text>
+<text x="298" y="949" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">tasks.rs · uart/tasks.rs · usb_cdc/tasks.rs · safety/regression.rs</text>
+<text x="298" y="976" fill="#16202E" font-size="17.5">Readers parse straight into the single command channel (F5.3) · no queue-processor · regression on standby</text></g>
+<line x1="1000" y1="998" x2="1000" y2="1010" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1010" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1001 1006,1001 1000,1010" fill="#0E4C92"/>
+<rect x="90" y="1006" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="1006" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="1033" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE B · ARTISAN SESSION</text>
+<g filter="url(#card)"><rect x="90" y="1064" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1064" width="9" height="108" rx="4.5" fill="#7A5B00"/>
+<rect x="115" y="1079" width="124" height="28" rx="14" fill="#7A5B00"/>
+<text x="177" y="1099" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">TRANSPORT</text>
+<text x="253" y="1101" fill="#5B6B82" font-size="17" font-weight="700">05</text>
+<text x="298" y="1101" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">run_reader_task()</text>
+<text x="298" y="1125" fill="#7A5B00" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/hardware/transport_tasks.rs</text>
+<text x="298" y="1152" fill="#16202E" font-size="17.5">read_bytes → push_to_event_queue → process_event_queue · USB ~100 ms / UART ~10 ms · thin usb_reader_task / uart_reader_task wrappers</text></g>
+<line x1="1000" y1="1174" x2="1000" y2="1186" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1186" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1177 1006,1177 1000,1186" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="1188" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1188" width="9" height="108" rx="4.5" fill="#5B2D8E"/>
+<rect x="115" y="1203" width="124" height="28" rx="14" fill="#5B2D8E"/>
+<text x="177" y="1223" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">MUX·PARSER</text>
+<text x="253" y="1225" fill="#5B6B82" font-size="17" font-weight="700">06</text>
+<text x="298" y="1225" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">would_process_command() → parse_artisan_command()</text>
+<text x="298" y="1249" fill="#5B2D8E" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/input/multiplexer.rs · src/input/parser.rs</text>
+<text x="298" y="1276" fill="#16202E" font-size="17.5">Pre-parse gate (no PROFILE leak) · from_utf8 · &#x27;;&#x27;→space normalisation · CHAN / UNITS / FILT / PROFILE / FANPROFILE / PID / STREAM / READ / STATUS / OT1 / OT2 …</text></g>
+<line x1="1000" y1="1298" x2="1000" y2="1310" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1310" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1301 1006,1301 1000,1310" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="1312" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1312" width="9" height="108" rx="4.5" fill="#5B2D8E"/>
+<rect x="115" y="1327" width="124" height="28" rx="14" fill="#5B2D8E"/>
+<text x="177" y="1347" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">MUX·PARSER</text>
+<text x="253" y="1349" fill="#5B6B82" font-size="17" font-weight="700">07</text>
+<text x="298" y="1349" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_parsed_command() → try_send()</text>
+<text x="298" y="1373" fill="#5B2D8E" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/hardware/transport_tasks.rs</text>
+<text x="298" y="1400" fill="#16202E" font-size="17.5">should_process / on_command_received (60 s idle session) · TracedCommand::new · full → ERR channel_full command_dropped</text></g>
+<line x1="1000" y1="1422" x2="1000" y2="1434" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1434" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1425 1006,1425 1000,1434" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="1436" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1436" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="1451" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="1471" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="1473" fill="#5B6B82" font-size="17" font-weight="700">08</text>
+<text x="298" y="1473" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">drain_commands() → process_artisan_command()</text>
+<text x="298" y="1497" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/tasks.rs · src/control/roaster_control.rs</text>
+<text x="298" y="1524" fill="#16202E" font-size="17.5">Latch whitelist · Chan / Units / Filt / Read / Status dispatch · #&lt;rate&gt; · #OK · READ TC4 5/8 fields · STATUS 20 fields</text></g>
+<line x1="1000" y1="1546" x2="1000" y2="1558" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1558" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1549 1006,1549 1000,1558" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="1560" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1560" width="9" height="108" rx="4.5" fill="#556600"/>
+<rect x="115" y="1575" width="124" height="28" rx="14" fill="#556600"/>
+<text x="177" y="1595" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">OUTPUT·TEL</text>
+<text x="253" y="1597" fill="#5B6B82" font-size="17" font-weight="700">09</text>
+<text x="298" y="1597" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">dual_output_tick() → *_write_bytes</text>
+<text x="298" y="1621" fill="#556600" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/tasks.rs · usb_cdc/driver.rs · uart/driver.rs</text>
+<text x="298" y="1648" fill="#16202E" font-size="17.5">mux.get_active_channel · append_crlf · 4 msgs/tick every 5 ms · error_counters</text></g>
+<line x1="1000" y1="1670" x2="1000" y2="1682" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1682" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1673 1006,1673 1000,1682" fill="#0E4C92"/>
+<rect x="90" y="1678" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="1678" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="1705" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE C · PREHEAT → START</text>
+<g filter="url(#card)"><rect x="90" y="1736" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1736" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="1751" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="1771" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="1773" fill="#5B6B82" font-size="17" font-weight="700">10</text>
+<text x="298" y="1773" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_preheat(t)</text>
+<text x="298" y="1797" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="1824" fill="#16202E" font-size="17.5">clear_emergency_explicit if latched · convert_from_display · preheat_target · state=Preheating · enable_pid_control · disable_continuous_output</text></g>
+<line x1="1000" y1="1846" x2="1000" y2="1858" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1858" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1849 1006,1849 1000,1858" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="1860" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="1860" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="1875" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="1895" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="1897" fill="#5B6B82" font-size="17" font-weight="700">11</text>
+<text x="298" y="1897" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_start_roast()</text>
+<text x="298" y="1921" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="1948" fill="#16202E" font-size="17.5">Reset charge / heat_session / dump_pending · profile_start_time=now · enable_pid (profile target_at(0) or DEFAULT) · roast_logger::start_roast(now) pins epoch · state=Heating</text></g>
+<line x1="1000" y1="1970" x2="1000" y2="1982" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="1982" r="5.5" fill="#0E4C92"/>
+<polygon points="994,1973 1006,1973 1000,1982" fill="#0E4C92"/>
+<rect x="90" y="1978" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="1978" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2005" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE C · CHARGE</text>
+<g filter="url(#card)"><rect x="90" y="2036" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2036" width="9" height="108" rx="4.5" fill="#8A2B2B"/>
+<rect x="115" y="2051" width="124" height="28" rx="14" fill="#8A2B2B"/>
+<text x="177" y="2071" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">SENSOR·SAFETY</text>
+<text x="253" y="2073" fill="#5B6B82" font-size="17" font-weight="700">12</text>
+<text x="298" y="2073" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">update_control() · charge detect</text>
+<text x="298" y="2097" fill="#8A2B2B" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="2124" fill="#16202E" font-size="17.5">bt_charge_history 10 samples / CHARGE_SAMPLE_TICK_DIV · drop first−BT &gt; 6.0 °C → charge_detected · #CHARGE dt=…</text></g>
+<line x1="1000" y1="2146" x2="1000" y2="2158" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="2158" r="5.5" fill="#0E4C92"/>
+<polygon points="994,2149 1006,2149 1000,2158" fill="#0E4C92"/>
+<rect x="90" y="2154" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="2154" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2181" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ①</text>
+<g filter="url(#card)"><rect x="90" y="2212" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2212" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="2227" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="2247" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="2249" fill="#5B6B82" font-size="17" font-weight="700">13</text>
+<text x="298" y="2249" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">control_loop_task() → control_loop_tick()</text>
+<text x="298" y="2273" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/tasks.rs</text>
+<text x="298" y="2300" fill="#16202E" font-size="17.5">100 ms timer · real tick ~310–330 ms (MAX31856 210 ms conversion) · StageTracker::start_tick → drain_commands</text></g>
+<line x1="1000" y1="2322" x2="1000" y2="2334" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="2334" r="5.5" fill="#0E4C92"/>
+<polygon points="994,2325 1006,2325 1000,2334" fill="#0E4C92"/>
+<rect x="90" y="2330" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="2330" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2357" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ②</text>
+<g filter="url(#card)"><rect x="90" y="2388" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2388" width="9" height="108" rx="4.5" fill="#8A2B2B"/>
+<rect x="115" y="2403" width="124" height="28" rx="14" fill="#8A2B2B"/>
+<text x="177" y="2423" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">SENSOR·SAFETY</text>
+<text x="253" y="2425" fill="#5B6B82" font-size="17" font-weight="700">14</text>
+<text x="298" y="2425" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">read_sensors()</text>
+<text x="298" y="2449" fill="#8A2B2B" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · controllers/sensor.rs</text>
+<text x="298" y="2476" fill="#16202E" font-size="17.5">2× MAX31856 over SPI · over-range / ≥5 errors / comms-error → emergency_shutdown · SensorController::update_temperatures + fault debounce</text></g>
+<line x1="1000" y1="2498" x2="1000" y2="2510" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="2510" r="5.5" fill="#0E4C92"/>
+<polygon points="994,2501 1006,2501 1000,2510" fill="#0E4C92"/>
+<rect x="90" y="2506" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="2506" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2533" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ③</text>
+<g filter="url(#card)"><rect x="90" y="2564" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2564" width="9" height="108" rx="4.5" fill="#8A2B2B"/>
+<rect x="115" y="2579" width="124" height="28" rx="14" fill="#8A2B2B"/>
+<text x="177" y="2599" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">SENSOR·SAFETY</text>
+<text x="253" y="2601" fill="#5B6B82" font-size="17" font-weight="700">15</text>
+<text x="298" y="2601" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">update_control(now) · guards</text>
+<text x="298" y="2625" fill="#8A2B2B" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · controllers/sensor.rs</text>
+<text x="298" y="2652" fill="#16202E" font-size="17.5">stale 1000 ms · comms-idle 15 s · MAX_ROAST 1800 s · two-tier RoR (soft 0.5–1.0 °C/s ×12 / hard &gt;1.0 ×3) · NaN→shutdown · Heating↔Stable ±2/3 °C</text></g>
+<line x1="1000" y1="2674" x2="1000" y2="2686" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="2686" r="5.5" fill="#0E4C92"/>
+<polygon points="994,2677 1006,2677 1000,2686" fill="#0E4C92"/>
+<rect x="90" y="2682" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="2682" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2709" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ④</text>
+<g filter="url(#card)"><rect x="90" y="2740" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2740" width="9" height="108" rx="4.5" fill="#0A7A5C"/>
+<rect x="115" y="2755" width="124" height="28" rx="14" fill="#0A7A5C"/>
+<text x="177" y="2775" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">ACTUATOR</text>
+<text x="253" y="2777" fill="#5B6B82" font-size="17" font-weight="700">16</text>
+<text x="298" y="2777" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">update_pid_control() → apply_guarded_heater()</text>
+<text x="298" y="2801" fill="#0A7A5C" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/pid.rs · handlers/temperature.rs · controllers/actuator.rs</text>
+<text x="298" y="2828" fill="#16202E" font-size="17.5">pid_cycle_time throttle · profile target_at(elapsed) · CoffeeRoasterPid::compute_output · mv / desired / integrator / saturation · latch→0.0</text></g>
+<line x1="1000" y1="2850" x2="1000" y2="2862" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="2862" r="5.5" fill="#0E4C92"/>
+<polygon points="994,2853 1006,2853 1000,2862" fill="#0E4C92"/>
+<rect x="90" y="2858" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="2858" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="2885" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ⑤</text>
+<g filter="url(#card)"><rect x="90" y="2916" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="2916" width="9" height="108" rx="4.5" fill="#0A7A5C"/>
+<rect x="115" y="2931" width="124" height="28" rx="14" fill="#0A7A5C"/>
+<text x="177" y="2951" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">ACTUATOR</text>
+<text x="253" y="2953" fill="#5B6B82" font-size="17" font-weight="700">17</text>
+<text x="298" y="2953" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">fan select → set_fan_speed()</text>
+<text x="298" y="2977" fill="#0A7A5C" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · controllers/actuator.rs</text>
+<text x="298" y="3004" fill="#16202E" font-size="17.5">latch/cooldown→100% · fan_profile.target_at · manual fan · 20% floor when desired&gt;0 (EdgeLogGate) · failure→emergency_shutdown</text></g>
+<line x1="1000" y1="3026" x2="1000" y2="3038" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3038" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3029 1006,3029 1000,3038" fill="#0E4C92"/>
+<rect x="90" y="3034" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3034" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3061" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ⑥</text>
+<g filter="url(#card)"><rect x="90" y="3092" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3092" width="9" height="108" rx="4.5" fill="#8A2B2B"/>
+<rect x="115" y="3107" width="124" height="28" rx="14" fill="#8A2B2B"/>
+<text x="177" y="3127" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">SENSOR·SAFETY</text>
+<text x="253" y="3129" fill="#5B6B82" font-size="17" font-weight="700">18</text>
+<text x="298" y="3129" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">probe-stuck two-stage</text>
+<text x="298" y="3153" fill="#8A2B2B" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="3180" fill="#16202E" font-size="17.5">PID: latch at 120 s · manual: ERR probe_stuck_warning at 120 s + latch at 300 s → ERR safety_fault Probe stuck</text></g>
+<line x1="1000" y1="3202" x2="1000" y2="3214" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3214" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3205 1006,3205 1000,3214" fill="#0E4C92"/>
+<rect x="90" y="3210" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3210" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3237" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ⑦</text>
+<g filter="url(#card)"><rect x="90" y="3268" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3268" width="9" height="108" rx="4.5" fill="#7A1F1F"/>
+<rect x="115" y="3283" width="124" height="28" rx="14" fill="#7A1F1F"/>
+<text x="177" y="3303" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">WDT·LOG</text>
+<text x="253" y="3305" fill="#5B6B82" font-size="17" font-weight="700">19</text>
+<text x="298" y="3305" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">feed_watchdog_stage() → feed_async()</text>
+<text x="298" y="3329" fill="#7A1F1F" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/safety/watchdog.rs</text>
+<text x="298" y="3356" fill="#16202E" font-size="17.5">HW RWDT fed first (unconditional) · 1000 ms gap vs 2.2 s HW · 1st miss SAFETY WATCHDOG · 2nd emergency_shutdown</text></g>
+<line x1="1000" y1="3378" x2="1000" y2="3390" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3390" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3381 1006,3381 1000,3390" fill="#0E4C92"/>
+<rect x="90" y="3386" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3386" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3413" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ⑧</text>
+<g filter="url(#card)"><rect x="90" y="3444" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3444" width="9" height="108" rx="4.5" fill="#556600"/>
+<rect x="115" y="3459" width="124" height="28" rx="14" fill="#556600"/>
+<text x="177" y="3479" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">OUTPUT·TEL</text>
+<text x="253" y="3481" fill="#5B6B82" font-size="17" font-weight="700">20</text>
+<text x="298" y="3481" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">emit_telemetry_stage() · 1 Hz</text>
+<text x="298" y="3505" fill="#556600" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/tasks.rs · logging/roast_logger.rs · output/artisan.rs</text>
+<text x="298" y="3532" fill="#16202E" font-size="17.5">log_sample when is_logging_active · MutableArtisanFormatter #t,ET,BT,RoR,gas (IIR RoR) · epoch reset on START edge · LED GPIO8 (riscv32)</text></g>
+<line x1="1000" y1="3554" x2="1000" y2="3566" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3566" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3557 1006,3557 1000,3566" fill="#0E4C92"/>
+<rect x="90" y="3562" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3562" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3589" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · MID-ROAST TICK ⑨</text>
+<g filter="url(#card)"><rect x="90" y="3620" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3620" width="9" height="108" rx="4.5" fill="#556600"/>
+<rect x="115" y="3635" width="124" height="28" rx="14" fill="#556600"/>
+<text x="177" y="3655" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">OUTPUT·TEL</text>
+<text x="253" y="3657" fill="#5B6B82" font-size="17" font-weight="700">21</text>
+<text x="298" y="3657" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">#DUMP drain · 4 rows/tick</text>
+<text x="298" y="3681" fill="#556600" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/application/tasks.rs · logging/roast_logger.rs</text>
+<text x="298" y="3708" fill="#16202E" font-size="17.5">take_dump_row → try_send · full→push_front · decoupled from STREAM (ring fed by logging_active)</text></g>
+<line x1="1000" y1="3730" x2="1000" y2="3742" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3742" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3733 1006,3733 1000,3742" fill="#0E4C92"/>
+<rect x="90" y="3738" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3738" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3765" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE D · LATCH</text>
+<g filter="url(#card)"><rect x="90" y="3796" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3796" width="9" height="108" rx="4.5" fill="#8A2B2B"/>
+<rect x="115" y="3811" width="124" height="28" rx="14" fill="#8A2B2B"/>
+<text x="177" y="3831" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">SENSOR·SAFETY</text>
+<text x="253" y="3833" fill="#5B6B82" font-size="17" font-weight="700">22</text>
+<text x="298" y="3833" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">emergency_shutdown(reason)</text>
+<text x="298" y="3857" fill="#8A2B2B" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · controllers/actuator.rs · controllers/safety</text>
+<text x="298" y="3884" fill="#16202E" font-size="17.5">First trip: ERR safety_fault &lt;reason&gt; · fault_condition=true state=Error · SSR 0 + fan 100% with retries</text></g>
+<line x1="1000" y1="3906" x2="1000" y2="3918" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="3918" r="5.5" fill="#0E4C92"/>
+<polygon points="994,3909 1006,3909 1000,3918" fill="#0E4C92"/>
+<rect x="90" y="3914" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="3914" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="3941" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE E · STOP / RE-ARM</text>
+<g filter="url(#card)"><rect x="90" y="3972" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="3972" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="3987" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="4007" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="4009" fill="#5B6B82" font-size="17" font-weight="700">23</text>
+<text x="298" y="4009" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_emergency_stop() [STOP]</text>
+<text x="298" y="4033" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="4060" fill="#16202E" font-size="17.5">STOP→EmergencyStop · latch armed · heater off + fan 100% · stop_streaming · roast_logger::stop_roast</text></g>
+<line x1="1000" y1="4082" x2="1000" y2="4094" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="4094" r="5.5" fill="#0E4C92"/>
+<polygon points="994,4085 1006,4085 1000,4094" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="4096" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="4096" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="4111" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="4131" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="4133" fill="#5B6B82" font-size="17" font-weight="700">24</text>
+<text x="298" y="4133" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">Stop [PID;OFF] → clear_emergency_explicit → handle_stop()</text>
+<text x="298" y="4157" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · hardware/ssr_logic.rs</text>
+<text x="298" y="4184" fill="#16202E" font-size="17.5">No bare OFF on the wire · SsrControlBase::rearm · state=Idle · cooling_active=true · heater 0 + fan 100 · stop_roast</text></g>
+<line x1="1000" y1="4206" x2="1000" y2="4218" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="4218" r="5.5" fill="#0E4C92"/>
+<polygon points="994,4209 1006,4209 1000,4218" fill="#0E4C92"/>
+<rect x="90" y="4214" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="4214" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="4241" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE E · NEXT BATCH</text>
+<g filter="url(#card)"><rect x="90" y="4272" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="4272" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="4287" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="4307" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="4309" fill="#5B6B82" font-size="17" font-weight="700">25</text>
+<text x="298" y="4309" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">START / PREHEAT release the latch</text>
+<text x="298" y="4333" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="4360" fill="#16202E" font-size="17.5">Canonical flow STOP → PREHEAT → START · heat_session_start=None · profile_start_time=None · dump_pending.clear</text></g>
+<line x1="1000" y1="4382" x2="1000" y2="4394" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="4394" r="5.5" fill="#0E4C92"/>
+<polygon points="994,4385 1006,4385 1000,4394" fill="#0E4C92"/>
+<rect x="90" y="4390" width="1820" height="40" rx="9" fill="#EAF0F7"/>
+<rect x="90" y="4390" width="6" height="40" rx="3" fill="#0E4C92"/>
+<text x="112" y="4417" fill="#0E4C92" font-size="21" font-weight="800" letter-spacing="1.5">PHASE F · STREAM + DUMP</text>
+<g filter="url(#card)"><rect x="90" y="4448" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="4448" width="9" height="108" rx="4.5" fill="#0E4C92"/>
+<rect x="115" y="4463" width="124" height="28" rx="14" fill="#0E4C92"/>
+<text x="177" y="4483" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">CONTROL·LOOP</text>
+<text x="253" y="4485" fill="#5B6B82" font-size="17" font-weight="700">26</text>
+<text x="298" y="4485" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_set_streaming() [STREAM;ON/OFF]</text>
+<text x="298" y="4509" fill="#0E4C92" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs</text>
+<text x="298" y="4536" fill="#16202E" font-size="17.5">OFF by default · allowed while latched · #OK · START/OT1/OT2 no longer enable it · is_continuous_enabled gate</text></g>
+<line x1="1000" y1="4558" x2="1000" y2="4570" stroke="#0E4C92" stroke-width="2.5"/>
+<circle cx="1000" cy="4570" r="5.5" fill="#0E4C92"/>
+<polygon points="994,4561 1006,4561 1000,4570" fill="#0E4C92"/>
+<g filter="url(#card)"><rect x="90" y="4572" width="1820" height="108" rx="13" fill="#FFFFFF" stroke="#C9D2DE" stroke-width="1.5"/>
+<rect x="90" y="4572" width="9" height="108" rx="4.5" fill="#556600"/>
+<rect x="115" y="4587" width="124" height="28" rx="14" fill="#556600"/>
+<text x="177" y="4607" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">OUTPUT·TEL</text>
+<text x="253" y="4609" fill="#5B6B82" font-size="17" font-weight="700">27</text>
+<text x="298" y="4609" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">handle_dump_log() [#DUMP]</text>
+<text x="298" y="4633" fill="#556600" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/control/roaster_control.rs · logging/roast_logger.rs</text>
+<text x="298" y="4660" fill="#16202E" font-size="17.5">dump_pending.clear · roast_logger::dump (tail preserved) · split on \n · cap LOG_CAPACITY+1 · 128 B rows</text></g>
+<rect x="90" y="4704" width="1820" height="158" rx="14" fill="#16202E"/>
+<rect x="90" y="4704" width="6" height="158" rx="3" fill="#C8A24B"/>
+<text x="118" y="4740" fill="#fff" font-size="20" font-weight="800">How to read this diagram</text>
+<text x="118" y="4768" fill="#C6D2E3" font-size="18">Top to bottom = time order. Each card = one step with its exact file and function. Loop D (steps 13–21) repeats ~3×/s for the whole roast.</text>
+<text x="118" y="4794" fill="#C6D2E3" font-size="18">Safety: any trip in D lands in LATCH (ERR safety_fault, SSR 0 + fan 100%). Canonical recovery: PID;OFF (no bare OFF exists on the wire).</text>
+<text x="118" y="4824" fill="#8FA3BF" font-size="15.5">Sources verified: main.rs · app_builder.rs · tasks.rs · roaster_control.rs · parser.rs · multiplexer.rs · transport_tasks.rs · artisan.rs · roast_logger.rs · watchdog.rs · ssr_logic.rs</text>
+<text x="1882" y="4824" fill="#8FA3BF" font-size="15.5" text-anchor="end">Generated 2026-09-11 · verified against CONTEXT v0.1 + src/</text>
+</svg>
