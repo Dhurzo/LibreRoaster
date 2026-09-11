@@ -9,14 +9,14 @@
 | Feature | Primary File(s) | Key Types/Functions |
 |---------|----------------|---------------------|
 | **Main control loop tick** | `src/application/tasks.rs` | `control_loop_task()` |
-| **RoasterControl orchestrator** | `src/control/roaster_control.rs` | `RoasterControl::tick()` |
-| **SensorController** | `src/control/controllers/sensor.rs` | `SensorController::sample()` |
-| **ActuatorController** (heater + fan) | `src/control/controllers/actuator.rs` | `ActuatorController::update()` |
+| **RoasterControl orchestrator** | `src/control/roaster_control.rs` | `process_artisan_command()` / `update_control()` |
+| **SensorController** | `src/control/controllers/sensor.rs` | `SensorController::update_temperatures()` |
+| **ActuatorController** (heater + fan) | `src/control/controllers/actuator.rs` | `apply_guarded_heater()` / `set_fan_speed()` |
 | **SafetyController** | `src/control/controllers/safety.rs` | `SafetyController::evaluate()` |
-| **CommandDispatcher** | `src/control/controllers/dispatch.rs` | `CommandDispatcher::dispatch()` |
-| **PID controller** | `src/control/pid.rs` | `PidController::update()` |
-| **SSR scheduler** (5 Hz zero-cross) | `src/control/ssr_scheduler.rs` | `SsrScheduler::update()` |
-| **SystemStatus aggregation** | `src/control/roaster_control.rs:1200+` | `RoasterControl::build_status()` |
+| **CommandDispatcher** | `src/control/controllers/dispatch.rs` | `CommandDispatcher::process_command()` |
+| **PID controller** | `src/control/pid.rs` | `CoffeeRoasterPid::update_feedback()` |
+| **SSR scheduler** (5 Hz zero-cross) | `src/control/ssr_scheduler.rs` | `next_cycle_allowed()` / `mark_cycle()` |
+| **SystemStatus aggregation** | `src/config/constants.rs` | `SystemStatus` struct (updated by `RoasterControl`) |
 
 ---
 
@@ -25,12 +25,12 @@
 | Feature | Primary File(s) | Key Types/Functions |
 |---------|----------------|---------------------|
 | **Command parser** | `src/input/parser.rs` | `parse_artisan_command()` |
-| **Command multiplexer** (USB+UART) | `src/input/multiplexer.rs` | `ArtisanMultiplexer` |
+| **Command multiplexer** (USB+UART) | `src/input/multiplexer.rs` | `CommandMultiplexer` |
 | **Command channel** | `src/application/service_container.rs` | `ARTISAN_CMD_CHANNEL` (`ARTISAN_CMD_CHANNEL_SIZE = 16`) |
-| **Artisan command handlers** | `src/control/handlers/artisan.rs` | `handle_artisan_command()` |
-| **Temperature commands** (`SETTARGET`, `PREHEAT`) | `src/control/handlers/temperature.rs` | `handle_set_target()` |
-| **System commands** (`START`, `STOP`, `READ`, `STATUS`) | `src/control/handlers/system.rs` | `handle_system_command()` |
-| **Safety commands** (`OT`, `RESET`) | `src/control/handlers/safety.rs` | `handle_safety_command()` |
+| **Artisan command handlers** | `src/control/handlers/artisan.rs` | `ArtisanCommandHandler::commit_manual_heater()` / `commit_manual_fan()` |
+| **Temperature commands** (`SETTARGET`, `PREHEAT`) | `src/control/handlers/temperature.rs` | `TemperatureCommandHandler::set_pid_target()` / `get_pid_output()` |
+| **System commands** (`START`, `STOP`, `READ`, `STATUS`) | `src/control/handlers/system.rs` | `SystemCommandHandler` (`handle_command()` / `can_handle()`) |
+| **Safety commands** | `src/control/handlers/safety.rs` | `SafetyCommandHandler::activate_emergency()` / `clear_emergency()` |
 | **Display units (C/F)** | `src/config/constants.rs` | `TemperatureScale::convert_*` |
 
 ---
@@ -43,9 +43,9 @@
 | **Output channel** | `src/application/service_container.rs` | `ARTISAN_OUTPUT_CHANNEL` (`ARTISAN_OUTPUT_CHANNEL_SIZE = 16`) |
 | **Dual output task** | `src/application/tasks.rs` | `dual_output_task()` |
 | **Continuous telemetry** | `src/control/abstractions.rs` | `OutputController` |
-| **READ response** | `src/output/artisan.rs:108` | `format_read_response_tc4()` |
-| **STATUS response** | `src/output/artisan.rs:165` | `format_status_response()` (20 fields) |
-| **CSV/RoR/Time formatters** | `src/output/formatters/*.rs` | `CsvFormatter`, `RorFormatter` |
+| **READ response** | `src/output/artisan.rs:97` | `format_read_response_full()` |
+| **STATUS response** | `src/output/artisan.rs:145` | `format_status_response()` (20 fields) |
+| **CSV/RoR/Time formatters** | `src/output/artisan.rs` | `ArtisanFormatter` helpers (`format_artisan_line`, RoR, time) |
 
 ---
 
@@ -71,7 +71,7 @@
 
 | Feature | Primary File(s) | Key Types/Functions |
 |---------|----------------|---------------------|
-| **RTC watchdog** | `src/safety/watchdog.rs` | `WatchdogFeeder::feed()` |
+| **RTC watchdog** | `src/safety/watchdog.rs` | `WatchdogFeeder::feed_async()` |
 | **Over-temp cutoff** | `src/control/controllers/sensor.rs` + `safety.rs` | `check_overtemp` / safety policy |
 | **Stale temperature guard** | `src/control/controllers/sensor.rs` | stale check (`TEMP_VALIDITY_TIMEOUT_MS`) |
 | **Heat source detection** | `src/hardware/heat_presence.rs` + `ssr_logic.rs` | heat-source state machine |

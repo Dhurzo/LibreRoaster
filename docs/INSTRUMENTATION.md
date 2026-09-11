@@ -48,6 +48,8 @@ ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeout
 | 19 | TempScale | 0/1 | Temperature scale: 0=Celsius, 1=Fahrenheit |
 | 20 | FaultFlag | bool (0/1) | Emergency fault condition active |
 
+> Positions above are normative and match `PROTOCOL.md` (§STATUS) and `src/output/artisan.rs:201-224`; this table is the semantic reference.
+
 ---
 
 ## Safety Telemetry Categories

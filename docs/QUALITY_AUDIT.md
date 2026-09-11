@@ -4,7 +4,7 @@
 **Alcance:** `src/` completo (94 archivos, ~24.068 líneas), `tests/`, `Cargo.toml`, configuración clippy
 **Método:** Auditoría paralela multi-agente (8 dimensiones) + verificación manual de hallazgos clave + gates objetivo
 
-> Nota 2026-09-09: snapshot histórico. Conteos actuales: **735 tests** (`502 lib + 233 integración`, era 631); `roaster_control.rs` ≈ 2098 líneas (era 3229, tras v5.4 split en `controllers/` + `ssr_logic.rs`); `OutputController` ya es flag funcional (`abstractions.rs:161-190`, M-A5 remediado); dump 66 KB parcialmente remediado (filas ~33-40 B). Ver `docs/TESTING.md` para el gate canónico.
+> Nota 2026-09-09: snapshot histórico. Conteos actuales: **735 tests** (`502 lib + 233 integración`, era 631); `roaster_control.rs` ≈ 2098 líneas (era 3229, tras v5.4 split en `controllers/` + `ssr_logic.rs`); `OutputController` ya es flag funcional (`abstractions.rs:161-190`, M-A5 remediado); dump 66 KB parcialmente remediado (filas ~33-40 B). Ver `CONTEXT.md` (Quality Gates) para el gate canónico.
 
 ---
 

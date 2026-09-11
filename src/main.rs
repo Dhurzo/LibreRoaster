@@ -161,8 +161,7 @@ fn main() -> ! {
     #[cfg(feature = "instrumentation")]
     esp_println::logger::init_logger(log::LevelFilter::Debug);
 
-    info!("LibreRoaster v0.1 starting...");
-    info!("Hardware initialized");
+    info!("LibreRoaster v0.0.1 Alpha starting...");
 
     let init_peripherals = InitPeripherals {
         ledc: peripherals.LEDC,
@@ -183,6 +182,7 @@ fn main() -> ! {
     let hw_handles = run_init_or_panic(libreroaster::hardware::init::init_hardware(
         init_peripherals,
     ));
+    info!("Hardware initialized");
 
     #[cfg(not(feature = "simulated-sensors"))]
     info!("Sensors initialized (BT: GPIO4, ET: GPIO3)");

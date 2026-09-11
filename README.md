@@ -1,9 +1,5 @@
 # LibreRoaster
 
-<p align="center">
-  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="160" height="160">
-</p>
-
 **Open Source Coffee Bean Roaster**  
 Firmware written in **Rust** for the ESP32-C3
 
@@ -38,7 +34,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 
 
 
-**What this means in practice:** the firmware compiles, flashes, boots, receives serial commands, and runs complete synthetic roast curves — including PID control, safety interlocks, and TC4-compatible telemetry — all tested on the host and on real ESP32-C3 hardware in simulated-sensors mode. **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
+**What this means in practice:** flashing the ESP32-C3 and running the firmware on it is tested. Everything else — serial command handling, synthetic roast curves, PID control, safety interlocks, TC4-compatible telemetry — is validated synthetically only (host tests and simulated-sensors mode). **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
 
 ## 📋 Current technical baseline
 
@@ -130,11 +126,11 @@ LibreRoaster implements a TC4-compatible serial interface with 20+ commands span
 ### Implemented command families
 
 - **Polling:** `READ`, `STATUS`, `STAT`
-- **Manual actuation:** `OT1`, `OT2`, `IO3`, `UP`, `DOWN`, `START`, `STOP`
+- **Manual actuation:** `OT1` (incl. `up`/`down`), `OT2`, `IO3`, `DCFAN`, `UP`, `DOWN`, `START`, `STOP`
 - **PID and roast control:** `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
 - **Profiles:** `PROFILE`, `FANPROFILE`, `PREHEAT`
 - **Handshake / setup:** `CHAN`, `UNITS`, `FILT`
-- **Diagnostics:** `REG`, `#DUMP`
+- **Diagnostics:** `REG`, `#DUMP`, `STREAM`
 
 ### Core response shapes
 
@@ -166,7 +162,7 @@ Two constraints matter operationally:
 1. **GPIO9 is a strapping pin** — it determines boot mode at reset. **Official ESP32-C3 dev boards** (DevKitC-02, DevKitM-1, RUST-1) include the pull-up already — no extra resistor needed. **Custom boards** (like LibreRoaster) need a **10kΩ pull-up to 3.3V**. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:84-112` asserts).
+For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:86-111` asserts).
 
 ---
 
@@ -276,7 +272,6 @@ The main technical documents are:
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
-- **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
 - **`docs/pinout.md`** — pin mapping reference
 - **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy

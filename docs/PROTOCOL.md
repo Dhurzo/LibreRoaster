@@ -127,6 +127,8 @@ Response shape:
 ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale,FaultFlag
 ```
 
+> The order above is normative and matches `src/output/artisan.rs:201-224`. Per-field semantics live in `INSTRUMENTATION.md`.
+
 Field map:
 
 1. ET
@@ -416,9 +418,9 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 
 `UNITS` affects output formatting state, but that state is not persisted across power cycles. A reconnect without reboot may preserve the last scale until a new `UNITS` command is sent.
 
-### `FILT` permissiveness
+### `FILT` strictness
 
-The parser currently tolerates malformed `FILT` payloads by coercing bad values to zero instead of rejecting the command. That is documented as a technical risk in the internal bug report.
+The parser rejects malformed `FILT` payloads: a non-numeric first token or a value above 100 yields `ERR invalid_value` ("reject, don't coerce", `src/input/parser.rs:134-147`). Only the first comma-separated token is used.
 
 ### `READ` vs `STATUS`
 
@@ -489,4 +491,4 @@ the Artisan RoR convention — not °C/s.
 - `ARCHITECTURE.md` for the task and ownership model behind the protocol
 - `ARTISAN_CONNECTION.md` for official Artisan configuration guidance
 - `INSTRUMENTATION.md` for deep status-field interpretation
-- `TESTING.md` for the test layers that pin the wire format
+- `tests/artisan_transcript_replay.rs` for the golden-transcript suite that pins the wire format

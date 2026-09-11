@@ -165,7 +165,7 @@ But the architectural truth remains the same: `RoasterControl` is the single obj
 
 ### State model
 
-The high-level firmware states are (`src/config/constants.rs:233-245`):
+The high-level firmware states are (`src/config/constants.rs:240-251`):
 
 - `Idle`
 - `Preheating`
@@ -244,7 +244,7 @@ Several timing constants define the system, but the implementation has important
 ### Nominal cadences
 
 - control loop period: 100 ms timer (`CONTROL_LOOP_PERIOD_MS`)
-- watchdog feed cadence: once per control tick (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms, fed in `tasks.rs:610-746`), not 100 ms
+- watchdog feed cadence: once per control tick (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms, fed by `feed_watchdog_stage` in `tasks.rs`), not 100 ms
 - output interval: 1000 ms default
 - stale-reading timeout: 1000 ms
 

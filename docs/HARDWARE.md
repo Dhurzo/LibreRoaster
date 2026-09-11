@@ -17,7 +17,7 @@ The firmware is opinionated about this topology. It is adaptable, but not dynami
 
 ## 2. Pin map used by the firmware
 
-The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:19-40`, enforced at boot by `src/hardware/init.rs:86-112`):
+The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:20-40`, enforced at boot by `src/hardware/init.rs:86-111`):
 
 | Signal | GPIO | Notes |
 |---|---:|---|
@@ -92,7 +92,7 @@ The firmware currently relies on these operational assumptions:
 - LEDC guard timeout **10 ms**,
 - temperature validity timeout **1000 ms**.
 
-These values shape both roast behavior and failure behavior. If you change them, you are changing more than performance.
+These values shape both roast behavior and failure behavior. If you change them, you are changing more than performance. Canonical timing reference: `ARCHITECTURE.md` §9 (`src/config/constants.rs` is the single source of truth).
 
 ## 8. Safety-relevant electrical constraints
 
@@ -106,11 +106,16 @@ or optocoupler in the load path); at rest the internal pull-up keeps the pin
 HIGH. The exact sensor (current transformer, optocoupler) is builder's
 choice — the only contract is the polarity above.
 
-- **Without the circuit**, the pin floats HIGH ("no heat") and the firmware
-  latches `NotDetected` when `ssr_output > 0.0` (any duty, not only duty ≥ 50 %)
-  within ≈1.7 s, forcing the heater to
+- **Without the circuit**, the pin floats HIGH ("no heat"). At duty ≥ 50 %
+  the HIGH samples accumulate (`HEAT_ABSENT_DEBOUNCE = 5` consecutive
+  samples ≈ 1.7 s) toward a `NotDetected` latch, forcing the heater to
   0 % until an explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast`
-  re-arms the availability state machine). `PROBE_STUCK_HEATER_MIN_PCT = 50` is
+  re-arms the availability state machine). Below 50 % duty the pin cannot
+  inform (the sample may land in the PWM OFF window), so nothing
+  accumulates — but a single LOW still re-detects heat at any duty
+  (`SsrControlBase::detect_heat_source`, `src/hardware/ssr_logic.rs:160-195`).
+  Do not confuse this with the probe-stuck arming gate (`ssr_output > 0.0`,
+  `src/control/roaster_control.rs:1001`): `PROBE_STUCK_HEATER_MIN_PCT = 50` is
   retained only as a conserved constant. For builds that deliberately omit
   the circuit, compile with the `no-heat-sense` feature, which disables the
   heat-source interpretation (all other safety layers stay active).
