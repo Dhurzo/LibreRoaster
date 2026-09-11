@@ -415,5 +415,5 @@
 <text x="118" y="4768" fill="#C6D2E3" font-size="18">Top to bottom = time order. Each card = one step with its exact file and function. Loop D (steps 13–21) repeats ~3×/s for the whole roast.</text>
 <text x="118" y="4794" fill="#C6D2E3" font-size="18">Safety: any trip in D lands in LATCH (ERR safety_fault, SSR 0 + fan 100%). Canonical recovery: PID;OFF (no bare OFF exists on the wire).</text>
 <text x="118" y="4824" fill="#8FA3BF" font-size="15.5">Sources verified: main.rs · app_builder.rs · tasks.rs · roaster_control.rs · parser.rs · multiplexer.rs · transport_tasks.rs · artisan.rs · roast_logger.rs · watchdog.rs · ssr_logic.rs</text>
-<text x="1882" y="4824" fill="#8FA3BF" font-size="15.5" text-anchor="end">Generated 2026-09-11 · verified against CONTEXT v0.1 + src/</text>
+<text x="1882" y="4824" fill="#8FA3BF" font-size="15.5" text-anchor="end">Generated 2026-09-11 · verified against CONTEXT v0.0.1 Alpha + src/</text>
 </svg>

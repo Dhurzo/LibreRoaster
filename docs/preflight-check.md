@@ -100,7 +100,7 @@ Verify wiring matches the **firmware pinout** (not any other document):
 
 2. Verify boot sequence in serial monitor:
 
-- [ ] See `LibreRoaster v0.1 starting...`
+- [ ] See `LibreRoaster v0.0.1 Alpha starting...`
 - [ ] See `Hardware initialized`
 - [ ] See `Sensors initialized (BT: GPIO4, ET: GPIO3)` (non-simulated build)
 - [ ] See `Hardware watchdog initialized (RTC WDT)`

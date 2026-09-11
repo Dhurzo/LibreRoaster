@@ -120,7 +120,7 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 ```bash
 cargo espflash monitor
 ```
-If you see "waiting for download" instead of "LibreRoaster v0.1 starting...", GPIO9 is being pulled low at boot.
+If you see "waiting for download" instead of "LibreRoaster v0.0.1 Alpha starting...", GPIO9 is being pulled low at boot.
 
 ---
 

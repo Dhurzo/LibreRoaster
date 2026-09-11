@@ -10,7 +10,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 **Core value proposition:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
 
-**Current milestone:** v0.1 — First working version (released 2026-04-30). Firmware compiles, flashes, boots on ESP32-C3 hardware without panics, responds to Artisan READ with real temperatures.
+**Current milestone:** v0.0.1 Alpha — First working version (in development on `develop`). Firmware compiles, flashes, boots on ESP32-C3 hardware without panics, responds to Artisan READ with real temperatures.
 
 ## Technical Stack
 
@@ -52,7 +52,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 
 ## Project State
 
-**v0.1 released** (2026-04-30):
+**v0.0.1 Alpha** (in development on `develop`):
 - ✅ Firmware compiles and flashes to ESP32-C3
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format

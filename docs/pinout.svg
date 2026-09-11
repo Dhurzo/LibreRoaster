@@ -362,5 +362,5 @@
   <text x="80" y="1544" font-size="10.5" fill="#334155">Back-powering: 10 kΩ series on external signals</text>
 
   <!-- ============ FOOTER ============ -->
-  <text x="800" y="1582" text-anchor="middle" font-size="10" fill="#64748b">Generated 2026-08-08 · triple-verified (firmware asserts · docs cross-ref · ESP32-C3 TRM) · LibreRoaster v0.1 · printable at 1600×1620</text>
+  <text x="800" y="1582" text-anchor="middle" font-size="10" fill="#64748b">Generated 2026-08-08 · triple-verified (firmware asserts · docs cross-ref · ESP32-C3 TRM) · LibreRoaster v0.0.1 Alpha · printable at 1600×1620</text>
 </svg>
