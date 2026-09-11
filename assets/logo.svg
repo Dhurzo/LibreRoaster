@@ -1,103 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="900" height="300" viewBox="0 0 900 300" role="img" aria-labelledby="title">
+  <title id="title">LibreRoaster - open-source coffee roast</title>
+  <rect width="900" height="300" rx="16" fill="#3A2314"/>
   <defs>
-    <linearGradient id="beanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#4B2E2E"/>
-      <stop offset="50%" style="stop-color:#3D1F1F"/>
-      <stop offset="100%" style="stop-color:#2B1515"/>
-    </linearGradient>
-    <linearGradient id="heatGrad" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:0.8"/>
-      <stop offset="50%" style="stop-color:#FF9F1C;stop-opacity:0.5"/>
-      <stop offset="100%" style="stop-color:#FFD93D;stop-opacity:0"/>
-    </linearGradient>
-    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" style="stop-color:#FFD93D;stop-opacity:0.3"/>
-      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:0"/>
-    </radialGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1A0D0D" flood-opacity="0.4"/>
-    </filter>
-    <filter id="innerGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-
-  <!-- Background circle -->
-  <circle cx="128" cy="128" r="118" fill="#1A1A2E" filter="url(#shadow)"/>
-
-  <!-- Subtle glow ring -->
-  <circle cx="128" cy="128" r="112" fill="none" stroke="url(#glowGrad)" stroke-width="3"/>
-
-  <!-- Heat waves rising -->
-  <g fill="url(#heatGrad)" opacity="0.6">
-    <path d="M128 180 Q110 150 128 120 Q146 150 128 180" filter="url(#innerGlow)"/>
-    <path d="M128 170 Q105 135 128 100 Q151 135 128 170" filter="url(#innerGlow)" style="animation-delay:0.2s"/>
-    <path d="M128 160 Q100 120 128 80 Q156 120 128 160" filter="url(#innerGlow)" style="animation-delay:0.4s"/>
-  </g>
-
-  <!-- Main coffee bean -->
-  <ellipse cx="128" cy="142" rx="38" ry="28" fill="url(#beanGrad)" filter="url(#shadow)">
-    <animateTransform attributeName="transform" type="scale" values="1;1.02;1" dur="3s" repeatCount="indefinite"/>
-  </ellipse>
-
-  <!-- Bean center line (the crease) -->
-  <path d="M128 120 Q126 132 125 145 Q123 155 128 165" 
-        fill="none" stroke="#1A0D0D" stroke-width="2.5" opacity="0.6"/>
-
-  <!-- Bean highlight -->
-  <ellipse cx="114" cy="132" rx="8" ry="5" fill="#5D3A3A" opacity="0.5"/>
-
-  <!-- ESP32-C3 chip representation -->
-  <g transform="translate(128, 200)">
-    <!-- PCB -->
-    <rect x="-22" y="-8" width="44" height="16" rx="3" fill="#1B2A1B" stroke="#2D5A2D" stroke-width="1.5"/>
-    <!-- ESP32 text -->
-    <text x="0" y="3" text-anchor="middle" font-family="monospace" font-size="7" font-weight="bold" fill="#4ADE80">ESP32-C3</text>
-    <!-- Pin indicators -->
-    <g stroke="#4ADE80" stroke-width="1.5" opacity="0.7">
-      <line x1="-20" y1="-8" x2="-20" y2="-12"/>
-      <line x1="-12" y1="-8" x2="-12" y2="-12"/>
-      <line x1="-4" y1="-8" x2="-4" y2="-12"/>
-      <line x1="4" y1="-8" x2="4" y2="-12"/>
-      <line x1="12" y1="-8" x2="12" y2="-12"/>
-      <line x1="20" y1="-8" x2="20" y2="-12"/>
-      <line x1="-20" y1="8" x2="-20" y2="12"/>
-      <line x1="-12" y1="8" x2="-12" y2="12"/>
-      <line x1="-4" y1="8" x2="-4" y2="12"/>
-      <line x1="4" y1="8" x2="4" y2="12"/>
-      <line x1="12" y1="8" x2="12" y2="12"/>
-      <line x1="20" y1="8" x2="20" y2="12"/>
+    <g id="bean">
+      <ellipse rx="13" ry="18" fill="#B58157" stroke="#5A341F" stroke-width="2"/>
+      <path d="M0,-15 C7,-7 -7,7 0,15" fill="none" stroke="#5A341F" stroke-width="3.5" stroke-linecap="round"/>
+      <ellipse cx="-5" cy="-8" rx="3.2" ry="6.5" fill="#D9A876" opacity="0.55"/>
     </g>
+    <g id="pincol" fill="#D9A876">
+      <rect x="75" y="64" width="7" height="7" rx="1"/>
+      <rect x="75" y="88" width="7" height="7" rx="1"/>
+      <rect x="75" y="112" width="7" height="7" rx="1"/>
+      <rect x="75" y="136" width="7" height="7" rx="1"/>
+      <rect x="75" y="160" width="7" height="7" rx="1"/>
+      <rect x="75" y="184" width="7" height="7" rx="1"/>
+      <rect x="75" y="208" width="7" height="7" rx="1"/>
+      <rect x="75" y="232" width="7" height="7" rx="1"/>
+    </g>
+  </defs>
+  <rect x="75" y="38" width="92" height="224" rx="8" fill="#1F130B" stroke="#8B5E34" stroke-width="2.5"/>
+  <path d="M98,49 h6 v-5 h6 v5 h6 v-5 h6 v5 h6 v-5 h6 v5 h6" fill="none" stroke="#D9A876" stroke-width="2"/>
+  <rect x="95" y="54" width="52" height="58" rx="5" fill="#9BA1A8" stroke="#6E7378" stroke-width="2"/>
+  <rect x="99" y="58" width="44" height="50" rx="3" fill="#B9BEC4"/>
+  <text x="121" y="87" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
+        font-size="13" font-weight="bold" fill="#2B1A10">ESP32</text>
+  <circle cx="141" cy="120" r="3.5" fill="#F5A623"/>
+  <rect x="105" y="125" width="32" height="26" rx="2" fill="#0B0704" stroke="#5F3A22" stroke-width="1.5"/>
+  <g fill="#D9A876">
+    <rect x="101" y="129" width="4" height="3"/>
+    <rect x="101" y="138" width="4" height="3"/>
+    <rect x="101" y="147" width="4" height="3"/>
+    <rect x="137" y="129" width="4" height="3"/>
+    <rect x="137" y="138" width="4" height="3"/>
+    <rect x="137" y="147" width="4" height="3"/>
   </g>
-
-  <!-- Temperature sensor icons (thermocouples) -->
-  <g transform="translate(50, 100)" opacity="0.7">
-    <path d="M0 0 L0 -20 M-4 -20 L4 -20 M-3 -23 L3 -17 M-3 -17 L3 -23" 
-          stroke="#FF6B35" stroke-width="2" fill="none" stroke-linecap="round"/>
-    <circle cx="0" cy="2" r="4" fill="#2D1B1B" stroke="#FF6B35" stroke-width="1.5"/>
+  <rect x="96" y="222" width="16" height="16" rx="3" fill="#7A4A28" stroke="#5F3A22" stroke-width="1.5"/>
+  <rect x="130" y="222" width="16" height="16" rx="3" fill="#7A4A28" stroke="#5F3A22" stroke-width="1.5"/>
+  <text x="104" y="232" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
+        font-size="6" fill="#EFE3CE">EN</text>
+  <text x="138" y="232" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
+        font-size="6" fill="#EFE3CE">BOOT</text>
+  <rect x="108" y="254" width="28" height="16" rx="2" fill="#9BA1A8" stroke="#6E7378" stroke-width="1.5"/>
+  <rect x="113" y="258" width="18" height="7" rx="1" fill="#120A06"/>
+  <rect x="82" y="58" width="10" height="186" rx="2" fill="#120A06"/>
+  <rect x="150" y="58" width="10" height="186" rx="2" fill="#120A06"/>
+  <use href="#pincol" xlink:href="#pincol"/>
+  <use href="#pincol" xlink:href="#pincol" x="83"/>
+  <g fill="none" stroke-width="5" stroke-linecap="round">
+    <path d="M165,136 C184,135 190,143 201,151" stroke="#F58A2E"/>
+    <path d="M165,160 C182,161 188,166 198,170" stroke="#EFE3CE"/>
+    <path d="M165,184 C183,184 190,186 200,188" stroke="#D9A876"/>
   </g>
-
-  <g transform="translate(206, 100)" opacity="0.7">
-    <path d="M0 0 L0 -20 M-4 -20 L4 -20 M-3 -23 L3 -17 M-3 -17 L3 -23" 
-          stroke="#FF6B35" stroke-width="2" fill="none" stroke-linecap="round"/>
-    <circle cx="0" cy="2" r="4" fill="#2D1B1B" stroke="#FF6B35" stroke-width="1.5"/>
+  <use href="#bean" xlink:href="#bean" transform="translate(218,168) rotate(-10) scale(1.75)"/>
+  <g fill="#D9A876" stroke="#5A341F" stroke-width="1">
+    <circle cx="203" cy="150" r="3.2"/>
+    <circle cx="200" cy="169" r="3.2"/>
+    <circle cx="202" cy="187" r="3.2"/>
   </g>
-
-  <!-- Rust gear/cog subtle indicator -->
-  <g transform="translate(220, 36)" opacity="0.5">
-    <circle cx="0" cy="0" r="12" fill="none" stroke="#E57324" stroke-width="1.5" stroke-dasharray="4 2"/>
-    <path d="M0 -10 L0 -14 M0 10 L0 14 M-10 0 L-14 0 M10 0 L14 0 
-             M-7 -7 L-10 -10 M7 -7 L10 -10 M-7 7 L-10 10 M7 7 L10 10"
-          stroke="#E57324" stroke-width="1.5" fill="none"/>
-  </g>
-
-  <!-- Version badge -->
-  <g transform="translate(128, 230)">
-    <rect x="-28" y="-6" width="56" height="12" rx="6" fill="#0D1B2A" stroke="#1E3A5F" stroke-width="1"/>
-    <text x="0" y="2" text-anchor="middle" font-family="monospace" font-size="6" font-weight="bold" fill="#4A9EFF">v0.0.1-α</text>
-  </g>
+  <text x="172" y="212" font-family="Arial, Helvetica, sans-serif"
+        font-size="12" font-weight="bold" fill="#F58A2E" letter-spacing="1">GPIO</text>
+  <text x="320" y="160" font-family="Arial, Helvetica, sans-serif"
+        font-size="80" font-weight="bold" fill="#F58A2E">Libre</text>
+  <text x="516" y="160" font-family="Arial, Helvetica, sans-serif"
+        font-size="80" font-weight="bold" fill="#FFFFFF">Roaster</text>
+  <text x="322" y="200" font-family="Arial, Helvetica, sans-serif"
+        font-size="18" letter-spacing="5" fill="#D8C7AE">OPEN-SOURCE COFFEE ROAST</text>
 </svg>

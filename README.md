@@ -1,7 +1,7 @@
 # ☕🔥 LibreRoaster
 
 <p align="center">
-  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="160" height="160">
+  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="400">
 </p>
 
 **Open Source Coffee Bean Roaster**  
