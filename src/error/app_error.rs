@@ -111,6 +111,7 @@ pub enum SafetyLevel {
 }
 
 impl AppError {
+    /// Contract: transient faults (timeout/invalid sample, comms timeout, safety warning) are recoverable; latched/hardware/init faults are not.
     pub fn is_recoverable(&self) -> bool {
         match self {
             AppError::Temperature { source, .. } => matches!(
@@ -126,6 +127,7 @@ impl AppError {
         }
     }
 
+    /// Contract: only out-of-range temperature and SSR hardware faults arm the emergency-shutdown path.
     pub fn requires_emergency_shutdown(&self) -> bool {
         match self {
             AppError::Temperature { source, .. } => matches!(source, TemperatureError::OutOfRange),
@@ -134,6 +136,7 @@ impl AppError {
         }
     }
 
+    /// Contract: stable subsystem tag (`temperature`/`control`/`hardware`/`communication`/`initialization`/`safety`) for logs and telemetry.
     pub fn category(&self) -> &'static str {
         match self {
             AppError::Temperature { .. } => "temperature",
@@ -145,6 +148,7 @@ impl AppError {
         }
     }
 
+    /// Contract: short human-readable message for the Artisan/operator surface (no internal details).
     pub fn user_message(&self) -> &'static str {
         match self {
             AppError::Temperature { source, .. } => match source {

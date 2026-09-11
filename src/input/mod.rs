@@ -18,7 +18,7 @@ pub use parser::parse_artisan_command;
 use crate::hardware::uart::{send_response, uart_reader_task};
 
 // Production command path uses the Embassy channel
-// (`ServiceContainer::get_artisan_channel`, ARTISAN_CMD_CHANNEL_SIZE = 8).
+// (`ServiceContainer::get_artisan_channel`, ARTISAN_CMD_CHANNEL_SIZE = 16).
 // Tests that want to exercise backpressure should target the real channel.
 
 #[derive(Debug, Clone, PartialEq)]

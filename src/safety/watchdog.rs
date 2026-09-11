@@ -54,16 +54,19 @@ mod software_watchdog {
     // orderly `SAFETY WATCHDOG` escalation + shutdown).
     const WATCHDOG_TIMEOUT_MS: u64 = 1000;
 
+    /// Software watchdog feeder: tracks control-loop liveness for telemetry.
     pub struct WatchdogFeeder {
         last_failure: Option<&'static str>,
     }
 
     impl WatchdogFeeder {
+        /// Resets the feed timestamp to never-fed and clears the last failure.
         pub fn initialize() -> Result<Self, WatchdogError> {
             LAST_FEED_MS.store(NEVER_FED, Ordering::SeqCst);
             Ok(Self { last_failure: None })
         }
 
+        /// Feeds the HW WDT unconditionally first; `_bean_temp` is reserved for a future overtemp-gated feed — no gating today.
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
             // `bean_temp` is reserved for a future overtemp-gated feed
             // (Artisan's convention: stop feeding during an overtemp crisis
@@ -95,10 +98,12 @@ mod software_watchdog {
             Ok(())
         }
 
+        /// Returns the stable reason string of the last failed feed, if any.
         pub fn last_failure_reason(&self) -> Option<&'static str> {
             self.last_failure
         }
 
+        /// True when recently fed; true before the first feed (startup, not hung).
         pub fn is_alive(&self) -> bool {
             let now = embassy_time::Instant::now().as_millis();
             let last = LAST_FEED_MS.load(Ordering::SeqCst);
@@ -115,18 +120,23 @@ mod software_watchdog {
 mod stub {
     use super::WatchdogError;
 
+    /// Host/build stub feeder: no hardware to feed, always reports healthy.
     pub struct WatchdogFeeder;
 
     impl WatchdogFeeder {
+        /// Stub init: always succeeds, no state to reset.
         pub fn initialize() -> Result<Self, WatchdogError> {
             Ok(Self)
         }
+        /// Stub feed: no HW WDT present, always `Ok` (ignores `_bean_temp`).
         pub fn feed_async(&mut self, _bean_temp: f32) -> Result<(), WatchdogError> {
             Ok(())
         }
+        /// Stub: never fails, so always `None`.
         pub fn last_failure_reason(&self) -> Option<&'static str> {
             None
         }
+        /// Stub: always true (no liveness tracking without a HW WDT).
         pub fn is_alive(&self) -> bool {
             true
         }
@@ -209,9 +219,9 @@ mod hw_watchdog {
         // RWDT so we can compensate its ×2/×4/×8/×16 shift upstream.
         let efuse = unsafe { &*esp32c3::EFUSE::ptr() };
         let wdt_delay_sel: u32 = efuse.rd_repeat_data1().read().wdt_delay_sel().bits() as u32;
-        // Saturating right shift: a 0 sel → 1, a 3 sel → 4. Clamp to 6 (the
-        // upper bound the report cites; saturating at 6 also guards against a
-        // future efuse value we have not accounted for).
+        // Saturating right shift: a 0 sel → 1, a 3 sel → 4. Clamp to 4
+        // (the shift maximum, guarding against a future efuse value we
+        // have not accounted for).
         let shift = 1u32 + wdt_delay_sel.min(3);
         let hold = WDT_STAGE0_HOLD_NOMINAL >> shift;
 
@@ -253,7 +263,9 @@ mod hw_watchdog {
 
 #[cfg(not(target_arch = "riscv32"))]
 mod hw_watchdog {
+    /// Host no-op: no RTC WDT present outside riscv32.
     pub fn feed() {}
+    /// Host no-op: no RTC WDT to configure outside riscv32.
     pub fn init() {}
 }
 

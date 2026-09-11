@@ -84,7 +84,9 @@ pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 // `MAX_TEMP` feeds `MAX_TARGET_TEMP`, so editing it changes what
 // SETTARGET/PREHEAT/PROFILE accept.
 pub const MAX_TEMP: f32 = 300.0;
+/// Sensor plausibility floor (°C): readings below are rejected as `OutOfRange`.
 pub const MIN_VALID_TEMP: f32 = -50.0;
+/// Sensor plausibility ceiling (°C): readings above are rejected as `OutOfRange`.
 pub const MAX_VALID_TEMP: f32 = 350.0;
 
 /// PID control loop sample time in milliseconds.
@@ -182,6 +184,7 @@ pub const PROBE_STUCK_MANUAL_LATCH_SECS: u64 = 300;
 /// flat BT is expected control behaviour. Manual mode (`pid_enabled =
 /// false`) has no regulation target, so it stays fully armed.
 pub const PROBE_STUCK_TARGET_MARGIN_C: f32 = 5.0;
+/// Contract: max ms to wait for SSR current-sense confirmation before flagging `NotDetected`/`Error`.
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.
 pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
@@ -193,7 +196,9 @@ pub const EMERGENCY_HEATER_OFF_RETRIES: u8 = 3;
 /// condition.
 pub const EMERGENCY_FAN_RETRIES: u8 = 3;
 
+/// Contract: additive calibration offset (°C) applied to the BT probe reading.
 pub const BT_THERMOCOUPLE_OFFSET: f32 = 0.0;
+/// Contract: additive calibration offset (°C) applied to the ET probe reading.
 pub const ET_THERMOCOUPLE_OFFSET: f32 = 0.0;
 
 pub const DEFAULT_OUTPUT_INTERVAL_MS: u64 = 1000;
@@ -223,6 +228,7 @@ const _: () = assert!(
     WATCHDOG_FEED_INTERVAL_MS * 2 < HW_WATCHDOG_TIMEOUT_MS,
     "the tick must leave >=2x margin before the RWDT resets the chip"
 );
+/// Contract: max ms a `LedcGuard` acquisition may spin before returning a timeout error.
 pub const LEDC_GUARD_TIMEOUT_MS: u64 = 10;
 /// Maximum idle time (ms) without any Artisan command before emergency shutdown.
 /// During active roasting, Artisan sends periodic STATUS queries (~1s interval),

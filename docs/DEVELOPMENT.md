@@ -48,8 +48,15 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 - **`instrumentation`** — enables telemetry/instrumentation hooks (pulled in by `test`)
 - **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
 - **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
+- **`no-heat-sense`** — disables heat-source interpretation for builds without the GPIO1 current-sense circuit (all other safety layers stay active)
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
 - **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
+
+| Variant | Command |
+|---------|---------|
+| Race check | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --test-threads=1 --no-fail-fast` |
+| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
 
 ### Why `test` matters
 

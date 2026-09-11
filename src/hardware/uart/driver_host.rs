@@ -67,6 +67,7 @@ static UART_PTR: SyncCell<core::ptr::NonNull<Option<UartDriver>>> =
 /// Host stub: allocate the (no-op) driver and return `Ok`.
 pub fn init_uart(_uart0: (), _rx: (), _tx: ()) -> Result<(), UartError> {
     let value = UART_DRIVER.init(Some(UartDriver::new()));
+    // SAFETY: single-task host stub — `init_uart` runs before any task reads `UART_PTR`, and `StaticCell` storage is 'static.
     unsafe { *UART_PTR.get() = core::ptr::NonNull::new_unchecked(value) };
     Ok(())
 }

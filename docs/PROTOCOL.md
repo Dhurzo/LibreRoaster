@@ -322,7 +322,7 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
   with `ERR handler_failed invalid_state:profile_temp_out_of_range`
 - PID gains must parse as floats
 - semicolon PID gains reject negative values
-- PID cycle time rejects values below 10 ms
+- PID cycle time accepts `10..=60000` ms (`PID;CT ≤ 60000`); values outside that range are rejected
 - PID channel accepts `1..=2` (channel 1 = ET, channel 2 = BT; the
   firmware has exactly two thermocouple channels, so `3`/`4` are rejected
   with `ERR out_of_range`)

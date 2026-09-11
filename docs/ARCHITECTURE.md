@@ -78,8 +78,9 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 ## 4. Task graph
 
 The embedded system is built around a fixed task graph: 5 long-lived worker
-tasks spawned by `Application::start_tasks` (`app_builder.rs:212-229`) plus
-the `async_main_task` supervisor spawned by the executor in `main.rs:266-268`
+tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:212-229`) plus
+the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via
+`executor.run` in `src/main.rs:261-263`)
 (6 Embassy tasks total; docs count the 5 workers).
 
 ### Input side
@@ -164,7 +165,7 @@ But the architectural truth remains the same: `RoasterControl` is the single obj
 
 ### State model
 
-The high-level firmware states are (`src/config/constants.rs:249-262`):
+The high-level firmware states are (`src/config/constants.rs:233-245`):
 
 - `Idle`
 - `Preheating`
@@ -292,7 +293,9 @@ event (`emergency_shutdown` in `RoasterControl`) — a connected host learns
 about the latch immediately instead of discovering it through the next
 rejected command. The operator-initiated `STOP` path does not emit it.
 While the latch is armed, the handshake commands `CHAN`/`UNITS`/`FILT`
-remain accepted (they carry no actuator side effects), so Artisan can
+plus `SetStreaming` (`STREAM;ON`/`STREAM;OFF`, allowed under latch per
+`src/control/roaster_control.rs:1137`) remain accepted (they carry no
+actuator side effects), so Artisan can
 reconnect to a latched device instead of looping on "Arduino could not set
 channels/units/filters"; every re-energizing command stays rejected.
 
@@ -302,15 +305,6 @@ before latching, so a brief light-roast turnaround spike no longer
 false-trips, while the hard band (> 1.0 °C/s) keeps the fast 3-tick latch.
 In manual/software-PID mode the probe-stuck detector is two-stage
 (A-TC4-C): a wire warning at 120 s of flat BT, the latch at 300 s.
-
-The probe-stuck detector is two-stage in manual / Artisan software-PID mode
-(A-TC4-C, 2026-08-12): at 120 s of flat BT with the heater on it emits
-`ERR probe_stuck_warning` on the wire without latching (a legitimately slow
-finish can hold BT nearly flat at low duty), and only at 300 s of continuous
-flatness does it escalate to the emergency latch (`ERR safety_fault Probe
-stuck`). Firmware-PID mode keeps the single-stage 120 s latch, because the
-regulating-near-target disarm already protects healthy PID holds there. The
-dead-probe backstop (Bug S1) stays closed in both modes.
 
 ## 11. Protocol boundary with Artisan
 

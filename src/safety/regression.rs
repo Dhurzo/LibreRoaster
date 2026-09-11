@@ -123,6 +123,7 @@ mod target_impl {
         let receiver = REGRESSION_TRIGGER.receiver();
         loop {
             receiver.receive().await;
+            // SAFETY: single-task Embassy regression task — spawner is captured on the executor thread and never shared across tasks.
             let spawner = unsafe { Spawner::for_current_executor().await };
             run_overtemp_regression(&spawner).await;
         }

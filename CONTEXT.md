@@ -28,7 +28,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks plus the `async_main_task` supervisor (`src/main.rs:266-268`):
+The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:212-229`) plus the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via `executor.run` in `src/main.rs:261-263`):
 
 1. **USB reader** — gathers bytes from native USB CDC and parses commands
 2. **UART reader** — gathers bytes from UART0 and parses commands
@@ -67,7 +67,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - All 735 host tests pass, ESP32 build warning-free
 
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
-- `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. Internal stop paths never re-arm. New `no-heat-sense` cargo feature for builds without the GPIO1 current-sense circuit (guards in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
+- `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New `no-heat-sense` cargo feature for builds without the GPIO1 current-sense circuit (guards in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
 - `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), "SSR cycle busy", and LEDC-GUARD timeouts now warn once per activation episode. The dedicated UART1 log sink remains deferred (needs bench validation).
 - Status LED is a real indicator — pure pattern logic in `src/hardware/status_led.rs` (host-tested), single owner stored in `ServiceContainer`, driven once per tick by the control loop. `enter_safe_shutdown` keeps `Peripherals::steal()` as documented fallback (app tasks are dead by then).
 - `Max31856::new_tolerant()` returns `(device, verified)`; `init_spi_sensors` degrades a single dead channel (BT-only / ET-only configs boot) and aborts only when BOTH channels are dead (`boot_policy` helper). `new()` keeps the hard-fail contract for HIL examples. Scripted SPI mock + 9 host tests.

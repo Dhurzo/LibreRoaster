@@ -88,7 +88,7 @@ The firmware currently relies on these operational assumptions:
   (`MAX31856_CONVERSION_TIME_MS = 210`),
 - MAX31856 one-shot conversion wait **210 ms** (datasheet 185 ms + margin),
 - watchdog feed interval **once per control tick** (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms),
-- hardware watchdog timeout **≈ 2.2 s nominal** (`HW_WATCHDOG_STAGE0_CYCLES = 300000` / 136 kHz ≈ 2206 ms; efuse shift can shorten it),
+- hardware watchdog timeout **≈ 2.2 s nominal** (`HW_WATCHDOG_STAGE0_CYCLES = 300000` / 136 kHz ≈ 2206 ms; without compensation the naive write would be lengthened by the efuse `wdt_delay_sel` shift to ~4.4/8.8/17.6/35.2 s — the firmware compensates with a shift-right so the programmed timeout stays ≈ 2.2 s nominal),
 - LEDC guard timeout **10 ms**,
 - temperature validity timeout **1000 ms**.
 
@@ -107,9 +107,11 @@ HIGH. The exact sensor (current transformer, optocoupler) is builder's
 choice — the only contract is the polarity above.
 
 - **Without the circuit**, the pin floats HIGH ("no heat") and the firmware
-  latches `NotDetected` at duty ≥ 50 % within ≈1.7 s, forcing the heater to
-  0 % until an explicit operator recovery (`OFF`/`START`/`PREHEAT`/`StopRoast`
-  re-arms the availability state machine). For builds that deliberately omit
+  latches `NotDetected` when `ssr_output > 0.0` (any duty, not only duty ≥ 50 %)
+  within ≈1.7 s, forcing the heater to
+  0 % until an explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast`
+  re-arms the availability state machine). `PROBE_STUCK_HEATER_MIN_PCT = 50` is
+  retained only as a conserved constant. For builds that deliberately omit
   the circuit, compile with the `no-heat-sense` feature, which disables the
   heat-source interpretation (all other safety layers stay active).
 - **With the circuit**, a transient "no heat" read is debounced

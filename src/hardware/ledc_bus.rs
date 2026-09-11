@@ -123,6 +123,7 @@ impl<'a> LedcBus<'a> {
     /// synchronously. Keep the two reads separate: `live_duty()` → DUTY_R,
     /// `read_duty_ticks()` → DUTY.
     fn read_live_register(&self, entry: &ChannelEntry<'a>) -> u16 {
+        // SAFETY: single-core ESP32-C3 with cooperative Embassy tasks — LEDC PAC pointer is a 'static MMIO singleton, never aliased mutably.
         let regs = unsafe { &*LEDC::ptr() };
         let raw = regs
             .ch(entry.number as usize)
@@ -130,6 +131,7 @@ impl<'a> LedcBus<'a> {
             .read()
             .duty_r()
             .bits();
+        // >>4: LEDC duty registers are 19-bit left-aligned; shift down to the channel's PWM-resolution ticks.
         (raw >> 4) as u16
     }
 
@@ -140,8 +142,10 @@ impl<'a> LedcBus<'a> {
     /// itself failed, not that the new duty has not been applied to the wire
     /// yet (the DUTY_R lag case).
     fn read_config_register(&self, entry: &ChannelEntry<'a>) -> u16 {
+        // SAFETY: single-core ESP32-C3 with cooperative Embassy tasks — LEDC PAC pointer is a 'static MMIO singleton, never aliased mutably.
         let regs = unsafe { &*LEDC::ptr() };
         let raw = regs.ch(entry.number as usize).duty().read().duty().bits();
+        // >>4: LEDC config DUTY is 19-bit left-aligned; shift down to the channel's PWM-resolution ticks (matches DUTY_R scaling in `read_live_register`).
         (raw >> 4) as u16
     }
 
@@ -351,5 +355,7 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
     }
 }
 
+// SAFETY: single-core ESP32-C3 with cooperative Embassy tasks — `LedcBus` is confined to the owning task via `&'a` handles, so no concurrent access occurs.
 unsafe impl<'a> Send for LedcBus<'a> {}
+// SAFETY: single-core ESP32-C3 with cooperative Embassy tasks — handles only borrow the bus and never outlive it (`'a`), so cross-task transfer is race-free.
 unsafe impl<'a> Send for LedcChannelHandle<'a> {}

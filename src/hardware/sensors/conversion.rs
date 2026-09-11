@@ -26,12 +26,16 @@ pub const MAX31856_LSB: f32 = 0.0078125;
 /// Maximum consecutive sensor read fallbacks before reporting error.
 /// At the real tick cadence (~310 ms: 100 ms timer + 210 ms
 /// `MAX31856_CONVERSION_TIME_MS`), 5 fallbacks ≈ 1.55 s of stale data before
-/// `resolve_channel` returns `HardwareError`.
+/// `resolve_channel` returns `HardwareError`. Mirrors `SENSOR_FAULT_DEBOUNCE = 5`
+/// (same 5-tick persistence bar) and stays under `TEMP_VALIDITY_TIMEOUT_MS`
+/// (1000 ms freshness bound is enforced per-sample; this caps total fallback run).
 const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
 
 /// Exponential moving average alpha for temperature filtering.
 /// 0.2 gives moderate smoothing — rejects single-bit SPI glitches (~0.25°C)
 /// while keeping the filter responsive to real temperature changes.
+/// Smoother (lower alpha) than `DERIVATIVE_FILTER_ALPHA` (0.3): display temps
+/// favour stability, the RoR derivative favours responsiveness.
 const EMA_ALPHA: f32 = 0.2;
 
 /// Decode a raw 24-bit MAX31856 temperature register into °C using

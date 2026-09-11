@@ -11,6 +11,7 @@ use crate::hardware::sensors::{SensorConversionHub, SensorSample};
 use embassy_time::Instant;
 use log::warn;
 
+/// IIR alpha for the PV-derivative filter: 0.3 reacts faster than `ROR_FILTER_ALPHA` (0.25) and `EMA_ALPHA` (0.2) because the RoR guard needs a responsive slope, not a smooth display value.
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
 /// Two-tier rate-of-rise debounce (light-roast verification). Aggressive

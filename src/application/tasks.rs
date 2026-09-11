@@ -796,7 +796,8 @@ async fn emit_telemetry_stage(
     }
 
     // Drain `#DUMP` rows outside the 1 Hz `should_emit` gate so a full roast
-    // drains in ~6 s. Drain up to `MAX_DUMP_ROWS_PER_TICK` rows per tick and
+    // (LOG_CAPACITY = 256 rows at MAX_DUMP_ROWS_PER_TICK = 4 rows/tick =
+    // 64 ticks × ~0.31 s ≈ 20 s) drains in ~20 s. Drain up to `MAX_DUMP_ROWS_PER_TICK` rows per tick and
     // re-push a row to the front of the deque if the output channel is full,
     // so no row is lost. `with_roaster_async` is `.await`-able but its
     // closure is sync — take+send+repush via three short lock acquisitions.

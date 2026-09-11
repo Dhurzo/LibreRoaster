@@ -86,13 +86,14 @@ pub struct RoasterControl {
     // `emergency_shutdown` does). Without this flag, the next `update_control`
     // tick would fall through to `artisan_manual_fan()` (cleared to 0.0 by
     // `dispatch.stop_streaming → clear_manual`) and cut the cooldown a single
-    // tick (~100 ms) after STOP. Set on STOP, dropped when a new roast
+    // control-loop tick (~310 ms: CONTROL_LOOP_TICK_MS plus the ~210 ms
+    // MAX31856 conversion wait) after STOP. Set on STOP, dropped when a new roast
     // starts (handle_start_roast), on explicit recovery (clear_emergency_explicit),
     // or once the bean mass cools below the safe-to-handle threshold.
     cooling_active: bool,
     /// Queue of `#DUMP` rows waiting to be sent. The async emitter in
     /// `src/application/tasks.rs::emit_telemetry_stage` drains up to
-    /// `MAX_DUMP_ROWS_PER_TICK` rows per 100 ms tick (outside the 1 Hz
+    /// `MAX_DUMP_ROWS_PER_TICK` rows per control-loop tick (~310 ms) (outside the 1 Hz
     /// `should_emit` gate) and re-pushes a row to the front if the output
     /// channel is full — so no row is lost. The queue is sized to hold a
     /// full-ring dump (`LOG_CAPACITY + 1` rows) so a complete roast can be
@@ -819,8 +820,8 @@ impl RoasterControl {
             if self.status.ssr_hardware_status
                 == crate::config::constants::SsrHardwareStatus::Available
             {
-                // Sensor reads take ~160ms (TEMPERATURE_READ_INTERVAL_MS), PID runs at 100ms
-                // (PID_SAMPLE_TIME_MS). Skip PID if data is stale to avoid computing on old readings.
+                // Sensor reads take ~210 ms (MAX31856 conversion) per
+                // control-loop tick (~310 ms total). Skip PID if data is stale to avoid computing on old readings.
                 let is_stale = if let Some(last_read) = self.sensor.last_temp_read() {
                     current_time.saturating_duration_since(last_read) > Duration::from_millis(500)
                 // > TEMPERATURE_READ_INTERVAL_MS * 2 + margin
@@ -1158,12 +1159,13 @@ impl RoasterControl {
                 self.handle_set_fan_speed(value, was_clamped, current_time)
             }
             crate::config::ArtisanCommand::Stop => {
-                // `STOP` (token "STOP" via `EmergencyStop`) arms the emergency
-                // latch, and the sanctioned un-latch path
+                // `STOP` on the wire parses to `EmergencyStop` and arms the
+                // emergency latch, and the sanctioned un-latch path
                 // (`RoasterCommand::StopRoast → clear_emergency_explicit`) has
-                // no producer in production code. Make plain `OFF`
-                // (`ArtisanCommand::Stop`, token "OFF") the *unconditional*
-                // recovery: if any fault or emergency latch is active, clear
+                // no producer in production code. There is no bare `OFF` on
+                // the wire — the recovery command is `PID;OFF` (or `PID,OFF`),
+                // which parses to `ArtisanCommand::Stop`. Make it the
+                // *unconditional* recovery: if any fault or emergency latch is active, clear
                 // it BEFORE running the normal stop, so the host always has a
                 // reachable door back to `Idle`. The whitelist at the top of
                 // this method already permits `Stop` while `fault_condition`
