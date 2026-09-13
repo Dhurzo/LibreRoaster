@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="950" viewBox="0 0 1200 950" font-family="Helvetica,Arial,sans-serif">
+<defs><style>
+.box{stroke:#333;stroke-width:1.5;rx:8;} .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+.t{fill:#111;font-size:14px;font-weight:bold;} .tw{fill:#fff;font-size:13px;font-weight:bold;}
+.p{fill:#111;font-size:11px;} .pw{fill:#fff;font-size:11px;} .n{fill:#444;font-size:10.5px;}
+.w{fill:#b00;font-size:11px;font-weight:bold;} .warn{fill:#b45309;font-size:11px;font-weight:bold;}
+.wire{stroke-width:2.4;fill:none;} .res{fill:#fff;stroke:#92400e;stroke-width:1.6;}
+</style></defs>
+  <rect x="0" y="0" width="1200" height="6" fill="#eab308"/>
+  <text x="1180" y="20" text-anchor="end" font-size="9" fill="#92400e" font-weight="bold">FRITZING STYLE — breadboard view — same circuit &amp; values as companion _en.svg — alternate Fritzing breadboard visual</text>
+<defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e3d9c3" stroke-width="0.5" opacity="0.6"/></pattern></defs>
+<rect width="1200" height="950" fill="#f6f1e6"/>
+<text x="600" y="28" text-anchor="middle" class="t" font-size="20">LibreRoaster — Detail (Fritzing): Resistor Networks &amp; Passive Values</text>
+<text x="600" y="48" text-anchor="middle" class="n">All values verified vs src/config/constants.rs, docs/pinout.md:256-272, docs/HARDWARE.md:130-137 · ESP32-C3 3.3V logic, max 3.6V on any GPIO</text>
+
+<!-- ============= GPIO9 FAN DIVIDER (center focus) ============= -->
+<rect x="40" y="80" width="700" height="280" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2.2"/>
+<text x="390" y="102" text-anchor="middle" class="t">GPIO9 Fan Strapping Network — THE Critical Divider</text>
+
+<!-- ESP pad -->
+<rect x="60" y="130" width="120" height="60" rx="6" class="chip"/>
+<text x="120" y="154" text-anchor="middle" class="tw">ESP32-C3</text>
+<text x="120" y="170" text-anchor="middle" class="pw">GPIO9 pad</text>
+<circle cx="180" cy="150" r="4" fill="#FF5722"/>
+
+<!-- 1k series to gate -->
+<rect x="250" y="142" width="56" height="20" rx="3" class="res"/><text x="278" y="156" text-anchor="middle" class="n">1 kΩ</text>
+<text x="278" y="172" text-anchor="middle" class="n" font-size="8">±5% 0.125W</text>
+<line x1="180" y1="150" x2="250" y2="150" class="wire" stroke="#FF5722"/>
+<line x1="306" y1="150" x2="360" y2="150" class="wire" stroke="#FF5722"/>
+
+<!-- 10k pull-up to 3V3 (on GPIO9 side, before 1k) -->
+<line x1="225" y1="150" x2="225" y2="108" class="wire" stroke="#E53935"/>
+<rect x="210" y="112" width="30" height="18" rx="3" class="res"/><text x="225" y="125" text-anchor="middle" class="n" font-size="9">10k</text>
+<line x1="225" y1="112" x2="225" y2="90" class="wire" stroke="#E53935"/>
+<line x1="225" y1="90" x2="520" y2="90" class="wire" stroke="#E53935"/>
+<text x="540" y="94" class="p">3.3 V rail</text>
+<text x="260" y="102" class="w" font-size="9">mandatory pull-up</text>
+
+<!-- MOSFET gate node -->
+<rect x="360" y="118" width="130" height="90" rx="6" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<text x="425" y="138" text-anchor="middle" class="t" font-size="11">IRLZ44N Gate</text>
+<text x="425" y="154" text-anchor="middle" class="n">G (high-Z at reset)</text>
+<text x="425" y="170" text-anchor="middle" class="n">Vgs(th) 1–2 V logic-level</text>
+<text x="425" y="186" text-anchor="middle" class="n" font-style="italic">IRF520 NOT ok</text>
+
+<!-- 100k weak pull-down gate→GND (after 1k, gate side) -->
+<line x1="405" y1="150" x2="405" y2="240" class="wire" stroke="#999"/>
+<rect x="390" y="210" width="30" height="18" rx="3" class="res"/><text x="405" y="223" text-anchor="middle" class="n" font-size="9">100k</text>
+<line x1="405" y1="228" x2="405" y2="260" class="wire" stroke="#999"/>
+<text x="445" y="224" class="n">weak (does not load strap)</text>
+<line x1="405" y1="260" x2="250" y2="260" class="wire" stroke="#999"/>
+<text x="250" y="276" class="n">GND (star)</text>
+<circle cx="405" cy="260" r="3" fill="#999"/>
+
+<!-- Voltage calc box -->
+<rect x="530" y="118" width="190" height="140" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+<text x="625" y="138" text-anchor="middle" class="t" font-size="11">Divider at RESET (GPIO9=Hi-Z)</text>
+<text x="540" y="156" class="n">Vgpio = 3.3V × 100k/(10k+100k)</text>
+<text x="540" y="174" class="n">= 3.3 × 0.909 = <tspan font-weight="bold" fill="#15803d">≈3.00 V ✔ BOOT OK</tspan></text>
+<text x="540" y="192" class="n">(threshold 2.5V for HIGH)</text>
+<line x1="540" y1="200" x2="710" y2="200" stroke="#e5e7eb"/>
+<text x="540" y="216" class="n">If 10k gate pull-down (WRONG):</text>
+<text x="540" y="232" class="n">V = 3.3 × 10k/(10k+10k)= <tspan font-weight="bold" fill="#b91c1c">1.65–1.9 V ✘ BOOT FAIL</tspan></text>
+<text x="540" y="248" class="w" font-size="9">→ boot:0x4 DOWNLOAD (see CONNECTION_TYPES.md)</text>
+
+<!-- ============= LED 330R ============= -->
+<rect x="40" y="390" width="340" height="160" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+<text x="210" y="412" text-anchor="middle" class="t">GPIO8 Status LED — 330 Ω Series</text>
+<rect x="60" y="430" width="80" height="40" rx="6" class="chip"/><text x="100" y="454" text-anchor="middle" class="tw">GPIO8</text>
+<line x1="140" y1="450" x2="170" y2="450" class="wire" stroke="#2563eb"/>
+<rect x="170" y="438" width="50" height="24" rx="3" class="res"/><text x="195" y="454" text-anchor="middle" class="n">330Ω</text>
+<line x1="220" y1="450" x2="250" y2="450" class="wire" stroke="#2563eb"/>
+<text x="250" y="442" class="n">Anode</text>
+<rect x="250" y="450" width="50" height="30" rx="15" fill="#fff" stroke="#dc2626" stroke-width="1.5"/><text x="275" y="470" text-anchor="middle" class="n">LED</text>
+<line x1="300" y1="465" x2="330" y2="465" class="wire" stroke="#999"/>
+<text x="335" y="468" class="n">GND</text>
+<rect x="80" y="484" width="260" height="54" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<text x="90" y="500" class="n">Calc: (3.3V−Vf2.0V)/330Ω ≈ 3.9 mA (safe &lt;20mA)</text>
+<text x="90" y="518" class="n">Push-pull, never open-drain. Patterns: Off/1Hz/Solid/4Hz</text>
+<text x="90" y="534" class="n">Safe-shutdown: Peripherals::steal() blink 3×200ms + 1s pause</text>
+
+<!-- ============= UART 1k series ============= -->
+<rect x="420" y="390" width="340" height="160" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+<text x="590" y="412" text-anchor="middle" class="t">UART0 — 1 kΩ Series Protection</text>
+<rect x="440" y="430" width="90" height="40" rx="6" fill="#e8f5e9" stroke="#059669" stroke-width="1.5"/><text x="485" y="454" text-anchor="middle" class="p">CH341 TX</text>
+<line x1="530" y1="450" x2="560" y2="450" class="wire" stroke="#7c3aed"/>
+<rect x="560" y="438" width="50" height="24" rx="3" class="res"/><text x="585" y="454" text-anchor="middle" class="n">1kΩ</text>
+<line x1="610" y1="450" x2="640" y2="450" class="wire" stroke="#7c3aed"/>
+<rect x="640" y="430" width="90" height="40" rx="6" class="chip"/><text x="685" y="450" text-anchor="middle" class="tw">GPIO20 RX</text>
+<text x="590" y="484" text-anchor="middle" class="w">Clamp to 3.3V via internal diodes + 1k limits fault to &lt;3.3mA</text>
+<text x="590" y="502" text-anchor="middle" class="n">Mandatory for 5V-tolerant CH341 clones (kill without R)</text>
+<text x="590" y="520" text-anchor="middle" class="n">GPIO21 TX → adapter RX: direct (no R needed, output)</text>
+<text x="590" y="536" class="n" font-style="italic">See pinout.md §5 “CH341 TX — 1kΩ — GPIO20 — 3.3V Zener — GND”</text>
+
+<!-- ============= ESD / backpower ============= -->
+<rect x="800" y="80" width="360" height="280" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<text x="980" y="102" text-anchor="middle" class="t">ESD &amp; Back-Powering — 10 kΩ Series</text>
+<text x="820" y="128" class="n">External signal ── <tspan font-weight="bold">10 kΩ</tspan> ── GPIO</text>
+<text x="820" y="148" class="n">Limits back-power current via ESD diode to &lt;330µA</text>
+<text x="820" y="168" class="n">when chip unpowered (CH341 TX→GPIO20 → VDD)</text>
+<line x1="830" y1="186" x2="1110" y2="186" stroke="#475569" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="820" y="208" class="w">Never power a GPIO when VDD off</text>
+<text x="820" y="228" class="n">Or add BAT54 Schottky to 3.3V rail</text>
+<rect x="820" y="240" width="320" height="100" rx="6" fill="#fff" stroke="#cbd5e1" stroke-width="1"/>
+<text x="830" y="260" class="t" font-size="11">Decoupling Near ESP32-C3</text>
+<text x="830" y="278" class="n">3.3V ── 100µF electrolytic ── GND (bulk)</text>
+<text x="830" y="296" class="n">      ── 10µF ceramic ── GND (LDO stability)</text>
+<text x="830" y="314" class="n">      ── 0.1µF per IC ── GND (HF: ESP, MAX×2, CH341)</text>
+<text x="830" y="332" class="n">Place &lt;5mm from IC. Thick traces ≥AWG20.</text>
+
+<!-- ============= Fan flyback + MOSFET choice ============= -->
+<rect x="800" y="390" width="360" height="180" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+<text x="980" y="412" text-anchor="middle" class="t">Fan Inductive Kickback</text>
+<text x="820" y="436" class="n">Motor (L) → spike &gt;20V when PWM OFF →</text>
+<text x="820" y="454" class="n">punches ESD diode → latch-up → 1A+ → chip cracks</text>
+<rect x="840" y="466" width="120" height="30" rx="6" fill="#fff" stroke="#333" stroke-width="1.5"/><text x="900" y="486" text-anchor="middle" class="p">Fan 12V M</text>
+<line x1="900" y1="496" x2="900" y2="520" stroke="#ea580c" stroke-width="2"/>
+<text x="920" y="504" class="n">1N4007</text>
+<line x1="960" y1="480" x2="960" y2="520" stroke="#333" stroke-width="2"/>
+<text x="970" y="492" class="n">cathode → +12V</text>
+<text x="970" y="508" class="n">anode → Drain</text>
+<text x="820" y="544" class="w">MANDATORY: diode + Zener 3.6V Gate-Source + 1kΩ gate series</text>
+<text x="820" y="562" class="n">Current per GPIO max 40mA (rec 20mA), total 200mA</text>
+
+<!-- ============= Resistor color codes & checklist ============= -->
+<rect x="40" y="580" width="1120" height="140" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="60" y="602" class="t">Resistor Kit — Buy This (Brown-Black-Orange = 10k, Brown-Black-Red = 1k, Brown-Black-Yellow = 100k, Orange-Orange-Brown = 330Ω)</text>
+<table></table>
+<text x="60" y="624" class="n">10kΩ (×2: GPIO9 pull-up + ESD series)  ·  1kΩ (×2: gate series + UART series)  ·  100kΩ (×1: weak gate pull-down)  ·  330Ω (×1: LED)  ·  1N4007 flyback  ·  BAT54 Schottky (optional back-power)</text>
+<text x="60" y="646" class="n">Tolerance ±5% carbon film is fine. Power 0.125W (0.25W also ok). Keep fan divider 10k/100k ratio exactly 1:10 for 3.0V boot level — do not use 10k/10k.</text>
+<text x="60" y="668" class="w">QUICK CHECK BEFORE POWER: DMM GPIO9 &gt;2.5V in first 1ms after reset · 3.3V rail 3.135–3.465V · No GPIO &gt;3.6V · GND common, no loops</text>
+<text x="60" y="690" class="n">Verify: 10k pull-up on GPIO9 line (brown-black-orange-gold) + 100k gate→GND (brown-black-yellow-gold) separated by 1k (brown-black-red-gold)</text>
+<text x="60" y="708" class="n">See pinout.md Quick Reference Survival Checklist + HARDWARE.md §8 + CONNECTION_TYPES.md §4.1 for official vs bare module notes</text>
+
+<!-- Footer -->
+<rect x="40" y="740" width="1120" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="60" y="762" class="t" font-size="12">Traceability</text>
+<text x="60" y="782" class="n">Derived from src/config/constants.rs:32-40 (HEAT_DETECTION_PIN=1, FAN_PWM_PIN=9, STATUS_LED_PIN=8, UART 20/21) + docs/pinout.md:256-272 resistor chain + docs/HARDWARE.md:130-137 · Generated 2026-09-07</text>
+<text x="60" y="800" class="n">Build: measure GPIO9 at boot with scope, measure 3.3V rail with DMM, run hil_fan sweep 0→100% and hil_gpio heat detect read</text>
+
+<text x="600" y="940" text-anchor="middle" class="n" font-size="10">LibreRoaster · Resistor Networks Detail · CC BY-SA · printable 1200×950 · v0.1</text>
+</svg>
