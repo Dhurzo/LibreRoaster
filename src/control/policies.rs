@@ -69,14 +69,10 @@ impl ManualPolicyOutcome {
         Self {
             heater_target: None,
             fan_target: Some(target.clamp(0.0, 100.0)),
-            // Bug B4: a fan command (`OT2`/`IO3`) must be neutral to the PID
-            // and to the manual/artisan mode flag (Spec F4.8: "OT2 ... must
-            // NOT change the heater state or affect PID status"). The old
-            // values `pid_enabled: Some(false)` / `artisan_control: Some(true)`
-            // caused `apply_policy_outcome` to disable the PID and drop the
-            // heater to 0% (artisan_manual_heater == 0.0 because no OT1 was
-            // sent) — adjusting the airflow mid-roast killed the asado. We
-            // now leave both as `None` so the heater/PID state is untouched.
+            // A fan command (`OT2`/`IO3`) stays neutral to the PID and to
+            // the manual/artisan mode flag (Spec F4.8: "OT2 ... must NOT
+            // change the heater state or affect PID status"). Both stay as
+            // `None` so the heater/PID state is untouched.
             pid_enabled: None,
             artisan_control: None,
             clear_manual: false,
@@ -288,9 +284,8 @@ mod tests {
         let o = ManualPolicyOutcome::fan(50.0);
         assert!(o.heater_target.is_none());
         assert_eq!(o.fan_target, Some(50.0));
-        // Bug B4: a fan command must be neutral to PID and the manual/artisan
-        // mode flag (Spec F4.8). Both used to be `Some(...)` which caused
-        // `apply_policy_outcome` to disable the PID and drop the heater.
+        // A fan command stays neutral to PID and the manual/artisan mode
+        // flag (Spec F4.8).
         assert_eq!(o.pid_enabled, None);
         assert_eq!(o.artisan_control, None);
         assert!(o.success);
@@ -387,10 +382,10 @@ mod tests {
         let o = ManualPolicyOutcome::fan(60.0);
         o.apply_to_status(&mut status);
         assert_eq!(status.fan_output, 60.0);
-        // Bug B4: a fan command must NOT alter `pid_enabled` or
-        // `artisan_control` (Spec F4.8). Default status has both at their
-        // defaults (pid_enabled=false, artisan_control=false) and the
-        // neutral fan outcome leaves them unchanged.
+        // A fan command must NOT alter `pid_enabled` or `artisan_control`
+        // (Spec F4.8). Default status has both at their defaults
+        // (pid_enabled=false, artisan_control=false) and the neutral fan
+        // outcome leaves them unchanged.
         assert!(!status.pid_enabled);
         assert!(!status.artisan_control);
     }

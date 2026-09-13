@@ -108,7 +108,7 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 | Boot Effect       | Pulled LOW → ESP32-C3 enters **download/bootstrap mode** |
 | Normal Operation  | LEDC PWM output (25 kHz) for fan speed control |
 | Risk              | If the fan driver circuit pulls GPIO9 low **during power-on reset**, the chip will not boot. |
-| Internal pull-up  | GPIO9 has a **45 kΩ internal weak pull-up**; left unconnected it latches HIGH and the chip boots normally. The external 10 kΩ pull-up below is a robustness measure, not a mandatory boot requirement. |
+| Internal pull-up  | GPIO9 has a **45 kΩ internal weak pull-up**; left completely unconnected it latches HIGH and the chip boots normally. On custom boards the external 10 kΩ pull-up below is still **mandatory** — the fan-driver circuitry can overpower the weak internal pull-up during reset. |
 
 **Required mitigations:**
 1. **External pull-up resistor (10 kΩ to 3.3V)** on the GPIO9 line — mandatory.
@@ -120,7 +120,7 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 ```bash
 cargo espflash monitor
 ```
-If you see "waiting for download" instead of "LibreRoaster v0.1 starting...", GPIO9 is being pulled low at boot.
+If you see "waiting for download" instead of "LibreRoaster v0.0.1 Alpha starting...", GPIO9 is being pulled low at boot.
 
 ---
 

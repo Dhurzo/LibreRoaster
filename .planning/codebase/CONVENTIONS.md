@@ -20,9 +20,9 @@
 - Module files named after module: `src/control/mod.rs`
 
 **Source Files:**
-- Snake_case for files: `max31856.rs`, `pid_controller.rs`
+- Snake_case for files: `max31856.rs`, `pid.rs` (`src/control/pid.rs`)
 - Feature-specific: `fan_host.rs`, `ssr_stub.rs` (host-stub variants wired via `#[path]` in `src/hardware/mod.rs`)
-- Tests live as inline `#[cfg(test)] mod tests` co-located with the module (no separate `*_tests.rs` sources in `src/`)
+- Tests are mostly inline `#[cfg(test)] mod tests` co-located with the module; exceptions exist as separate sources: `src/application/tasks_tests.rs` and `src/control/roaster_control_tests.rs`
 
 **Constants:**
 - SCREAMING_SNAKE_CASE for constants in `src/config/constants.rs`:
@@ -85,7 +85,7 @@
 **Line Length:** Not explicitly configured - follow standard Rust practices
 
 **Blank Lines:**
-- Two blank lines between module-level items
+- Follow `cargo fmt` (single blank line between items); do not use two blank lines between module-level items
 - One blank line between function definitions
 - No blank lines within function bodies (except logical separation)
 
@@ -213,14 +213,8 @@ impl AppError {
   pub fn read_temperature(&mut self) -> Result<f32, Max31856Error> { ... }
   ```
 
-**Unwrap for Known-Good States:**
-- Used for initialization that should never fail:
-  ```rust
-  let app = AppBuilder::new()
-      .with_uart(peripherals.UART0)
-      .build()
-      .expect("Failed to build application");
-  ```
+**No `unwrap`/`expect`/`panic` in production:**
+- The manifest denies `clippy::unwrap_used`, `clippy::expect_used` and `clippy::panic` in production code — propagate `Result` instead of using `.expect("...")` on `build()` or similar fallible paths.
 
 **Panic in Critical Sections:**
 - Only in main entry after all initialization
@@ -350,8 +344,7 @@ let app = AppBuilder::new()
     .with_real_ssr(static_ssr)
     .with_fan_control(static_fan)
     .with_temperature_sensors(bean_sensor, env_sensor)
-    .build()
-    .expect("Failed to build application");
+    .build()?;
 ```
 
 Notes:

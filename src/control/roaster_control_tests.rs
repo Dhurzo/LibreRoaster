@@ -200,8 +200,7 @@ fn artisan_stop_returns_ok() {
 
 #[test]
 fn artisan_emergency_stop_triggers_emergency() {
-    // Audit MT-7 (2026-08-11): the old body asserted only `is_ok()` — the
-    // name promises the emergency *latch*, so pin it: Error state,
+    // The name promises the emergency *latch*, so pin it: Error state,
     // fault_condition, and the safety-latch flag must all be set after
     // `EmergencyStop` (mirrors stop_latches_then_off_recovers below).
     let mut ctrl = make_control();
@@ -332,10 +331,8 @@ fn artisan_run_regression_returns_ok() {
 
 #[test]
 fn accessor_methods_return_references() {
-    // Audit MT-7 (2026-08-11): the old body only bound the accessors to
-    // `_`-prefixed locals (zero assertions). Prove the accessors return
-    // LIVE references: mutate through the `_mut` pair and verify the
-    // change is visible through the read accessor.
+    // Prove the accessors return LIVE references: mutate through the `_mut`
+    // pair and verify the change is visible through the read accessor.
     let mut ctrl = make_control();
 
     // safety: activate via safety_mut, observe via safety.
@@ -380,15 +377,15 @@ fn artisan_read_status_returns_ok() {
     assert!(result.is_ok());
 }
 
-// ── V2-1: STOP bricks the roaster — OFF must recover ───────
+// ── STOP bricks the roaster — OFF must recover ───────
 
 #[test]
 fn stop_latches_then_off_recovers() {
-    // Bug V2-1: `STOP` (→ EmergencyStop) arms the latch and leaves the
-    // device bricked (the only sanctioned recovery, `RoasterCommand::
-    // StopRoast`, has no protocol producer). `OFF` (which parses to
-    // `ArtisanCommand::Stop`, token "OFF"/"PID,OFF") must un-latch and
-    // return the roaster to a controllable state.
+    // `STOP` (→ EmergencyStop) arms the latch and leaves the device bricked
+    // (the sanctioned recovery, `RoasterCommand::StopRoast`, has no protocol
+    // producer). `OFF` (which parses to `ArtisanCommand::Stop`, token
+    // "OFF"/"PID,OFF") must un-latch and return the roaster to a
+    // controllable state.
     let mut ctrl = make_control();
 
     // Arm the latch the way `STOP` does.
@@ -431,12 +428,11 @@ fn stop_latches_then_off_recovers() {
 
 #[test]
 fn stop_streaming_does_not_clear_state_while_latched() {
-    // Bug V2-1 (B34 consistency): while the emergency latch is armed,
-    // `stop_streaming` must NOT repaint the state to `Idle`. The
-    // `EmergencyStop` handler reaches `dispatch.stop_streaming` without
-    // clearing the latch; the device must remain visibly `Error` so
-    // telemetry does not claim "Idle" with the fan pinned and commands
-    // rejected.
+    // While the emergency latch is armed, `stop_streaming` must NOT repaint
+    // the state to `Idle`. The `EmergencyStop` handler reaches
+    // `dispatch.stop_streaming` without clearing the latch; the device must
+    // remain visibly `Error` so telemetry does not claim "Idle" with the fan
+    // pinned and commands rejected.
     let mut ctrl = make_control();
     let _ = ctrl.emergency_shutdown("test latch");
     assert_eq!(ctrl.get_state(), RoasterState::Error);
@@ -618,14 +614,13 @@ fn stream_accepted_while_latched() {
     assert!(ctrl.get_output_manager().is_continuous_enabled());
 }
 
-// ── V2-16a: RoR guard must not fire during empty-drum PREHEAT ─
+// ── RoR guard must not fire during empty-drum PREHEAT ─
 
 #[test]
 fn ror_guard_skipped_in_preheat_empty_drum() {
-    // Bug V2-16a: an empty drum with a low-mass BT probe heats faster
-    // than MAX_BT_RATE_OF_RISE during PREHEAT; the guard used to fire
-    // every tick in all states, bricking the device (via V2-1) within
-    // 1-2 seconds. The guard is now gated to `Heating`/`Stable`.
+    // An empty drum with a low-mass BT probe heats faster than
+    // MAX_BT_RATE_OF_RISE during PREHEAT. The guard is gated to
+    // `Heating`/`Stable`, so it must not fire there.
     let mut ctrl = make_control();
 
     // Drive PREHEAT (state -> Preheating, PID enabled).
@@ -657,15 +652,13 @@ fn ror_guard_skipped_in_preheat_empty_drum() {
     );
 }
 
-// ── V2-4: START swallowed after PID;SV / OT1 in Idle ───────────
+// ── START swallowed after PID;SV / OT1 in Idle ───────────
 
 #[test]
 fn start_after_pid_sv_in_idle_starts_roast() {
-    // Bug V2-4: `PID;SV` enables PID with state=Idle, which made
-    // `is_streaming()` true. The old gate swallowed START as "ignored",
-    // keeping `profile_start_time` unset so the temporal backstops stayed
-    // inactive. The state-based gate (V2-4/V2-16c) must take the full
-    // handoff when the state is Idle.
+    // `PID;SV` enables PID with state=Idle. The state-based gate must take
+    // the full handoff when the state is Idle, fixing `profile_start_time`
+    // so the temporal backstops activate.
     let mut ctrl = make_control();
 
     // Pre-condition: PID enabled from Idle, state remains Idle.
@@ -693,9 +686,8 @@ fn start_after_pid_sv_in_idle_starts_roast() {
 
 #[test]
 fn start_after_ot1_in_idle_starts_roast() {
-    // Bug V2-4: `OT1` enables `artisan_control` in Idle (manual heater),
-    // which also counted as "streaming" under the old gate. START must take
-    // the full handoff.
+    // `OT1` enables `artisan_control` in Idle (manual heater). START must
+    // take the full handoff.
     let mut ctrl = make_control();
 
     let r = ctrl.process_artisan_command(ArtisanCommand::SetHeater(40));
@@ -711,8 +703,8 @@ fn start_after_ot1_in_idle_starts_roast() {
 
 #[test]
 fn start_during_active_roast_is_ignored() {
-    // Regression guard for V2-4: the new state-based gate must still
-    // ignore a second START that arrives during an active roast.
+    // Regression guard: the state-based gate must still ignore a second
+    // START that arrives during an active roast.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
     assert!(r.is_ok());
@@ -727,15 +719,13 @@ fn start_during_active_roast_is_ignored() {
     assert_eq!(ctrl.profile_start_time, first_start);
 }
 
-// ── V2-16c: temporal backstops protect manual mode too ──────────
+// ── Temporal backstops protect manual mode too ──────────
 
 #[test]
 fn comms_idle_protects_manual_mode_when_heater_energized() {
-    // Bug V2-16c: in pure Artisan-manual mode (OT1 from a slider, no
-    // START) the state stays Idle, so the previous state-only gate left a
-    // USB disconnect with the heater at 80 % completely unprotected. The
-    // physical gate (heater_energized || roast_active) must trigger the
-    // comms-idle emergency even from Idle.
+    // In pure Artisan-manual mode (OT1 from a slider, no START) the state
+    // stays Idle. The physical gate (heater_energized || roast_active) must
+    // trigger the comms-idle emergency even from Idle.
     let mut ctrl = make_control();
 
     // Energize the heater via OT1 in Idle. After the guarded heater write
@@ -761,12 +751,11 @@ fn comms_idle_protects_manual_mode_when_heater_energized() {
     ctrl.status_mut().last_command_received_at_ms = backdated;
 
     let out = ctrl.update_control(now);
-    // Bug L11 (2026-07-25): `emergency_shutdown` always returns `Err` (the
-    // actuator's `emergency_shutdown` ends with `Err(RoasterError::EmergencyShutdown)`),
+    // `emergency_shutdown` always returns `Err` (the actuator's
+    // `emergency_shutdown` ends with `Err(RoasterError::EmergencyShutdown)`),
     // so `update_control`'s `emergency_shutdown(...)?` early-returns with
-    // that Err — the dead `return Ok(0.0)` that used to follow it has been
-    // removed. The relevant assertion is the side-effect (latch armed),
-    // not the return value, so `let _ = out;` covers both Ok and Err.
+    // that Err. The relevant assertion is the side-effect (latch armed), not
+    // the return value, so `let _ = out;` covers both Ok and Err.
     let _ = out;
     assert!(
         ctrl.safety().is_emergency_active(),
@@ -795,12 +784,12 @@ fn comms_idle_does_not_trigger_when_idle_and_heater_off() {
     );
 }
 
-// ── V2-7: #DUMP queue clears, survives full rings, re-pushes ───────
+// ── #DUMP queue clears, survives full rings, re-pushes ───────
 
 #[test]
 fn handle_dump_log_clears_previous_dump() {
-    // Bug V2-7: a second `#DUMP` request must not splice two partial
-    // dumps together. `handle_dump_log` starts by clearing the deque.
+    // A second `#DUMP` request must not splice two partial dumps together.
+    // `handle_dump_log` starts by clearing the deque.
     let mut ctrl = make_control();
     // Start a roast and stop it so the logger has at least one row.
     crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
@@ -845,8 +834,8 @@ fn handle_dump_log_clears_previous_dump() {
 
 #[test]
 fn start_clears_dump_pending() {
-    // Bug V2-7: a START drops any in-flight dump so it does not bleed
-    // into the new roast's live telemetry.
+    // A START drops any in-flight dump so it does not bleed into the new
+    // roast's live telemetry.
     let mut ctrl = make_control();
     // Seed the deque with a sentinel row (skip the real logger path).
     let row = heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from(
@@ -872,9 +861,9 @@ fn start_clears_dump_pending() {
 
 #[test]
 fn push_dump_row_front_preserves_fifo_order() {
-    // Bug V2-7: re-pushing a row to the front when the output channel is
-    // full must keep FIFO order — the row is retried next, before any row
-    // that was already behind it.
+    // Re-pushing a row to the front when the output channel is full must keep
+    // FIFO order — the row is retried next, before any row that was already
+    // behind it.
     let mut ctrl = make_control();
     ctrl.push_dump_row_front(
         heapless::String::<{ crate::logging::roast_logger::DUMP_ROW_CAPACITY }>::try_from("a")
@@ -889,23 +878,21 @@ fn push_dump_row_front_preserves_fifo_order() {
     assert_eq!(ctrl.take_dump_row().unwrap().as_str(), "a");
 }
 
-// ── V2-5: PREHEAT drops the cooldown latch ──────────────────────
+// ── PREHEAT drops the cooldown latch ──────────────────────
 
 #[test]
 fn preheat_drops_cooling_latch() {
-    // Bug V2-5 (B3 residual): `OFF` at a high BT arms the cooldown latch
-    // (fan 100 %). A subsequent `PREHEAT;180` used to keep the latch armed
-    // for the whole preheat — the PID heated against maximum airflow, and
-    // since the heater kept BT > COOLING_RELEASE_BEAN_TEMP_C the latch
-    // could never auto-release. Only START cleared it. PREHEAT is a
-    // deliberate re-energize, so it must also clear the latch.
+    // `OFF` at a high BT arms the cooldown latch (fan 100 %). PREHEAT is a
+    // deliberate re-energize, so it must also clear the latch — otherwise the
+    // PID would heat against maximum airflow for the whole preheat, and since
+    // the heater keeps BT > COOLING_RELEASE_BEAN_TEMP_C the latch could never
+    // auto-release.
     let mut ctrl = make_control();
 
-    // Simulate a STOP having latched cooldown: set the latch directly
-    // via the field-touchable path the production STOP uses.
-    // EmergencyStop arms the SAFETY latch (which we do NOT want to clear
-    // in PREHEAT — that path is V2-1's OFF). Use a plain STOP via the
-    // Artisan `Stop` handler so `cooling_active = true` and the safety
+    // Simulate a STOP having latched cooldown: set the latch directly via
+    // the field-touchable path the production STOP uses. EmergencyStop arms
+    // the SAFETY latch (which PREHEAT must not clear). Use a plain STOP via
+    // the Artisan `Stop` handler so `cooling_active = true` and the safety
     // latch stays cleared.
     let r = ctrl.process_artisan_command(ArtisanCommand::Stop);
     assert!(r.is_ok());
@@ -939,18 +926,16 @@ fn preheat_drops_cooling_latch() {
     );
 }
 
-// ── V2-13: OFF+START preserves the fan profile ──────────────────
+// ── OFF+START preserves the fan profile ──────────────────
 
 #[test]
 fn off_start_preserves_fan_profile() {
-    // Bug V2-13: `stop_streaming` used to clear `fan_profile = None`,
-    // asymmetric with the temperature profile (which survived OFF). An
-    // `OFF` → `START` flow silently wiped the fan profile and forced the
-    // operator to re-send `FANPROFILE`. The cooldown latch already
-    // takes precedence over the fan profile in the fan selector, and
-    // clearing `profile_start_time` already disables interpolation during
-    // cooldown — so the `fan_profile = None` line was both redundant for
-    // the cooldown safety and harmful for the legitimate-profile path.
+    // `stop_streaming` keeps `fan_profile`, symmetric with the temperature
+    // profile (which survives OFF). An `OFF` → `START` flow must not silently
+    // wipe the fan profile and force the operator to re-send `FANPROFILE`.
+    // The cooldown latch already takes precedence over the fan profile in the
+    // fan selector, and clearing `profile_start_time` already disables
+    // interpolation during cooldown.
     // We thread a fan profile in via the private field (tests are inside
     // the module) and assert STOP does NOT erase it.
     use crate::config::constants::{FanProfile, FanSetpoint, MAX_PROFILE_SETPOINTS};
@@ -970,8 +955,7 @@ fn off_start_preserves_fan_profile() {
         "test precondition: profile loaded"
     );
 
-    // STOP/OFF must NOT clear the fan profile (the V2-13 fix removed the
-    // `self.fan_profile = None;` line from `stop_streaming`).
+    // STOP/OFF must NOT clear the fan profile.
     let _ = ctrl.process_artisan_command(ArtisanCommand::Stop);
     assert!(
         ctrl.fan_profile.is_some(),
@@ -992,18 +976,17 @@ fn off_start_preserves_fan_profile() {
     assert!(ctrl.profile_start_time.is_some());
 }
 
-// ── P1 (2026-08-03): legacy RoR guard must not apply BT threshold to ET ──
+// ── Legacy RoR guard must not apply BT threshold to ET ──
 
 #[test]
 fn pid_channel_1_does_not_trigger_legacy_ror() {
-    // Bug P1: with `PID;CHAN;1` (ET as PV), the legacy
-    // `check_rate_of_rise` consumes `status.derivative_rate` — which
-    // `refresh_filtered_derivative` feeds from the ACTIVE PV (ET). The
-    // 0.5 °C/s threshold calibrated for the sluggish BT would abort a
-    // healthy roast ~1 s into Heating. Reproduce: CHAN;1, ET climbing
-    // ~1 °C/s for 5 ticks in Heating → no emergency. The BT-only
-    // `check_bt_rate` guard (fed by `refresh_bt_guard_derivative`) is
-    // what must protect this configuration.
+    // With `PID;CHAN;1` (ET as PV), the legacy `check_rate_of_rise` consumes
+    // `status.derivative_rate` — which `refresh_filtered_derivative` feeds
+    // from the ACTIVE PV (ET). The 0.5 °C/s threshold calibrated for the
+    // sluggish BT must not abort a healthy roast ~1 s into Heating.
+    // Reproduce: CHAN;1, ET climbing ~1 °C/s for 5 ticks in Heating → no
+    // emergency. The BT-only `check_bt_rate` guard (fed by
+    // `refresh_bt_guard_derivative`) is what protects this configuration.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::SetPidChannel(1));
     assert!(r.is_ok());
@@ -1038,15 +1021,12 @@ fn pid_channel_1_does_not_trigger_legacy_ror() {
     }
 }
 
-// ── P3 (2026-08-03): START/PREHEAT recover from the STOP latch ─────────
+// ── START/PREHEAT recover from the STOP latch ─────────
 
 #[test]
 fn start_after_stop_recovers_to_heating() {
-    // Bug P3: `STOP` (→ EmergencyStop) arms the emergency latch, and the
-    // only previously-sanctioned recovery (`RoasterCommand::StopRoast`)
-    // has no production producer — the next roast was impossible until
-    // the undocumented `OFF` token. START is the operator's deliberate
-    // re-energize: it must un-latch and start the roast.
+    // `STOP` (→ EmergencyStop) arms the emergency latch. START is the
+    // operator's deliberate re-energize: it must un-latch and start the roast.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
     assert!(r.is_ok(), "STOP path must arm the latch");
@@ -1077,8 +1057,8 @@ fn start_after_stop_recovers_to_heating() {
 
 #[test]
 fn preheat_after_stop_recovers() {
-    // Bug P3 companion: PREHEAT is likewise a deliberate re-energize and
-    // must recover from a latched STOP.
+    // PREHEAT is likewise a deliberate re-energize and must recover from a
+    // latched STOP.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
     assert!(ctrl.safety().is_emergency_active());
@@ -1090,15 +1070,14 @@ fn preheat_after_stop_recovers() {
     assert!(!ctrl.get_status().fault_condition);
 }
 
-// ── P4 (2026-08-03): RoR guard arms for PID;SV from Idle ───────────────
+// ── RoR guard arms for PID;SV from Idle ───────────────
 
 #[test]
 fn pid_sv_in_idle_energizes_with_ror_guard() {
-    // Bug P4: `PID;SV`/`SETTARGET` from Idle enables the PID (state stays
-    // Idle) and the heater heats toward the setpoint with NO RoR
-    // supervision — a runaway was only stopped by overtemp/comms-idle.
-    // The guard must now arm on (Idle && pid_enabled && heater_energized):
-    // BT climbing > 0.5 °C/s for 3 ticks → emergency shutdown.
+    // `PID;SV`/`SETTARGET` from Idle enables the PID (state stays Idle) and
+    // the heater heats toward the setpoint. The guard arms on
+    // (Idle && pid_enabled && heater_energized): BT climbing > 0.5 °C/s for 3
+    // ticks → emergency shutdown.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
     assert!(r.is_ok());
@@ -1136,8 +1115,8 @@ fn pid_sv_in_idle_energizes_with_ror_guard() {
 
 #[test]
 fn pid_sv_in_idle_does_not_abort_on_healthy_bt() {
-    // Regression guard for the P4 extension: a healthy BT drift
-    // (< 0.5 °C/s) under PID;SV from Idle must NOT trip the guard.
+    // Regression guard for the Idle extension: a healthy BT drift (< 0.5 °C/s)
+    // under PID;SV from Idle must NOT trip the guard.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
     let t0 = Instant::from_millis(70_000);
@@ -1160,15 +1139,14 @@ fn pid_sv_in_idle_does_not_abort_on_healthy_bt() {
     assert_ne!(ctrl.get_state(), RoasterState::Error);
 }
 
-// ── P5 (2026-08-03): probe-stuck detector ──────────────────────────────
+// ── Probe-stuck detector ──────────────────────────────
 
 #[test]
 fn probe_stuck_pid_mode_fires_after_flat_bt() {
-    // Bug P5 + Audit A-TC4-C (2026-08-12): in firmware-PID mode the
-    // detector keeps the original single-stage latch at
-    // PROBE_STUCK_TIMEOUT_SECS (120 s): a flat PV FAR from the setpoint
-    // while the loop is chasing it is a control hazard (a shorted TC
-    // reads flat ~0 °C — a VALID temperature with no MAX31856 fault bit).
+    // In firmware-PID mode the detector keeps the single-stage latch at
+    // PROBE_STUCK_TIMEOUT_SECS (120 s): a flat PV FAR from the setpoint while
+    // the loop is chasing it is a control hazard (a shorted TC reads flat
+    // ~0 °C — a VALID temperature with no MAX31856 fault bit).
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
     // High proportional gain with zero integral: BT far from the target
@@ -1203,12 +1181,11 @@ fn probe_stuck_pid_mode_fires_after_flat_bt() {
 
 #[test]
 fn probe_stuck_manual_mode_two_stage_warns_then_latches() {
-    // Audit A-TC4-C (2026-08-12): manual / Artisan software-PID mode is
-    // two-stage. At PROBE_STUCK_TIMEOUT_SECS (120 s) the detector must
-    // NOT latch — a legitimately slow finish can hold BT < 1 °C for
-    // 2 min at low duty. Only after PROBE_STUCK_MANUAL_LATCH_SECS (300 s)
-    // of continuous flat BT does the emergency latch fire, keeping the
-    // dead-probe backstop (Bug S1) closed.
+    // Manual / Artisan software-PID mode is two-stage. At
+    // PROBE_STUCK_TIMEOUT_SECS (120 s) the detector must NOT latch — a
+    // legitimately slow finish can hold BT < 1 °C for 2 min at low duty. Only
+    // after PROBE_STUCK_MANUAL_LATCH_SECS (300 s) of continuous flat BT does
+    // the emergency latch fire, keeping the dead-probe backstop closed.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
     assert!(
@@ -1317,14 +1294,12 @@ fn probe_stuck_does_not_fire_when_regulating_near_target() {
     assert_ne!(ctrl.get_state(), RoasterState::Error);
 }
 
-// ── P6 (2026-08-03): MAX_ROAST_TIME must not run during PREHEAT ────────
+// ── MAX_ROAST_TIME must not run during PREHEAT ────────
 
 #[test]
 fn preheat_does_not_count_toward_max_roast_time() {
-    // Bug P6: the 30-min cap must NOT run during Preheating — big drums
-    // legitimately preheat for over half an hour. The old gate keyed on
-    // `heater_energized || roast_active` (Preheating included), so a long
-    // preheat hit the cap mid-preheat and aborted before loading beans.
+    // The 30-min cap must NOT run during Preheating — big drums legitimately
+    // preheat for over half an hour.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
     assert!(r.is_ok());
@@ -1368,8 +1343,8 @@ fn preheat_does_not_count_toward_max_roast_time() {
 
 #[test]
 fn start_resets_heat_session_clock() {
-    // Bug P6 companion: START drops the manual heat-session clock so the
-    // roast budget anchors to `profile_start_time` from the START.
+    // START drops the manual heat-session clock so the roast budget anchors
+    // to `profile_start_time` from the START.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
     let t0 = Instant::from_millis(1000);
@@ -1391,15 +1366,13 @@ fn start_resets_heat_session_clock() {
     assert!(ctrl.profile_start_time.is_some());
 }
 
-// ── P10 (2026-08-03): #CHARGE fires on a realistic 2.26 °C/s drop ──────
+// ── #CHARGE fires on a realistic 2.26 °C/s drop ──────
 
 #[test]
 fn charge_detection_fires_on_low_rate_drop() {
-    // Bug P10: with CHARGE_DROP_THRESHOLD_C = 6.0, a ~2.26 °C/s drop
-    // (0.7 °C per 310 ms tick) spanning the 10-sample deque (~3.1 s)
-    // fires #CHARGE. Under the previous 8.0 threshold the same profile
-    // only accumulated 6.3 °C — the charge would have been silently
-    // missed at the low end of the real 2–3 °C/s charge signature.
+    // With CHARGE_DROP_THRESHOLD_C = 6.0, a ~2.26 °C/s drop (0.7 °C per
+    // 310 ms tick) spanning the 10-sample deque (~3.1 s) fires #CHARGE — the
+    // low end of the real 2–3 °C/s charge signature.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
     assert!(r.is_ok());
@@ -1422,13 +1395,13 @@ fn charge_detection_fires_on_low_rate_drop() {
     );
 }
 
-// ── P11 (2026-08-03): START resets the charge-detection state ──────────
+// ── START resets the charge-detection state ──────────
 
 #[test]
 fn start_clears_charge_state() {
-    // Bug P11: a batch that ends WITHOUT a STOP (e.g. PREHEAT → START
-    // cadence) kept `charge_detected` latched, so the `!charge_detected`
-    // gate never re-fired #CHARGE on the next batch. START must reset it
+    // A batch that ends WITHOUT a STOP (e.g. PREHEAT → START cadence) must
+    // not keep `charge_detected` latched; otherwise the `!charge_detected`
+    // gate never re-fires #CHARGE on the next batch. START resets it
     // (idempotent with the `stop_streaming` reset on STOP/OFF).
     let mut ctrl = make_control();
     // Simulate a previous roast in which charge was detected.
@@ -1445,7 +1418,7 @@ fn start_clears_charge_state() {
     );
 }
 
-// ── B-L / B-H (2026-08-04): fan retry discipline in emergency paths ────
+// ── Fan retry discipline in emergency paths ────
 
 /// Shared per-instance attempt counter for `FlakyFan` (an `Arc` so the
 /// test can read the count after the fan is moved into the control
@@ -1462,11 +1435,10 @@ fn read_fan_attempts(counter: &FanAttemptCounter) -> u8 {
     critical_section::with(|cs| *counter.borrow(cs).borrow())
 }
 
-/// Fan stub whose `emergency_set_speed` fails for the first
-/// `fail_attempts` calls, then succeeds. Used to verify that the
-/// emergency paths retry the fan instead of giving up after one attempt
-/// (Bug B-L / B-H) and that `status.fan_output` is only published after a
-/// successful write.
+/// Fan stub whose `emergency_set_speed` fails for the first `fail_attempts`
+/// calls, then succeeds. Used to verify that the emergency paths retry the
+/// fan instead of giving up after one attempt and that `status.fan_output`
+/// is only published after a successful write.
 struct FlakyFan {
     fail_attempts: u8,
     attempts: FanAttemptCounter,
@@ -1516,9 +1488,8 @@ fn make_control_with_fan(fan: Box<dyn Fan + Send>) -> RoasterControl {
 
 #[test]
 fn emergency_shutdown_fan_retries_until_success() {
-    // Bug B-L: the fan used to get a single attempt while the heater got
-    // EMERGENCY_HEATER_OFF_RETRIES. A fan that fails twice and then
-    // succeeds must still end at 100 %.
+    // A fan that fails twice and then succeeds must still end at 100 %: the
+    // fan gets EMERGENCY_HEATER_OFF_RETRIES-style retries.
     let attempts = new_fan_attempt_counter();
     let fan = Box::new(FlakyFan::new(2, attempts.clone()));
     let mut ctrl = make_control_with_fan(fan);
@@ -1543,12 +1514,10 @@ fn emergency_shutdown_fan_retries_until_success() {
 
 #[test]
 fn emergency_shutdown_fan_total_failure_keeps_fan_output_honest() {
-    // Bug B-L: when the fan never accepts a write, `status.fan_output`
-    // must NOT claim 100 % (the previous code wrote it unconditionally).
-    // Bug S4 (2026-08-05): a total fan failure during an internal trap is
-    // no longer absorbed — `emergency_shutdown` escalates as
-    // `HardwareError(emergency_fan_failed)` so the control loop surfaces
-    // an ERR to Artisan ("no fan means unsafe to continue").
+    // When the fan never accepts a write, `status.fan_output` must NOT claim
+    // 100 %. A total fan failure during an internal trap escalates as
+    // `HardwareError(emergency_fan_failed)` so the control loop surfaces an
+    // ERR to Artisan ("no fan means unsafe to continue").
     let attempts = new_fan_attempt_counter();
     let fan = Box::new(FlakyFan::new(u8::MAX, attempts.clone()));
     let mut ctrl = make_control_with_fan(fan);
@@ -1578,9 +1547,9 @@ fn emergency_shutdown_fan_total_failure_keeps_fan_output_honest() {
 
 #[test]
 fn artisan_stop_fan_failure_returns_err() {
-    // Bug B-H: the Artisan STOP token path (`handle_emergency_stop`) must
-    // escalate when the fan cannot reach 100 % — the control loop then
-    // emits an ERR to Artisan instead of silently acknowledging.
+    // The Artisan STOP token path (`handle_emergency_stop`) escalates when
+    // the fan cannot reach 100 % — the control loop then emits an ERR to
+    // Artisan instead of silently acknowledging.
     let attempts = new_fan_attempt_counter();
     let fan = Box::new(FlakyFan::new(u8::MAX, attempts.clone()));
     let mut ctrl = make_control_with_fan(fan);
@@ -1598,7 +1567,7 @@ fn artisan_stop_fan_failure_returns_err() {
 
 #[test]
 fn artisan_stop_fan_success_returns_ok() {
-    // Bug B-H: with a working fan the STOP path still acknowledges.
+    // With a working fan the STOP path acknowledges.
     let fan = Box::new(StubFan::new());
     let mut ctrl = make_control_with_fan(fan);
 

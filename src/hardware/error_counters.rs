@@ -92,13 +92,10 @@ pub fn reset_error_count(name: &str) {
 }
 
 // ── Output-direction counters ──────────────────────────────────────────────
-// Audit H-1 (2026-08-11): reads had first-class error accounting while the
-// OUTPUT direction was invisible: `let _ = try_send(...)` swallowed
-// channel-full drops and `dual_output_tick` swallowed USB/UART write
-// failures. These saturating counters close that gap. They are intentionally
-// NOT part of the TC4 STATUS wire line (20 fields, byte-exact, pinned by
-// golden tests) — they are exposed via the getters below and the telemetry
-// trail (debug!/warn! in tasks.rs).
+// Saturating counters for output-channel drops and USB/UART write failures.
+// They are intentionally NOT part of the TC4 STATUS wire line (20 fields,
+// byte-exact, pinned by golden tests) — they are exposed via the getters
+// below and the telemetry trail (debug!/warn! in tasks.rs).
 
 #[derive(Clone, Copy)]
 struct OutputCounters {

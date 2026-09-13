@@ -75,14 +75,14 @@ impl CommandDispatcher {
         self.artisan_handler.evaluate(command, status)
     }
 
-    /// Commit a manual heater value AFTER the hardware write was accepted
-    /// (Bug C, 2026-08-03). See `ArtisanCommandHandler::commit_manual_heater`.
+    /// Commit a manual heater value AFTER the hardware write was accepted.
+    /// See `ArtisanCommandHandler::commit_manual_heater`.
     pub fn commit_manual_heater(&mut self, value: f32) {
         self.artisan_handler.commit_manual_heater(value);
     }
 
-    /// Commit a manual fan value AFTER the hardware write was accepted
-    /// (Bug C, 2026-08-03). See `ArtisanCommandHandler::commit_manual_fan`.
+    /// Commit a manual fan value AFTER the hardware write was accepted.
+    /// See `ArtisanCommandHandler::commit_manual_fan`.
     pub fn commit_manual_fan(&mut self, value: f32) {
         self.artisan_handler.commit_manual_fan(value);
     }
@@ -97,12 +97,11 @@ impl CommandDispatcher {
     ) -> Result<(), RoasterError> {
         status.artisan_control = false;
         self.temp_handler.set_pid_target(target_temp)?;
-        // Bug A3 (2026-07-25): Artisan's ramp/soak profile re-sends SV on
-        // every step. Calling `enable_pid` unconditionally would call
-        // `PidController::enable` every time, which clears the I-term and
-        // derivative history → steady-state droop on every ramp step. Only
-        // arm the controller the first time we transition out of manual
-        // mode; subsequent calls just update the target.
+        // Artisan's ramp/soak profile re-sends SV on every step. Calling
+        // `enable_pid` unconditionally would call `PidController::enable`
+        // every time, which clears the I-term and derivative history →
+        // steady-state droop on every ramp step. Only arm the controller the
+        // first time out of manual mode; subsequent calls just update the target.
         if !self.temp_handler.pid_is_enabled() {
             self.temp_handler.enable_pid();
         }

@@ -1,6 +1,6 @@
 //! Realistic thermal plant model for hardware-free closed-loop testing.
 //!
-//! The previous `simulated.rs` curve is a pure open-loop waypoint interpolator:
+//! The `simulated.rs` curve is a pure open-loop waypoint interpolator:
 //! `temperatures_at(t)` ignores heater/fan and jumps instantly with no inertia,
 //! so PID gains tuned on it are aggressive on real hardware and RoR/probe
 //! guards are never stressed under realistic lag.
@@ -54,9 +54,7 @@ impl Default for ThermalPlantConfig {
             // TODO(HIL): provisional — see module doc. Tuned to match the
             // 25→225°C / 600s medium curve at 50% heater and to keep ET RoR
             // ~0.5°C/s and BT ~0.33°C/s initially. Real drum must recalibrate
-            // `tau_*` + `heater_gain`. Faster drum/bean taus than first draft
-            // so 9s at 50% lifts BT>35°C and 124s at 60% reaches mid-roast
-            // >170°C (otherwise L3 crack tests fail).
+            // `tau_*` + `heater_gain`.
             tau_drum_secs: 9.0,
             tau_bean_secs: 13.0,
             tau_bt_probe_secs: 3.5,

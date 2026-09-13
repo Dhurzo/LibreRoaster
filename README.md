@@ -1,7 +1,7 @@
-# LibreRoaster
+# ☕🔥 LibreRoaster
 
 <p align="center">
-  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="160" height="160">
+  <img src="assets/logo.svg" alt="LibreRoaster Logo" width="400">
 </p>
 
 **Open Source Coffee Bean Roaster**  
@@ -22,39 +22,28 @@ The project is aimed at builders who want an inspectable roasting controller rat
 
 ## 🚧 Project Status
 
-**v0.1 Alpha** — development in progress on the `develop` branch.
+**v0.0.1 Alpha** — development in progress on the `develop` branch.
 
-> **Latest tag:** [`v0.1`](https://github.com/Dhurzo/LibreRoaster/releases/tag/v0.1) (2026-04-30)
+> **Version:** 0.0.1 Alpha — no release tags yet (tracking `develop`).
 
 | Milestone | Status |
 |-----------|--------|
-| Firmware compiles & flashes to ESP32-C3 | ✅ Pass |
-| Boot without panics, USB CDC + UART functional | ✅ Pass |
-| 735 host-side unit + integration tests (502 lib + 233 integration) | ✅ All pass (incl. SSR scheduler) |
-| Serial command protocol (TC4-compatible, 20+ commands) | ✅ Implemented |
-| Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested — full roast simulation via USB CDC |
-| PID control, profiles, safety interlocks | ✅ **Implemented — 11 critical bugs fixed (see below)** |
+| Firmware compiles for ESP32-C3 target | ✅ Tested on target ESP32 |
+| Firmware flashes to ESP32-C3 | ✅ Tested on target ESP32 |
+| Boot without panics, runs on target ESP32 | ✅ Tested on target ESP32 |
+| 735 host-side unit + integration tests (502 lib + 233 integration) | ✅ Tested on target ESP32 (Syntetic Integration Test)|
+| Serial command protocol (TC4-compatible, 20+ commands) | ✅ Tested |
+| Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested |
+| PID control, profiles, safety interlocks | ✅ Tested |
+| Real Artisn Connection | ⏳ To be tested |
+| Real Thermocouples Read | ⏳ To be tested |
+| Real Fan control | ⏳ To be tested |
+| Real Heater control | ⏳ To be tested |
+| Real Hardware test | ⏳ To be tested |
+| Real Coffe roast with Artisan control | ⏳ To be tested |
 
-> ✅ **All 11 critical bugs fixed** (2026-07-16). The closed-loop PID can now raise heater power beyond 5%, Artisan slider syntax (`OT1;75`, `OT2;60`, `IO3;50`, `PID;SV;250`, `UNITS;F`) is accepted, logs no longer interleave with protocol, emergency latch persists until explicit recovery, and sensor fault map matches datasheet. **Validated in simulation** (735 tests pass, 0 failures). Hardware validation with real Artisan + thermal fuse is **planned (hardware-validation milestone)**.
-| Real hardware: thermocouples, heater, fan | ❌ Not yet tested |
-| End-to-end roast with real Artisan | ❌ Not yet tested |
-| Real coffee roasted using LibreRoaster | ❌ Not yet |
-
-**What this means in practice:** the firmware compiles, flashes, boots, receives serial commands, and runs complete synthetic roast curves — including PID control, safety interlocks, and TC4-compatible telemetry — all tested on the host and on real ESP32-C3 hardware in simulated-sensors mode. **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
-
-## 🔮 Hardware Roadmap
-
-### DIY Drum Roaster Build Guide 🛠️
-
-We are working on a **complete hardware assembly guide** for a DIY drum coffee roaster compatible with LibreRoaster. The guide will include:
-
-- 📐 Step-by-step build instructions with a full bill of materials
-- 💰 Component selection focused on **minimum cost** without compromising safety
-- 🔌 Plug-and-play compatibility with the LibreRoaster ESP32-C3 firmware
-
-The guide is **currently in progress** and will be published once validated. If you want to contribute or follow along, check the issues and discussions in this repo.
-
----
+ 
+**What this means in practice:** flashing the ESP32-C3 and running the firmware on it is tested. Everything else — serial command handling, synthetic roast curves, PID control, safety interlocks, TC4-compatible telemetry — is validated synthetically only (host tests and simulated-sensors mode). **Hardware integration (thermocouples, heater, fan) and real Artisan connectivity have not been validated yet.** Do not connect this to a live heater without independent safety mechanisms.
 
 ## 📋 Current technical baseline
 
@@ -146,11 +135,11 @@ LibreRoaster implements a TC4-compatible serial interface with 20+ commands span
 ### Implemented command families
 
 - **Polling:** `READ`, `STATUS`, `STAT`
-- **Manual actuation:** `OT1`, `OT2`, `IO3`, `UP`, `DOWN`, `START`, `STOP`
+- **Manual actuation:** `OT1` (incl. `up`/`down`), `OT2`, `IO3`, `DCFAN`, `UP`, `DOWN`, `START`, `STOP`
 - **PID and roast control:** `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
 - **Profiles:** `PROFILE`, `FANPROFILE`, `PREHEAT`
 - **Handshake / setup:** `CHAN`, `UNITS`, `FILT`
-- **Diagnostics:** `REG`, `#DUMP`
+- **Diagnostics:** `REG`, `#DUMP`, `STREAM`
 
 ### Core response shapes
 
@@ -182,7 +171,7 @@ Two constraints matter operationally:
 1. **GPIO9 is a strapping pin** — it determines boot mode at reset. **Official ESP32-C3 dev boards** (DevKitC-02, DevKitM-1, RUST-1) include the pull-up already — no extra resistor needed. **Custom boards** (like LibreRoaster) need a **10kΩ pull-up to 3.3V**. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:84-112` asserts).
+For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:86-111` asserts).
 
 ---
 
@@ -292,7 +281,6 @@ The main technical documents are:
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
-- **`docs/TESTING.md`** — test types, coverage, status, and known gaps across all test layers
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
 - **`docs/pinout.md`** — pin mapping reference
 - **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy
@@ -325,6 +313,20 @@ Improper handling can result in **severe injury, fire, or death**.
 
 > ⚠️ You build and use this project **at your own risk**.  
 > The authors and contributors are **not responsible** for any damage, injury, or loss.
+
+---
+
+## 🔮 Hardware Roadmap
+
+### DIY Drum Roaster Build Guide 🛠️
+
+We are working on a **complete hardware assembly guide** for a DIY drum coffee roaster compatible with LibreRoaster. The guide will include:
+
+- 📐 Step-by-step build instructions with a full bill of materials
+- 💰 Component selection focused on **minimum cost** without compromising safety
+- 🔌 Plug-and-play compatibility with the LibreRoaster ESP32-C3 firmware
+
+The guide is **currently in progress** and will be published once validated. Please note it will take **quite a long time**: logistics and available-time constraints mean we are focusing mainly on the **software** for now — the hardware part will arrive, but not soon. If you want to contribute or follow along, check the issues and discussions in this repo.
 
 ---
 

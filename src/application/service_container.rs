@@ -1,9 +1,7 @@
 //! Application service container with single async ownership.
 //!
 //! `RoasterControl` is stored in a single `EmbassyMutex<CriticalSectionRawMutex,
-//! Option<RoasterControl>>` slot. This removes the previous dual-slot design
-//! (a sync `Mutex<RefCell<Option<_>>>` mirror plus an async embassy mutex) and
-//! the 3-retry init race that masked a synchronization bug (F5.2).
+//! Option<RoasterControl>>` slot.
 //!
 //! Initialization is single-threaded: `AppBuilder::build()` runs before the
 //! async executor starts, so `init_roaster` stores the instance into the
@@ -40,9 +38,6 @@ pub struct ServiceContainer {
     pub roaster: EmbassyMutex<CriticalSectionRawMutex, Option<RoasterControl>>,
     /// Parsed Artisan input state (targets, PID setpoints) for the active session.
     pub artisan_input: Mutex<RefCell<Option<ArtisanInput>>>,
-    // Bug DRA-2 (2026-07-26): the `multiplexer` field was removed — it was
-    // NEVER read or written (always None). The real multiplexer lives in the
-    // `ARTISAN_MULTIPLEXER` static, accessed via `get_multiplexer()`.
     /// RTC watchdog feeder handle; `None` until `AppBuilder::build()` installs it.
     pub watchdog_feeder: Mutex<RefCell<Option<WatchdogFeeder>>>,
     /// The status LED's single long-lived owner. Embedded-only (esp-hal `Output` does
@@ -51,15 +46,11 @@ pub struct ServiceContainer {
     pub status_led: Mutex<RefCell<Option<Output<'static>>>>,
 }
 
-// Bug E1 (2026-08-03): was 8. The channel is drained once per control tick
-// (~310 ms) and Artisan's session-open burst (UNITS/FILT/CHAN/PID/OT1/OT2/
-// START — typically 10-15 lines) used to overrun it, dropping the TAIL of the
-// burst (which is where START, or a mid-burst STOP/EmergencyStop, lands).
-// Doubling the buffer keeps a full burst resident across one tick window.
-// Bug H3 (2026-08-10): `MAX_COMMANDS_PER_TICK` now EQUALS this size, so the
-// tick rate-limit branch is intentionally inert — the bounded channel itself
-// caps the work per tick, and the old 8-command budget silently discarded
-// the 9th..16th commands of a burst.
+// The channel is drained once per control tick (~310 ms); the buffer keeps a
+// full Artisan session-open burst (UNITS/FILT/CHAN/PID/OT1/OT2/START —
+// typically 10-15 lines) resident across one tick window, including a trailing
+// START or STOP/EmergencyStop. The per-tick command budget equals this size,
+// so the bounded channel itself caps the work per tick.
 /// Capacity of the Artisan command channel and of the per-tick command budget.
 pub const ARTISAN_CMD_CHANNEL_SIZE: usize = 16;
 /// Capacity of the Artisan output channel drained by `dual_output_task`.
@@ -376,11 +367,9 @@ impl core::fmt::Display for ContainerError {
 
 #[cfg(any(test, feature = "async-lock-depth-metrics"))]
 mod async_lock_depth {
-    // Bug H4 (2026-08-10): `core::sync::atomic` RMW ops (fetch_add/max/sub)
-    // require the A extension — absent on riscv32imc (ESP32-C3), so the
-    // `--features embedded,async-lock-depth-metrics` build failed with E0599
-    // and CI never caught it. Use `portable_atomic` like the rest of the
-    // firmware (watchdog.rs, traceability.rs).
+    // `core::sync::atomic` RMW ops (fetch_add/max/sub) require the A
+    // extension — absent on riscv32imc (ESP32-C3). Use `portable_atomic`
+    // like the rest of the firmware (watchdog.rs, traceability.rs).
     use portable_atomic::{AtomicUsize, Ordering};
 
     static ASYNC_LOCK_DEPTH_CURRENT: AtomicUsize = AtomicUsize::new(0);

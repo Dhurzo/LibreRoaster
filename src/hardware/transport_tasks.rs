@@ -93,15 +93,14 @@ impl Default for TransportRxState {
 
 /// Push received bytes to the event queue.
 ///
-/// Bug #2 fix: if the queue is full when a new byte arrives, the entire
-/// pending partial command is flushed rather than dropping just the oldest
-/// byte. Dropping one byte from the middle of an in-progress command would
-/// corrupt it silently (e.g. "SETTAR" losing its leading 'S' becomes
-/// "ETTAR"), producing nonsense when the terminator finally arrives.
-/// Flushing the whole queue guarantees the host sees a clean error
-/// (`ERR buffer_overflow`) on the next terminator instead of a corrupted
-/// command. The error itself is emitted by `process_event_queue` when it
-/// detects the empty line caused by the flush.
+/// If the queue is full when a new byte arrives, the entire pending partial
+/// command is flushed rather than dropping just the oldest byte. Dropping one
+/// byte from the middle of an in-progress command would corrupt it silently
+/// (e.g. "SETTAR" losing its leading 'S' becomes "ETTAR"), producing nonsense
+/// when the terminator finally arrives. Flushing the whole queue guarantees
+/// the host sees a clean error (`ERR buffer_overflow`) on the next terminator
+/// instead of a corrupted command. The error itself is emitted by
+/// `process_event_queue` when it detects the empty line caused by the flush.
 pub(crate) fn push_to_event_queue(
     event_queue: &BlockingMutex<
         CriticalSectionRawMutex,
@@ -113,14 +112,12 @@ pub(crate) fn push_to_event_queue(
     event_queue.lock(|cell| {
         if let Some(queue) = cell.borrow_mut().as_mut() {
             for &byte in data {
-                // Bug M3 (2026-08-10): while discarding, consume the bytes
-                // of the corrupted line WITHOUT enqueueing them. When its
-                // terminator arrives, push it so `process_event_queue`'s
-                // terminator-only branch emits the `buffer_overflow` ERR and
-                // consumes the latch — a subsequent CLEAN command is then
-                // accepted instead of being wrongly attributed to the
-                // overflow and dropped (previously a `STOP`/`EmergencyStop`
-                // right after a garbage burst was silently lost).
+                // While discarding, consume the bytes of the corrupted line
+                // WITHOUT enqueueing them. When its terminator arrives, push
+                // it so `process_event_queue`'s terminator-only branch emits
+                // the `buffer_overflow` ERR and consumes the latch — a
+                // subsequent clean command is then accepted instead of being
+                // wrongly attributed to the overflow and dropped.
                 if overflow.discarding {
                     if byte == 0x0D || byte == 0x0A {
                         overflow.discarding = false;
@@ -154,19 +151,18 @@ pub(crate) fn push_to_event_queue(
 #[derive(Default)]
 pub struct EventQueueOverflow {
     pub triggered: bool,
-    /// Bug M3 (2026-08-10): while true, `push_to_event_queue` consumes
-    /// incoming bytes without enqueueing them until the corrupted line's
-    /// terminator arrives, so the first clean command after a flush is NOT
-    /// discarded along with the garbage.
+    /// While true, `push_to_event_queue` consumes incoming bytes without
+    /// enqueueing them until the corrupted line's terminator arrives, so the
+    /// first clean command after a flush is NOT discarded along with the garbage.
     pub discarding: bool,
 }
 
-/// Bug P7 (2026-08-03): decide whether a read error on `channel` should be
-/// counted toward the comms-error emergency threshold. ONLY the multiplexer's
-/// ACTIVE channel counts: 10 consecutive read failures on a transport that is
-/// not in use (e.g. a broken UART line while Artisan runs over USB) must not
-/// abort the session with `emergency_shutdown`. Errors on an inactive channel
-/// are still logged for diagnostics.
+/// Decide whether a read error on `channel` should be counted toward the
+/// comms-error emergency threshold. ONLY the multiplexer's ACTIVE channel
+/// counts: 10 consecutive read failures on a transport that is not in use
+/// (e.g. a broken UART line while Artisan runs over USB) must not abort the
+/// session with `emergency_shutdown`. Errors on an inactive channel are still
+/// logged for diagnostics.
 pub fn should_count_read_error(active: CommChannel, channel: CommChannel) -> bool {
     active == channel
 }
@@ -216,12 +212,12 @@ pub(crate) fn extract_line_from_event_queue(
     }
 }
 
-/// Audit MP-3 (2026-08-11): coalesce `ERR command_ignored_inactive_channel`
-/// to at most one per second. Without this, a second connected Artisan or a
-/// noisy UART stream polling `READ` floods the ACTIVE host's line with
-/// foreign ERR lines (the output channel is only 16 deep and drained 4 per
-/// 5 ms, so the flood also crowds out real telemetry/STATUS data). One
-/// notification per second keeps the operator informed without the flood.
+/// Coalesce `ERR command_ignored_inactive_channel` to at most one per second.
+/// Without this, a second connected Artisan or a noisy UART stream polling
+/// `READ` floods the ACTIVE host's line with foreign ERR lines (the output
+/// channel is only 16 deep and drained 4 per 5 ms, so the flood also crowds
+/// out real telemetry/STATUS data). One notification per second keeps the
+/// operator informed without the flood.
 static LAST_INACTIVE_ERR_MS: AtomicU32 = AtomicU32::new(0);
 const INACTIVE_ERR_COALESCE_MS: u32 = 1000;
 
@@ -271,30 +267,22 @@ async fn handle_parsed_command(
         }
     });
 
-    // Bug V2-15: record the queue depth on EVERY dispatch decision — the
-    // drop path (channel full) is the one that motivated this metric in the
-    // first place, but the previous code only recorded it inside `if sent`.
-    // Dropped commands left zero telemetry footprint, hiding back-pressure.
+    // Record the queue depth on EVERY dispatch decision — including the drop
+    // path (channel full) — so dropped commands leave a telemetry footprint
+    // instead of hiding back-pressure.
     record_queue_depth(ServiceContainer::get_artisan_channel().len());
 
-    // Bug #1: notify the host that the command was dropped because the
-    // artisan channel was full. Without this, Artisan would keep sending
-    // commands that disappear silently, leaving the roaster in an
-    // unexpected state. Emitting ERR lets the host decide to retry.
+    // Notify the host that the command was dropped because the artisan
+    // channel was full, so it can decide to retry instead of leaving the
+    // roaster in an unexpected state.
     if channel_full {
         send_channel_full_error(channel, config).await;
     }
 
-    // Bug D (2026-08-03): a command on the INACTIVE transport was silently
-    // discarded by the multiplexer — this path had NO feedback at all (the
-    // ERR paths only exist for channel_full / parse errors, and both write
-    // to the active transport). An EmergencyStop or STOP sent over the wrong
-    // wire (e.g. UART while USB is the active session) was lost forever with
-    // only an `info!` in the log. Emit an explicit ERR through the output
-    // channel; the dual-output task routes it to the active session, so the
-    // operator at least sees that a command was refused, not processed.
-    // Audit MP-3 (2026-08-11): coalesced to 1/s — see
-    // `emit_inactive_channel_err_if_due`.
+    // A command on the INACTIVE transport is refused with an explicit ERR
+    // through the output channel; the dual-output task routes it to the
+    // active session, so the operator sees that a command was refused, not
+    // processed. Coalesced to 1/s — see `emit_inactive_channel_err_if_due`.
     if !should_process {
         emit_inactive_channel_err_if_due();
     }
@@ -304,12 +292,9 @@ async fn handle_parsed_command(
 /// host knows its command was dropped due to backpressure. Multiplexer-aware
 /// (only writes if this channel is the active TX).
 ///
-/// Bug P8 (2026-08-03): a dropped/parse-error command must NOT activate a
-/// channel from `None` — previously both error paths called
-/// `mux.on_command_received(channel)`, so boot-time garbage on UART could
-/// hijack the multiplexer (making UART the active/response route) before any
-/// VALID command had been seen. Channel activation is reserved for
-/// `handle_parsed_command` (a successfully parsed command only).
+/// A dropped/parse-error command must NOT activate a channel from `None`.
+/// Channel activation is reserved for `handle_parsed_command` (a successfully
+/// parsed command only).
 async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig) {
     let mut should_write = true;
     critical_section::with(|cs| {
@@ -330,9 +315,9 @@ async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig
 
 /// Send a parse error response via the output channel (multiplexer-aware).
 ///
-/// Bug P8 (2026-08-03): must NOT activate a channel from `None` — see
-/// `send_channel_full_error`. A garbage line in the boot window is silently
-/// dropped (no active channel to reply to); a real session is unaffected.
+/// Must NOT activate a channel from `None`. A garbage line in the boot window
+/// is silently dropped (no active channel to reply to); a real session is
+/// unaffected.
 pub(crate) async fn send_parse_error(
     error: ParseError,
     channel: CommChannel,
@@ -361,19 +346,9 @@ pub(crate) async fn send_parse_error(
 
 /// Process the event queue: drain *all* complete lines in this iteration.
 ///
-/// Bug B11: the previous implementation did a single `if
-/// event_queue_has_terminator` per call. With CRLF terminators the first
-/// pass extracted the command and left the trailing LF in the queue; on
-/// the next arrival the only extraction consumed that bare LF and returned
-/// `None` (terminator-only → empty buffer), silently discarding the turn
-/// even though a complete command sat in the queue. Net effect: one
-/// command per two arrivals, half of the Artisan `READ` polls unanswered,
-/// and a ramp-up burst (`CHAN;\nUNITS;\nFILT;\n` in one chunk) was
-/// serialized at one-command-per-poll.
-///
-/// Fix: (1) loop while any terminator is present, (2) on a terminator-only
-/// extraction (`None`) `continue` to keep draining rather than exit, so a
-/// bare LF (the trailing byte of CRLF) does not consume a turn.
+/// Loops while any terminator is present; on a terminator-only extraction
+/// (`None`) it continues to keep draining rather than exiting, so a bare LF
+/// (the trailing byte of CRLF) does not consume a turn.
 pub(crate) async fn process_event_queue(
     event_queue: &BlockingMutex<
         CriticalSectionRawMutex,
@@ -388,14 +363,11 @@ pub(crate) async fn process_event_queue(
             // A terminator was present but the extracted line was empty
             // (e.g. a bare LF left over from a CRLF). The terminator has
             // been consumed; keep draining the rest of the queue rather
-            // than waiting for another byte to arrive.
-            // Bug V2-10: but if an overflow was latched, the trailing
-            // fragment (here, only terminators) carried the overflow flag
-            // and must still produce the buffer_overflow error — otherwise
-            // the flag survives into the next VALID command and gets
-            // wrongly attributed to it. Consume the flag here and surface
-            // the error for THIS extraction turn rather than the next
-            // command.
+            // than waiting for another byte to arrive. If an overflow was
+            // latched, the trailing fragment (here, only terminators)
+            // carries the overflow flag and must still produce the
+            // buffer_overflow error for THIS extraction turn rather than the
+            // next command.
             if overflow.triggered {
                 overflow.triggered = false;
                 send_parse_error(ParseError::BufferOverflow, channel, config).await;
@@ -404,12 +376,11 @@ pub(crate) async fn process_event_queue(
             continue;
         };
 
-        // Bug #2: if the event queue overflowed since the last line was
-        // extracted, the current line is the trailing fragment of a
-        // command whose leading bytes were dropped. Emit an explicit
-        // buffer_overflow error so the host knows its command was
-        // discarded, rather than chasing the (truncated) remaining bytes
-        // through the parser.
+        // If the event queue overflowed since the last line was extracted,
+        // the current line is the trailing fragment of a command whose
+        // leading bytes were dropped. Emit an explicit buffer_overflow error
+        // so the host knows its command was discarded, rather than chasing
+        // the (truncated) remaining bytes through the parser.
         if overflow.triggered {
             overflow.triggered = false;
             send_parse_error(ParseError::BufferOverflow, channel, config).await;
@@ -424,14 +395,14 @@ pub(crate) async fn process_event_queue(
             continue;
         }
 
-        // Audit MP-1 (2026-08-11): refuse INACTIVE-channel lines BEFORE
-        // parsing. `parse_artisan_command` populates the parser-side
-        // PROFILE/FANPROFILE FIFOs as a side effect; parsing a line that the
-        // multiplexer gate would drop anyway leaked the profile into the
-        // FIFO, where a LATER session's `SetProfile` consumed the stale
-        // entry (F3-MP1). `would_process_command` is a pure predicate — it
-        // does NOT activate the channel, so activation stays reserved for
-        // successfully parsed commands (P8).
+        // Refuse INACTIVE-channel lines BEFORE parsing.
+        // `parse_artisan_command` populates the parser-side PROFILE/FANPROFILE
+        // FIFOs as a side effect; parsing a line that the multiplexer gate
+        // would drop anyway would leak the profile into the FIFO, where a
+        // LATER session's `SetProfile` could consume the stale entry.
+        // `would_process_command` is a pure predicate — it does NOT activate
+        // the channel, so activation stays reserved for successfully parsed
+        // commands.
         let accepted = critical_section::with(|cs| {
             ServiceContainer::get_multiplexer()
                 .borrow(cs)
@@ -441,7 +412,7 @@ pub(crate) async fn process_event_queue(
         });
         if !accepted {
             // Line already consumed from the queue; notify the active host
-            // (coalesced to 1/s, MP-3) and keep draining.
+            // (coalesced to 1/s) and keep draining.
             emit_inactive_channel_err_if_due();
             continue;
         }
@@ -486,9 +457,9 @@ pub async fn run_reader_task<RX: RxSource>(
     Timer::after(reader_start_delay).await;
 
     loop {
-        // L6: track whether the most recent read filled the buffer so we
-        // can skip the 10 ms poll sleep when a burst is in flight and the
-        // UART FIFO would otherwise overflow waiting for the next tick.
+        // Track whether the most recent read filled the buffer so we can skip
+        // the 10 ms poll sleep when a burst is in flight and the UART FIFO
+        // would otherwise overflow waiting for the next tick.
         let mut buffer_was_full = false;
         // Read from the transport using the trait's static method
         match RX::read_bytes(&mut rbuf).await {
@@ -502,13 +473,11 @@ pub async fn run_reader_task<RX: RxSource>(
             Ok(0) => { /* no data — idle poll */ }
             Ok(_) => { /* should not happen */ }
             Err(e) => {
-                // Bug P7 (2026-08-03): count a read error only when this
-                // transport is the multiplexer's ACTIVE channel. The control
-                // loop trips a global emergency at 10 consecutive errors
-                // (`MAX_COMMS_READ_ERRORS`); counting every transport
-                // regardless of the active session meant a dead UART line
-                // could abort a healthy USB roast (~1 s of failure). Errors on
-                // an inactive transport are still logged for diagnostics.
+                // Count a read error only when this transport is the
+                // multiplexer's ACTIVE channel. The control loop trips a
+                // global emergency at 10 consecutive errors
+                // (`MAX_COMMS_READ_ERRORS`). Errors on an inactive transport
+                // are still logged for diagnostics.
                 let active_channel = critical_section::with(|cs| {
                     ServiceContainer::get_multiplexer()
                         .borrow(cs)
@@ -575,9 +544,8 @@ mod tests {
         }
     }
 
-    /// Bug-hunt T-B1: byte-level accumulation across pushes (the production
-    /// event queue, which the legacy `process_command_data` helpers do NOT
-    /// provide — they drop unterminated fragments between calls).
+    /// Byte-level accumulation across pushes (the production event queue):
+    /// bytes must accumulate into one command across pushes.
     #[test]
     fn event_queue_accumulates_byte_drip_and_handles_crlf() {
         let state = TransportRxState::new();
@@ -596,8 +564,7 @@ mod tests {
             Some(b"OT1 75".as_slice()),
             "bytes must accumulate across pushes into one command"
         );
-        // The bare LF (trailing byte of CRLF) is consumed, not parsed
-        // (Bug B11 semantics).
+        // The bare LF (trailing byte of CRLF) is consumed, not parsed.
         assert!(
             extract_line_from_event_queue(&state.event_queue).is_none(),
             "bare LF must extract as None"
@@ -606,9 +573,8 @@ mod tests {
         assert!(!overflow.triggered);
     }
 
-    /// Bug-hunt T-B2: a byte-dripped command parses and dispatches through
-    /// the PRODUCTION pipeline (event queue → extract → parse → multiplexer
-    /// → artisan channel).
+    /// A byte-dripped command parses and dispatches through the PRODUCTION
+    /// pipeline (event queue → extract → parse → multiplexer → artisan channel).
     #[test]
     fn byte_drip_command_parsed_end_to_end() {
         init_container();
@@ -646,7 +612,7 @@ mod tests {
         );
     }
 
-    /// Bug-hunt T-B4: byte-level interleaving across TWO transports must not
+    /// Byte-level interleaving across TWO transports must not
     /// cross-contaminate. Each reader task owns its own event queue (the
     /// production `TransportRxState` per transport); bytes dripped
     /// alternately into two queues — as simultaneous USB + UART sessions
@@ -729,7 +695,7 @@ mod tests {
             "the front half must stay an unterminated partial line"
         );
         // The bare terminator on the other transport extracts as an empty
-        // line (T-B1 semantics) — never as a merged 'READ' command.
+        // line — never as a merged 'READ' command.
         assert_eq!(
             extract_line_from_event_queue(&b_state.event_queue),
             None,
@@ -740,10 +706,9 @@ mod tests {
         assert!(!overflow_b.triggered);
     }
 
-    /// Bug-hunt T-B3: a queue overflow must flush the partial command and
-    /// emit `ERR buffer_overflow`; a valid command arriving AFTER the
-    /// overflow is the trailing fragment and must NOT execute (EC-01, in the
-    /// production path).
+    /// A queue overflow must flush the partial command and emit
+    /// `ERR buffer_overflow`; a valid command arriving AFTER the overflow is
+    /// the trailing fragment and must NOT execute.
     #[test]
     fn queue_overflow_flushes_and_blocks_stale_command() {
         init_container();

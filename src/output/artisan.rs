@@ -7,8 +7,6 @@
 
 // Internal delegation note: pure helpers live in `ArtisanFormatter` (shared,
 // stateless); per-session RoR state lives in `MutableArtisanFormatter`.
-// Bug L13 (2026-08-10): these doc values had drifted from the real
-// constants (5→10, 32→64, 8→16).
 // - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (10 samples)
 // - `REPORT_BUFFER_SIZE`: Temperature report formatting (64 chars)
 // - `TIME_FORMAT_SIZE`: Time formatting (16 chars)
@@ -25,12 +23,7 @@ use heapless::{Deque, String as HeaplessString};
 /// Namespace for the shared Artisan wire-formatting helpers used by
 /// `MutableArtisanFormatter` and the READ/STATUS response paths.
 ///
-/// Bug M12 (2026-08-10): this type used to also implement `OutputFormatter`
-/// with a stateful, timestamp-less RoR (divergent from production: ignored
-/// `UNITS;F` and emitted raw °C/s without the ×60 scaling — wiring it back
-/// up would have reintroduced two already-fixed bugs). Production has always
-/// used `MutableArtisanFormatter`; the dead impl and `RorCalculator` are
-/// gone.
+/// Production output goes through `MutableArtisanFormatter`.
 pub struct ArtisanFormatter;
 
 impl ArtisanFormatter {
@@ -67,13 +60,11 @@ impl ArtisanFormatter {
         if !value.is_finite() {
             return 0.0;
         }
-        // Bug S10 (2026-08-05): a huge but FINITE value (e.g. `f32::MAX`,
-        // ~40 chars as `{:.1}`) used to pass through untouched and get
-        // truncated mid-digit by the heapless READ buffer, corrupting the
-        // CSV token Artisan must parse (counterexample: `...,-`). Telemetry
-        // fields (temperatures, duties) never legitimately exceed ±1000 —
-        // clamp into a magnitude that always fits, so the wire format stays
-        // well-formed no matter what state the status carries.
+        // A huge but FINITE value (e.g. `f32::MAX`, ~40 chars as `{:.1}`)
+        // would be truncated mid-digit by the fixed READ buffer, corrupting
+        // the CSV token Artisan must parse. Telemetry fields (temperatures,
+        // duties) never legitimately exceed ±1000 — clamp into a magnitude
+        // that always fits, so the wire format stays well-formed.
         if value.abs() > 1000.0 {
             value.clamp(-1000.0, 1000.0)
         } else {
@@ -104,11 +95,8 @@ impl ArtisanFormatter {
 
     /// Format a TC4 READ response: AMB,ET,BT,CHAN3,CHAN4 plus PID fields.
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
-        // Bug L15 (2026-08-10): `ambient_temp` is an always-0.0 placeholder on
-        // this firmware (no ambient probe). Sending it through
-        // `convert_to_display` emitted `32.0` (0 °C in °F) in Fahrenheit mode —
-        // a phantom reading on the wire. Emit the raw value so AMB stays 0.0
-        // in both scales, matching PROTOCOL §4.
+        // `ambient_temp` is an always-0.0 placeholder (no ambient probe).
+        // Emit the raw value so AMB stays 0.0 in both scales, matching PROTOCOL §4.
         let amb = Self::normalize_read_value(status.ambient_temp);
         let et = Self::normalize_read_value(
             status
@@ -178,21 +166,17 @@ impl ArtisanFormatter {
         };
         let pv =
             Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
-        // Bug #5: PV is a temperature, but `mv` (manipulated variable) and
+        // PV is a temperature, but `mv` (manipulated variable) and
         // `integrator_value` are dimensionless percentages — they must NOT go
         // through the °C→°F temperature conversion, otherwise a heater at
-        // 75% would be reported as ~167°"F" to Artisan. The previous code
-        // wrapped them in `convert_to_display`, and a test blessed the bug.
+        // 75% would be reported as ~167°"F" to Artisan.
         let mv = Self::normalize_read_value(status.mv);
         let integrator_value = Self::normalize_read_value(status.integrator_value);
-        // M8: STATUS field 13 emits the RoR in degrees-per-minute of the
+        // STATUS field 13 emits the RoR in degrees-per-minute of the
         // active display scale (Artisan convention) — °C/min in Celsius mode,
         // °F/min in °F mode. Internally `derivative_rate` is °C/s, so:
         //   °C/min = °C/s × 60
         //   °F/min = °C/s × (9/5) × 60
-        // Pre-fix, the Celsius branch emitted raw °C/s while the Fahrenheit
-        // branch emitted °F/min — the same RoR displayed as ~0.42 (°C/min felt)
-        // or ~−45.36 (°F/min felt), a 108× mismatch on `UNITS` toggle.
         let derivative_value = if status.temperature_settings.is_fahrenheit() {
             Self::normalize_read_value(status.derivative_rate * (9.0 / 5.0) * 60.0)
         } else {
@@ -254,9 +238,7 @@ impl ArtisanFormatter {
     ///
     /// Artisan's ArduinoTC4 driver accepts a handshake response only if it is
     /// empty or starts with `#` (comm.py: `if (not len(result) == 0 and not
-    /// result.startswith('#')): raise Exception(...)`). The previous `OK`
-    /// response failed that check and aborted the initialisation
-    /// (ArduinoIsInitialized stayed 0, so READ never worked). The reference
+    /// result.startswith('#')): raise Exception(...)`). The reference
     /// TC4 firmware answers `UNITS` with `# Changed units to C/F` and `FILT`
     /// with silence — both satisfy the same `#`/empty contract.
     pub fn format_handshake_ack() -> HeaplessString<REPORT_BUFFER_SIZE> {
@@ -282,16 +264,12 @@ impl ArtisanFormatter {
 
     /// Detect a genuine spike against a linear-extrapolated window (n ≥ 4).
     pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
-        // M9: contrast against a linear extrapolation of the window, NOT
-        // against the mean. On a clean ramp {m, m+d, m+2d, m+3d, ...} the
-        // mean-based 2σ test flat-out flags every sample past the 3rd
-        // (the ramp slope variance is ~2 d per step while 2σ ≈ 1.63·d with
-        // n=3), suppressing the very behavior the RoR is supposed to track.
-        // The linear approach uses the residuals against the estimated slope
-        // (the right baseline for a ramp), floors the rejection threshold at
-        // 2.0 °C so a near-perfect window doesn't reject innocent noise, and
-        // widens it to 3·σ so real spikes still trip. Requires n ≥ 4 to fit
-        // both a slope and a non-trivial residual sample.
+        // Compare against a linear extrapolation of the window (the right
+        // baseline for a ramp): the slope estimate sets the expected next
+        // value, and the rejection threshold uses the residuals around that
+        // slope — floored at 2.0 °C so a near-perfect window doesn't reject
+        // innocent noise, widened to 3·σ so real spikes still trip. Requires
+        // n ≥ 4 to fit both a slope and a non-trivial residual sample.
         if history.len() < 4 {
             return false;
         }
@@ -322,10 +300,8 @@ pub struct MutableArtisanFormatter {
     start_time: Instant,
     /// Most recent bean temperature used for RoR deltas.
     last_bt: f32,
-    /// Bug #6: `last_bt == 0.0` was previously used as the "first sample"
-    /// sentinel, but a legitimate BT reading of 0 °C (cold ambient, sensor
-    /// fallback) would falsely re-initialise the ROR state and discard the
-    /// real history. We now track initialisation explicitly with this flag.
+    /// Explicit initialisation flag — a legitimate BT reading of 0 °C must
+    /// not re-initialise the RoR state and discard history.
     is_initialised: bool,
     /// Rolling bean-temperature window for RoR slope estimation.
     bt_history: Deque<f32, BT_HISTORY_SIZE>,
@@ -364,8 +340,7 @@ impl MutableArtisanFormatter {
         &mut self,
         status: &SystemStatus,
     ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
-        // L3: read the clock ONCE per `format()` call (paired single-read
-        // with `ArtisanFormatter::format` above).
+        // Read the clock once per `format()` call.
         let elapsed = self.start_time.elapsed();
         let elapsed_secs = elapsed.as_secs();
         let elapsed_ms = elapsed.as_millis() % 1000;
@@ -374,13 +349,10 @@ impl MutableArtisanFormatter {
         let bt_c = status.bean_temp;
         let ror = self.calculate_ror(bt_c, Instant::now());
 
-        // Convert temperatures for display.
-        // Bug M1 (2026-08-10): every field goes through `normalize_read_value`
-        // — the READ and STATUS paths already did, but the continuous stream
-        // did not, so a faulted ET (supported config: ET unplugged → NaN
-        // after debounce) put a literal "NaN" on the wire every second while
-        // a READ on the same cable reported 0.0: two protocol surfaces
-        // disagreeing about the same failure.
+        // Convert temperatures for display. Every field goes through
+        // `normalize_read_value` — including a faulted ET (supported config:
+        // ET unplugged → NaN after debounce), which must report 0.0 here
+        // exactly as READ does.
         let et = ArtisanFormatter::normalize_read_value(
             status
                 .temperature_settings
@@ -391,13 +363,10 @@ impl MutableArtisanFormatter {
         );
         let gas = ArtisanFormatter::normalize_read_value(status.ssr_output); // SSR output as gas control
 
-        // M8: emit continuous-stream RoR in degrees-per-minute of the
+        // Emit continuous-stream RoR in degrees-per-minute of the
         // active display scale (Artisan convention). Internally `ror` is the
         // °C/s value computed by `calculate_ror` so apply the same ×60
-        // °C/s → °C/min scaling and the 9/5 scale conversion for °F. Without
-        // this, the continuous stream shows the rate in °C/s while STATUS
-        // emits °C/min — same value, different units, contradicting each
-        // other on the wire.
+        // °C/s → °C/min scaling and the 9/5 scale conversion for °F.
         let ror_display = if status.temperature_settings.is_fahrenheit() {
             ror * (9.0 / 5.0) * 60.0
         } else {
@@ -409,10 +378,10 @@ impl MutableArtisanFormatter {
         let line =
             ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror_display, gas);
 
-        // Bug #7: prefix the spontaneous continuous-telemetry line with '#' so
+        // Prefix the spontaneous continuous-telemetry line with '#' so
         // a line-oriented client can distinguish it from a synchronous `READ`
-        // response (which the READ handler emits via `format_read_response_full`,
-        // starting with a digit and using a different field count). Artisan
+        // response (emitted via `format_read_response_full`, starting with
+        // a digit and using a different field count). Artisan
         // tolerates a leading '#' on continuous telemetry.
         let mut prefixed = HeaplessString::<REPORT_BUFFER_SIZE>::new();
         let _ = prefixed.push('#');
@@ -422,21 +391,18 @@ impl MutableArtisanFormatter {
 
     /// Update the BT history and compute the IIR-filtered rate of rise.
     fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
-        // Bug V2-12: a single non-finite BT (sensor fault → NaN flowing into
-        // `derivative_rate` is the more common upstream path, but this method
-        // is also called with the raw BT for the formatter) poisons the IIR
-        // forever: `last_filtered_ror = α·NaN + (1-α)·prev = NaN`, and every
-        // subsequent clean sample still mixes with `NaN`. Return the last
+        // A single non-finite BT would poison the IIR forever
+        // (`last_filtered_ror = α·NaN + (1-α)·prev = NaN`, and every
+        // subsequent clean sample still mixes with `NaN`). Return the last
         // filtered RoR and DO NOT advance history with garbage — the next
         // finite sample finds a clean window so the IIR recovers immediately.
         if !current_bt.is_finite() {
             return self.last_filtered_ror;
         }
 
-        // Bug #6: use an explicit initialisation flag instead of treating
-        // `last_bt == 0.0` as the "first sample" sentinel. A legitimate BT
-        // of 0 °C (cold ambient, MAX31856 fallback) no longer corrupts ROR
-        // state by re-seeding the history.
+        // Use the explicit initialisation flag instead of treating
+        // `last_bt == 0.0` as the "first sample" sentinel: a legitimate BT
+        // of 0 °C no longer corrupts ROR state by re-seeding the history.
         if !self.is_initialised {
             self.last_bt = current_bt;
             self.is_initialised = true;
@@ -450,43 +416,24 @@ impl MutableArtisanFormatter {
         }
 
         if current_bt == self.last_bt {
-            // L1: the previous "early-return 0.0 on equal BT" produced a
-            // saw-tooth RoR where holding temp (a normal pre/post 1C stall)
-            // dropped the RoR to 0 °C/min for the duration of the plateau
-            // instead of tracking whatever trend existed in the window —
-            // a transient would fool the debounce and force the IIR to
-            // converge again. Drop the early-return: advance history with
-            // the new timestamp and let the normal RoR path compute the
-            // rate from the window. A duplicated sample in the middle of a
-            // ramp contributes 0 d(BT) for that step but the rest of the
-            // window still slopes.
+            // No early-return on equal BT: holding temp (a normal pre/post 1C
+            // stall) tracks whatever trend exists in the window instead of
+            // dropping the RoR to 0 for the duration of the plateau. Advance
+            // history with the new timestamp and let the normal RoR path
+            // compute the rate from the window. A duplicated sample in the
+            // middle of a ramp contributes 0 d(BT) for that step but the rest
+            // of the window still slopes.
         }
 
-        // Bug B12: the previous code refused to insert an outlier into the
-        // history, so on a smooth ramp {m, m+d, m+2d, m+3d, ...} every
-        // sample past the 3rd was rejected (a constant ramp violates the
-        // "2-sigma vs mean of {first 3 samples}" rule by construction:
-        // σ ≈ 0.82·d, while the deviation of m+3d is 2·d > 1.63·d). The
-        // window froze at 3 samples and `last_filtered_ror` was returned
-        // for the entire roast.
-        //
-        // Fix: ALWAYS advance the history so the mean/variance track the
+        // ALWAYS advance the history so the mean/variance track the
         // trend, and the only side-effect of an outlier is suppressing the
         // RoR value emitted for THIS sample (return the last filtered
         // RoR). The next clean sample finds a window that has moved on
         // rather than one frozen at the start of the roast.
         let is_outlier = {
-            // Bug V2-11 (B12 residual): the previous code applied the 2σ test
-            // to `front` and `back` SEPARATELY (each slice using its own
-            // mean/σ). When the deque wraps, the front slice holds only the
-            // oldest samples; on a linear ramp the current sample deviates up
-            // to ~9d from that fragment while 2σ of a 3-element slice is
-            // ~1.63d → guaranteed outlier. The simulation in the v2 report
-            // showed 70-85 % of ramp samples suppressed, so the IIR only
-            // updated ~2 of every 10 samples and the emitted RoR converged
-            // ~20-30 s late. Combine both slices into a single window (as
-            // the RoR calc a few lines below already does) so the test uses
-            // the mean/σ of the WHOLE history.
+            // Combine both deque slices into a single window (as the RoR
+            // calc a few lines below already does) so the test uses the
+            // statistics of the WHOLE history.
             let mut window: heapless::Vec<f32, BT_HISTORY_SIZE> = heapless::Vec::new();
             let (front, back) = self.bt_history.as_slices();
             let _ = window.extend_from_slice(front);
@@ -573,12 +520,10 @@ impl MutableArtisanFormatter {
         let first_ts = timestamps[0];
         let last_ts = timestamps[timestamps.len() - 1];
 
-        // Bug B20: `as_secs()` plus `as_millis()/1000` doubled the elapsed
-        // time for windows >= 1 s because `as_millis()` returns the FULL
-        // millisecond count (not the sub-second remainder). On the prior
-        // `last_filtered_ror` (kept by B12's outlier-skip path) this would
-        // approximately halve the reported RoR for any roast > 1 s. Use a
-        // single `as_millis()` reading divided by 1000 to get the real span.
+        // Use a single `as_millis()` reading divided by 1000 to get the real
+        // span: `as_millis()` returns the FULL millisecond count (not the
+        // sub-second remainder), so adding `as_secs()` would double-count
+        // windows >= 1 s and halve the reported RoR.
         let time_elapsed_secs =
             (last_ts.saturating_duration_since(first_ts).as_millis() as f32) / 1000.0;
         if time_elapsed_secs > 0.0 {
@@ -600,8 +545,8 @@ mod tests {
 
     fn create_test_status() -> SystemStatus {
         SystemStatus {
-            chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
-            requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
+            chan_poll_rate_hz: 0, // Artisan CHAN polling-rate request
+            requested_filter: 0,  // Artisan FILT filter request
             state: RoasterState::Stable,
             bean_temp: 150.5,
             env_temp: 120.3,
@@ -710,7 +655,7 @@ mod tests {
         assert_eq!(parts[9], "150.5");
         assert_eq!(parts[10], "88.5");
         assert_eq!(parts[11], "37.1");
-        // M8: STATUS field 12 (derivative) is in °C/min of the active scale.
+        // STATUS field 12 (derivative) is in °C/min of the active scale.
         // −0.42 °C/s × 60 = −25.20 °C/min (formatter is `{:.2}`).
         assert_eq!(parts[12], "-25.20");
         assert_eq!(parts[13], "1");
@@ -752,7 +697,7 @@ mod tests {
 
         assert_eq!(parts.len(), 20);
         assert_eq!(parts[11], "51.2");
-        // M8: derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
+        // Derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
         assert_eq!(parts[12], "43.80");
         assert_eq!(parts[13], "1");
         assert_eq!(parts[14], "0");
@@ -767,7 +712,7 @@ mod tests {
         assert!(output.contains(",none,"));
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 20);
-        // M8: zero °C/s × 60 = 0.00 °C/min (unchanged, but documenting the unit).
+        // Zero °C/s × 60 = 0.00 °C/min (documenting the unit).
         assert_eq!(parts[12], "0.00");
         assert_eq!(parts[13], "0");
         assert_eq!(parts[14], "0");
@@ -776,9 +721,8 @@ mod tests {
 
     #[test]
     fn test_format_csv_output() {
-        // Bug M12 (2026-08-10): this used the removed stateful
-        // `ArtisanFormatter` (dead impl); repointed to the production
-        // `MutableArtisanFormatter`, which emits the same wire shape.
+        // Uses the production `MutableArtisanFormatter`, which emits the
+        // same wire shape.
         let mut formatter = MutableArtisanFormatter::new();
         let status = create_test_status();
 
@@ -796,7 +740,7 @@ mod tests {
         let parts: Vec<&str> = output.split(',').collect();
         assert_eq!(parts.len(), 5);
 
-        // Bug #7 regression: continuous-telemetry lines are prefixed with '#'
+        // Continuous-telemetry lines are prefixed with '#'
         // so they can be distinguished from a synchronous `READ` response on
         // the same wire. The time field carries that prefix.
         assert!(
@@ -887,7 +831,7 @@ mod tests {
 
     #[test]
     fn test_format_handshake_ack() {
-        // Bug P-TC4: UNITS/FILT acks must satisfy Artisan's handshake check
+        // UNITS/FILT acks must satisfy Artisan's handshake check
         // (`len == 0 or startswith('#')`) so the ArduinoTC4 initialisation
         // completes instead of raising "could not set temperature unit".
         assert_eq!(ArtisanFormatter::format_handshake_ack(), "#OK");
@@ -943,10 +887,8 @@ mod tests {
         assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
 
         // Test Fahrenheit conversion: ET/BT convert to °F; AMB stays raw.
-        // Bug L15 (2026-08-10): `ambient_temp` is an always-0.0 placeholder
-        // (no ambient probe on this firmware), so converting 0 °C to 32 °F
-        // emitted a phantom reading on the wire. AMB is emitted raw in both
-        // scales (PROTOCOL §4: absent channel = 0.0).
+        // `ambient_temp` is an always-0.0 placeholder (no ambient probe),
+        // so AMB is emitted raw in both scales (PROTOCOL §4: absent channel = 0.0).
         status
             .temperature_settings
             .set_scale(TemperatureScale::Fahrenheit);
@@ -1134,19 +1076,16 @@ mod tests {
         assert_eq!(parts[2], "88.0", "Heater % must not be converted");
         assert_eq!(parts[3], "42.0", "Fan % must not be converted");
         assert_eq!(parts[9], "302.9", "PV converted to Fahrenheit");
-        // Bug #5 regression: `mv` and `integrator_value` are percentages
-        // (PID output terms), not temperatures. The previous formatter ran
-        // them through `convert_to_display`, producing nonsense like 191.3
-        // for a 75% heater, and a test here blessed that. They must be
-        // emitted unchanged in both scales.
+        // `mv` and `integrator_value` are percentages (PID output terms),
+        // not temperatures — they are emitted unchanged in both scales.
         assert_eq!(parts[10], "88.5", "MV must NOT be converted (it is a %)");
         assert_eq!(
             parts[11], "37.1",
             "Integrator must NOT be converted (it is a %)"
         );
-        // Bug #5 regression: `derivative_rate` is in °C/s internally. Artisan
-        // in °F mode expects a rate in °F/min, not "°F as if it were a
-        // temperature". So we multiply by 9/5×60, NOT apply °C→°F.
+        // `derivative_rate` is in °C/s internally. Artisan in °F mode
+        // expects a rate in °F/min, not "°F as if it were a temperature":
+        // multiply by 9/5×60, NOT °C→°F.
         // −0.42 °C/s × 1.8 × 60 = −45.36 °F/min.
         assert_eq!(
             parts[12], "-45.36",
@@ -1154,14 +1093,11 @@ mod tests {
         );
     }
 
-    // ── V2-12: calculate_ror must not be poisoned by a non-finite BT ──
+    // ── calculate_ror with non-finite BT ──
 
     #[test]
     fn calculate_ror_nan_bt_does_not_poison_filter() {
-        // Bug V2-12: a single NaN flowing into the IIR left
-        // `last_filtered_ror = α·NaN + (1-α)·prev = NaN` forever; every clean
-        // sample afterwards still mixed with NaN and the RoR never recovered.
-        // The fix early-returns on non-finite BT WITHOUT advancing history,
+        // A NaN must return the last filtered RoR WITHOUT advancing history,
         // so the next finite sample finds a clean window.
         let mut fmt = MutableArtisanFormatter::new();
 
@@ -1201,38 +1137,29 @@ mod tests {
         assert!(r_after > 0.0);
     }
 
-    // ── V2-11: outlier test uses the COMBINED history window ─────────
+    // ── outlier test uses the COMBINED history window ─────────
 
     #[test]
     fn outlier_test_uses_combined_window_on_linear_ramp() {
-        // Bug V2-11 (B12 residual): the previous per-slice test marked
-        // 70-85 % of a linear ramp as outliers because the front slice (when
-        // the deque wrapped) held only the oldest samples — the current
-        // sample deviated up to ~9d from that fragment while 2σ of a
-        // 3-element slice was ~1.63d → guaranteed outlier. The fix combines
-        // both slices into a single window so the 2σ test uses the mean of
-        // the WHOLE history; on a linear ramp the deviation from the
-        // combined mean stays under 2σ for the bulk of the samples.
+        // The test combines both slices into a single window so the
+        // classification uses the whole history; on a linear ramp the
+        // deviation from the combined window stays small for the bulk of
+        // the samples.
         //
         // A neat way to exercise this is to fill the BT_HISTORY_SIZE=5 deque
         // (which forces a wrap, splitting front/back) and check that the
-        // LAST sample of a clean ramp is NOT classified as an outlier — the
-        // per-slice version flagged it.
+        // LAST sample of a clean ramp is NOT classified as an outlier.
         let mut fmt = MutableArtisanFormatter::new();
 
         // Drive a clean linear ramp 100, 102, 104, 106, 108 °C at 1 s steps.
-        // The 5th sample will evict the 1st (deque wrap → front holds oldest
-        // 4, back holds 0; the per-slice test on a single 4-element slice was
-        // actually safe). To force a true front+back split, drive 6 samples.
+        // To force a true front+back split, drive 6 samples.
         let bt_series = [100.0_f32, 102.0, 104.0, 106.0, 108.0, 110.0];
         let mut last_ror = 0.0_f32;
         for (i, &bt) in bt_series.iter().enumerate() {
             let t = Instant::from_millis((i as u64) * 1000);
             last_ror = fmt.calculate_ror(bt, t);
             // Every sample of a clean, monotonic ramp must produce a finite
-            // RoR. The IIR must update on every one of them (the bug
-            // suppressed ~70-85 % of them, so `last_filtered_ror` would have
-            // frozen at the first or second sample's value).
+            // RoR. The IIR must update on every one of them.
             assert!(
                 last_ror.is_finite(),
                 "RoR at sample {} must be finite: {}",
@@ -1241,9 +1168,7 @@ mod tests {
             );
         }
         // A 2 °C/s ramp filtered with α=0.25 from 0 must end meaningfully
-        // above zero (the per-slice bug would have returned the same frozen
-        // value for all late samples; we assert it advanced past the first
-        // sample's 0.0). 5 updates of 2°C/s × 0.25 → ≥ 0.5 °C/s.
+        // above zero. 5 updates of 2°C/s × 0.25 → ≥ 0.5 °C/s.
         assert!(
             last_ror > 0.5,
             "RoR must advance on a clean ramp (per-slice bug froze it): {}",
@@ -1257,14 +1182,11 @@ mod tests {
         /// never panic and must never emit a literal "NaN" / "inf" token
         /// that could corrupt Artisan's numeric parsing of the READ line.
         ///
-        /// Huge-but-finite values (e.g. f32::MAX)
-        /// formatted to ~40 chars and the fixed-size
-        /// `HeaplessString<REPORT_BUFFER_SIZE>` TRUNCATED mid-number,
-        /// producing a corrupt line (counterexample: "0.0,42404414...0,-"
-        /// where the bare "-" is a truncated negative). Artisan cannot parse
-        /// such a line. Post-fix: `normalize_read_value` clamps finite values
-        /// to ±1000.0, so every emitted token stays short and parseable —
-        /// this property now runs green as part of the suite.
+        /// Huge-but-finite values (e.g. f32::MAX) format to ~40 chars and the
+        /// fixed-size `HeaplessString<REPORT_BUFFER_SIZE>` would truncate
+        /// mid-number, producing a corrupt line. `normalize_read_value`
+        /// clamps finite values to ±1000.0, so every emitted token stays
+        /// short and parseable.
         #[test]
         fn format_read_never_panics_with_hostile_status(
             bean_temp in hostile_f32(),
@@ -1290,7 +1212,7 @@ mod tests {
             assert!(!text.is_empty(), "READ response must not be empty");
             // The formatted line must not contain unparseable float tokens
             // (the formatter's `normalize_read_value` maps non-finite to 0.0
-            // and clamps huge finites to ±1000 — S10; this property proves NO
+            // and clamps huge finites to ±1000 — this property proves NO
             // field bypasses that sanitization).
             for token in text.split([',', ' ', '\n', '\r']) {
                 if token.is_empty() || token.starts_with('#') {

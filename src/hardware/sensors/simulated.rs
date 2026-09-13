@@ -422,20 +422,9 @@ impl RoastCurve {
         }
 
         if elapsed_secs <= self.points[0].time_secs {
-            // Bug C4b-exposed (2026-07-25): when the FIRST two points share
-            // the same `time_secs` (e.g. a curve authored so the user can
-            // express "from t=0 the bean is at X, the env is at Y" as two
-            // coincident points), `elapsed_secs == points[0].time_secs`
-            // matched the FIRST point rather than the LATEST point at that
-            // time. Returning the first point is also what `points[0]`
-            // already gives us, so this early-return was only the legacy
-            // behaviour — but the same loop below resolves `range == 0` in
-            // favour of `curr`. We now do the same here: scan forward while
-            // the next point shares this `time_secs` and return the LAST
-            // coincident one, so a 0-range at t=0 is consistent with a
-            // 0-range elsewhere in the curve. (This test was previously
-            // unreachable because the C4b cfg bug blocked `regression`
-            // from compiling at all; fixing that exposed this latent gap.)
+            // When the FIRST two points share the same `time_secs`, scan
+            // forward and return the LAST coincident one, so a 0-range at
+            // t=0 is consistent with a 0-range elsewhere in the curve.
             let mut idx = 0usize;
             while idx + 1 < self.points.len()
                 && self.points[idx + 1].time_secs == self.points[0].time_secs
@@ -706,10 +695,8 @@ mod tests {
             let mut curve = RoastCurve::new();
             for i in 0..times.len() {
                 // The temp vectors are independent generators: either may be
-                // empty while `times` is not. Indexing with
-                // `i % len.max(1)` was an out-of-bounds panic for len == 0
-                // (caught by the CI regression job); fall back to 0.0 for
-                // missing temps instead.
+                // empty while `times` is not. Fall back to 0.0 for missing
+                // temps.
                 let bean = bean_temps
                     .get(i % bean_temps.len().max(1))
                     .copied()

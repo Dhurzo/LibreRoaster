@@ -82,15 +82,14 @@ pub const CALIBRATION_BUFFER_SIZE: usize = 64;
 /// Used for timestamp formatting in seconds and milliseconds
 /// for protocols like Artisan.
 ///
-/// Bug B31: the previous value was 8 bytes, which fits `"{}.{:02}"` only up
-/// to 99 999 s (≈27.7 h of continuous streaming). At 100 000+ s the `write!`
-/// returns `Err` and the timestamp buffer is silently left truncated — the
-/// upstream `try_send` swallows the failure. 16 bytes gives comfortable
-/// headroom (up to 9 999 999 s ≈ 115 days) without measurable memory cost.
+/// 16 bytes gives comfortable headroom for `"{}.{:02}"` timestamps (up to
+/// 9 999 999 s ≈ 115 days) without measurable memory cost. Smaller buffers
+/// risk `write!` returning `Err` at 100 000+ s and leaving the timestamp
+/// silently truncated (the upstream `try_send` swallows the failure).
 pub const TIME_FORMAT_SIZE: usize = 16;
 
 /// Safety-critical error wire line (`SAFETY …` / `ERR safety_fault …`).
-/// 128 B matches `ERROR_MSG_MAX_LEN`; separate name for audit grep.
+/// 128 B matches `ERROR_MSG_MAX_LEN`.
 pub const SAFETY_ERROR_MSG_MAX_LEN: usize = 128;
 
 /// ROR sliding window — 10 samples × 4 B ≈ 40 B per deque at 1 Hz

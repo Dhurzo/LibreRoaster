@@ -10,7 +10,7 @@
 |------|------|------------|
 | 1. Add command enum variant | `src/config/constants.rs` | Add to `ArtisanCommand` enum |
 | 2. Parse it | `src/input/parser.rs` | Add branch in `parse_artisan_command()` |
-| 3. Route it | `src/control/controllers/dispatch.rs` | Add match arm in `CommandDispatcher::dispatch()` |
+| 3. Route it | `src/control/controllers/dispatch.rs` | Add match arm in `CommandDispatcher::process_command()` |
 | 4. Handle it | `src/control/handlers/*.rs` | Create handler fn (see `artisan.rs`, `temperature.rs`, `system.rs`) |
 | 5. Add test | `tests/artisan_integration_test.rs` | Add test case in `command_*` modules |
 
@@ -22,10 +22,10 @@
 
 | Target | File | Notes |
 |--------|------|-------|
-| PID algorithm | `src/control/pid.rs` | `PidController::update()` — pure math, no hardware |
-| PID config (Kp, Ki, Kd, limits) | `src/config/constants.rs` | `PidConfig` struct |
-| PID integration point | `src/control/controllers/actuator.rs` | `ActuatorController::update()` calls PID |
-| PID setpoint source | `src/control/roaster_control.rs` | `RoasterControl::pid_setpoint()` |
+| PID algorithm | `src/control/pid.rs` | `CoffeeRoasterPid::update_feedback()` — pure math, no hardware |
+| PID config (Kp, Ki, Kd, limits) | `src/control/pid.rs` | `CoffeeRoasterPid` gains via `with_gains()` / `set_gains()` |
+| PID integration point | `src/control/controllers/actuator.rs` | `ActuatorController::apply_guarded_heater()` consumes PID output |
+| PID setpoint source | `src/control/handlers/temperature.rs` | `TemperatureCommandHandler::set_pid_target()` |
 
 ---
 
@@ -36,7 +36,7 @@
 | Raw SPI read | `src/hardware/max31856.rs` | `Max31856::read_temperature()` |
 | Conversion / validation / EMA | `src/hardware/sensors/conversion.rs` | `SensorConversionHub` + `SensorController::update_temperatures` |
 | SensorController logic | `src/control/controllers/sensor.rs` | Fault debounce, stale check |
-| Add 3rd sensor | `src/hardware/shared_spi.rs` + `conversion.rs` | New CS pin, extend `SensorHub` |
+| Add 3rd sensor | `src/hardware/shared_spi.rs` + `conversion.rs` | New CS pin, extend `SensorConversionHub` |
 
 ---
 
@@ -69,7 +69,7 @@
 | Safety policy evaluation | `src/control/controllers/safety.rs` | `SafetyController` |
 | Emergency stop behavior | `src/control/roaster_control.rs` | `handle_emergency_stop()` (+ `src/control/handlers/safety.rs`) |
 | Stale temp timeout | `src/config/constants.rs` | `TEMP_VALIDITY_TIMEOUT_MS = 1000` |
-| Watchdog feed | `src/safety/watchdog.rs` | `WatchdogFeeder::feed()` — called once per tick via `ServiceContainer::with_watchdog` |
+| Watchdog feed | `src/safety/watchdog.rs` | `WatchdogFeeder::feed_async()` — called once per tick via `ServiceContainer::with_watchdog` |
 
 ---
 
@@ -89,10 +89,10 @@
 
 | Target | File | Notes |
 |--------|------|-------|
-| READ response | `src/output/artisan.rs:108` | `format_read_response_tc4()` |
-| STATUS response | `src/output/artisan.rs:165` | `format_status_response()` (20 fields) |
-| Continuous telemetry | `src/output/artisan.rs:46` | `format_artisan_line()` (`#<time>,ET,BT,ROR,Gas`) |
-| Display units (C/F) | `src/config/constants.rs` | `TemperatureScale` impl |
+| READ response | `src/output/artisan.rs:97` | `format_read_response_full()` |
+| STATUS response | `src/output/artisan.rs:145` | `format_status_response()` (20 fields) |
+| Continuous telemetry | `src/output/artisan.rs:38` | `format_artisan_line()` (`#<time>,ET,BT,ROR,Gas`) |
+| Display units (C/F) | `src/config/constants.rs` | `TemperatureSettings` impl |
 | Add new telemetry field | `src/control/roaster_control.rs` | Extend `SystemStatus` + formatter |
 
 ---
@@ -137,10 +137,10 @@
 | Question | Answer |
 |----------|--------|
 | Main entry point? | `src/main.rs` → `init_hardware()` → `AppBuilder::build()` → `async_main_task` → `start_tasks()` |
-| Control loop tick rate? | `src/config/constants.rs:356` — `CONTROL_LOOP_PERIOD_MS = 100` (real tick `CONTROL_LOOP_TICK_MS` ≈ 310–330 ms with MAX31856); timer used in `src/application/tasks.rs:1144` |
-| Command channel capacity? | `src/application/service_container.rs:64` — `ARTISAN_CMD_CHANNEL_SIZE = 16` |
-| Output channel capacity? | `src/application/service_container.rs:66` — `ARTISAN_OUTPUT_CHANNEL_SIZE = 16` |
-| Watchdog timeout? | `src/safety/watchdog.rs:59` — software `WATCHDOG_TIMEOUT_MS = 1000`; HW nominal `HW_WATCHDOG_TIMEOUT_MS` ≈ 2206 ms (`constants.rs:235`) |
+| Control loop tick rate? | `src/config/constants.rs:333` — `CONTROL_LOOP_PERIOD_MS = 100` (real tick `CONTROL_LOOP_TICK_MS` ≈ 310–330 ms with MAX31856); timer used in `src/application/tasks.rs:1051-1055` |
+| Command channel capacity? | `src/application/service_container.rs:55` — `ARTISAN_CMD_CHANNEL_SIZE = 16` |
+| Output channel capacity? | `src/application/service_container.rs:57` — `ARTISAN_OUTPUT_CHANNEL_SIZE = 16` |
+| Watchdog timeout? | `src/safety/watchdog.rs:55` — software `WATCHDOG_TIMEOUT_MS = 1000`; HW nominal `HW_WATCHDOG_TIMEOUT_MS` ≈ 2206 ms (`constants.rs:225`) |
 | Heap size? | `src/main.rs:143` — `heap_allocator!(size: 72 * 1024)` |
 | Max profile points? | `src/config/constants.rs:318` — `MAX_PROFILE_SETPOINTS = 16` (32 is `MAX_CURVE_POINTS` for simulated curves) |
 | USB write timeout? | `src/hardware/usb_cdc/driver.rs:92-113` — 50 ms write (+10 ms best-effort terminator) + 20 ms flush; UART `uart/driver.rs:79-84` 50 ms + 50 ms |

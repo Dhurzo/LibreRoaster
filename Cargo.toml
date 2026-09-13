@@ -2,7 +2,7 @@
 edition      = "2021"
 name         = "libreroaster"
 rust-version = "1.88"
-version      = "0.1.0"
+version      = "0.0.1-alpha"
 description  = "OpenSource Coffee Bean Roaster compatible with Artisan+"
 authors      = ["Juan Ángel López"]
 license      = "Apache-2.0"
@@ -71,8 +71,7 @@ embedded-io       = "0.6.1"
 embedded-io-async = "0.6.1"
 embassy-time     = "0.5.0"
 embassy-time-driver = { version = "0.2.1", features = ["tick-hz-1_000_000"] }
-embassy-usb     = "0.5.0"
-embassy-usb-driver = "=0.2.0"
+
 critical-section = "1.2.0"
 static_cell = "2.1.1"
 log              = "0.4.27"

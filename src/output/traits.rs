@@ -3,9 +3,6 @@
 //! Defines `OutputError`, the single error enum returned by the formatters and
 //! output controllers when serialisation or transport fails.
 
-// Audit M-A5 (2026-08-11): the `OutputFormatter` trait was removed — it had
-// zero implementors; the production formatter is `ArtisanFormatter` /
-// `MutableArtisanFormatter` (output/artisan.rs), which pre-dates the trait.
 #[derive(Debug)]
 /// Errors produced while formatting or emitting Artisan responses.
 pub enum OutputError {

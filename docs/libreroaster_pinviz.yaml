@@ -1,10 +1,10 @@
-# LibreRoaster — Realistic Hardware Pinout (aligned with firmware v0.1)
+# LibreRoaster — Realistic Hardware Pinout (aligned with firmware v0.0.1 Alpha)
 # Board: ESP32-C3 (RISC-V, 160MHz, 400KB SRAM, 4MB Flash)
 # Sources: src/config/constants.rs, docs/HARDWARE.md, docs/pinout.md
 # Last aligned: 2026-09-06 — pinout.svg resistor fix (100k weak) + timer docs
 
 board: esp32c3_devkit_m1
-title: "LibreRoaster v0.1 — Complete Wiring Diagram (ESP32-C3)"
+title: "LibreRoaster v0.0.1 Alpha — Complete Wiring Diagram (ESP32-C3)"
 
 devices:
   # ═══════════════════════════════════════════════════════════

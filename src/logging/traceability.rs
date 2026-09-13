@@ -3,7 +3,7 @@
 //! Emits `TRACE,...` events (when the `instrumentation` or `test` feature is
 //! enabled) that correlate each Artisan command with its queue, actuation,
 //! and telemetry stages via a monotonic `TraceId`. Release builds compile the
-//! formatting helpers to nothing (Audit M-R1).
+//! formatting helpers to nothing.
 
 #[cfg(any(feature = "instrumentation", feature = "test"))]
 use crate::application::service_container::ServiceContainer;
@@ -16,15 +16,9 @@ use core::fmt::Write;
 use heapless::String;
 use portable_atomic::{AtomicU32, Ordering};
 
-/// F5.5 (Gap #2): Maximum length of a single trace/telemetry event routed
-/// through the shared output channel. Previously 192, which left the STATUS
-/// line (`format_status_response`) and `#DUMP` data rows too close to their
-/// formatted sizes — a slightly longer STATUS or dump row would trip the
-/// `ERR status_too_long` path when a small bump in field width would have
-/// sufficed. 256 gives ~25% headroom over the 20-field STATUS line and
-/// keeps a single dump row (sample ~24 chars) comfortably below the cap.
-/// Embedded cost: +64 bytes static per channel buffer (≈30 callsites); well
-/// within the riscv32imc RAM budget.
+/// Maximum length of a single trace/telemetry event routed through the
+/// shared output channel. 256 gives headroom over the 20-field STATUS line
+/// and keeps a single dump row comfortably below the cap.
 pub const TRACE_EVENT_MAX_LEN: usize = 256;
 
 static TRACE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -123,9 +117,8 @@ impl TracedCommand {
 
 /// Emit a queue-enqueue (or fallback) trace event for a command.
 pub fn trace_command_enqueue(traced: &TracedCommand, depth: usize, fallback: bool) {
-    // Audit M-R1 (2026-08-11): in releases without instrumentation/test the
-    // event was formatted (soft-float f32 Display, String<256>) and then
-    // DISCARDED by emit_event on every command. Skip the formatting entirely.
+    // In releases without instrumentation/test, skip the formatting entirely
+    // (the event would be discarded).
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (traced, depth, fallback);
@@ -146,7 +139,7 @@ pub fn trace_command_enqueue(traced: &TracedCommand, depth: usize, fallback: boo
 
 /// Emit a queue-dequeue trace event for a command.
 pub fn trace_queue_dequeue(traced: &TracedCommand, depth: usize) {
-    // Audit M-R1: skip formatting when the event would be discarded.
+    // Skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (traced, depth);
@@ -167,7 +160,7 @@ pub fn trace_actuation(
     latency_us: u32,
     saturation_active: bool,
 ) {
-    // Audit M-R1: skip formatting when the event would be discarded.
+    // Skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (
@@ -200,7 +193,7 @@ pub fn trace_telemetry(
     watchdog_feed_ok: bool,
     app_error: Option<&AppError>,
 ) {
-    // Audit M-R1: skip formatting when the event would be discarded.
+    // Skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (
@@ -234,7 +227,7 @@ pub fn trace_guard(
     watchdog_failure: Option<&'static str>,
     app_error: Option<&AppError>,
 ) {
-    // Audit M-R1: skip formatting when the event would be discarded.
+    // Skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (
@@ -425,7 +418,7 @@ pub fn format_safe_shutdown_guard(
 
 /// Emit a safe-shutdown guard trace event (always reports a failure).
 pub fn trace_safe_shutdown_guard(trace_id: TraceId, app_error: Option<&AppError>) {
-    // Audit M-R1: skip formatting when the event would be discarded.
+    // Skip formatting when the event would be discarded.
     #[cfg(not(any(feature = "instrumentation", feature = "test")))]
     {
         let _ = (trace_id, app_error);
@@ -465,12 +458,9 @@ fn bool_flag(value: bool) -> u8 {
     }
 }
 
-// Audit MR-1 (2026-08-11): the `format_trace_*`/`emit_event` helpers are
-// gated behind `cfg(any(feature = "instrumentation", feature = "test"))` so
-// release builds compile them to nothing (no wasted formatting). The test
-// module references those helpers, so it must carry the SAME gate — plain
-// `cargo clippy --all-targets` (default features, test profile) otherwise
-// fails to compile the module against the absent helpers.
+// The `format_trace_*`/`emit_event` helpers are gated behind
+// `cfg(any(feature = "instrumentation", feature = "test"))`, so the test
+// module carries the same gate.
 #[cfg(all(test, any(feature = "instrumentation", feature = "test")))]
 mod tests {
     use super::*;

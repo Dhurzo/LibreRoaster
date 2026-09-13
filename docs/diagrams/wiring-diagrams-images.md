@@ -87,7 +87,7 @@ Assemble and verify one subsystem at a time. Each diagram isolates a single subs
 - 3.3 V logic rail, 12 V fan power (separate supplies)
 - Star ground — all grounds tied to a single point
 - Native USB-C (CDC) for Artisan and flashing
-- Optional USB-UART adapter at 3.3 V: RX←GPIO21, TX→GPIO20
+- Optional USB-UART adapter at 3.3 V: RX←GPIO20, TX→GPIO21
 - Both transports listened concurrently; commands accepted on the latched channel (multiplexer, 60 s idle reset)
 
 ---
@@ -111,10 +111,7 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 ### 5. Resistor Networks — All Passives Explained
 
-<img src="details/libreroaster_detail_resistors_en.svg" alt="Resistor networks detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_resistors_fritzing_en.svg">libreroaster_detail_resistors_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_resistors_en.svg` · **Fritzing:** `details/libreroaster_detail_resistors_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - GPIO9 divider: 10 kΩ → 3.3 V (boot) + 1 kΩ series + 100 kΩ weak gate → GND (calc 3.0 V vs 1.65 V failure)
 - GPIO8 LED 330 Ω (3.9 mA), UART 1 kΩ series, ESD 10 kΩ, decoupling 100 µF + 10 µF + 0.1 µF
@@ -122,10 +119,7 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 ### 6. SPI Bus — Sharing, Timing & GPIO Matrix
 
-<img src="details/libreroaster_detail_spi_en.svg" alt="SPI bus sharing detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_spi_fritzing_en.svg">libreroaster_detail_spi_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_spi_en.svg` · **Fritzing:** `details/libreroaster_detail_spi_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - Shared SCLK/MOSI/MISO rails, per-CS isolation, GPIO matrix MISO via GPIO5 (avoids GPIO2)
 - Mode 1 timing diagram (CPOL=0/CPHA=1), 1 MHz period, code snippet `.with_sck(6).with_mosi(7).with_miso(5)`
@@ -133,20 +127,14 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 ### 7. Fan Stage — MOSFET Ultra-Detail
 
-<img src="details/libreroaster_detail_fan_en.svg" alt="Fan MOSFET ultra detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_fan_fritzing_en.svg">libreroaster_detail_fan_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_fan_en.svg` · **Fritzing:** `details/libreroaster_detail_fan_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - 25 kHz PWM waveforms (25/50/75 %), IRLZ44N vs IRF520, flyback 1N4007, 1 kΩ gate stopper, 100 kΩ weak, 10 kΩ boot pull-up
 - Waveform scope points, fade threshold 12 ticks, `FAN_MIN_SAFETY_PCT 20%`, hil_fan sweep verification
 
 ### 8. SSR & Heat Detection — AC + GPIO1 State Machine
 
-<img src="details/libreroaster_detail_ssr_heat_en.svg" alt="SSR and heat detection detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_ssr_heat_fritzing_en.svg">libreroaster_detail_ssr_heat_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_ssr_heat_en.svg` · **Fritzing:** `details/libreroaster_detail_ssr_heat_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - DC 3.3 V → SSR-25DA DC+ (5 Hz 14-bit), AC mains L→fuse→SSR→klixon→heater, PE chassis, heatsink 1 W/A
 - Two sense options (CT vs opto) → GPIO1 Pull::Up LOW=heat, debounce 5× @≥50% → NotDetected, 10× @0% → Error, rearm via OFF/START
@@ -154,23 +142,17 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 ### 9. Power Rails & Star Ground — Decoupling & Back-Powering
 
-<img src="details/libreroaster_detail_power_comms_en.svg" alt="Power and star ground detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_power_comms_fritzing_en.svg">libreroaster_detail_power_comms_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_power_comms_en.svg` · **Fritzing:** `details/libreroaster_detail_power_comms_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - 5 V → AMS1117-3.3 LDO → 3.3 V ±5% ≥200 mA, 12 V ≥5 A fan rail, star GND (no loops, AC isolated), 100 µF + 10 µF + 0.1 µF per IC &lt;5 mm
 - Native USB-C vs UART 115200 multiplexer (60 s latch), CH341 5 V clone warning, back-power BAT54 option
 
 ### 10. Status LED — GPIO8 & Safe-Shutdown Blink
 
-<img src="details/libreroaster_detail_status_led_en.svg" alt="Status LED detail" width="100%">
-*Fritzing:* <a href="details/libreroaster_detail_status_led_fritzing_en.svg">libreroaster_detail_status_led_fritzing_en.svg</a>
-
-**File:** `details/libreroaster_detail_status_led_en.svg` · **Fritzing:** `details/libreroaster_detail_status_led_fritzing_en.svg`
+> ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - GPIO8 → 330 Ω → LED → GND, push-pull, active-high, resistor calc (Vf 2.0 V → 3.9 mA), 1 Hz/4 Hz patterns, phase-locked `led_on(elapsed_ms)`, `Peripherals::steal()` 3×200 ms blink on init failure
 
 ---
 
-*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=5`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-09-07 — added 6 per-section detailed diagrams (resistors, SPI, fan ultra, SSR/heat, power/star-GND, LED) each with schematic + Fritzing variant (12 SVG files in `details/`). All subs and full wiring now also have Fritzing twins.*
+*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=5`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-09-07. The 6 per-section detailed diagrams (resistors, SPI, fan ultra, SSR/heat, power/star-GND, LED) are pending.*
