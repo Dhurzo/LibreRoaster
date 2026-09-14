@@ -209,24 +209,15 @@ impl Application {
         self.verify_initialization()
             .map_err(TaskError::VerificationFailed)?;
 
-        spawner
-            .spawn(uart_reader_task())
-            .map_err(TaskError::SpawnFailed)?;
-        spawner
-            .spawn(usb_reader_task())
-            .map_err(TaskError::SpawnFailed)?;
+        spawner.spawn(uart_reader_task().map_err(TaskError::SpawnFailed)?);
+        spawner.spawn(usb_reader_task().map_err(TaskError::SpawnFailed)?);
+
+        spawner.spawn(super::dual_output_task().map_err(TaskError::SpawnFailed)?);
+
+        spawner.spawn(super::control_loop_task().map_err(TaskError::SpawnFailed)?);
 
         spawner
-            .spawn(super::dual_output_task())
-            .map_err(TaskError::SpawnFailed)?;
-
-        spawner
-            .spawn(super::control_loop_task())
-            .map_err(TaskError::SpawnFailed)?;
-
-        spawner
-            .spawn(crate::safety::regression::regression_task())
-            .map_err(TaskError::SpawnFailed)?;
+            .spawn(crate::safety::regression::regression_task().map_err(TaskError::SpawnFailed)?);
 
         info!("All application tasks started successfully");
         Ok(())

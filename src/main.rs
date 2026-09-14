@@ -245,9 +245,7 @@ fn main() -> ! {
 
     // Start RTOS scheduler (must precede embassy executor)
     let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
-    let sw_int =
-        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     // Create and run embassy executor inside the RTOS main task
     static EXECUTOR: static_cell::StaticCell<esp_rtos::embassy::Executor> =
@@ -259,6 +257,20 @@ fn main() -> ! {
     let app = APPLICATION.init(app);
 
     executor.run(|spawner| {
-        spawner.must_spawn(async_main_task(app, spawner));
+        // embassy-executor 0.10 splits spawning into fallible token
+        // creation + infallible `must_spawn`. Token creation for a
+        // freshly booted executor cannot fail in practice; if it ever
+        // does, halt feeding the watchdog (same sync-halt pattern as
+        // `run_init_or_panic`) instead of running zero tasks.
+        match async_main_task(app, spawner) {
+            Ok(token) => spawner.spawn(token),
+            Err(e) => {
+                log::error!("failed to spawn main task: {:?}", e);
+                loop {
+                    libreroaster::safety::watchdog::feed_hw_watchdog();
+                    esp_hal::rom::ets_delay_us(1_000_000);
+                }
+            }
+        }
     })
 }

@@ -20,7 +20,7 @@ use crate::hardware::static_sync::SyncCell;
 use embassy_time::{with_timeout, Duration as EmbassyDuration};
 
 #[cfg(target_arch = "riscv32")]
-use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 
 /// Errors returned by the USB CDC driver.
 #[derive(Debug, Clone, PartialEq, Eq)]

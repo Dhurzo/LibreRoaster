@@ -345,13 +345,9 @@ impl<'a> ChannelIFace<'a, LowSpeed> for LedcChannelHandle<'a> {
 
     fn is_duty_fade_running(&self) -> bool {
         let entry = self.entry();
-        match self
-            .bus
+        self.bus
             .with_channel_mut(entry, |channel| channel.is_duty_fade_running())
-        {
-            Ok(value) => value,
-            Err(_) => false,
-        }
+            .unwrap_or_default()
     }
 }
 

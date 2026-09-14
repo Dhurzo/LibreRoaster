@@ -24,7 +24,7 @@ pub const USB_CDC_BAUD_RATE: u32 = 115200;
 pub fn initialize_usb_cdc_system(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
 ) -> Result<(), UsbCdcError> {
-    let usb = esp_hal::usb_serial_jtag::UsbSerialJtag::new(usb_device);
+    let usb = esp_hal::usb::usb_serial_jtag::UsbSerialJtag::new(usb_device);
     driver::init_usb_cdc(usb)
 }
 

@@ -52,8 +52,6 @@ impl ArtisanInput {
 /// Spawn the UART reader task on the Embassy executor (device only).
 #[cfg(target_arch = "riscv32")]
 pub fn start_uart_tasks(spawner: &embassy_executor::Spawner) -> Result<(), InputError> {
-    spawner
-        .spawn(uart_reader_task())
-        .map_err(|_| InputError::UartError)?;
+    spawner.spawn(uart_reader_task().map_err(|_| InputError::UartError)?);
     Ok(())
 }
