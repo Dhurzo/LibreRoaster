@@ -115,7 +115,7 @@ jobs:
             --lcov \
             --output-path target/coverage/lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/coverage/lcov.info
