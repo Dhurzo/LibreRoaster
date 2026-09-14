@@ -59,10 +59,13 @@ fn main() -> ! {
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
     let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    // Production SSR topology (src/hardware/init.rs:122-128): 14-bit, 5 Hz
+    // zero-cross. (An 8-bit/1 Hz combo is unachievable from APB and the
+    // driver rejects it with timer_config_error.)
     match timer0.configure(timer::config::Config {
-        duty: timer::config::Duty::Duty8Bit,
+        duty: timer::config::Duty::Duty14Bit,
         clock_source: timer::LSClockSource::APBClk,
-        frequency: Rate::from_hz(1),
+        frequency: Rate::from_hz(5),
     }) {
         Ok(_) => {}
         Err(_) => {

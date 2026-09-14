@@ -126,9 +126,14 @@ fn run_init_or_panic<T>(result: Result<T, InitError>) -> T {
             // builder.build()). Feed every iteration so the operator can
             // read the error blink pattern instead of the ~2.2 s watchdog
             // resetting the chip.
+            // Feed in ≤100 ms chunks: a single ROM `ets_delay_us` spin
+            // ≥ ~250 ms never returns on ESP32-C3, which would starve the
+            // watchdog and turn this observable halt into a reset loop.
             loop {
-                libreroaster::safety::watchdog::feed_hw_watchdog();
-                esp_hal::rom::ets_delay_us(1_000_000);
+                for _ in 0..10 {
+                    libreroaster::safety::watchdog::feed_hw_watchdog();
+                    esp_hal::rom::ets_delay_us(100_000);
+                }
             }
         }
     }
@@ -234,10 +239,13 @@ fn main() -> ! {
                 log::error!("AppBuilder failed: {:?}", e);
                 // Keep the RWDT fed while we halt so the error stays
                 // observable instead of the watchdog resetting the system
-                // every ~2.2 s.
+                // every ~2.2 s. Fed in ≤100 ms chunks: a single ROM
+                // `ets_delay_us` spin ≥ ~250 ms never returns on ESP32-C3.
                 loop {
-                    libreroaster::safety::watchdog::feed_hw_watchdog();
-                    esp_hal::rom::ets_delay_us(1_000_000);
+                    for _ in 0..10 {
+                        libreroaster::safety::watchdog::feed_hw_watchdog();
+                        esp_hal::rom::ets_delay_us(100_000);
+                    }
                 }
             }
         }
@@ -266,9 +274,13 @@ fn main() -> ! {
             Ok(token) => spawner.spawn(token),
             Err(e) => {
                 log::error!("failed to spawn main task: {:?}", e);
+                // Halt feeding the watchdog in ≤100 ms chunks (a single
+                // ROM `ets_delay_us` spin ≥ ~250 ms never returns).
                 loop {
-                    libreroaster::safety::watchdog::feed_hw_watchdog();
-                    esp_hal::rom::ets_delay_us(1_000_000);
+                    for _ in 0..10 {
+                        libreroaster::safety::watchdog::feed_hw_watchdog();
+                        esp_hal::rom::ets_delay_us(100_000);
+                    }
                 }
             }
         }
