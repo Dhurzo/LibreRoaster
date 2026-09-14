@@ -1114,7 +1114,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "esp-rtos",
- "esp32c3 0.31.0",
+ "esp32c3 0.32.2",
  "futures",
  "heapless 0.9.3",
  "libm",
