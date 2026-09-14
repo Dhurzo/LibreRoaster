@@ -34,6 +34,8 @@ use esp32c3;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
+esp_bootloader_esp_idf::esp_app_desc!();
+#[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig, Pull};
 #[cfg(target_arch = "riscv32")]
 use esp_hal::ledc::channel::{self, ChannelIFace};
