@@ -167,6 +167,38 @@ The simulated curve module includes 18 unit tests covering edge cases (empty cur
 cargo test --target x86_64-unknown-linux-gnu --features test simulated
 ```
 
+## Hardware validation scripts (no sensors needed)
+
+Two scripts in `scripts/` exercise the simulated curve on a real ESP32-C3
+over the Artisan serial protocol. Both follow the repo HIL line format
+(`TEST:<name>:<PASS|FAIL>:<detail>`, `TESTSUITE:COMPLETE:x/y:<status>`)
+and exit 0 only when every check passes. Last full hardware pass:
+2026-09-14 (virtual roast 15/15, soak 12/12).
+
+| Script | What it proves on hardware | Runtime |
+|---|---|---|
+| `scripts/hw_virtual_roast.py` | Full roast lifecycle (idle → preheat → roast → stop → recovered idle); PROFILE/FANPROFILE interpolation follows roast time (SV/fan vs expected); STOP operator path (heater cut, fan 100 %, latch) + `PID;OFF` recovery | ~2 min |
+| `scripts/hw_soak.py` | 1 Hz `#` stream integrity over the whole default curve: format, cadence, monotonic timestamps (no resets), no glitches, full BT span, no `safety_fault`, device responsive afterwards | ~12 min (660 s capture) |
+
+```bash
+python3 scripts/hw_virtual_roast.py --port /dev/ttyUSB0
+python3 scripts/hw_soak.py --port /dev/ttyUSB0 --duration 660
+```
+
+Two things the scripts encode that are easy to get wrong by hand:
+
+- **Session keepalive.** The firmware drops the active transport after
+  60 s without commands (`CommandMultiplexer::IDLE_TIMEOUT_SECS`
+  anti-hijack failover), which silently stops telemetry routing even
+  with `STREAM;ON`. Like Artisan (which polls `READ` continuously),
+  `hw_soak.py` sends `STATUS` every 25 s to hold the session.
+- **Single UART cable.** See `docs/DEVELOPMENT.md` §9: with the native-USB
+  cable plugged, `esp-println`'s `auto` printer may route lines to the
+  unread USB side once the host enumerates it. Capture HIL output on
+  UART0 with native USB unplugged.
+
+Soak raw captures are saved under `logs/` (git-ignored) for forensics.
+
 ## Related documentation
 
 - `docs/ARCHITECTURE.md` — Runtime architecture and task topology
