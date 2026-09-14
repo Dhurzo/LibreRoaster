@@ -1,0 +1,29 @@
+{
+  "run_id": "GPIO-01-20260810T205308Z",
+  "scenario_id": "GPIO-01",
+  "manifest_entry": {
+    "id": "GPIO-01",
+    "category": "GPIO",
+    "tier": 1,
+    "description": "Heat detection pin (GPIO1) reads HIGH when no load (internal pull-up active)",
+    "command_sequence": "OT1 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "heater",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/GPIO-01.csv",
+    "metadata": {
+      "expected_hardware_status_not_error": true,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 362.0,
+  "run_directory": "tests/hardware/runs/GPIO-01/20260810T205308Z",
+  "started_at": "2026-08-10T20:53:08.941319",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

@@ -1,0 +1,30 @@
+{
+  "run_id": "FAN-01-20260810T205148Z",
+  "scenario_id": "FAN-01",
+  "manifest_entry": {
+    "id": "FAN-01",
+    "category": "Fan",
+    "tier": 1,
+    "description": "IO3 0 sets fan to 0%, STATUS confirms fan=0",
+    "command_sequence": "IO3 0; STATUS; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "fan",
+      "heater",
+      "guard_timeouts",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/FAN-01.csv",
+    "metadata": {
+      "expected_fan": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 277.0,
+  "run_directory": "tests/hardware/runs/FAN-01/20260810T205148Z",
+  "started_at": "2026-08-10T20:51:48.118272",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

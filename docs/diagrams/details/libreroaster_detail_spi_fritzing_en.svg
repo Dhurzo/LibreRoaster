@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="950" viewBox="0 0 1200 950" font-family="Helvetica,Arial,sans-serif">
+<defs><style>
+.box{stroke:#333;stroke-width:1.5;rx:8;} .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+.t{fill:#111;font-size:14px;font-weight:bold;} .tw{fill:#fff;font-size:13px;font-weight:bold;}
+.p{fill:#111;font-size:11px;} .pw{fill:#fff;font-size:11px;} .n{fill:#444;font-size:10.5px;}
+.w{fill:#b00;font-size:11px;font-weight:bold;} .wire{stroke-width:2.5;fill:none;}
+</style></defs>
+  <rect x="0" y="0" width="1200" height="6" fill="#eab308"/>
+  <text x="1180" y="20" text-anchor="end" font-size="9" fill="#92400e" font-weight="bold">FRITZING STYLE — breadboard view — same circuit &amp; values as companion _en.svg — alternate Fritzing breadboard visual</text>
+<defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e3d9c3" stroke-width="0.5" opacity="0.6"/></pattern></defs>
+<rect width="1200" height="950" fill="#f6f1e6"/>
+<text x="600" y="28" text-anchor="middle" class="t" font-size="20">LibreRoaster — Detail (Fritzing): SPI Bus Sharing (2× MAX31856)</text>
+<text x="600" y="48" text-anchor="middle" class="n">SPI2 (FSPI) 1 MHz Mode 1 (CPOL=0, CPHA=1) · GPIO6 SCLK / GPIO7 MOSI / GPIO5 MISO via GPIO matrix · CS GPIO4 BT / GPIO3 ET · Verified init.rs .with_sck(6).with_mosi(7).with_miso(5)</text>
+
+<!-- Timing diagram box -->
+<rect x="40" y="70" width="1120" height="150" rx="10" fill="#fff" stroke="#0d9488" stroke-width="2"/>
+<text x="60" y="92" class="t">Timing &amp; Mode — Why 1 MHz Mode1 + 210 ms Wait Dominate the Loop</text>
+<!-- SCLK waveform -->
+<text x="60" y="116" class="n" font-weight="bold">SCLK (GPIO6)</text>
+<polyline points="140,130 160,130 160,110 180,110 180,130 200,130 200,110 220,110 220,130 240,130 240,110 260,110 260,130 280,130" fill="none" stroke="#2196F3" stroke-width="2.5"/>
+<text x="300" y="124" class="n">CPOL=0 idle LOW · CPHA=1 sample on falling edge · 1 MHz period 1 µs</text>
+<text x="60" y="146" class="n">MOSI (GPIO7) stable on rising, sampled on falling — MAX31856 SDI follows this.</text>
+<text x="60" y="166" class="n">MISO (GPIO5) SD0 → sampled by ESP on falling. Do NOT cross MOSI↔MISO.</text>
+<rect x="60" y="180" width="1100" height="28" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.2"/>
+<text x="70" y="198" class="n">Real tick = CONTROL_LOOP_PERIOD_MS 100ms + MAX31856_CONVERSION_TIME_MS 210ms + overhead ≈ 310–330 ms · Loop waits for one-shot conversion (one_shot 0x51) before reading.</text>
+
+<!-- Center wiring matrix -->
+<rect x="40" y="240" width="700" height="380" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="2"/>
+<text x="390" y="262" text-anchor="middle" class="t">Shared Bus — Physical Wiring</text>
+
+<!-- ESP -->
+<rect x="60" y="280" width="160" height="220" rx="8" class="chip"/>
+<text x="140" y="304" text-anchor="middle" class="tw">ESP32-C3 SPI2</text>
+<circle cx="60" cy="330" r="4" fill="#2196F3"/><text x="70" y="334" class="pw">GPIO6 SCLK</text>
+<circle cx="60" cy="360" r="4" fill="#4CAF50"/><text x="70" y="364" class="pw">GPIO7 MOSI</text>
+<circle cx="60" cy="390" r="4" fill="#FF9800"/><text x="70" y="394" class="pw">GPIO5 MISO*</text>
+<circle cx="60" cy="420" r="4" fill="#9C27B0"/><text x="70" y="424" class="pw">GPIO4 CS_BT</text>
+<circle cx="60" cy="450" r="4" fill="#7B1FA2"/><text x="70" y="454" class="pw">GPIO3 CS_ET</text>
+<circle cx="60" cy="480" r="4" fill="#E53935"/><text x="70" y="484" class="pw">3V3 / GND</text>
+<text x="140" y="498" text-anchor="middle" class="pw" font-size="9">* via GPIO matrix (avoid GPIO2 FSPIQ strap)</text>
+
+<!-- Rails -->
+<line x1="280" y1="330" x2="600" y2="330" class="wire" stroke="#2196F3"/> <!-- SCLK rail vertical at 420 -->
+<line x1="420" y1="330" x2="420" y2="560" fill="none" stroke="#2196F3" stroke-width="3.2"/>
+<line x1="280" y1="360" x2="600" y2="360" class="wire" stroke="#4CAF50"/>
+<line x1="440" y1="360" x2="440" y2="570" fill="none" stroke="#4CAF50" stroke-width="3.2"/>
+<line x1="280" y1="390" x2="600" y2="390" class="wire" stroke="#FF9800"/>
+<line x1="460" y1="390" x2="460" y2="580" fill="none" stroke="#FF9800" stroke-width="3.2"/>
+<circle cx="420" cy="330" r="3.5" fill="#2196F3"/><circle cx="440" cy="360" r="3.5" fill="#4CAF50"/><circle cx="460" cy="390" r="3.5" fill="#FF9800"/>
+<text x="400" y="316" class="n" font-size="9">SCLK rail</text><text x="440" y="316" class="n" font-size="9">MOSI rail</text><text x="460" y="316" class="n" font-size="9">MISO rail</text>
+
+<!-- CS separate -->
+<line x1="220" y1="420" x2="340" y2="420" class="wire" stroke="#9C27B0"/>
+<line x1="340" y1="420" x2="340" y2="520" class="wire" stroke="#9C27B0"/>
+<line x1="220" y1="450" x2="320" y2="450" class="wire" stroke="#7B1FA2"/>
+<line x1="320" y1="450" x2="320" y2="500" class="wire" stroke="#7B1FA2"/>
+<text x="350" y="414" class="n" font-size="9">CS_BT only to BT</text>
+<text x="330" y="444" class="n" font-size="9">CS_ET only to ET</text>
+
+<!-- 3V3/GND shared -->
+<line x1="220" y1="478" x2="500" y2="478" class="wire" stroke="#E53935"/>
+<line x1="500" y1="478" x2="500" y2="600" class="wire" stroke="#E53935"/>
+<line x1="220" y1="488" x2="480" y2="488" class="wire" stroke="#999"/>
+<line x1="480" y1="488" x2="480" y2="610" class="wire" stroke="#999"/>
+
+<!-- MAX BT -->
+<rect x="560" y="330" width="160" height="140" rx="6" fill="#e8f0ff" stroke="#333" stroke-width="1.5"/>
+<text x="640" y="352" text-anchor="middle" class="t" font-size="11">MAX31856 #2 BT</text>
+<text x="570" y="372" class="n">SCK ← SCLK rail</text>
+<text x="570" y="392" class="n">SDI ← MOSI rail</text>
+<text x="570" y="412" class="n">SDO → MISO rail</text>
+<text x="570" y="432" class="n">CS ← GPIO4 (HIGH default)</text>
+<text x="570" y="452" class="n">VIN 3.3V + 0.1µF to GND</text>
+
+<!-- MAX ET -->
+<rect x="560" y="480" width="160" height="140" rx="6" fill="#e8f0ff" stroke="#333" stroke-width="1.5"/>
+<text x="640" y="502" text-anchor="middle" class="t" font-size="11">MAX31856 #1 ET</text>
+<text x="570" y="522" class="n">SCK ← SCLK rail</text>
+<text x="570" y="542" class="n">SDI ← MOSI rail</text>
+<text x="570" y="562" class="n">SDO → MISO rail</text>
+<text x="570" y="582" class="n">CS ← GPIO3</text>
+
+<!-- Thermocouple detail right -->
+<rect x="780" y="240" width="380" height="380" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+<text x="970" y="262" text-anchor="middle" class="t">Thermocouple Wiring Detail</text>
+<rect x="800" y="280" width="340" height="80" rx="6" fill="#fff" stroke="#333" stroke-width="1.4"/>
+<text x="970" y="300" text-anchor="middle" class="p">Type-K Probe</text>
+<text x="810" y="320" class="n">T+ <tspan fill="#d97706" font-weight="bold">YELLOW</tspan> → MAX T+ (do not reverse)</text>
+<text x="810" y="338" class="n">T− <tspan fill="#dc2626" font-weight="bold">RED</tspan> → MAX T− · Reverse = inverted negative reading</text>
+<text x="810" y="356" class="n">Shield → GND at ESP end only (no loop)</text>
+
+<rect x="800" y="370" width="340" height="100" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+<text x="810" y="390" class="t" font-size="11">Per-Module Decoupling &amp; Pins</text>
+<text x="810" y="408" class="n">VIN ── 0.1µF ceramic (0402) ── GND &lt;5mm from IC</text>
+<text x="810" y="426" class="n">FAULT / DRDY → <tspan font-weight="bold">NOT CONNECTED</tspan> (firmware polls, 210ms wait)</text>
+<text x="810" y="444" class="n">VCC 3.3V ±5%  (max 3.6V). GND common, thick.</text>
+<text x="810" y="462" class="n">CS defaults HIGH via Output::new(High) — verify with scope</text>
+
+<rect x="800" y="480" width="340" height="120" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.2"/>
+<text x="810" y="500" class="t" font-size="11">Common Pitfalls</text>
+<text x="810" y="518" class="w" font-size="10">✘ Both CS LOW simultaneously → MISO contention → garbage temp</text>
+<text x="810" y="536" class="n">Use SpiDeviceWithCs (critical_section::Mutex) — never toggle CS manually</text>
+<text x="810" y="554" class="w" font-size="10">✘ Swapped BT↔ET (electrically valid, control misbehaves)</text>
+<text x="810" y="572" class="n">BT must be in bean mass, ET in exhaust airflow</text>
+<text x="810" y="590" class="n">Verify with: <tspan font-family="monospace">hil_tc</tspan> — prints raw temps + fault register</text>
+
+<!-- Code snippet box -->
+<rect x="40" y="640" width="700" height="140" rx="8" fill="#1f2937" stroke="#0f172a" stroke-width="1.5"/>
+<text x="60" y="664" font-family="monospace" font-size="11" fill="#e2e8f0">Spi::new(spi2, Config::default().with_frequency(Rate::from_khz(1000)).with_mode(Mode::_1))</text>
+<text x="60" y="684" font-family="monospace" font-size="11" fill="#93c5fd">    .with_sck(gpio6).with_mosi(gpio7).with_miso(gpio5) // MISO via GPIO matrix, not GPIO2</text>
+<text x="60" y="704" font-family="monospace" font-size="11" fill="#86efac">let bt_cs = Output::new(gpio4, High); let et_cs = Output::new(gpio3, High);</text>
+<text x="60" y="724" font-family="monospace" font-size="11" fill="#fca5a5">Max31856::new_tolerant() → degrades single dead channel (BT-only/ET-only boot ok)</text>
+<text x="60" y="744" class="n" fill="#94a3b8">If both dead → boot_policy aborts with thermocouples init error</text>
+<text x="60" y="764" class="n" fill="#cbd5e1">Ref: src/hardware/init.rs:240-318 + src/hardware/max31856.rs</text>
+
+<!-- Footer -->
+<rect x="40" y="800" width="1120" height="60" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="60" y="822" class="t" font-size="12">Test &amp; Scope Checklist</text>
+<text x="60" y="842" class="n">Scope SCLK: 1 MHz bursts only when CS LOW. Both CS never LOW together. MISO via GPIO5 (not GPIO2). 3.3V rail stable. Run </text>
+<text x="60" y="860" class="n" font-family="monospace">cargo run --release --example hil_tc</text>
+
+<text x="600" y="940" text-anchor="middle" class="n" font-size="10">LibreRoaster · SPI Bus Detail · CC BY-SA · printable 1200×950 · v0.1</text>
+</svg>

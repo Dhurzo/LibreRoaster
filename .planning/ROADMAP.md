@@ -1,0 +1,120 @@
+# Roadmap: LibreRoaster v5.4
+
+## Milestones
+
+- ✅ **v5.2 Architecture Hardening & Validation** - Phases 95-103 (shipped 2026-03-20)
+- 📋 **v5.3 Deep Bug Analysis & Defect Report** - Phases 104-109 (deferred)
+- ✅ **v5.4 Architecture Decomposition & Quality Fixes** - Phases 110-115 (completed 2026-04-22)
+
+## Phases
+
+### Phase 110: Quality Quick Wins (Clippy + Test Fix)
+**Goal**: Fix all 24 pre-existing clippy warnings and the broken ssr_scheduler test.
+**Depends on**: Nothing (first phase, fully independent)
+**Requirements**: CLP-01, CLP-02, TST-01
+**Success Criteria**:
+  1. `cargo clippy --release --target riscv32imc-unknown-none-elf --features embedded -- -D warnings` exits 0.
+  2. `cargo clippy --target x86_64-unknown-linux-gnu --features "std,test" -- -D warnings` exits 0.
+  3. `cargo test --target x86_64-unknown-linux-gnu --features "std,test" --test ssr_scheduler` passes all 3 tests.
+  4. Full test suite still passes.
+**Plans**: 3 plans
+
+Plans:
+- [x] 110-01: Fix clippy issues in app_builder.rs (redundant closures, new_without_default, unwrap_or_default) — 13 lints
+- [x] 110-02: Fix clippy issues in hardware/ files (ledc_bus.rs, ssr.rs, fan.rs, sensors/conversion.rs, usb_cdc/driver.rs) — 11 lints
+- [x] 110-03: Fix ssr_scheduler test (guard_rejects_commands_while_busy — wrong time expectation)
+
+### Phase 111: RoasterControl Decomposition — Controller Extraction
+**Goal**: Extract focused controller types from RoasterControl while preserving all behavior.
+**Depends on**: Phase 110
+**Requirements**: SRP-01, SRP-02, SRP-03
+**Success Criteria**:
+  1. New controller types exist: `SensorController`, `ActuatorController`, `SafetyController`, `CommandDispatcher`.
+  2. Each controller owns a bounded set of fields and methods from RoasterControl.
+  3. The handler chain pattern is preserved for command dispatch.
+  4. RoasterControl still works as a facade that delegates to controllers (backward-compatible).
+  5. All existing tests pass without modification.
+**Plans**: 3 plans
+
+> Historical note: the v5.4 planning documents named these `TemperatureController`/`HeaterController`/`FanController`; the implementation landed as `SensorController` / `ActuatorController` (heater + fan together) / `SafetyController` / `CommandDispatcher`. The names below reflect what was actually shipped.
+
+Plans:
+- [x] 111-01: Extract SensorController (read_sensors, update_temperatures, is_temperature_valid, last_sensor_sample)
+- [x] 111-02: Extract ActuatorController (heater + fan: apply_guarded_heater, update_guard_busy_ms, capture_ssr_monitor_metrics, busy_window_ms, last_desired_heater_output, fan speed)
+- [x] 111-03: Extract CommandDispatcher (command forwarding) + SafetyController (emergency_shutdown, mark_overtemp_regression_active, apply_safety_outcome)
+
+### Phase 112: RoasterControl Integration — Call Site Migration
+**Goal**: Update all callers to use the new controller interfaces and remove the RoasterControl facade.
+**Depends on**: Phase 111
+**Requirements**: SRP-04, SRP-05
+**Success Criteria**:
+  1. All callers in tasks.rs, regression.rs, and tests use controller references directly.
+  2. RoasterControl facade is removed or reduced to a thin composition root.
+  3. Artisan protocol responses are byte-identical (verified by existing tests).
+  4. Full test suite passes.
+**Plans**: 2 plans
+
+Plans:
+- [x] 112-01: Add controller accessor methods (sensor/actuator/safety/dispatch × ref/mut)
+- [x] 112-02: Preserve backward-compatible facade for all existing callers
+
+### Phase 113: ServiceContainer — Constructor Injection
+**Goal**: Replace ServiceContainer singleton with constructor-injected dependencies.
+**Depends on**: Phase 112
+**Requirements**: DIP-01, DIP-02
+**Success Criteria**:
+  1. `static_cell` singleton removed from ServiceContainer.
+  2. Dependencies flow through constructors — no upward static access.
+  3. ServiceContainer becomes a plain struct with owned fields.
+  4. All tests pass.
+**Plans**: 2 plans
+
+Plans:
+- [x] 113-01: Add init_roaster() and init_artisan_input() DI methods to ServiceContainer
+- [x] 113-02: Add reset_for_test() for test isolation; keep pub fields for backward compat
+
+### Phase 114: ServiceContainer — Call Site Migration
+**Goal**: Update all Embassy tasks and call sites to receive injected dependencies.
+**Depends on**: Phase 113
+**Requirements**: DIP-03, DIP-04
+**Success Criteria**:
+  1. Embassy task signatures accept dependencies as parameters.
+  2. All 6+ ServiceContainer:: call sites use injected references.
+  3. No remaining `ServiceContainer::get_*()` static access.
+  4. All tests pass.
+**Plans**: 2 plans
+
+Plans:
+- [x] 114-01: Update app_builder.rs to use init methods instead of direct field access
+- [x] 114-02: Add init_test_service_container() helper; update integration tests
+
+### Phase 115: Full Verification & Clean Build
+**Goal**: Verify the entire milestone passes all quality gates on both targets.
+**Depends on**: Phase 114
+**Requirements**: VER-01, VER-02, VER-03, VER-04
+**Success Criteria**:
+  1. ESP32 release build: zero errors, zero warnings.
+  2. All host tests pass (631 as of 2026-08-04).
+  3. Host clippy: clean.
+  4. ESP32 clippy: clean.
+**Plans**: 1 plan
+
+Plans:
+- [x] 115-01: Full verification — ESP32 build clean, 631 tests pass (2026-08-04), clippy clean on both targets
+
+## Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 110. Quality Quick Wins | 3/3 | ✅ Done | 2026-04-22 |
+| 111. Controller Extraction | 3/3 | ✅ Done | 2026-04-22 |
+| 112. Controller Accessors | 2/2 | ✅ Done | 2026-04-22 |
+| 113. ServiceContainer DI | 2/2 | ✅ Done | 2026-04-22 |
+| 114. Test Helpers | 2/2 | ✅ Done | 2026-04-22 |
+| 115. Full Verification | 1/1 | ✅ Done | 2026-04-22 |
+
+---
+
+*Roadmap created: 2026-04-22*
+*For milestone: v5.4 Architecture Decomposition & Quality Fixes*
+*Last updated: 2026-08-04 (controller names and test counts aligned with the shipped implementation)*

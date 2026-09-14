@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (host)
+        run: |
+          cargo clippy --locked --all-targets -- \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic
+
+  embedded-clippy:
+    name: Clippy (ESP32-C3 / riscv32imc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy on embedded target
+        # Block the build if the embedded target regresses (e.g. deny(panic)
+        # fires, dead-code stubs that don't compile, etc). This previously
+        # slipped through CI because clippy was only run on the host target.
+        run: |
+          cargo clippy --release --locked --target riscv32imc-unknown-none-elf \
+            --features embedded -- \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Run host tests
+        run: cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
+      # Bug C4b (2026-07-25): doctests for the doc-comment examples live in
+      # `src/common/`. Without an explicit step, a copy-pasted snippet that
+      # no longer compiles would slip through CI silently.
+      - name: Run doctests
+        run: cargo test --target x86_64-unknown-linux-gnu --features test --doc
+
+  regression:
+    name: Regression Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Run regression tests
+        run: cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview, rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate code coverage
+        run: |
+          mkdir -p target/coverage
+          # Audit A-TC4 (2026-08-12): include regression + simulated-sensors
+          # so the conversion math (tests/sensor_conversion.rs), the
+          # regression status suite and the L3 simulated-sensors pipeline are
+          # instrumented — previously they showed as uncovered in Codecov.
+          cargo llvm-cov --target x86_64-unknown-linux-gnu \
+            --features "test,regression,simulated-sensors" \
+            --no-fail-fast \
+            --lcov \
+            --output-path target/coverage/lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
+  embedded-build:
+    name: Embedded Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Build for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded
+      # Bug V2-6: the `regression` feature has been broken for the embedded
+      # target across THREE rounds of "fixes" because nothing in CI compiled
+      # `--features embedded,regression`. It pulls host-only crates (or, after
+      # the V2-6 fix, depends on `simulated-sensors`) into the device build.
+      # This 6-line step surfaces a class of breakage that previously escaped
+      # every green CI run.
+      - name: Build regression feature for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,regression
+      # Bug C4b (2026-07-25): build the `embedded,instrumentation` cell that
+      # nobody compiled; without it, dead-code from the telemetry path that
+      # is gated on `instrumentation` accumulates and a producer/consumer can
+      # silently desynchronise.
+      - name: Build with instrumentation for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,instrumentation

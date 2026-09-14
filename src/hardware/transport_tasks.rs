@@ -1,0 +1,768 @@
+//! Generic transport tasks for UART and USB CDC.
+//!
+//! This module provides a unified implementation of the receive/parse/enqueue
+//! logic that was previously duplicated between `uart/tasks.rs` and
+//! `usb_cdc/tasks.rs`. Each transport implements the `RxSource` trait, and
+//! the generic functions handle the rest. Transport-specific
+//! modules provide non-generic `#[embassy_executor::task]` wrappers.
+//!
+//! F5.3: Command path simplified — reader task pushes parsed commands directly
+//! to the artisan channel via `try_send` (with multiplexer gating). The
+//! intermediate `command_queue` and `run_queue_processor_task` have been
+//! removed (was: 2 queues + 3 tasks per transport → 1 queue + 1 task).
+
+use crate::application::queue_metrics::record_queue_depth;
+use crate::application::service_container::ServiceContainer;
+use crate::hardware::error_counters::try_send_output;
+use crate::input::multiplexer::CommChannel;
+use crate::input::parser::ParseError;
+use crate::logging::traceability::{trace_command_enqueue, TracedCommand, TRACE_EVENT_MAX_LEN};
+use core::cell::RefCell;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_time::{Duration, Timer};
+use heapless::{Deque, String, Vec};
+use log::debug;
+use portable_atomic::{AtomicU32, Ordering};
+
+/// Size of the event queue for buffering incoming bytes before parsing.
+pub const EVENT_QUEUE_SIZE: usize = 256;
+
+/// Trait for transport receive half.
+#[allow(async_fn_in_trait)]
+pub trait RxSource {
+    type Error: core::fmt::Debug;
+
+    /// Read bytes into the provided buffer.
+    async fn read_bytes(buffer: &mut [u8]) -> Result<usize, Self::Error>;
+}
+
+/// Configuration for a transport task set.
+#[derive(Clone, Copy)]
+pub struct TransportConfig {
+    /// Unique name for this transport (used in logs).
+    pub name: &'static str,
+    /// Channel identifier for multiplexer routing.
+    pub channel: CommChannel,
+    /// Initial delay before reader task starts polling (ms).
+    pub reader_start_delay_ms: u64,
+    /// Initial delay before writer task starts (ms).
+    pub writer_start_delay_ms: u64,
+    /// Poll interval for reader task (ms).
+    pub reader_poll_interval_ms: u64,
+}
+
+impl Default for TransportConfig {
+    fn default() -> Self {
+        Self {
+            name: "transport",
+            channel: CommChannel::None,
+            reader_start_delay_ms: 10,
+            writer_start_delay_ms: 20,
+            reader_poll_interval_ms: 10,
+        }
+    }
+}
+
+/// Internal state for a transport's receive path.
+pub struct TransportRxState {
+    pub event_queue:
+        BlockingMutex<CriticalSectionRawMutex, RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>>,
+}
+
+impl TransportRxState {
+    /// Create an uninitialized transport RX state. Call `init` before use.
+    pub const fn new() -> Self {
+        Self {
+            event_queue: BlockingMutex::new(RefCell::new(None)),
+        }
+    }
+
+    /// Allocate the backing event queue (called once per transport at task start).
+    pub fn init(&self) {
+        self.event_queue
+            .lock(|cell| *cell.borrow_mut() = Some(Deque::new()));
+    }
+}
+
+impl Default for TransportRxState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Push received bytes to the event queue.
+///
+/// If the queue is full when a new byte arrives, the entire pending partial
+/// command is flushed rather than dropping just the oldest byte. Dropping one
+/// byte from the middle of an in-progress command would corrupt it silently
+/// (e.g. "SETTAR" losing its leading 'S' becomes "ETTAR"), producing nonsense
+/// when the terminator finally arrives. Flushing the whole queue guarantees
+/// the host sees a clean error (`ERR buffer_overflow`) on the next terminator
+/// instead of a corrupted command. The error itself is emitted by
+/// `process_event_queue` when it detects the empty line caused by the flush.
+pub(crate) fn push_to_event_queue(
+    event_queue: &BlockingMutex<
+        CriticalSectionRawMutex,
+        RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
+    >,
+    data: &[u8],
+    overflow: &mut EventQueueOverflow,
+) {
+    event_queue.lock(|cell| {
+        if let Some(queue) = cell.borrow_mut().as_mut() {
+            for &byte in data {
+                // While discarding, consume the bytes of the corrupted line
+                // WITHOUT enqueueing them. When its terminator arrives, push
+                // it so `process_event_queue`'s terminator-only branch emits
+                // the `buffer_overflow` ERR and consumes the latch — a
+                // subsequent clean command is then accepted instead of being
+                // wrongly attributed to the overflow and dropped.
+                if overflow.discarding {
+                    if byte == 0x0D || byte == 0x0A {
+                        overflow.discarding = false;
+                        let _ = queue.push_back(byte);
+                    }
+                    continue;
+                }
+                if queue.len() >= EVENT_QUEUE_SIZE {
+                    // Drop the entire pending partial command.
+                    queue.clear();
+                    overflow.triggered = true;
+                    if byte == 0x0D || byte == 0x0A {
+                        // The overflow byte closes a line: keep it so the
+                        // terminator-only extraction reports the overflow.
+                        let _ = queue.push_back(byte);
+                    } else {
+                        // Mid-line overflow: discard until the terminator.
+                        overflow.discarding = true;
+                    }
+                    continue;
+                }
+                let _ = queue.push_back(byte);
+            }
+        }
+    });
+}
+
+/// Tracks whether the event queue has overflowed since the last line was
+/// extracted. Used by `process_event_queue` to emit an `ERR buffer_overflow`
+/// instead of silently corrupting the next command.
+#[derive(Default)]
+pub struct EventQueueOverflow {
+    pub triggered: bool,
+    /// While true, `push_to_event_queue` consumes incoming bytes without
+    /// enqueueing them until the corrupted line's terminator arrives, so the
+    /// first clean command after a flush is NOT discarded along with the garbage.
+    pub discarding: bool,
+}
+
+/// Decide whether a read error on `channel` should be counted toward the
+/// comms-error emergency threshold. ONLY the multiplexer's ACTIVE channel
+/// counts: 10 consecutive read failures on a transport that is not in use
+/// (e.g. a broken UART line while Artisan runs over USB) must not abort the
+/// session with `emergency_shutdown`. Errors on an inactive channel are still
+/// logged for diagnostics.
+pub fn should_count_read_error(active: CommChannel, channel: CommChannel) -> bool {
+    active == channel
+}
+
+/// Check if the event queue has a line terminator (CR or LF).
+pub(crate) fn event_queue_has_terminator(
+    event_queue: &BlockingMutex<
+        CriticalSectionRawMutex,
+        RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
+    >,
+) -> bool {
+    event_queue.lock(|cell| {
+        if let Some(queue) = cell.borrow().as_ref() {
+            queue.iter().any(|&b| b == 0x0D || b == 0x0A)
+        } else {
+            false
+        }
+    })
+}
+
+/// Extract one complete line from the event queue.
+pub(crate) fn extract_line_from_event_queue(
+    event_queue: &BlockingMutex<
+        CriticalSectionRawMutex,
+        RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
+    >,
+) -> Option<Vec<u8, 256>> {
+    let mut command_data = Vec::<u8, 256>::new();
+    let mut extracted = false;
+
+    event_queue.lock(|cell| {
+        if let Some(queue) = cell.borrow_mut().as_mut() {
+            while let Some(byte) = queue.pop_front() {
+                if byte == 0x0D || byte == 0x0A {
+                    break;
+                }
+                let _ = command_data.push(byte);
+            }
+            extracted = true;
+        }
+    });
+
+    if extracted && !command_data.is_empty() {
+        Some(command_data)
+    } else {
+        None
+    }
+}
+
+/// Coalesce `ERR command_ignored_inactive_channel` to at most one per second.
+/// Without this, a second connected Artisan or a noisy UART stream polling
+/// `READ` floods the ACTIVE host's line with foreign ERR lines (the output
+/// channel is only 16 deep and drained 4 per 5 ms, so the flood also crowds
+/// out real telemetry/STATUS data). One notification per second keeps the
+/// operator informed without the flood.
+static LAST_INACTIVE_ERR_MS: AtomicU32 = AtomicU32::new(0);
+const INACTIVE_ERR_COALESCE_MS: u32 = 1000;
+
+fn emit_inactive_channel_err_if_due() {
+    let now = embassy_time::Instant::now().as_millis() as u32;
+    let last = LAST_INACTIVE_ERR_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < INACTIVE_ERR_COALESCE_MS {
+        return;
+    }
+    LAST_INACTIVE_ERR_MS.store(now, Ordering::Relaxed);
+    let output_channel = ServiceContainer::get_output_channel();
+    let mut msg = String::<TRACE_EVENT_MAX_LEN>::new();
+    let _ = msg.push_str("ERR command_ignored_inactive_channel");
+    try_send_output(output_channel, msg);
+}
+
+/// Handle a parsed command: check multiplexer, push to artisan channel via try_send.
+async fn handle_parsed_command(
+    cmd: crate::config::ArtisanCommand,
+    channel: CommChannel,
+    config: &TransportConfig,
+) {
+    let traced = TracedCommand::new(cmd, channel);
+    let mut should_process = true;
+    let mut sent = false;
+    let mut channel_full = false;
+
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            should_process = mux.should_process_command(channel);
+        }
+
+        if should_process {
+            let artisan_channel = ServiceContainer::get_artisan_channel();
+            match artisan_channel.try_send(traced) {
+                Ok(()) => {
+                    trace_command_enqueue(&traced, artisan_channel.len(), false);
+                    sent = true;
+                }
+                Err(_) => {
+                    debug!("{} artisan channel full, command dropped", config.name);
+                    channel_full = true;
+                }
+            }
+        }
+    });
+
+    // Record the queue depth on EVERY dispatch decision — including the drop
+    // path (channel full) — so dropped commands leave a telemetry footprint
+    // instead of hiding back-pressure.
+    record_queue_depth(ServiceContainer::get_artisan_channel().len());
+
+    // Notify the host that the command was dropped because the artisan
+    // channel was full, so it can decide to retry instead of leaving the
+    // roaster in an unexpected state.
+    if channel_full {
+        send_channel_full_error(channel, config).await;
+    }
+
+    // A command on the INACTIVE transport is refused with an explicit ERR
+    // through the output channel; the dual-output task routes it to the
+    // active session, so the operator sees that a command was refused, not
+    // processed. Coalesced to 1/s — see `emit_inactive_channel_err_if_due`.
+    if !should_process {
+        emit_inactive_channel_err_if_due();
+    }
+}
+
+/// Send an `ERR channel_full` response through the output channel so the
+/// host knows its command was dropped due to backpressure. Multiplexer-aware
+/// (only writes if this channel is the active TX).
+///
+/// A dropped/parse-error command must NOT activate a channel from `None`.
+/// Channel activation is reserved for `handle_parsed_command` (a successfully
+/// parsed command only).
+async fn send_channel_full_error(channel: CommChannel, _config: &TransportConfig) {
+    let mut should_write = true;
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            should_write = mux.should_write_to(channel);
+        }
+
+        if should_write {
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
+            let _ = message.push_str("ERR channel_full command_dropped");
+            crate::hardware::error_counters::try_send_output(output_channel, message);
+        }
+    });
+}
+
+/// Send a parse error response via the output channel (multiplexer-aware).
+///
+/// Must NOT activate a channel from `None`. A garbage line in the boot window
+/// is silently dropped (no active channel to reply to); a real session is
+/// unaffected.
+pub(crate) async fn send_parse_error(
+    error: ParseError,
+    channel: CommChannel,
+    _config: &TransportConfig,
+) {
+    let mut should_write = true;
+
+    critical_section::with(|cs| {
+        let multiplexer = ServiceContainer::get_multiplexer();
+        let mut guard = multiplexer.borrow(cs).borrow_mut();
+        if let Some(mux) = guard.as_mut() {
+            should_write = mux.should_write_to(channel);
+        }
+
+        if should_write {
+            let output_channel = ServiceContainer::get_output_channel();
+            let mut message = String::<TRACE_EVENT_MAX_LEN>::new();
+            let _ = message.push_str("ERR ");
+            let _ = message.push_str(error.code());
+            let _ = message.push_str(" ");
+            let _ = message.push_str(error.message());
+            crate::hardware::error_counters::try_send_output(output_channel, message);
+        }
+    });
+}
+
+/// Process the event queue: drain *all* complete lines in this iteration.
+///
+/// Loops while any terminator is present; on a terminator-only extraction
+/// (`None`) it continues to keep draining rather than exiting, so a bare LF
+/// (the trailing byte of CRLF) does not consume a turn.
+pub(crate) async fn process_event_queue(
+    event_queue: &BlockingMutex<
+        CriticalSectionRawMutex,
+        RefCell<Option<Deque<u8, EVENT_QUEUE_SIZE>>>,
+    >,
+    channel: CommChannel,
+    config: &TransportConfig,
+    overflow: &mut EventQueueOverflow,
+) {
+    while event_queue_has_terminator(event_queue) {
+        let Some(command_data) = extract_line_from_event_queue(event_queue) else {
+            // A terminator was present but the extracted line was empty
+            // (e.g. a bare LF left over from a CRLF). The terminator has
+            // been consumed; keep draining the rest of the queue rather
+            // than waiting for another byte to arrive. If an overflow was
+            // latched, the trailing fragment (here, only terminators)
+            // carries the overflow flag and must still produce the
+            // buffer_overflow error for THIS extraction turn rather than the
+            // next command.
+            if overflow.triggered {
+                overflow.triggered = false;
+                send_parse_error(ParseError::BufferOverflow, channel, config).await;
+                return;
+            }
+            continue;
+        };
+
+        // If the event queue overflowed since the last line was extracted,
+        // the current line is the trailing fragment of a command whose
+        // leading bytes were dropped. Emit an explicit buffer_overflow error
+        // so the host knows its command was discarded, rather than chasing
+        // the (truncated) remaining bytes through the parser.
+        if overflow.triggered {
+            overflow.triggered = false;
+            send_parse_error(ParseError::BufferOverflow, channel, config).await;
+            return;
+        }
+
+        // If the command buffer is at capacity (256 bytes), the command
+        // was truncated — emit an explicit error rather than parse the
+        // truncated junk.
+        if command_data.len() >= 256 {
+            send_parse_error(ParseError::CommandTooLong, channel, config).await;
+            continue;
+        }
+
+        // Refuse INACTIVE-channel lines BEFORE parsing.
+        // `parse_artisan_command` populates the parser-side PROFILE/FANPROFILE
+        // FIFOs as a side effect; parsing a line that the multiplexer gate
+        // would drop anyway would leak the profile into the FIFO, where a
+        // LATER session's `SetProfile` could consume the stale entry.
+        // `would_process_command` is a pure predicate — it does NOT activate
+        // the channel, so activation stays reserved for successfully parsed
+        // commands.
+        let accepted = critical_section::with(|cs| {
+            ServiceContainer::get_multiplexer()
+                .borrow(cs)
+                .borrow()
+                .as_ref()
+                .is_none_or(|mux| mux.would_process_command(channel))
+        });
+        if !accepted {
+            // Line already consumed from the queue; notify the active host
+            // (coalesced to 1/s) and keep draining.
+            emit_inactive_channel_err_if_due();
+            continue;
+        }
+
+        let parse_result = if command_data.is_empty() {
+            Err(ParseError::EmptyCommand)
+        } else {
+            core::str::from_utf8(&command_data)
+                .map_err(|_| ParseError::InvalidValue)
+                .and_then(crate::input::parse_artisan_command)
+        };
+
+        match parse_result {
+            Ok(cmd) => {
+                handle_parsed_command(cmd, channel, config).await;
+            }
+            Err(error) => {
+                send_parse_error(error, channel, config).await;
+            }
+        }
+    }
+}
+
+/// Generic reader task implementation.
+///
+/// Reads bytes from the transport, buffers them in an event queue,
+/// extracts complete lines (CR/LF terminated), parses them as Artisan
+/// commands, and pushes them directly to the artisan channel via try_send
+/// (or drops with debug log when full). No intermediate command queue.
+pub async fn run_reader_task<RX: RxSource>(
+    _rx: RX,
+    state: &'static TransportRxState,
+    config: &'static TransportConfig,
+) {
+    state.init();
+
+    let mut rbuf = [0u8; 64];
+    let mut overflow = EventQueueOverflow::default();
+    let reader_poll_interval = Duration::from_millis(config.reader_poll_interval_ms);
+    let reader_start_delay = Duration::from_millis(config.reader_start_delay_ms);
+
+    Timer::after(reader_start_delay).await;
+
+    loop {
+        // Track whether the most recent read filled the buffer so we can skip
+        // the 10 ms poll sleep when a burst is in flight and the UART FIFO
+        // would otherwise overflow waiting for the next tick.
+        let mut buffer_was_full = false;
+        // Read from the transport using the trait's static method
+        match RX::read_bytes(&mut rbuf).await {
+            Ok(len) if len > 0 => {
+                crate::hardware::error_counters::reset_error_count(config.name);
+                push_to_event_queue(&state.event_queue, &rbuf[..len], &mut overflow);
+                if len == rbuf.len() {
+                    buffer_was_full = true;
+                }
+            }
+            Ok(0) => { /* no data — idle poll */ }
+            Ok(_) => { /* should not happen */ }
+            Err(e) => {
+                // Count a read error only when this transport is the
+                // multiplexer's ACTIVE channel. The control loop trips a
+                // global emergency at 10 consecutive errors
+                // (`MAX_COMMS_READ_ERRORS`). Errors on an inactive transport
+                // are still logged for diagnostics.
+                let active_channel = critical_section::with(|cs| {
+                    ServiceContainer::get_multiplexer()
+                        .borrow(cs)
+                        .borrow()
+                        .as_ref()
+                        .map(|mux| mux.get_active_channel())
+                        .unwrap_or(CommChannel::None)
+                });
+                if should_count_read_error(active_channel, config.channel) {
+                    crate::hardware::error_counters::increment_error_count(config.name);
+                }
+                log::warn!("{} read error: {:?}", config.name, e);
+            }
+        }
+
+        process_event_queue(&state.event_queue, config.channel, config, &mut overflow).await;
+
+        if !buffer_was_full {
+            Timer::after(reader_poll_interval).await;
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::application::service_container::ServiceContainer;
+    use crate::common::{StubFan, StubHeater};
+    use crate::config::ArtisanCommand;
+    use crate::control::RoasterControl;
+    use crate::hardware::sensors::SensorConversionHub;
+    use crate::input::ArtisanInput;
+    use futures::executor::block_on;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that touch the global `ServiceContainer` so
+    /// parallel execution cannot interleave channels across tests.
+    static CONTAINER_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn init_container() {
+        let _guard = CONTAINER_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        let roaster = RoasterControl::new(
+            Box::new(StubHeater::new()),
+            Box::new(StubFan::new()),
+            SensorConversionHub::new(),
+        )
+        .expect("RoasterControl should build");
+        ServiceContainer::init_roaster(roaster);
+        ServiceContainer::init_artisan_input(ArtisanInput::new().expect("input should build"));
+        ServiceContainer::init_multiplexer();
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+        while ServiceContainer::get_output_channel().try_receive().is_ok() {}
+    }
+
+    fn test_config() -> TransportConfig {
+        TransportConfig {
+            name: "test",
+            channel: CommChannel::Uart,
+            ..TransportConfig::default()
+        }
+    }
+
+    /// Byte-level accumulation across pushes (the production event queue):
+    /// bytes must accumulate into one command across pushes.
+    #[test]
+    fn event_queue_accumulates_byte_drip_and_handles_crlf() {
+        let state = TransportRxState::new();
+        state.init();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Drip "OT1 75\r\n" one byte at a time, as a slow host would.
+        for &b in b"OT1 75\r\n" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+        assert!(event_queue_has_terminator(&state.event_queue));
+
+        let first = extract_line_from_event_queue(&state.event_queue);
+        assert_eq!(
+            first.as_deref(),
+            Some(b"OT1 75".as_slice()),
+            "bytes must accumulate across pushes into one command"
+        );
+        // The bare LF (trailing byte of CRLF) is consumed, not parsed.
+        assert!(
+            extract_line_from_event_queue(&state.event_queue).is_none(),
+            "bare LF must extract as None"
+        );
+        assert!(!event_queue_has_terminator(&state.event_queue));
+        assert!(!overflow.triggered);
+    }
+
+    /// A byte-dripped command parses and dispatches through the PRODUCTION
+    /// pipeline (event queue → extract → parse → multiplexer → artisan channel).
+    #[test]
+    fn byte_drip_command_parsed_end_to_end() {
+        init_container();
+
+        let state = TransportRxState::new();
+        state.init();
+        let config = test_config();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Partial command without terminator across pushes.
+        for &b in b"OT1 7" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+        assert!(!event_queue_has_terminator(&state.event_queue));
+        for &b in b"5\r" {
+            push_to_event_queue(&state.event_queue, &[b], &mut overflow);
+        }
+
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+
+        let channel = ServiceContainer::get_artisan_channel();
+        let mut cmds = alloc::vec::Vec::new();
+        while let Ok(traced) = channel.try_receive() {
+            cmds.push(traced.command);
+        }
+        assert_eq!(
+            cmds,
+            alloc::vec![ArtisanCommand::SetHeater(75)],
+            "dripped command must arrive intact"
+        );
+    }
+
+    /// Byte-level interleaving across TWO transports must not
+    /// cross-contaminate. Each reader task owns its own event queue (the
+    /// production `TransportRxState` per transport); bytes dripped
+    /// alternately into two queues — as simultaneous USB + UART sessions
+    /// would arrive — must reconstruct each command in its own transport
+    /// only. A line split across transports must never merge into a valid
+    /// command on either side.
+    #[test]
+    fn interleaved_byte_drip_across_two_transports_stays_isolated() {
+        let usb_state = TransportRxState::new();
+        usb_state.init();
+        let uart_state = TransportRxState::new();
+        uart_state.init();
+        let mut overflow_usb = EventQueueOverflow::default();
+        let mut overflow_uart = EventQueueOverflow::default();
+
+        // Two sessions in flight: "OT1 75\r" on one queue, "IO3 40\r" on
+        // the other, bytes interleaved one-by-one across transports.
+        let usb_bytes: &[u8] = b"OT1 75\r";
+        let uart_bytes: &[u8] = b"IO3 40\r";
+        for i in 0..usb_bytes.len().max(uart_bytes.len()) {
+            if i < usb_bytes.len() {
+                push_to_event_queue(&usb_state.event_queue, &[usb_bytes[i]], &mut overflow_usb);
+            }
+            if i < uart_bytes.len() {
+                push_to_event_queue(
+                    &uart_state.event_queue,
+                    &[uart_bytes[i]],
+                    &mut overflow_uart,
+                );
+            }
+        }
+
+        assert!(event_queue_has_terminator(&usb_state.event_queue));
+        assert!(event_queue_has_terminator(&uart_state.event_queue));
+
+        let usb_line = extract_line_from_event_queue(&usb_state.event_queue);
+        let uart_line = extract_line_from_event_queue(&uart_state.event_queue);
+        assert_eq!(
+            usb_line.as_deref(),
+            Some(b"OT1 75".as_slice()),
+            "each queue must hold its own complete command"
+        );
+        assert_eq!(
+            uart_line.as_deref(),
+            Some(b"IO3 40".as_slice()),
+            "each queue must hold its own complete command"
+        );
+        assert!(!overflow_usb.triggered);
+        assert!(!overflow_uart.triggered);
+
+        // The extracted lines must parse as the intended commands (pure
+        // parser call — OT1/IO3 have no parser-side side effects).
+        assert_eq!(
+            crate::input::parse_artisan_command(
+                core::str::from_utf8(usb_line.as_deref().unwrap()).unwrap()
+            ),
+            Ok(crate::config::ArtisanCommand::SetHeater(75))
+        );
+        assert_eq!(
+            crate::input::parse_artisan_command(
+                core::str::from_utf8(uart_line.as_deref().unwrap()).unwrap()
+            ),
+            Ok(crate::config::ArtisanCommand::SetFan(40))
+        );
+
+        // A line split ACROSS transports: front half on one queue, back half
+        // (the terminator) on the other. Neither side may complete a command.
+        let a_state = TransportRxState::new();
+        a_state.init();
+        let b_state = TransportRxState::new();
+        b_state.init();
+        let mut overflow_a = EventQueueOverflow::default();
+        let mut overflow_b = EventQueueOverflow::default();
+
+        push_to_event_queue(&a_state.event_queue, b"READ", &mut overflow_a);
+        push_to_event_queue(&b_state.event_queue, b"\r", &mut overflow_b);
+
+        assert!(
+            !event_queue_has_terminator(&a_state.event_queue),
+            "the front half must stay an unterminated partial line"
+        );
+        // The bare terminator on the other transport extracts as an empty
+        // line — never as a merged 'READ' command.
+        assert_eq!(
+            extract_line_from_event_queue(&b_state.event_queue),
+            None,
+            "the bare terminator must extract as an empty line"
+        );
+        assert!(!event_queue_has_terminator(&b_state.event_queue));
+        assert!(!overflow_a.triggered);
+        assert!(!overflow_b.triggered);
+    }
+
+    /// A queue overflow must flush the partial command and emit
+    /// `ERR buffer_overflow`; a valid command arriving AFTER the overflow is
+    /// the trailing fragment and must NOT execute.
+    #[test]
+    fn queue_overflow_flushes_and_blocks_stale_command() {
+        init_container();
+
+        let state = TransportRxState::new();
+        state.init();
+        let config = test_config();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Activate the UART session with a valid command first so parse
+        // errors have a route to the output channel.
+        push_to_event_queue(&state.event_queue, b"READ\r", &mut overflow);
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+
+        // Flood 300 bytes without a terminator: queue clears + overflow latch.
+        let junk = [b'X'; 300];
+        push_to_event_queue(&state.event_queue, &junk, &mut overflow);
+        assert!(overflow.triggered, "overflow must be latched");
+        assert!(!event_queue_has_terminator(&state.event_queue));
+
+        // A valid command after the flood is the trailing fragment.
+        push_to_event_queue(&state.event_queue, b"OT1 50\r", &mut overflow);
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+
+        let output = ServiceContainer::get_output_channel();
+        let mut lines = alloc::vec::Vec::new();
+        while let Ok(line) = output.try_receive() {
+            lines.push(line.as_str().to_string());
+        }
+        assert!(
+            lines.iter().any(|l| l.starts_with("ERR buffer_overflow")),
+            "overflow must surface as ERR buffer_overflow, got {:?}",
+            lines
+        );
+
+        assert!(
+            ServiceContainer::get_artisan_channel()
+                .try_receive()
+                .is_err(),
+            "the post-overflow fragment must never execute"
+        );
+    }
+}

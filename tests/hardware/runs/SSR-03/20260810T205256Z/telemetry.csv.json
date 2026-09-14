@@ -1,0 +1,28 @@
+{
+  "run_id": "SSR-03-20260810T205256Z",
+  "scenario_id": "SSR-03",
+  "manifest_entry": {
+    "id": "SSR-03",
+    "category": "SSR",
+    "tier": 1,
+    "description": "SSR duty cycle set-clear cycle remains at 0 (safe initialization test)",
+    "command_sequence": "OT1 0; STATUS; OT1 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "heater",
+      "fault_condition"
+    ],
+    "golden_output": "tests/hardware/goldens/SSR-03.csv",
+    "metadata": {
+      "expected_heater": 0.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 362.0,
+  "run_directory": "tests/hardware/runs/SSR-03/20260810T205256Z",
+  "started_at": "2026-08-10T20:52:56.724301",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

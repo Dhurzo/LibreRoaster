@@ -1,0 +1,157 @@
+[package]
+edition      = "2021"
+name         = "libreroaster"
+rust-version = "1.88"
+version      = "0.0.1-alpha"
+description  = "OpenSource Coffee Bean Roaster compatible with Artisan+"
+authors      = ["Juan Ángel López"]
+license      = "Apache-2.0"
+
+[[example]]
+name = "hil_tc"
+path = "examples/hil_tc.rs"
+
+[[example]]
+name = "hil_fan"
+path = "examples/hil_fan.rs"
+
+[[example]]
+name = "hil_ssr"
+path = "examples/hil_ssr.rs"
+
+[[example]]
+name = "hil_c1"
+path = "examples/hil_c1.rs"
+
+[[example]]
+name = "hil_gpio"
+path = "examples/hil_gpio.rs"
+
+[[example]]
+name = "gpio_roast_test"
+path = "examples/gpio_roast_test.rs"
+# Bug L4 (2026-08-10): the example imports
+# `libreroaster::hardware::sensors::simulated`, which only exists with the
+# `simulated-sensors` feature. Without `required-features`, `cargo build
+# --examples --target riscv32` failed with E0433; the gate makes cargo skip
+# the example (with a warning) instead of breaking the whole target build.
+required-features = ["simulated-sensors"]
+
+[features]
+default = []
+std = ["embedded-hal-02"]
+test = ["std", "instrumentation"]
+instrumentation = []
+async-lock-depth-metrics = []
+embedded = []
+simulated-sensors = []
+no-heat-sense = []
+# Bug V2-6: `regression` no longer pulls `embedded-hal-mock` (a std-only
+# crate) into the embedded build — that broke `riscv32 + regression` (the
+# `void` transitive dep wanted std, cascading into 14 errors). The
+# regression runner is `no_std` and replays SensorConversionHub fixtures
+# via `from_fixture`, which itself depends on `new_uninit()` whose riscv32
+# branch panics unless `simulated-sensors` is on — so `regression` implies
+# `simulated-sensors` to select the safe `new_simulated(default)` branch
+# instead of pulling host test deps into the device build.
+regression = ["simulated-sensors"]
+
+[[bin]]
+name = "libreroaster"
+path = "./src/main.rs"
+required-features = ["embedded"]
+
+[dependencies]
+# Core dependencies - available for all targets
+heapless         = "0.9.2"
+embedded-hal     = "1.0.0"
+embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", optional = true }
+embedded-hal-bus = "0.2.0"
+embedded-io       = "0.6.1"
+embedded-io-async = "0.6.1"
+embassy-time     = "0.5.0"
+embassy-time-driver = { version = "0.2.1", features = ["tick-hz-1_000_000"] }
+
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+log              = "0.4.27"
+embassy-sync     = "0.6.1"
+embassy-executor = { version = "0.9.1", features = ["log"] }
+portable-atomic = "1.13"
+libm = "0.2"
+# Bug L11 (2026-07-25): `embedded-hal-mock` was an `optional = true` dep that
+# nothing in the workspace referenced after the V2-6 regression-runner rewrite
+# (it is `no_std` now). An `optional` dep with no enabling feature is dead
+# weight — removed.
+
+# Logging - esp_println for direct UART0 output
+
+# ESP-specific dependencies - only for embedded target
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp-hal = { version = "~1.0", features = ["esp32c3", "log-04", "unstable"] }
+esp32c3 = "0.31.0"
+
+esp-rtos = { version = "0.2.0", features = [
+  "embassy",
+  "esp-alloc",
+  "esp32c3",
+  "log-04",
+] }
+
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32c3", "log-04"] }
+log                    = "0.4.27"
+
+esp-alloc = "0.9.0"
+esp-backtrace = { version = "0.18.1", features = [
+  "esp32c3",
+  "panic-handler",
+  "println",
+] }
+esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
+riscv-rt = { version = "0.16.0" }
+
+critical-section = "1.2.0"
+
+[dev-dependencies]
+# Test dependencies - only used on host (x86_64).
+# These all require std which is unavailable on riscv32 embedded target.
+[target.'cfg(not(target_arch = "riscv32"))'.dev-dependencies]
+log = "0.4.27"
+critical-section = { version = "1.2.0", features = ["std"] }
+static_cell = "2.1.1"
+embassy-sync = "0.6.1"
+futures = { version = "0.3", features = ["thread-pool"] }
+proptest = "1"
+proptest-derive = "0.5"
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units    = 1     # LLVM can perform better optimizations using a single thread
+debug            = 2
+debug-assertions = false
+incremental      = false
+lto              = 'fat'
+opt-level        = 's'
+overflow-checks = true
+
+[lints.clippy]
+# Embedded Rust clippy configuration for LibreRoaster
+# See clippy.toml for detailed configuration
+
+# Critical: deny unwrap, expect, and panic in production code
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+# Additional embedded-specific restrictions
+fallible_impl_from = "deny"
+
+[lints.rust]
+# Unsafe code linting via cargo-geiger
+# Run: cargo geiger --all-targets
+# See: .planning/phases/31-linting-audit/geiger-report.md
+# Note: cargo-geiger doesn't integrate with [lints.rust] - use CLI instead

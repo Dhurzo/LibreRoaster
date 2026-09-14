@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="950" viewBox="0 0 1200 950" font-family="Helvetica,Arial,sans-serif">
+<defs><style>
+.box{stroke:#333;stroke-width:1.5;rx:8;} .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+.t{fill:#111;font-size:14px;font-weight:bold;} .tw{fill:#fff;font-size:13px;font-weight:bold;}
+.p{fill:#111;font-size:11px;} .pw{fill:#fff;font-size:11px;} .n{fill:#444;font-size:10.5px;}
+.w{fill:#b00;font-size:11px;font-weight:bold;} .wire{stroke-width:2.5;fill:none;} .danger{fill:#fde8e8;stroke:#c0392b;stroke-width:2.5;stroke-dasharray:6 4;}
+</style></defs>
+  <rect x="0" y="0" width="1200" height="6" fill="#eab308"/>
+  <text x="1180" y="20" text-anchor="end" font-size="9" fill="#92400e" font-weight="bold">FRITZING STYLE — breadboard view — same circuit &amp; values as companion _en.svg — alternate Fritzing breadboard visual</text>
+<defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e3d9c3" stroke-width="0.5" opacity="0.6"/></pattern></defs>
+<rect width="1200" height="950" fill="#f6f1e6"/>
+<text x="600" y="28" text-anchor="middle" class="t" font-size="20">LibreRoaster — Detail (Fritzing): SSR &amp; Heat Detection (GPIO10 + GPIO1)</text>
+<text x="600" y="48" text-anchor="middle" class="n">SSR 5 Hz zero-cross 14-bit LEDC Ch1/Timer0 · Heat sense GPIO1 Pull::Up LOW=heat · Safety layers: overtemp, heat mismatch, stale temp · src/hardware/ssr_logic.rs</text>
+
+<!-- Left: DC control side -->
+<rect x="40" y="70" width="360" height="220" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<text x="220" y="92" text-anchor="middle" class="t">DC Control Side (3.3V logic)</text>
+<rect x="60" y="110" width="100" height="40" rx="6" class="chip"/><text x="110" y="134" text-anchor="middle" class="tw">GPIO10</text>
+<line x1="160" y1="130" x2="200" y2="130" class="wire" stroke="#dc2626"/>
+<rect x="200" y="118" width="60" height="24" rx="3" fill="#fff" stroke="#333" stroke-width="1.2"/><text x="230" y="134" text-anchor="middle" class="n">SSR</text>
+<line x1="260" y1="130" x2="300" y2="130" class="wire" stroke="#dc2626"/>
+<rect x="300" y="100" width="80" height="60" rx="6" fill="#fff" stroke="#dc2626" stroke-width="1.5"/><text x="340" y="122" text-anchor="middle" class="p">SSR-25DA</text><text x="340" y="138" text-anchor="middle" class="n">DC+ 3–32V</text><text x="340" y="152" text-anchor="middle" class="n">5Hz PWM</text>
+<text x="220" y="180" class="n">GPIO10 → DC+ (safe, no strapping)</text>
+<text x="220" y="200" class="n">GND → DC−</text>
+<text x="220" y="220" class="n">LEDC 14-bit 16383 steps · min duty 820 ticks (10ms = ½ mains cycle)</text>
+<rect x="60" y="230" width="320" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<text x="70" y="248" class="n">Duty 0 &lt;820 ticks → snapped to 0 (SSR_MIN_DUTY_TICKS)</text>
+<text x="70" y="266" class="n">Prevents 25% misfire on zero-cross SSR with 2.4ms pulse</text>
+
+<!-- Right: AC mains danger -->
+<rect x="440" y="70" width="720" height="220" rx="10" class="danger"/>
+<text x="800" y="92" text-anchor="middle" class="w" font-size="13">⚠ AC MAINS ZONE 110–240V — ISOLATE, FUSE, DISCONNECT TO WIRE</text>
+<rect x="460" y="110" width="140" height="60" rx="6" fill="#fff" stroke="#c0392b" stroke-width="1.5"/><text x="530" y="132" text-anchor="middle" class="t" font-size="11">AC Mains</text><text x="530" y="150" text-anchor="middle" class="n">L N PE earth</text>
+<line x1="600" y1="130" x2="640" y2="130" class="wire" stroke="#c0392b"/><text x="620" y="124" class="n">L→</text>
+<rect x="640" y="110" width="100" height="40" rx="6" fill="#fff" stroke="#333" stroke-width="1.2"/><text x="690" y="134" text-anchor="middle" class="n">Fuse + Block</text>
+<line x1="740" y1="130" x2="780" y2="130" class="wire" stroke="#c0392b"/><text x="760" y="124" class="n">AC-IN</text>
+<rect x="780" y="110" width="100" height="40" rx="6" fill="#fff" stroke="#dc2626" stroke-width="1.5"/><text x="830" y="132" text-anchor="middle" class="p">SSR</text>
+<line x1="880" y1="130" x2="920" y2="130" class="wire" stroke="#c0392b"/><text x="900" y="124" class="n">AC-OUT</text>
+<rect x="920" y="110" width="100" height="40" rx="6" fill="#e8f5e9" stroke="#059669" stroke-width="1.2"/><text x="970" y="128" text-anchor="middle" class="n">Klixon</text><text x="970" y="142" text-anchor="middle" class="n" font-size="9">thermal fuse</text>
+<line x1="1020" y1="130" x2="1060" y2="130" class="wire" stroke="#c0392b"/>
+<rect x="1060" y="110" width="80" height="40" rx="6" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/><text x="1100" y="134" text-anchor="middle" class="p">Heater</text>
+<text x="530" y="180" class="n">N direct → Heater N · PE → chassis (MANDATORY earth)</text>
+<text x="530" y="200" class="w">SSR switches L only. HW klixon in SERIES independent of CPU (THERM-1/2).</text>
+<text x="530" y="220" class="n">Heatsink ≈1W/A (10A≈10–15W). SSR DC 3.3V may be marginal if SSR needs &gt;15mA → transistor buffer from 5/12V.</text>
+<text x="530" y="240" class="n">Waveform: 5Hz period 200ms = 20 half-cycles @50Hz mains. 50% = 10 cycles ON (100ms) / 10 OFF.</text>
+<text x="530" y="260" class="n">Scope AC-OUT: half-sine bursts at 5 Hz. DMM L–N: 0V at 0%, ~115V RMS at 50%.</text>
+
+<!-- Bottom left: Heat detection options -->
+<rect x="40" y="320" width="560" height="340" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+<text x="320" y="342" text-anchor="middle" class="t">Heat Detection → GPIO1 (Two Build Options)</text>
+
+<!-- Option A -->
+<rect x="60" y="360" width="240" height="120" rx="8" fill="#fff" stroke="#92400e" stroke-width="1.5"/>
+<text x="180" y="380" text-anchor="middle" class="t" font-size="11">Option A — CT Clamp (Recommended)</text>
+<text x="70" y="400" class="n">AC L through CT core → burden R →</text>
+<text x="70" y="418" class="n">rectifier → comparator →</text>
+<text x="70" y="436" class="n">open-collector NPN → GPIO1</text>
+<text x="70" y="454" class="n">collector→GPIO1, emitter→GND</text>
+<text x="180" y="472" class="w" font-size="9">NO external pull-up — internal Pull::Up</text>
+
+<!-- Option B -->
+<rect x="320" y="360" width="240" height="120" rx="8" fill="#fff" stroke="#92400e" stroke-width="1.5"/>
+<text x="440" y="380" text-anchor="middle" class="t" font-size="11">Option B — Optocoupler</text>
+<text x="330" y="400" class="n">Neon/LED across heater →</text>
+<text x="330" y="418" class="n">opto LED → transistor →</text>
+<text x="330" y="436" class="n">open-collector → GPIO1</text>
+<text x="330" y="454" class="n">Same polarity: LOW = heater ON</text>
+
+<!-- GPIO1 behavior -->
+<rect x="60" y="500" width="500" height="140" rx="8" fill="#f1f5f9" stroke="#334155" stroke-width="1.5"/>
+<text x="70" y="520" class="t" font-size="11">GPIO1 Logic (src/hardware/ssr_logic.rs + heat_presence.rs)</text>
+<text x="70" y="540" class="n">• Internal Pull::Up → HIGH = no heat (SSR OFF or circuit absent)</text>
+<text x="70" y="558" class="n">• LOW trustworthy at any duty (PWM OFF only produces HIGH)</text>
+<text x="70" y="576" class="n">• HIGH only meaningful at duty ≥50% (observable window = 1 sample/period @310ms tick)</text>
+<text x="70" y="594" class="n">• Debounce: 5× consecutive HIGH @≥50% → NotDetected (~1.7s) · Single LOW → Available immediately</text>
+<text x="70" y="612" class="n">• Stuck-on: 10× consecutive LOW @duty 0 → Error (~3.3s)</text>
+<text x="70" y="630" class="n">• <tspan font-weight="bold">Without circuit:</tspan> always HIGH → NotDetected @≥50% → heater forced 0% → use <tspan font-family="monospace">--features no-heat-sense</tspan></text>
+
+<!-- Right: Safety flowchart -->
+<rect x="640" y="320" width="520" height="340" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<text x="900" y="342" text-anchor="middle" class="t">Safety Cross-Check (debounce state machine)</text>
+<text x="660" y="366" class="n">Current duty? ── &lt;50% (≈8192 ticks) ──→ Uninformative window →</text>
+<text x="680" y="384" class="n">heat_absent_count = 0 (do not accumulate) · But LOW still clears latch!</text>
+<line x1="660" y1="396" x2="1100" y2="396" stroke="#e5e7eb"/>
+<text x="660" y="414" class="n">≥50% + HIGH (no heat) ──→ debounce_heat_absent() ── 5× → NotDetected</text>
+<text x="660" y="432" class="n">≥50% + LOW (heat) ──→ Available immediately</text>
+<text x="660" y="450" class="n">duty 0 + LOW (residual) ──→ heat_present_count 10× → Error (stuck-on)</text>
+<rect x="660" y="470" width="480" height="50" rx="6" fill="#fff" stroke="#cbd5e1" stroke-width="1"/>
+<text x="670" y="490" class="w" font-size="10">Build: cargo run --example hil_gpio (GPIO1 pull-up) · hil_ssr (PWM) · Simulated: no-heat-sense disables this</text>
+<text x="670" y="508" class="n">Recovery: OFF/START/PREHEAT/StopRoast → SsrControlBase::rearm() → Available (see HARDWARE.md §8)</text>
+<text x="660" y="530" class="n">• OVERTEMP 260°C → emergency_shutdown() → ERR safety_fault</text>
+<text x="660" y="548" class="n">• Stale temp 1000ms, RoR &gt;0.5°C/s soft 12× / 1.0°C/s hard 3×, probe stuck 120s warn → 300s latch</text>
+<text x="660" y="566" class="n">• Internal latch emits ERR safety_fault once; STOP operator path does not</text>
+<rect x="660" y="580" width="480" height="64" rx="6" fill="#fee2e2" stroke="#fecaca" stroke-width="1"/>
+<text x="670" y="600" class="t" font-size="11">DANGER: GPIO1 NEVER to AC mains</text>
+<text x="670" y="618" class="n">Expects 3.3V logic only. AC → internal ESD → instant death + mains on GPIO.</text>
+<text x="670" y="636" class="n">Opto/CT must be isolated. Verify with DMM: GPIO1 3.3V at idle, &lt;0.4V when heater ON.</text>
+
+<!-- Footer -->
+<rect x="40" y="680" width="1120" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="60" y="702" class="t" font-size="12">Test &amp; Commissioning Order</text>
+<text x="60" y="722" class="n">1. DC side alone (SSR disconnected): GPIO10 5Hz on scope, GPIO1 HIGH. 2. Connect SSR DC, no AC: same. 3. AC last: clamp meter confirms current only when GPIO10 HIGH + GPIO1 LOW.</text>
+<text x="60" y="740" class="n">Verify heater power = mains × duty (5Hz time-proportioning). Minimum 820 ticks ensures ≥10ms ON → at least one half-cycle per 200ms period for zero-cross SSR.</text>
+
+<text x="600" y="940" text-anchor="middle" class="n" font-size="10">LibreRoaster · SSR &amp; Heat Detect Detail · CC BY-SA · printable 1200×950 · v0.1</text>
+</svg>

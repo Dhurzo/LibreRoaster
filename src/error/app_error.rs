@@ -1,0 +1,426 @@
+//! Unified application error type (`AppError`) and subsystem error enums.
+//!
+//! Maps subsystem failures (temperature, control, hardware, comms, init, safety)
+//! into a single error surface with recoverability/severity classification and
+//! `From` conversions from the lower-level `RoasterError`/driver errors.
+
+use crate::input::InputError;
+use crate::memory::ERROR_MSG_MAX_LEN;
+use core::fmt;
+#[cfg(feature = "std")]
+extern crate std;
+use alloc::string::String;
+
+/// Top-level error type surfaced across LibreRoaster subsystems.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppError {
+    /// Temperature subsystem failure (sensor read/range/fault).
+    Temperature {
+        message: heapless::String<ERROR_MSG_MAX_LEN>,
+        source: TemperatureError,
+    },
+
+    /// Control-loop / PID failure.
+    Control { source: ControlError },
+
+    /// Hardware-subsystem failure (SSR/fan/UART driver).
+    Hardware { source: HardwareError },
+
+    /// Communication (UART/protocol/timeout) failure.
+    Communication { source: CommunicationError },
+
+    /// Startup initialisation failure.
+    Initialization { source: InitError },
+
+    /// Safety latch/emergency condition with a severity level.
+    Safety { severity: SafetyLevel },
+}
+
+/// Temperature-subsystem errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemperatureError {
+    /// Reading outside the valid/operational range.
+    OutOfRange,
+    /// MAX31856 reported a fault bit (open/shorted probe).
+    SensorFault,
+    /// Sensor read did not complete within `TEMP_VALIDITY_TIMEOUT_MS`.
+    ReadingTimeout,
+    /// Reading was non-finite or otherwise unusable.
+    InvalidValue,
+}
+
+/// Control-loop / PID errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlError {
+    /// PID computation failure.
+    PidError,
+    /// Invalid roaster state for the requested operation.
+    InvalidState,
+    /// A control command could not be applied.
+    CommandFailed,
+    /// Actuator output (SSR/fan) write failure.
+    OutputError,
+    /// An emergency shutdown was triggered.
+    EmergencyShutdown,
+}
+
+/// Hardware-subsystem errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HardwareError {
+    /// UART driver error.
+    UartError,
+    /// Fan PWM write error.
+    FanError,
+    /// SSR heater write/availability error.
+    SsrError,
+}
+
+/// Communication-subsystem errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommunicationError {
+    /// UART transport error.
+    UartError,
+    /// Malformed/unsupported serial protocol frame.
+    ProtocolError,
+    /// No command/response within the expected window.
+    TimeoutError,
+}
+
+/// Startup initialisation errors (carry a human-readable reason).
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitError {
+    /// `ServiceContainer` construction failed.
+    ServiceContainer { what: &'static str, reason: String },
+    /// Hardware peripheral init failed.
+    HardwareInit { what: &'static str, reason: String },
+    /// Embassy task spawn failed.
+    TaskSpawn { what: &'static str, reason: String },
+    /// Heap allocation during init failed.
+    MemoryAllocation { what: &'static str, reason: String },
+}
+
+/// Severity of a safety condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SafetyLevel {
+    /// Non-latching warning.
+    Warning,
+    /// Critical: latched fault requiring operator intervention.
+    Critical,
+    /// Emergency: immediate shutdown required.
+    Emergency,
+}
+
+impl AppError {
+    /// Contract: transient faults (timeout/invalid sample, comms timeout, safety warning) are recoverable; latched/hardware/init faults are not.
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            AppError::Temperature { source, .. } => matches!(
+                source,
+                TemperatureError::ReadingTimeout | TemperatureError::InvalidValue
+            ),
+            AppError::Communication { source } => {
+                matches!(source, CommunicationError::TimeoutError)
+            }
+            AppError::Hardware { .. } | AppError::Control { .. } => false,
+            AppError::Safety { severity } => matches!(severity, SafetyLevel::Warning),
+            AppError::Initialization { .. } => false,
+        }
+    }
+
+    /// Contract: only out-of-range temperature and SSR hardware faults arm the emergency-shutdown path.
+    pub fn requires_emergency_shutdown(&self) -> bool {
+        match self {
+            AppError::Temperature { source, .. } => matches!(source, TemperatureError::OutOfRange),
+            AppError::Hardware { source } => matches!(source, HardwareError::SsrError),
+            _ => false,
+        }
+    }
+
+    /// Contract: stable subsystem tag (`temperature`/`control`/`hardware`/`communication`/`initialization`/`safety`) for logs and telemetry.
+    pub fn category(&self) -> &'static str {
+        match self {
+            AppError::Temperature { .. } => "temperature",
+            AppError::Control { .. } => "control",
+            AppError::Hardware { .. } => "hardware",
+            AppError::Communication { .. } => "communication",
+            AppError::Initialization { .. } => "initialization",
+            AppError::Safety { .. } => "safety",
+        }
+    }
+
+    /// Contract: short human-readable message for the Artisan/operator surface (no internal details).
+    pub fn user_message(&self) -> &'static str {
+        match self {
+            AppError::Temperature { source, .. } => match source {
+                TemperatureError::OutOfRange => "Temperature out of safe range",
+                TemperatureError::SensorFault => "Temperature sensor malfunction",
+                TemperatureError::ReadingTimeout => "Temperature reading timeout",
+                TemperatureError::InvalidValue => "Invalid temperature reading",
+            },
+            AppError::Control { source } => match source {
+                ControlError::PidError => "Control system error",
+                ControlError::InvalidState => "Invalid system state",
+                ControlError::CommandFailed => "Command execution failed",
+                ControlError::OutputError => "Output control error",
+                ControlError::EmergencyShutdown => "Emergency shutdown",
+            },
+            AppError::Hardware { source } => match source {
+                HardwareError::UartError => "Communication hardware error",
+                HardwareError::FanError => "Fan controller error",
+                HardwareError::SsrError => "Heating element error",
+            },
+            AppError::Communication { source } => match source {
+                CommunicationError::UartError => "Communication error",
+                CommunicationError::ProtocolError => "Protocol error",
+                CommunicationError::TimeoutError => "Communication timeout",
+            },
+            AppError::Initialization { source } => match source {
+                InitError::ServiceContainer { what: _, .. } => "System initialization failed",
+                InitError::HardwareInit { what: _, .. } => "Hardware initialization failed",
+                InitError::TaskSpawn { what: _, .. } => "Task startup failed",
+                InitError::MemoryAllocation { what: _, .. } => "Memory allocation failed",
+            },
+            AppError::Safety { severity } => match severity {
+                SafetyLevel::Warning => "Safety warning",
+                SafetyLevel::Critical => "Safety critical error",
+                SafetyLevel::Emergency => "Emergency shutdown required",
+            },
+        }
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            AppError::Temperature { source, .. } => Some(match source {
+                TemperatureError::OutOfRange => "temperature_out_of_range",
+                TemperatureError::SensorFault => "sensor_fault",
+                TemperatureError::ReadingTimeout => "sensor_timeout",
+                TemperatureError::InvalidValue => "sensor_invalid",
+            }),
+            AppError::Control { source } => Some(match source {
+                ControlError::PidError => "pid_error",
+                ControlError::InvalidState => "invalid_state",
+                ControlError::CommandFailed => "command_failed",
+                ControlError::OutputError => "output_error",
+                ControlError::EmergencyShutdown => "emergency_shutdown",
+            }),
+            AppError::Hardware { source } => Some(match source {
+                HardwareError::UartError => "uart_error",
+                HardwareError::FanError => "fan_error",
+                HardwareError::SsrError => "ssr_error",
+            }),
+            AppError::Communication { source } => Some(match source {
+                CommunicationError::UartError => "comm_uart_error",
+                CommunicationError::ProtocolError => "protocol_error",
+                CommunicationError::TimeoutError => "timeout_error",
+            }),
+            AppError::Initialization { source } => Some(match source {
+                InitError::ServiceContainer { .. } => "service_container_init_failed",
+                InitError::HardwareInit { .. } => "hardware_init_failed",
+                InitError::TaskSpawn { .. } => "task_spawn_failed",
+                InitError::MemoryAllocation { .. } => "memory_alloc_failed",
+            }),
+            AppError::Safety { severity } => Some(match severity {
+                SafetyLevel::Warning => "safety_warning",
+                SafetyLevel::Critical => "safety_critical",
+                SafetyLevel::Emergency => "safety_emergency",
+            }),
+        }
+    }
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {} (source: {})",
+            self.category(),
+            self.user_message(),
+            self.source().unwrap_or("unknown")
+        )
+    }
+}
+
+impl From<crate::control::RoasterError> for AppError {
+    fn from(err: crate::control::RoasterError) -> Self {
+        match err {
+            crate::control::RoasterError::TemperatureOutOfRange { .. } => AppError::Temperature {
+                message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
+                    "Temperature out of range",
+                )
+                .unwrap_or_default(),
+                source: TemperatureError::OutOfRange,
+            },
+            crate::control::RoasterError::SensorFault { .. } => AppError::Temperature {
+                message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from(
+                    "Temperature sensor fault",
+                )
+                .unwrap_or_default(),
+                source: TemperatureError::SensorFault,
+            },
+            crate::control::RoasterError::InvalidState { .. } => AppError::Control {
+                source: ControlError::InvalidState,
+            },
+            crate::control::RoasterError::PidError { .. } => AppError::Control {
+                source: ControlError::PidError,
+            },
+            crate::control::RoasterError::HardwareError { .. } => AppError::Hardware {
+                source: HardwareError::SsrError,
+            },
+            crate::control::RoasterError::EmergencyShutdown { .. } => AppError::Control {
+                source: ControlError::EmergencyShutdown,
+            },
+        }
+    }
+}
+
+impl From<crate::hardware::uart::UartError> for AppError {
+    fn from(_err: crate::hardware::uart::UartError) -> Self {
+        AppError::Communication {
+            source: CommunicationError::UartError,
+        }
+    }
+}
+
+impl From<crate::hardware::fan::FanError> for AppError {
+    fn from(_err: crate::hardware::fan::FanError) -> Self {
+        AppError::Hardware {
+            source: HardwareError::FanError,
+        }
+    }
+}
+
+impl From<crate::hardware::ssr::SsrError> for AppError {
+    fn from(_err: crate::hardware::ssr::SsrError) -> Self {
+        AppError::Hardware {
+            source: HardwareError::SsrError,
+        }
+    }
+}
+
+impl From<InputError> for AppError {
+    fn from(err: InputError) -> Self {
+        match err {
+            InputError::UartError => AppError::Communication {
+                source: CommunicationError::UartError,
+            },
+            InputError::ParseError => AppError::Communication {
+                source: CommunicationError::ProtocolError,
+            },
+            _ => AppError::Communication {
+                source: CommunicationError::UartError,
+            },
+        }
+    }
+}
+
+#[cfg(target_arch = "riscv32")]
+impl From<crate::application::app_builder::BuildError> for InitError {
+    fn from(e: crate::application::app_builder::BuildError) -> Self {
+        InitError::ServiceContainer {
+            what: "AppBuilder",
+            reason: alloc::format!("{:?}", e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::RoasterError;
+    use crate::hardware::fan::FanError;
+    use crate::hardware::ssr::SsrError;
+
+    #[test]
+    fn test_error_categorization() {
+        let temp_err = AppError::Temperature {
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
+            source: TemperatureError::OutOfRange,
+        };
+        assert_eq!(temp_err.category(), "temperature");
+        assert!(!temp_err.is_recoverable());
+        assert!(temp_err.requires_emergency_shutdown());
+    }
+
+    #[test]
+    fn test_source_propagation_from_roaster_error() {
+        let roaster_err = crate::control::RoasterError::TemperatureOutOfRange {
+            source: Some("sensor_read"),
+        };
+        let app_err = AppError::from(roaster_err);
+
+        assert_eq!(app_err.source(), Some("temperature_out_of_range"));
+        assert!(format!("{}", app_err).contains("source:"));
+    }
+
+    #[test]
+    fn test_user_messages() {
+        let err = AppError::Temperature {
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
+            source: TemperatureError::SensorFault,
+        };
+        assert_eq!(err.user_message(), "Temperature sensor malfunction");
+    }
+
+    #[test]
+    fn test_source_from_hardware_errors() {
+        let fan_err = crate::hardware::fan::FanError::PwmError {
+            source: "set_duty_failed",
+        };
+        let app_err = AppError::from(fan_err);
+
+        assert_eq!(app_err.source(), Some("fan_error"));
+    }
+
+    #[test]
+    fn test_boundary_contract_hardware_to_control() {
+        let ssr_err = SsrError::PwmError { source: "test" };
+        let ctrl_err = RoasterError::from(ssr_err);
+        assert!(matches!(ctrl_err, RoasterError::HardwareError { .. }));
+    }
+
+    #[test]
+    fn test_boundary_contract_control_to_app() {
+        let ctrl_err = RoasterError::TemperatureOutOfRange {
+            source: Some("sensor"),
+        };
+        let app_err = AppError::from(ctrl_err);
+        assert!(matches!(app_err, AppError::Temperature { .. }));
+        assert_eq!(app_err.source(), Some("temperature_out_of_range"));
+    }
+
+    #[test]
+    fn test_boundary_contract_hardware_direct_to_app() {
+        let fan_err = FanError::PwmError { source: "test" };
+        let app_err = AppError::from(fan_err);
+        assert!(matches!(app_err, AppError::Hardware { .. }));
+        assert_eq!(app_err.source(), Some("fan_error"));
+    }
+
+    #[test]
+    fn test_boundary_contract_input_to_app() {
+        let input_err = InputError::ParseError;
+        let app_err = AppError::from(input_err);
+        assert!(matches!(app_err, AppError::Communication { .. }));
+    }
+
+    #[test]
+    fn test_display_outputs_expected_tokens() {
+        let err = AppError::Temperature {
+            message: heapless::String::<ERROR_MSG_MAX_LEN>::try_from("Test").unwrap_or_default(),
+            source: TemperatureError::OutOfRange,
+        };
+        let repr = format!("{}", err);
+        assert!(repr.contains("temperature:"));
+        assert!(repr.contains("source:"));
+    }
+
+    #[test]
+    fn test_debug_contains_variant_name() {
+        let err = AppError::Control {
+            source: ControlError::PidError,
+        };
+        let repr = format!("{:?}", err);
+        assert!(repr.contains("Control"));
+        assert!(repr.contains("PidError"));
+    }
+}

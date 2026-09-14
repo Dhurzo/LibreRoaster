@@ -1,0 +1,11 @@
+{
+  "ambient_temp_min": 0.0,
+  "ambient_temp_max": 50.0,
+  "dual_channel_max_delta": 15.0,
+  "temp_stability_max_delta": 5.0,
+  "ssr_duty_tolerance_pct": 3.0,
+  "fan_duty_tolerance_pct": 5.0,
+  "reference_temp_tolerance": 2.0,
+  "gpio_read_consistency_samples": 3,
+  "ledc_duty_readback_tolerance_ticks": 2
+}

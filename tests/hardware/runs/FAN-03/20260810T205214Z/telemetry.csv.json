@@ -1,0 +1,28 @@
+{
+  "run_id": "FAN-03-20260810T205214Z",
+  "scenario_id": "FAN-03",
+  "manifest_entry": {
+    "id": "FAN-03",
+    "category": "Fan",
+    "tier": 1,
+    "description": "Fan responds correctly across full 0-100% range in 25% steps",
+    "command_sequence": "IO3 0; STATUS; IO3 25; STATUS; IO3 50; STATUS; IO3 75; STATUS; IO3 100; STATUS; IO3 0; STATUS",
+    "requires_unsafe": false,
+    "expected_columns": [
+      "fan",
+      "guard_timeouts"
+    ],
+    "golden_output": "tests/hardware/goldens/FAN-03.csv",
+    "metadata": {
+      "fan_duty_tolerance_pct": 5.0,
+      "retention_days": 60,
+      "evidence_owner": "libreroaster/audits"
+    }
+  },
+  "max_command_latency_us": 359.0,
+  "run_directory": "tests/hardware/runs/FAN-03/20260810T205214Z",
+  "started_at": "2026-08-10T20:52:14.909287",
+  "manifest_path": "tests/hardware/scenario_manifest.json",
+  "hardware_mode": true,
+  "reference_temp": null
+}

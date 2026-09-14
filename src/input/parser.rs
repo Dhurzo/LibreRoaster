@@ -1,0 +1,1745 @@
+//! Artisan serial command parser for LibreRoaster.
+//!
+//! Translates raw TC4/Artisan command lines (READ, OT1, PID;..., PROFILE,
+//! STREAM, ...) into the internal `ArtisanCommand` enum. Handles delimiter
+//! normalisation, value range/clamping, and FIFO staging of PROFILE/FANPROFILE
+//! payloads via interrupt-safe statics for the control loop to consume.
+
+use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
+use core::cell::RefCell;
+use critical_section::Mutex;
+
+/// A small FIFO (capacity 4) preserves bursts of PROFILE lines in order;
+/// overflow drops the oldest, keeping the newest command.
+static PARSED_PROFILE: Mutex<RefCell<heapless::Deque<RoastProfile, 4>>> =
+    Mutex::new(RefCell::new(heapless::Deque::new()));
+
+/// Store a parsed profile for the command handler to consume.
+pub fn store_profile(profile: RoastProfile) {
+    critical_section::with(|cs| {
+        let mut slot = PARSED_PROFILE.borrow(cs).borrow_mut();
+        if slot.len() >= 4 {
+            let _ = slot.pop_front();
+        }
+        let _ = slot.push_back(profile);
+    });
+}
+
+/// Consume the oldest stored profile, returning it and removing it from the
+/// queue.
+pub fn take_profile() -> Option<RoastProfile> {
+    critical_section::with(|cs| PARSED_PROFILE.borrow(cs).borrow_mut().pop_front())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseError {
+    /// Command string did not match any known Artisan/TC4 verb.
+    UnknownCommand,
+    /// Command was recognised but a parameter failed numeric parsing.
+    InvalidValue,
+    /// A parsed numeric value fell outside its allowed range.
+    OutOfRange,
+    /// The command line was empty or whitespace-only.
+    EmptyCommand,
+    /// Command exceeded maximum buffer size (256 bytes).
+    CommandTooLong,
+    /// Event queue overflowed while a partial command was in flight; the
+    /// buffered bytes were flushed to prevent silent corruption.
+    BufferOverflow,
+}
+
+impl ParseError {
+    /// Returns the stable machine-readable error token for this parse failure.
+    pub fn code(&self) -> &'static str {
+        match self {
+            ParseError::UnknownCommand => "unknown_command",
+            ParseError::InvalidValue => "invalid_value",
+            ParseError::OutOfRange => "out_of_range",
+            ParseError::EmptyCommand => "invalid_value",
+            ParseError::CommandTooLong => "command_too_long",
+            ParseError::BufferOverflow => "buffer_overflow",
+        }
+    }
+
+    /// Returns the human-readable error message for this parse failure.
+    pub fn message(&self) -> &'static str {
+        match self {
+            ParseError::UnknownCommand => "unknown_command",
+            ParseError::InvalidValue => "invalid_value",
+            ParseError::OutOfRange => "out_of_range",
+            ParseError::EmptyCommand => "empty_command",
+            ParseError::CommandTooLong => "command_too_long",
+            ParseError::BufferOverflow => "buffer_overflow",
+        }
+    }
+}
+
+/// Parse a single Artisan/TC4 command line into an `ArtisanCommand`.
+///
+/// Trims and normalises the delimiter (`;`/`,`/`=` to space), dispatches
+/// init/handshake and operational verbs, and rejects malformed or out-of-range
+/// input with a `ParseError`.
+pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError> {
+    let trimmed = command.trim();
+
+    if trimmed.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
+
+    // Artisan/TC4 uses ';' as the delimiter for init/handshake commands
+    // (CHAN;1200, UNITS;C, FILT;70, PID;SV;250, PROFILE;...) and a space for
+    // operational commands (OT1 75, READ, STATUS). Some Artisan configurations
+    // also send the operational form with a semicolon: `OT1;75`, `OT2;60`,
+    // `IO3;50`.
+    //
+    // Normalise the delimiter to a space BEFORE the init-command
+    // dispatch. Init commands still match (`"CHAN 1200"` parses identically to
+    // `"CHAN;1200"` once we look for `split_once(' ')`), and `OT1;75` becomes
+    // `OT1 75`, hitting the existing operational parser.
+    let normalized: heapless::String<256> = {
+        let mut s = heapless::String::new();
+        for ch in trimmed.chars() {
+            // The transport layer accepts lines up to 255 bytes
+            // (`Vec<u8, 256>`, `CommandTooLong` fires at ≥256) and
+            // PROFILE/FANPROFILE commands routinely reach ~170 bytes with
+            // `MAX_PROFILE_SETPOINTS = 16`. Use a 256-byte buffer matching
+            // the transport ceiling, and surface overflow as an explicit
+            // `CommandTooLong` instead of truncating.
+            let pushed = if ch == ';' { s.push(' ') } else { s.push(ch) };
+            if pushed.is_err() {
+                return Err(ParseError::CommandTooLong);
+            }
+        }
+        s
+    };
+    let trimmed = normalized.as_str();
+    debug_assert!(!trimmed.is_empty() || command.trim().is_empty());
+
+    // Init commands with the normalised delimiter. We split on the first
+    // space; CHAN/UNITS/FILT/etc. consume the remainder as their argument.
+    if let Some((cmd, args)) = trimmed.split_once(' ') {
+        let init_result: Option<Result<ArtisanCommand, ParseError>> =
+            match cmd.to_ascii_uppercase().as_str() {
+                "CHAN" => Some(
+                    args.trim()
+                        .parse::<u16>()
+                        .map(ArtisanCommand::Chan)
+                        .map_err(|_| ParseError::InvalidValue),
+                ),
+                "UNITS" => Some(match args.trim() {
+                    "C" | "c" => Ok(ArtisanCommand::Units(false)),
+                    "F" | "f" => Ok(ArtisanCommand::Units(true)),
+                    _ => Err(ParseError::InvalidValue),
+                }),
+                "FILT" => {
+                    // Artisan sends comma-separated filter values
+                    // (e.g., "FILT;70,70,70,70") or a single value
+                    // (e.g., "FILT;5"). The value is acknowledged but not
+                    // used by the firmware — just extract the first token.
+                    // Non-numeric or > 100 yields `ERR invalid_value`,
+                    // matching the parser's "reject, don't coerce" convention.
+                    let first = args.trim().split(',').next().unwrap_or("").trim();
+                    let val = first.parse::<u8>().map_err(|_| ParseError::InvalidValue)?;
+                    if val > 100 {
+                        return Err(ParseError::InvalidValue);
+                    }
+                    Some(Ok(ArtisanCommand::Filt(val)))
+                }
+                "PROFILE" => Some(parse_profile_args(args.trim())),
+                "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
+                "PID" => Some(parse_pid_subcommand(args.trim())),
+                "STREAM" => Some(match args.trim().to_ascii_uppercase().as_str() {
+                    "ON" => Ok(ArtisanCommand::SetStreaming(true)),
+                    "OFF" => Ok(ArtisanCommand::SetStreaming(false)),
+                    _ => Err(ParseError::InvalidValue),
+                }),
+                // Unknown init command → fall through to operational parsing
+                // on the normalised string (e.g. "OT1 75", "READ").
+                _ => None,
+            };
+
+        if let Some(result) = init_result {
+            return result;
+        }
+    }
+
+    // Operational commands: parse the normalised command by spaces. take(5)
+    // prevents heapless::Vec overflow on garbage input (>5 tokens) while
+    // preserving trailing junk so arity checks (e.g. PIDGAIN `len() == 4`)
+    // can reject it.
+    let parts: heapless::Vec<&str, 5> = trimmed.split_whitespace().take(5).collect();
+
+    if parts.is_empty() {
+        return Err(ParseError::UnknownCommand);
+    }
+
+    // TC4 spec note 2 allows the parameter delimiter to be a comma, space,
+    // semicolon OR equals sign for *every* command. The `;`→` ` normalisation
+    // above covers the semicolon, but classic actuator syntax documented for
+    // aArtisan/firmware TC4 uses commas and equals: `OT1,75`, `IO3=50`,
+    // `DCFAN,40`. With only whitespace splitting those arrive as a single
+    // token ("OT1,75") rejected as `unknown_command`, breaking Artisan
+    // slider/button configs that follow the documented
+    // syntax. Re-tokenise on [',','='] ONLY when the head of the first token
+    // names an actuator command — a global comma split would corrupt the
+    // comma-separated payloads of FILT (first-value extraction) and
+    // PROFILE/FANPROFILE (`t,temp` pairs), and the `PID,ON`/`PID,OFF`/
+    // `PID,SV,..` forms are dispatched from `cmd` below and must stay whole.
+    let parts = if parts[0].contains(',') || parts[0].contains('=') {
+        let head = parts[0].split([',', '=']).next().unwrap_or("");
+        let is_actuator = head.eq_ignore_ascii_case("OT1")
+            || head.eq_ignore_ascii_case("OT2")
+            || head.eq_ignore_ascii_case("IO3")
+            || head.eq_ignore_ascii_case("DCFAN");
+        if is_actuator {
+            trimmed.split([' ', ',', '=']).take(4).collect()
+        } else {
+            parts
+        }
+    } else {
+        parts
+    };
+
+    let cmd = parts[0];
+
+    if (cmd.eq_ignore_ascii_case("STATUS") || cmd.eq_ignore_ascii_case("STAT")) && parts.len() == 1
+    {
+        Ok(ArtisanCommand::StatusReport)
+    } else if cmd.eq_ignore_ascii_case("READ") && parts.len() == 1 {
+        Ok(ArtisanCommand::ReadStatus)
+    } else if cmd.eq_ignore_ascii_case("START") && parts.len() == 1 {
+        Ok(ArtisanCommand::StartRoast)
+    } else if cmd.eq_ignore_ascii_case("STOP") && parts.len() == 1 {
+        Ok(ArtisanCommand::EmergencyStop)
+    } else if cmd.eq_ignore_ascii_case("UP") && parts.len() == 1 {
+        Ok(ArtisanCommand::IncreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("DOWN") && parts.len() == 1 {
+        Ok(ArtisanCommand::DecreaseHeater)
+    } else if cmd.eq_ignore_ascii_case("REG") && parts.len() == 1 {
+        Ok(ArtisanCommand::RunRegression)
+    } else if cmd.eq_ignore_ascii_case("OT1") {
+        if parts.len() == 2 {
+            // TC4 step commands: `OT1,up` / `OT1,down` move the heater duty
+            // by DUTY_STEP rather than setting an absolute value.
+            if parts[1].eq_ignore_ascii_case("up") {
+                Ok(ArtisanCommand::IncreaseHeater)
+            } else if parts[1].eq_ignore_ascii_case("down") {
+                Ok(ArtisanCommand::DecreaseHeater)
+            } else {
+                let value = parse_percentage(parts[1])?;
+                Ok(ArtisanCommand::SetHeater(value))
+            }
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("IO3") {
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
+            Ok(ArtisanCommand::SetFan(value))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("DCFAN") {
+        // TC4 DCFAN command: sets the fan PWM duty 0-100. The reference
+        // firmware additionally slews the duty at max 25 points/s to limit
+        // fan inrush on triac-driven Hottop roasters; LibreRoaster drives
+        // the fan with a 25 kHz LEDC PWM (no triac inrush), so the duty is
+        // applied immediately, same as IO3.
+        if parts.len() == 2 {
+            let value = parse_percentage(parts[1])?;
+            Ok(ArtisanCommand::SetFan(value))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("OT2") {
+        if parts.len() == 2 {
+            let (value, was_clamped) = parse_ot2_value(parts[1])?;
+            Ok(ArtisanCommand::SetFanSpeed(value, was_clamped))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("PIDGAIN") {
+        if parts.len() == 4 {
+            let kp = parse_float(parts[1])?;
+            let ki = parse_float(parts[2])?;
+            let kd = parse_float(parts[3])?;
+            // Non-finite gains yield a NaN MV — reject here with
+            // `ERR out_of_range`.
+            if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
+                return Err(ParseError::OutOfRange);
+            }
+            // Negative gains are rejected here (`OutOfRange`), mirroring the
+            // PID;T check. The handler check remains as defense-in-depth.
+            if kp < 0.0 || ki < 0.0 || kd < 0.0 {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("#DUMP") && parts.len() == 1 {
+        Ok(ArtisanCommand::DumpLog)
+    } else if cmd.eq_ignore_ascii_case("PID,ON") {
+        Ok(ArtisanCommand::StartRoast)
+    } else if cmd.eq_ignore_ascii_case("PID,OFF") {
+        Ok(ArtisanCommand::Stop)
+    } else if cmd.to_ascii_uppercase().starts_with("PID,SV,") {
+        // PID,SV,150 → same as SETTARGET 150
+        let sv_str = &cmd[7..]; // After "PID,SV,"
+        let target = sv_str
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| ParseError::InvalidValue)?;
+        // The value is in *display units* (°C or °F depending on UNITS);
+        // the handler `handle_set_target_temp` converts to °C and validates
+        // the converted value. Keep only the numeric sanity check here.
+        if !target.is_finite() {
+            return Err(ParseError::InvalidValue);
+        }
+        Ok(ArtisanCommand::SetTargetTemp(target))
+    } else if cmd.eq_ignore_ascii_case("PREHEAT") {
+        if parts.len() == 2 {
+            let temp = parse_float(parts[1])?;
+            // Same as PID;SV — the handler converts display units to
+            // °C and validates the converted value; keep only the finite
+            // sanity check here.
+            if !temp.is_finite() {
+                return Err(ParseError::InvalidValue);
+            }
+            Ok(ArtisanCommand::Preheat(temp))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("SETTARGET") {
+        if parts.len() == 2 {
+            let target = parse_float(parts[1])?;
+            // Same as PID;SV — the handler validates after the
+            // display→°C conversion; keep only the finite sanity check here.
+            if !target.is_finite() {
+                return Err(ParseError::InvalidValue);
+            }
+            Ok(ArtisanCommand::SetTargetTemp(target))
+        } else {
+            Err(ParseError::InvalidValue)
+        }
+    } else {
+        Err(ParseError::UnknownCommand)
+    }
+}
+
+fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
+    // Accept both ';' and ' ' as segment delimiters: the caller pre-normalises
+    // ';' to ' ' for some paths, so we split on either to stay robust under
+    // both `PID;SV;250` and `PID SV 250` style inputs.
+    // The caller normalises every ';' to a space, so a legal spaced form
+    // like `PID; SV; 250` arrives as `PID  SV  250` — skip empty segments
+    // (mirroring `parse_profile_args`).
+    let parts: heapless::Vec<&str, 8> = args
+        .split([';', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .take(8)
+        .collect();
+    if parts.is_empty() {
+        return Err(ParseError::InvalidValue);
+    }
+
+    match parts[0].trim().to_ascii_uppercase().as_str() {
+        "ON" => Ok(ArtisanCommand::StartRoast),
+        "OFF" => Ok(ArtisanCommand::Stop),
+        "SV" => {
+            // Require exact arity — trailing junk (`PID;SV;250;junk`) is rejected.
+            if parts.len() != 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let target = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            // The value is in display units; the handler converts to °C and validates.
+            if !target.is_finite() {
+                return Err(ParseError::InvalidValue);
+            }
+            Ok(ArtisanCommand::SetTargetTemp(target))
+        }
+        "T" => {
+            // Require exactly `PID;T;kp;ki;kd` — extra tokens are rejected
+            // instead of partially applied.
+            if parts.len() != 4 {
+                return Err(ParseError::InvalidValue);
+            }
+            let kp = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let ki = parts[2]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let kd = parts[3]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            // Non-finite gains would yield a NaN MV every tick — reject
+            // with `OutOfRange` (same class already handled on PID;LIMIT and PIDGAIN).
+            if !kp.is_finite() || !ki.is_finite() || !kd.is_finite() {
+                return Err(ParseError::OutOfRange);
+            }
+            if kp < 0.0 || ki < 0.0 || kd < 0.0 {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+        }
+        "CHAN" => {
+            // Require exact arity, same as SV.
+            if parts.len() != 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let ch = parts[1]
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            // Accept only `1..=2` — the firmware has exactly two
+            // thermocouples (1 = ET, 2 = BT).
+            if !(1..=2).contains(&ch) {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidChannel(ch))
+        }
+        "CT" => {
+            // Require exact arity, same as SV.
+            if parts.len() != 2 {
+                return Err(ParseError::InvalidValue);
+            }
+            let ms = parts[1]
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            // Bound the cycle time to 10 ms..=60 s. An unbounded `cycle_ms`
+            // would stall `update_pid_control` on the last applied output
+            // (regulation dead); anything updating slower than once a minute
+            // has no regulatory value.
+            if !(10..=60_000).contains(&ms) {
+                return Err(ParseError::OutOfRange);
+            }
+            Ok(ArtisanCommand::SetPidCycleTime(ms))
+        }
+        "LIMIT" => {
+            // Require exact arity — trailing junk (`PID;LIMIT;0;100;junk`)
+            // is rejected, not partially applied.
+            if parts.len() != 3 {
+                return Err(ParseError::InvalidValue);
+            }
+            let min = parts[1]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            let max = parts[2]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| ParseError::InvalidValue)?;
+            // Reject NaN/Inf which would cause PID compute_output to panic
+            if !min.is_finite() || !max.is_finite() {
+                return Err(ParseError::InvalidValue);
+            }
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max))
+        }
+        _ => Err(ParseError::UnknownCommand),
+    }
+}
+
+fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
+    let value = value_str
+        .parse::<u8>()
+        .map_err(|_| ParseError::InvalidValue)?;
+
+    if value <= 100 {
+        Ok(value)
+    } else {
+        Err(ParseError::OutOfRange)
+    }
+}
+
+fn parse_float(value_str: &str) -> Result<f32, ParseError> {
+    value_str
+        .parse::<f32>()
+        .map_err(|_| ParseError::InvalidValue)
+}
+
+/// Parse OT2 fan speed value with decimal support.
+///
+/// OT2 clamps out-of-range fan values to the `[0, 100]` range and reports
+/// the clamping back to the caller via `was_clamped=true` so the control
+/// layer can emit an `ERR OT2_CLAMPED` notification.
+///
+/// OT2 is a fan-override command and does not change heater or PID state.
+/// The fan is clamped, the heater is left alone, and the host is notified.
+///
+/// - Decimals are rounded to the nearest integer
+/// - Out-of-range values are clamped to `[0, 100]` and `was_clamped` is set true
+/// - Negative values clamp to 0
+/// - Returns `Ok((clamped_value, was_clamped))`; non-finite input returns `Err(InvalidValue)`
+fn parse_ot2_value(value_str: &str) -> Result<(u8, bool), ParseError> {
+    let value = value_str
+        .parse::<f32>()
+        .map_err(|_| ParseError::InvalidValue)?;
+
+    // Non-finite input is rejected outright — clamping `(NaN+0.5) as i32`
+    // would saturate to 0 and silently issue `SetFanSpeed(0, true)` with the
+    // heater still energised.
+    if !value.is_finite() {
+        return Err(ParseError::InvalidValue);
+    }
+
+    let was_clamped = !(0.0..=100.0).contains(&value);
+
+    // Round to nearest integer (0.5 rounds up)
+    let rounded = if value >= 0.0 {
+        (value + 0.5) as i32
+    } else {
+        (value - 0.5) as i32
+    };
+
+    let clamped = rounded.clamp(0, 100) as u8;
+    Ok((clamped, was_clamped))
+}
+
+fn parse_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
+    let mut profile = RoastProfile::new();
+    // Accept both ';' and ' ' as segment delimiters (the caller may pre-
+    // normalise ';' to ' '). Inner point format is `time,temp` (comma).
+    for segment in args.split([';', ' ']) {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let mut parts = segment.splitn(2, ',');
+        let time_str = parts.next().ok_or(ParseError::InvalidValue)?;
+        let temp_str = parts.next().ok_or(ParseError::InvalidValue)?;
+
+        let time_secs: u32 = time_str
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        let temperature: f32 = temp_str
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+
+        // The raw value is in the host's display scale;
+        // `handle_set_profile` converts to °C with `convert_from_display`
+        // first and validates in °C. Only reject non-finite values here;
+        // range check belongs on the converted value in the handler.
+        if !temperature.is_finite() {
+            return Err(ParseError::InvalidValue);
+        }
+
+        profile
+            .setpoints
+            .push(ProfileSetpoint {
+                time_secs,
+                temperature,
+            })
+            .map_err(|_| ParseError::OutOfRange)?;
+    }
+
+    if profile.setpoints.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
+
+    store_profile(profile);
+    Ok(ArtisanCommand::SetProfile)
+}
+
+fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
+    use crate::config::FanSetpoint;
+    let mut profile = FanProfile::new();
+    for segment in args.split([';', ' ']) {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let mut parts = segment.splitn(2, ',');
+        let time_secs: u32 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        let fan_speed: u8 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        if fan_speed > 100 {
+            return Err(ParseError::OutOfRange);
+        }
+        profile
+            .setpoints
+            .push(FanSetpoint {
+                time_secs,
+                fan_speed,
+            })
+            .map_err(|_| ParseError::OutOfRange)?;
+    }
+    if profile.setpoints.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
+    crate::input::parser::fan_profile_store(profile);
+    Ok(ArtisanCommand::SetFanProfile)
+}
+
+/// FIFO queue for FANPROFILE: a burst of two FANPROFILE lines must not
+/// overwrite the first before the control loop drains it (same rationale
+/// as `PARSED_PROFILE`).
+static PARSED_FAN_PROFILE: Mutex<RefCell<heapless::Deque<FanProfile, 4>>> =
+    Mutex::new(RefCell::new(heapless::Deque::new()));
+/// Stage a parsed FANPROFILE into the interrupt-safe FIFO for the control loop.
+pub fn fan_profile_store(profile: FanProfile) {
+    critical_section::with(|cs| {
+        let mut slot = PARSED_FAN_PROFILE.borrow(cs).borrow_mut();
+        if slot.len() >= 4 {
+            let _ = slot.pop_front();
+        }
+        let _ = slot.push_back(profile);
+    });
+}
+/// Remove and return the oldest staged FANPROFILE, if any.
+pub fn fan_profile_take() -> Option<FanProfile> {
+    critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(test)]
+    mod proptest_tests {
+        #![allow(clippy::unwrap_used)]
+
+        use crate::config::ArtisanCommand;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_never_panics(input: String) {
+                let _result = super::parse_artisan_command(&input);
+            }
+
+            #[test]
+            fn empty_and_whitespace_commands(
+                whitespace in prop::collection::vec(prop_oneof![
+                    Just(' '),
+                    Just('\t'),
+                    Just('\n'),
+                    Just('\r')
+                ], 0..20)
+            ) {
+                let input: String = whitespace.iter().collect();
+                let result = super::parse_artisan_command(&input);
+                assert!(matches!(result, Err(super::ParseError::EmptyCommand)));
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn known_commands_parse_correctly(index in 0u32..100) {
+                let command_table = vec![
+                    ("READ", ArtisanCommand::ReadStatus),
+                    ("STATUS", ArtisanCommand::StatusReport),
+                    ("STAT", ArtisanCommand::StatusReport),
+                    ("START", ArtisanCommand::StartRoast),
+                    ("STOP", ArtisanCommand::EmergencyStop),
+                    ("UP", ArtisanCommand::IncreaseHeater),
+                    ("DOWN", ArtisanCommand::DecreaseHeater),
+                    ("REG", ArtisanCommand::RunRegression),
+                    ("#DUMP", ArtisanCommand::DumpLog),
+                    ("OT1 0", ArtisanCommand::SetHeater(0)),
+                    ("OT1 50", ArtisanCommand::SetHeater(50)),
+                    ("OT1 100", ArtisanCommand::SetHeater(100)),
+                    ("IO3 0", ArtisanCommand::SetFan(0)),
+                    ("IO3 50", ArtisanCommand::SetFan(50)),
+                    ("IO3 100", ArtisanCommand::SetFan(100)),
+                    ("OT2 0", ArtisanCommand::SetFanSpeed(0, false)),
+                    ("OT2 50", ArtisanCommand::SetFanSpeed(50, false)),
+                    ("OT2 100", ArtisanCommand::SetFanSpeed(100, false)),
+                    ("OT2 150", ArtisanCommand::SetFanSpeed(100, true)),
+                    ("SETTARGET 150", ArtisanCommand::SetTargetTemp(150.0)),
+                    ("SETTARGET 210.5", ArtisanCommand::SetTargetTemp(210.5)),
+                    ("PREHEAT 100", ArtisanCommand::Preheat(100.0)),
+                    ("PREHEAT 200.5", ArtisanCommand::Preheat(200.5)),
+                    ("PIDGAIN 1.0 0.5 0.1", ArtisanCommand::SetPidGain(1.0, 0.5, 0.1)),
+                    ("CHAN;0", ArtisanCommand::Chan(0)),
+                    ("CHAN;999", ArtisanCommand::Chan(999)),
+                    ("UNITS;C", ArtisanCommand::Units(false)),
+                    ("UNITS;F", ArtisanCommand::Units(true)),
+                    ("FILT;5", ArtisanCommand::Filt(5)),
+                    ("FILT;70,70,70,70", ArtisanCommand::Filt(70)),
+                    ("PID;ON", ArtisanCommand::StartRoast),
+                    ("PID;OFF", ArtisanCommand::Stop),
+                    ("read", ArtisanCommand::ReadStatus),
+                    ("status", ArtisanCommand::StatusReport),
+                    ("ot1 75", ArtisanCommand::SetHeater(75)),
+                    ("Up", ArtisanCommand::IncreaseHeater),
+                ];
+
+                let (input, expected_command) = command_table[index as usize % command_table.len()];
+                // Assert exact command equality so the table proves the
+                // mapping, not just successful parsing.
+                let result = super::parse_artisan_command(input);
+                assert_eq!(result, Ok(expected_command));
+            }
+        }
+
+        proptest! {
+            /// Hostile byte soup (NUL, non-UTF8,
+            /// control chars, delimiters, huge numbers) must never panic the
+            /// parser, and any actuator command that DOES parse must carry a
+            /// clamped value (<= 100). A parse of garbage into
+            /// `SetHeater > 100` would be a safety bug (unexpected heat).
+            #[test]
+            fn hostile_bytes_never_panic_and_never_unclamp(
+                bytes in prop::collection::vec(any::<u8>(), 0..300)
+            ) {
+                // Production transport converts bytes with `from_utf8` and
+                // rejects invalid UTF-8 (Err InvalidValue); the lossy
+                // conversion here is a SUPERSET of what reaches the parser,
+                // so it exercises every byte sequence the wire can deliver.
+                let input = String::from_utf8_lossy(&bytes);
+                if let Ok(cmd) = super::parse_artisan_command(&input) {
+                    match cmd {
+                        ArtisanCommand::SetHeater(v) => {
+                            assert!(v <= 100, "SetHeater must clamp to 100, got {v}")
+                        }
+                        ArtisanCommand::SetFan(v) => {
+                            assert!(v <= 100, "SetFan must clamp to 100, got {v}")
+                        }
+                        ArtisanCommand::SetFanSpeed(v, _) => {
+                            assert!(v <= 100, "SetFanSpeed must clamp to 100, got {v}")
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            /// A NUL byte embedded anywhere in a command must not forge or
+            /// alter it: token matching is exact (`eq_ignore_ascii_case` on
+            /// whole tokens), so `OT1\0 75` is `unknown_command`, and
+            /// `SETTARGET 200\0` fails the numeric parse.
+            #[test]
+            fn nul_byte_cannot_forge_or_alter_commands(nul_pos in 0usize..7) {
+                let base = b"OT1 75";
+                let mut buf = Vec::with_capacity(base.len() + 1);
+                buf.extend_from_slice(&base[..nul_pos]);
+                buf.push(0);
+                buf.extend_from_slice(&base[nul_pos..]);
+                let input = String::from_utf8_lossy(&buf);
+                let result = super::parse_artisan_command(&input);
+                assert!(
+                    result.is_err(),
+                    "NUL must never produce a valid command: {input:?} → {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_read_command() {
+        let result = parse_artisan_command("READ");
+        assert!(matches!(result, Ok(ArtisanCommand::ReadStatus)));
+    }
+
+    #[test]
+    fn test_parse_status_command() {
+        let result = parse_artisan_command("STATUS");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
+    }
+
+    #[test]
+    fn test_parse_stat_command_alias() {
+        let result = parse_artisan_command("STAT");
+        assert!(matches!(result, Ok(ArtisanCommand::StatusReport)));
+    }
+
+    #[test]
+    fn test_parse_start_command() {
+        let result = parse_artisan_command("START");
+        assert!(matches!(result, Ok(ArtisanCommand::StartRoast)));
+    }
+
+    #[test]
+    fn test_parse_stream_on() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;ON"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+        assert!(matches!(
+            parse_artisan_command("STREAM ON"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_off() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;OFF"),
+            Ok(ArtisanCommand::SetStreaming(false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_case_insensitive() {
+        assert!(matches!(
+            parse_artisan_command("stream;on"),
+            Ok(ArtisanCommand::SetStreaming(true))
+        ));
+        assert!(matches!(
+            parse_artisan_command("Stream;Off"),
+            Ok(ArtisanCommand::SetStreaming(false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_stream_invalid_value() {
+        assert!(matches!(
+            parse_artisan_command("STREAM;MAYBE"),
+            Err(ParseError::InvalidValue)
+        ));
+        assert!(matches!(
+            parse_artisan_command("STREAM;1"),
+            Err(ParseError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn test_parse_ot1_command() {
+        let result = parse_artisan_command("OT1 75");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(75))));
+    }
+
+    #[test]
+    fn test_parse_io3_command() {
+        let result = parse_artisan_command("IO3 50");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(50))));
+    }
+
+    #[test]
+    fn test_parse_stop_command() {
+        let result = parse_artisan_command("STOP");
+        assert!(matches!(result, Ok(ArtisanCommand::EmergencyStop)));
+    }
+
+    #[test]
+    fn test_parse_regression_command() {
+        let result = parse_artisan_command("REG");
+        assert!(matches!(result, Ok(ArtisanCommand::RunRegression)));
+    }
+
+    #[test]
+    fn test_invalid_command() {
+        let result = parse_artisan_command("INVALID");
+        assert!(matches!(result, Err(ParseError::UnknownCommand)));
+    }
+
+    #[test]
+    fn test_invalid_value() {
+        let result = parse_artisan_command("OT1 abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_out_of_range_value() {
+        let result = parse_artisan_command("OT1 150");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_empty_command() {
+        let result = parse_artisan_command("");
+        assert!(matches!(result, Err(ParseError::EmptyCommand)));
+    }
+
+    #[test]
+    fn test_parse_ot1_zero() {
+        let result = parse_artisan_command("OT1 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(0))));
+    }
+
+    #[test]
+    fn test_parse_ot1_max() {
+        let result = parse_artisan_command("OT1 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(100))));
+    }
+
+    #[test]
+    fn test_parse_io3_zero() {
+        let result = parse_artisan_command("IO3 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(0))));
+    }
+
+    #[test]
+    fn test_parse_io3_max() {
+        let result = parse_artisan_command("IO3 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(100))));
+    }
+
+    #[test]
+    fn test_parse_io3_invalid_above() {
+        let result = parse_artisan_command("IO3 150");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    // Initialization handshake command tests (Phase 17)
+
+    #[test]
+    fn test_parse_chan_command() {
+        let result = parse_artisan_command("CHAN;1200");
+        assert!(matches!(result, Ok(ArtisanCommand::Chan(1200))));
+    }
+
+    #[test]
+    fn test_parse_chan_command_lowercase() {
+        let result = parse_artisan_command("chan;1200");
+        assert!(matches!(result, Ok(ArtisanCommand::Chan(1200))));
+    }
+
+    #[test]
+    fn test_parse_chan_command_mixed_case() {
+        let result = parse_artisan_command("Chan;9999");
+        assert!(matches!(result, Ok(ArtisanCommand::Chan(9999))));
+    }
+
+    #[test]
+    fn test_parse_chan_command_invalid_value() {
+        let result = parse_artisan_command("CHAN;abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_units_command_celsius() {
+        let result = parse_artisan_command("UNITS;C");
+        assert!(matches!(result, Ok(ArtisanCommand::Units(false))));
+    }
+
+    #[test]
+    fn test_parse_units_command_fahrenheit() {
+        let result = parse_artisan_command("UNITS;F");
+        assert!(matches!(result, Ok(ArtisanCommand::Units(true))));
+    }
+
+    #[test]
+    fn test_parse_units_command_lowercase() {
+        let result = parse_artisan_command("units;f");
+        assert!(matches!(result, Ok(ArtisanCommand::Units(true))));
+    }
+
+    #[test]
+    fn test_parse_units_command_invalid() {
+        let result = parse_artisan_command("UNITS;K");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_filt_command() {
+        let result = parse_artisan_command("FILT;5");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(5))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_lowercase() {
+        let result = parse_artisan_command("filt;3");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(3))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_non_numeric_rejected() {
+        // Garbage is rejected loudly, not coerced to 0.
+        let result = parse_artisan_command("FILT;abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_filt_command_out_of_range_rejected() {
+        // Values above 100 are out of range (0-100 filter %).
+        let result = parse_artisan_command("FILT;999");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        let result = parse_artisan_command("FILT; 101 ");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+        // Boundaries stay valid.
+        let result = parse_artisan_command("FILT;0");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(0))));
+        let result = parse_artisan_command("FILT;100");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(100))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_multi_value() {
+        // Artisan sends comma-separated filter values: "FILT;70,70,70,70"
+        let result = parse_artisan_command("FILT;70,70,70,70");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(70))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_multi_value_extracts_first() {
+        // Only the first comma-separated value matters
+        let result = parse_artisan_command("FILT;80,90,100,110");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(80))));
+    }
+
+    #[test]
+    fn test_parse_filt_command_with_whitespace() {
+        let result = parse_artisan_command("FILT; 7 ");
+        assert!(matches!(result, Ok(ArtisanCommand::Filt(7))));
+    }
+
+    #[test]
+    fn test_parse_chan_unknown_command() {
+        let result = parse_artisan_command("UNKNOWN;123");
+        assert!(matches!(result, Err(ParseError::UnknownCommand)));
+    }
+
+    #[test]
+    fn test_semicolon_with_space_fallback() {
+        let result = parse_artisan_command("CHAN;1200");
+        assert!(matches!(result, Ok(ArtisanCommand::Chan(1200))));
+
+        let result = parse_artisan_command("OT1 75");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(75))));
+    }
+
+    #[test]
+    fn test_parse_up_command() {
+        let result = parse_artisan_command("UP");
+        assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
+    }
+
+    #[test]
+    fn test_parse_up_command_case_insensitive() {
+        let result = parse_artisan_command("up");
+        assert!(matches!(result, Ok(ArtisanCommand::IncreaseHeater)));
+    }
+
+    #[test]
+    fn test_parse_down_command() {
+        let result = parse_artisan_command("DOWN");
+        assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
+    }
+
+    #[test]
+    fn test_parse_down_command_case_insensitive() {
+        let result = parse_artisan_command("down");
+        assert!(matches!(result, Ok(ArtisanCommand::DecreaseHeater)));
+    }
+
+    #[test]
+    fn test_empty_command_returns_empty_command_error() {
+        let result = parse_artisan_command("");
+        assert!(matches!(result, Err(ParseError::EmptyCommand)));
+    }
+
+    /// TEST-18-05b: Verify whitespace-only command returns EmptyCommand error
+    #[test]
+    fn test_whitespace_command_returns_empty_command_error() {
+        let result = parse_artisan_command("   ");
+        assert!(matches!(result, Err(ParseError::EmptyCommand)));
+    }
+
+    #[test]
+    fn test_partial_ot1_command_returns_invalid_value() {
+        let result = parse_artisan_command("OT1");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_partial_io3_command_returns_invalid_value() {
+        let result = parse_artisan_command("IO3");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_extra_whitespace_handled_correctly() {
+        let result = parse_artisan_command("OT1  50");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(50))));
+    }
+
+    #[test]
+    fn test_parse_ot1_zero_value() {
+        let result = parse_artisan_command("OT1 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(0))));
+    }
+
+    #[test]
+    fn test_parse_ot1_max_value() {
+        let result = parse_artisan_command("OT1 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetHeater(100))));
+    }
+
+    #[test]
+    fn test_parse_ot1_out_of_range() {
+        let result = parse_artisan_command("OT1 150");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_parse_io3_zero_value() {
+        let result = parse_artisan_command("IO3 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(0))));
+    }
+
+    #[test]
+    fn test_parse_io3_max_value() {
+        let result = parse_artisan_command("IO3 100");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFan(100))));
+    }
+
+    #[test]
+    fn test_parse_io3_out_of_range() {
+        let result = parse_artisan_command("IO3 150");
+        assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    // OT2 Command Tests
+
+    #[test]
+    fn test_parse_ot2_command_basic() {
+        let result = parse_artisan_command("OT2 75");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(75, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_command_lowercase() {
+        let result = parse_artisan_command("ot2 50");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_up() {
+        let result = parse_artisan_command("OT2 50.5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(51, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_decimal_rounds_down() {
+        let result = parse_artisan_command("OT2 50.4");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(50, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_above_max() {
+        let result = parse_artisan_command("OT2 150");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(100, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_clamped_negative() {
+        let result = parse_artisan_command("OT2 -5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, true))));
+    }
+
+    #[test]
+    fn test_parse_ot2_zero() {
+        let result = parse_artisan_command("OT2 0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetFanSpeed(0, false))));
+    }
+
+    #[test]
+    fn test_parse_ot2_max() {
+        let result = parse_artisan_command("OT2 100");
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetFanSpeed(100, false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_ot2_invalid_value() {
+        let result = parse_artisan_command("OT2 abc");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_ot2_partial_command() {
+        let result = parse_artisan_command("OT2");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_pidgain_command() {
+        let result = parse_artisan_command("PIDGAIN 2.0 0.25 0.05");
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetPidGain(2.0, 0.25, 0.05))
+        ));
+    }
+
+    #[test]
+    fn test_parse_pidgain_case_insensitive() {
+        let result = parse_artisan_command("pidgain 1.5 0.3 0.1");
+        assert!(matches!(
+            result,
+            Ok(ArtisanCommand::SetPidGain(1.5, 0.3, 0.1))
+        ));
+    }
+
+    #[test]
+    fn test_parse_pidgain_invalid_value() {
+        let result = parse_artisan_command("PIDGAIN abc 0.25 0.05");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_pidgain_partial() {
+        let result = parse_artisan_command("PIDGAIN 2.0 0.25");
+        assert!(matches!(result, Err(ParseError::InvalidValue)));
+    }
+
+    #[test]
+    fn test_parse_settarget_command() {
+        let result = parse_artisan_command("SETTARGET 200");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(200.0))));
+    }
+
+    #[test]
+    fn test_parse_settarget_decimal() {
+        let result = parse_artisan_command("SETTARGET 210.5");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(210.5))));
+    }
+
+    #[test]
+    fn test_parse_settarget_out_of_range() {
+        // The parser does not range-check display-unit setpoints —
+        // the handler validates after the °F→°C conversion. 350 °F is well
+        // within °C target range (~177 °C), and the parser must pass it.
+        let result = parse_artisan_command("SETTARGET 350");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(v))
+            if (v - 350.0).abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn test_parse_settarget_too_low() {
+        // A small value like 40 °F (~4 °C) is parsed successfully; the
+        // handler decides whether the converted target is in range.
+        let result = parse_artisan_command("SETTARGET 40");
+        assert!(matches!(result, Ok(ArtisanCommand::SetTargetTemp(v))
+            if (v - 40.0).abs() < f32::EPSILON));
+    }
+
+    // ── PREHEAT command edge cases ────────────
+
+    #[test]
+    fn test_preheat_basic() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 180"),
+            Ok(ArtisanCommand::Preheat(180.0))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_decimal() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 210.5"),
+            Ok(ArtisanCommand::Preheat(210.5))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_min() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 50"),
+            Ok(ArtisanCommand::Preheat(50.0))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_max() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 300"),
+            Ok(ArtisanCommand::Preheat(300.0))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_too_low() {
+        // The parser passes the value through; the handler validates
+        // after the display→°C conversion.
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 40"),
+            Ok(ArtisanCommand::Preheat(40.0))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_too_high() {
+        // The parser passes the value through (e.g. 350 °F ≈ 177 °C
+        // is a normal preheat). Handler validates post-conversion.
+        assert!(matches!(
+            parse_artisan_command("PREHEAT 350"),
+            Ok(ArtisanCommand::Preheat(350.0))
+        ));
+    }
+
+    #[test]
+    fn test_preheat_no_value() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT"),
+            Err(ParseError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn test_preheat_invalid() {
+        assert!(matches!(
+            parse_artisan_command("PREHEAT abc"),
+            Err(ParseError::InvalidValue)
+        ));
+    }
+
+    // ── FANPROFILE command edge cases ──────────
+
+    #[test]
+    fn test_fanprofile_basic() {
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,20;60,50;120,100"),
+            Ok(ArtisanCommand::SetFanProfile)
+        ));
+    }
+
+    #[test]
+    fn test_fanprofile_single_setpoint() {
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,30"),
+            Ok(ArtisanCommand::SetFanProfile)
+        ));
+    }
+
+    #[test]
+    fn test_fanprofile_empty() {
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;"),
+            Err(ParseError::EmptyCommand)
+        ));
+    }
+
+    #[test]
+    fn test_fanprofile_out_of_range() {
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;0,150"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_fanprofile_invalid_format() {
+        assert!(matches!(
+            parse_artisan_command("FANPROFILE;abc,def"),
+            Err(ParseError::InvalidValue)
+        ));
+    }
+
+    // ── TC4 PID commands ──────────────────────
+
+    #[test]
+    fn test_pid_on_maps_to_start() {
+        assert!(matches!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
+    }
+
+    #[test]
+    fn test_pid_off_maps_to_stop() {
+        assert!(matches!(
+            parse_artisan_command("PID,OFF"),
+            Ok(ArtisanCommand::Stop)
+        ));
+    }
+
+    #[test]
+    fn test_pid_sv_maps_to_settarget() {
+        assert!(matches!(
+            parse_artisan_command("PID,SV,150"),
+            Ok(ArtisanCommand::SetTargetTemp(150.0))
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,210.5"),
+            Ok(ArtisanCommand::SetTargetTemp(210.5))
+        ));
+    }
+
+    #[test]
+    fn test_pid_sv_case_insensitive() {
+        assert!(matches!(
+            parse_artisan_command("pid,sv,200"),
+            Ok(ArtisanCommand::SetTargetTemp(200.0))
+        ));
+    }
+
+    #[test]
+    fn test_pid_sv_out_of_range() {
+        // The parser does not range-check display-unit setpoints.
+        // 40 °F (~4 °C) and 350 °F (~177 °C) are both accepted; the handler
+        // validates after the °F→°C conversion.
+        assert!(matches!(
+            parse_artisan_command("PID,SV,40"),
+            Ok(ArtisanCommand::SetTargetTemp(40.0))
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID,SV,350"),
+            Ok(ArtisanCommand::SetTargetTemp(350.0))
+        ));
+    }
+
+    // ── PID semicolon command tests ──────────
+
+    #[test]
+    fn test_pid_semicolon_on() {
+        assert!(matches!(
+            parse_artisan_command("PID;ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_off() {
+        assert!(matches!(
+            parse_artisan_command("PID;OFF"),
+            Ok(ArtisanCommand::Stop)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv() {
+        assert!(matches!(
+            parse_artisan_command("PID;SV;150"),
+            Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 150.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv_decimal() {
+        assert!(matches!(
+            parse_artisan_command("PID;SV;210.5"),
+            Ok(ArtisanCommand::SetTargetTemp(v)) if (v - 210.5).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_sv_out_of_range() {
+        // The parser does not range-check display-unit setpoints.
+        // 40 °F is parsed successfully; the handler validates post-conversion.
+        assert!(matches!(
+            parse_artisan_command("PID;SV;40"),
+            Ok(ArtisanCommand::SetTargetTemp(40.0))
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t() {
+        let result = parse_artisan_command("PID;T;2.0;0.5;1.0");
+        assert!(matches!(result, Ok(ArtisanCommand::SetPidGain(kp, ki, kd))
+            if (kp - 2.0).abs() < f32::EPSILON && (ki - 0.5).abs() < f32::EPSILON && (kd - 1.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t_invalid() {
+        assert!(matches!(
+            parse_artisan_command("PID;T;abc"),
+            Err(ParseError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_t_negative() {
+        assert!(matches!(
+            parse_artisan_command("PID;T;-1;0.5;1.0"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan() {
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;2"),
+            Ok(ArtisanCommand::SetPidChannel(2))
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_et() {
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;1"),
+            Ok(ArtisanCommand::SetPidChannel(1))
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_invalid() {
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;5"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_chan_3_and_4_rejected() {
+        // The firmware has exactly two thermocouples (1 = ET, 2 = BT) —
+        // 3|4 select no valid PV input and are rejected.
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;3"),
+            Err(ParseError::OutOfRange)
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;4"),
+            Err(ParseError::OutOfRange)
+        ));
+        assert!(matches!(
+            parse_artisan_command("PID;CHAN;0"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_ct() {
+        assert!(matches!(
+            parse_artisan_command("PID;CT;1000"),
+            Ok(ArtisanCommand::SetPidCycleTime(1000))
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_ct_too_low() {
+        assert!(matches!(
+            parse_artisan_command("PID;CT;5"),
+            Err(ParseError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_limit() {
+        assert!(matches!(
+            parse_artisan_command("PID;LIMIT;0;100"),
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max)) if min == 0.0 && max == 100.0
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_limit_custom() {
+        assert!(matches!(
+            parse_artisan_command("PID;LIMIT;20;80"),
+            Ok(ArtisanCommand::SetPidOutputLimits(min, max)) if min == 20.0 && max == 80.0
+        ));
+    }
+
+    #[test]
+    fn test_pid_semicolon_unknown_sub() {
+        assert!(matches!(
+            parse_artisan_command("PID;UNKNOWN"),
+            Err(ParseError::UnknownCommand)
+        ));
+    }
+
+    #[test]
+    fn test_pid_comma_still_works_on() {
+        assert!(matches!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        ));
+    }
+
+    #[test]
+    fn test_pid_comma_still_works_off() {
+        assert!(matches!(
+            parse_artisan_command("PID,OFF"),
+            Ok(ArtisanCommand::Stop)
+        ));
+    }
+
+    /// Artisan's default slider syntax uses a semicolon, not a space, for
+    /// the operational commands `OT1`, `OT2`, `IO3`. The `;`→` ` normalisation
+    /// handles them.
+    #[test]
+    fn test_ot1_semicolon_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1;75"),
+            Ok(ArtisanCommand::SetHeater(75))
+        );
+    }
+
+    #[test]
+    fn test_ot2_semicolon_parses_as_set_fan_speed() {
+        assert_eq!(
+            parse_artisan_command("OT2;60"),
+            Ok(ArtisanCommand::SetFanSpeed(60, false))
+        );
+    }
+
+    #[test]
+    fn test_io3_semicolon_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3;50"),
+            Ok(ArtisanCommand::SetFan(50))
+        );
+    }
+
+    // ── TC4 classic comma/equals delimiters ─────────────
+
+    /// The TC4 spec (aArtisan serial commands, note 2) permits comma, space,
+    /// semicolon OR equals as the parameter delimiter for every command.
+    /// Artisan slider/button configs documented in guides use the classic
+    /// comma form (`OT1,{v}`, `IO3,{v}`).
+    #[test]
+    fn test_ot1_comma_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1,75"),
+            Ok(ArtisanCommand::SetHeater(75))
+        );
+    }
+
+    #[test]
+    fn test_ot1_equals_parses_as_set_heater() {
+        assert_eq!(
+            parse_artisan_command("OT1=50"),
+            Ok(ArtisanCommand::SetHeater(50))
+        );
+    }
+
+    #[test]
+    fn test_ot2_comma_parses_as_set_fan_speed() {
+        assert_eq!(
+            parse_artisan_command("OT2,60.5"),
+            Ok(ArtisanCommand::SetFanSpeed(61, false))
+        );
+    }
+
+    #[test]
+    fn test_io3_comma_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3,50"),
+            Ok(ArtisanCommand::SetFan(50))
+        );
+    }
+
+    #[test]
+    fn test_io3_equals_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("IO3=30"),
+            Ok(ArtisanCommand::SetFan(30))
+        );
+    }
+
+    /// `DCFAN,duty` is the TC4 fan command (added 13-Apr-2014 to the
+    /// aArtisan spec) and is implemented by the reference firmware.
+    /// Maps to the same fan path as IO3.
+    #[test]
+    fn test_dcfan_comma_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("DCFAN,40"),
+            Ok(ArtisanCommand::SetFan(40))
+        );
+    }
+
+    #[test]
+    fn test_dcfan_space_parses_as_set_fan() {
+        assert_eq!(
+            parse_artisan_command("DCFAN 80"),
+            Ok(ArtisanCommand::SetFan(80))
+        );
+    }
+
+    #[test]
+    fn test_dcfan_out_of_range() {
+        assert_eq!(
+            parse_artisan_command("DCFAN,150"),
+            Err(ParseError::OutOfRange)
+        );
+    }
+
+    /// TC4 step commands `OT1,up` / `OT1,down` (spec: "OT1,up"/"OT1,down"
+    /// step the duty by DUTY_STEP).
+    #[test]
+    fn test_ot1_comma_up_parses_as_increase() {
+        assert_eq!(
+            parse_artisan_command("OT1,up"),
+            Ok(ArtisanCommand::IncreaseHeater)
+        );
+    }
+
+    #[test]
+    fn test_ot1_comma_down_parses_as_decrease() {
+        assert_eq!(
+            parse_artisan_command("OT1,down"),
+            Ok(ArtisanCommand::DecreaseHeater)
+        );
+    }
+
+    #[test]
+    fn test_ot1_comma_up_case_insensitive() {
+        assert_eq!(
+            parse_artisan_command("OT1,UP"),
+            Ok(ArtisanCommand::IncreaseHeater)
+        );
+    }
+
+    /// The comma re-tokenisation must NOT swallow the legacy
+    /// `PID,ON`/`PID,OFF`/`PID,SV,..` forms dispatched from `cmd`.
+    #[test]
+    fn test_pid_comma_forms_still_work_with_retokenise() {
+        assert_eq!(
+            parse_artisan_command("PID,ON"),
+            Ok(ArtisanCommand::StartRoast)
+        );
+        assert_eq!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::Stop));
+        assert_eq!(
+            parse_artisan_command("PID,SV,150"),
+            Ok(ArtisanCommand::SetTargetTemp(150.0))
+        );
+    }
+
+    /// FILT's comma-separated payload keeps its first-value extraction
+    /// (no global comma splitting).
+    #[test]
+    fn test_filt_comma_payload_unaffected() {
+        assert_eq!(
+            parse_artisan_command("FILT;80,90,100,110"),
+            Ok(ArtisanCommand::Filt(80))
+        );
+    }
+
+    /// PROFILE `t,temp` pairs stay intact (no global comma splitting).
+    #[test]
+    fn test_profile_comma_pairs_unaffected() {
+        assert_eq!(
+            parse_artisan_command("PROFILE;0,180;120,200"),
+            Ok(ArtisanCommand::SetProfile)
+        );
+    }
+
+    /// PID sub-commands still parse after the `;` normalisation —
+    /// `PID;SV;250` becomes `PID SV 250`, so the pid sub-parser splits on
+    /// either delimiter.
+    #[test]
+    fn test_pid_sv_semicolon_parses_as_set_target() {
+        assert_eq!(
+            parse_artisan_command("PID;SV;250"),
+            Ok(ArtisanCommand::SetTargetTemp(250.0))
+        );
+    }
+
+    #[test]
+    fn test_chan_semicolon_still_works() {
+        assert_eq!(
+            parse_artisan_command("CHAN;1200"),
+            Ok(ArtisanCommand::Chan(1200))
+        );
+    }
+
+    #[test]
+    fn test_units_semicolon_still_works() {
+        assert_eq!(
+            parse_artisan_command("UNITS;F"),
+            Ok(ArtisanCommand::Units(true))
+        );
+    }
+}

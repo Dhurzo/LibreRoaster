@@ -1,0 +1,1243 @@
+//! Artisan wire-format output for LibreRoaster.
+//!
+//! Builds the TC4-compatible READ/STATUS telemetry lines and the continuous
+//! `#`-prefixed stream from `SystemStatus`, including rate-of-rise filtering
+//! and the °C/°F display-scale conversion. `ArtisanFormatter` holds the pure
+//! shared helpers; `MutableArtisanFormatter` keeps per-session RoR state.
+
+// Internal delegation note: pure helpers live in `ArtisanFormatter` (shared,
+// stateless); per-session RoR state lives in `MutableArtisanFormatter`.
+// - `BT_HISTORY_SIZE`: Fixed history for BT temperature tracking (10 samples)
+// - `REPORT_BUFFER_SIZE`: Temperature report formatting (64 chars)
+// - `TIME_FORMAT_SIZE`: Time formatting (16 chars)
+use crate::config::SystemStatus;
+use crate::memory::{
+    BT_HISTORY_SIZE, REPORT_BUFFER_SIZE, RESPONSE_BUFFER_SIZE, ROR_FILTER_ALPHA, ROR_MIN_SAMPLES,
+    TIME_FORMAT_SIZE,
+};
+use crate::output::traits::OutputError;
+use core::fmt::Write;
+use embassy_time::Instant;
+use heapless::{Deque, String as HeaplessString};
+
+/// Namespace for the shared Artisan wire-formatting helpers used by
+/// `MutableArtisanFormatter` and the READ/STATUS response paths.
+///
+/// Production output goes through `MutableArtisanFormatter`.
+pub struct ArtisanFormatter;
+
+impl ArtisanFormatter {
+    /// Format elapsed roast time as `SS.ss` (centisecond precision).
+    fn format_time(elapsed_secs: u64, elapsed_ms: u64) -> HeaplessString<TIME_FORMAT_SIZE> {
+        let mut buf = HeaplessString::<TIME_FORMAT_SIZE>::new();
+        let _ = core::write!(&mut buf, "{}.{:02}", elapsed_secs, elapsed_ms / 10);
+        buf
+    }
+
+    /// Build one CSV telemetry line: `time,ET,BT,ROR,Gas`.
+    fn format_artisan_line(
+        time_str: &str,
+        et: f32,
+        bt: f32,
+        ror: f32,
+        gas: f32,
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(
+            &mut buf,
+            "{},{:.1},{:.1},{:.2},{:.1}",
+            time_str,
+            et,
+            bt,
+            ror,
+            gas
+        );
+        buf
+    }
+
+    /// Clamp a telemetry scalar to a wire-safe finite magnitude (|v| ≤ 1000).
+    fn normalize_read_value(value: f32) -> f32 {
+        if !value.is_finite() {
+            return 0.0;
+        }
+        // A huge but FINITE value (e.g. `f32::MAX`, ~40 chars as `{:.1}`)
+        // would be truncated mid-digit by the fixed READ buffer, corrupting
+        // the CSV token Artisan must parse. Telemetry fields (temperatures,
+        // duties) never legitimately exceed ±1000 — clamp into a magnitude
+        // that always fits, so the wire format stays well-formed.
+        if value.abs() > 1000.0 {
+            value.clamp(-1000.0, 1000.0)
+        } else {
+            value
+        }
+    }
+
+    #[deprecated = "Use format_read_response_full() instead"]
+    pub fn format_read_response(
+        status: &SystemStatus,
+        fan_speed: f32,
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let et = Self::normalize_read_value(status.env_temp);
+        let bt = Self::normalize_read_value(status.bean_temp);
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(fan_speed);
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(
+            &mut buf,
+            "{:.1},{:.1},{:.1},{:.1}",
+            et,     // ET
+            bt,     // BT
+            heater, // Power (heater)
+            fan     // Fan
+        );
+        buf
+    }
+
+    /// Format a TC4 READ response: AMB,ET,BT,CHAN3,CHAN4 plus PID fields.
+    pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        // `ambient_temp` is an always-0.0 placeholder (no ambient probe).
+        // Emit the raw value so AMB stays 0.0 in both scales, matching PROTOCOL §4.
+        let amb = Self::normalize_read_value(status.ambient_temp);
+        let et = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.bean_temp),
+        );
+        // TC4 standard format: AMBIENT,ET,BT,CHAN3,CHAN4
+        // When PID is ON (TC4 PID mode), Artisan expects 3 extra fields:
+        //   res[5] = Heater duty %, res[6] = Fan duty %, res[7] = SV (setpoint temp)
+        // Heater/fan are percentages (0-100), NOT temperatures — never convert to °F.
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        if status.pid_enabled {
+            let heater = Self::normalize_read_value(status.ssr_output);
+            let fan = Self::normalize_read_value(status.fan_output);
+            let sv = Self::normalize_read_value(
+                status
+                    .temperature_settings
+                    .convert_to_display(status.target_temp),
+            );
+            let _ = core::write!(
+                &mut buf,
+                "{:.1},{:.1},{:.1},0.0,0.0,{:.1},{:.1},{:.1}",
+                amb,
+                et,
+                bt,
+                heater,
+                fan,
+                sv,
+            );
+        } else {
+            let _ = core::write!(&mut buf, "{:.1},{:.1},{:.1},0.0,0.0", amb, et, bt,);
+        }
+        buf
+    }
+
+    /// Format STATUS response with 20 CSV fields.
+    ///
+    /// Buffer capacity: RESPONSE_BUFFER_SIZE=512 bytes.
+    /// The STATUS line consists of 20 fields (ET, BT, heater, fan, watchdog flags,
+    /// failure reason, PID state, latency metrics, temp scale, fault flag).
+    pub fn format_status_response(status: &SystemStatus) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
+        let et = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt = Self::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.bean_temp),
+        );
+        let heater = Self::normalize_read_value(status.ssr_output);
+        let fan = Self::normalize_read_value(status.fan_output);
+        let watchdog_flag = if status.watchdog_feed_ok { 1 } else { 0 };
+        let failure_count = status.watchdog_consecutive_failures;
+        let failure_reason = status.watchdog_last_failure.unwrap_or("none");
+        let guard_timeouts = status.ledc_guard_timeouts;
+        let regression_flag = if status.overtemp_regression_active {
+            1
+        } else {
+            0
+        };
+        let pv =
+            Self::normalize_read_value(status.temperature_settings.convert_to_display(status.pv));
+        // PV is a temperature, but `mv` (manipulated variable) and
+        // `integrator_value` are dimensionless percentages — they must NOT go
+        // through the °C→°F temperature conversion, otherwise a heater at
+        // 75% would be reported as ~167°"F" to Artisan.
+        let mv = Self::normalize_read_value(status.mv);
+        let integrator_value = Self::normalize_read_value(status.integrator_value);
+        // STATUS field 13 emits the RoR in degrees-per-minute of the
+        // active display scale (Artisan convention) — °C/min in Celsius mode,
+        // °F/min in °F mode. Internally `derivative_rate` is °C/s, so:
+        //   °C/min = °C/s × 60
+        //   °F/min = °C/s × (9/5) × 60
+        let derivative_value = if status.temperature_settings.is_fahrenheit() {
+            Self::normalize_read_value(status.derivative_rate * (9.0 / 5.0) * 60.0)
+        } else {
+            Self::normalize_read_value(status.derivative_rate * 60.0)
+        };
+        let saturation_flag = if status.saturation_active { 1 } else { 0 };
+        let integrator_clamp_flag = if status.integrator_clamped { 1 } else { 0 };
+        let derivative_available_flag = if status.derivative_available { 1 } else { 0 };
+        let command_latency = status.command_latency_us;
+        let max_command_latency = status.max_command_latency_us;
+        let temp_scale_indicator = if status.temperature_settings.is_fahrenheit() {
+            1u8
+        } else {
+            0u8
+        };
+        let fault_flag = if status.fault_condition { 1 } else { 0 };
+
+        let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
+        // Safety: Verify buffer capacity before writing to catch overflow bugs in development.
+        // STATUS response with 20 fields must fit in RESPONSE_BUFFER_SIZE=512 bytes.
+        debug_assert!(buf.capacity() >= RESPONSE_BUFFER_SIZE);
+        let _ = core::write!(
+            &mut buf,
+            "{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{:.1},{:.2},{},{},{},{},{},{},{}",
+            et,
+            bt,
+            heater,
+            fan,
+            watchdog_flag,
+            failure_count,
+            failure_reason,
+            guard_timeouts,
+            regression_flag,
+            pv,
+            mv,
+            integrator_value,
+            derivative_value,
+            saturation_flag,
+            integrator_clamp_flag,
+            derivative_available_flag,
+            command_latency,
+            max_command_latency,
+            temp_scale_indicator,
+            fault_flag
+        );
+        buf
+    }
+
+    /// Format the `CHAN` acknowledgement line (`#<channel>`).
+    pub fn format_chan_ack(channel: u16) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = core::write!(&mut buf, "#{}", channel);
+        buf
+    }
+
+    /// Handshake acknowledgement for `UNITS` / `FILT` (and any other
+    /// startup command whose acknowledgement semantics are "empty line or
+    /// '#'-prefixed line").
+    ///
+    /// Artisan's ArduinoTC4 driver accepts a handshake response only if it is
+    /// empty or starts with `#` (comm.py: `if (not len(result) == 0 and not
+    /// result.startswith('#')): raise Exception(...)`). The reference
+    /// TC4 firmware answers `UNITS` with `# Changed units to C/F` and `FILT`
+    /// with silence — both satisfy the same `#`/empty contract.
+    pub fn format_handshake_ack() -> HeaplessString<REPORT_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = buf.push_str("#OK");
+        buf
+    }
+
+    /// Format an `ERR <code> <message>` wire error line.
+    pub fn format_err(code: u8, message: &str) -> HeaplessString<RESPONSE_BUFFER_SIZE> {
+        let mut buf = HeaplessString::<RESPONSE_BUFFER_SIZE>::new();
+        let _ = core::write!(&mut buf, "ERR {} {}", code, message);
+        buf
+    }
+
+    // ROR Calculation Helper Functions (public for use by MutableArtisanFormatter)
+
+    /// Single-pole IIR low-pass: `out = α·x + (1-α)·prev`.
+    pub fn apply_iir_filter(instantaneous_ror: f32, last_filtered: f32, alpha: f32) -> f32 {
+        // IIR filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+        alpha * instantaneous_ror + (1.0 - alpha) * last_filtered
+    }
+
+    /// Detect a genuine spike against a linear-extrapolated window (n ≥ 4).
+    pub fn is_temperature_outlier(current_temp: f32, history: &[f32]) -> bool {
+        // Compare against a linear extrapolation of the window (the right
+        // baseline for a ramp): the slope estimate sets the expected next
+        // value, and the rejection threshold uses the residuals around that
+        // slope — floored at 2.0 °C so a near-perfect window doesn't reject
+        // innocent noise, widened to 3·σ so real spikes still trip. Requires
+        // n ≥ 4 to fit both a slope and a non-trivial residual sample.
+        if history.len() < 4 {
+            return false;
+        }
+
+        let n = history.len() as f32;
+        let slope = (history[history.len() - 1] - history[0]) / (n - 1.0); // paso medio
+        let predicted = history[history.len() - 1] + slope;
+
+        // σ of step-to-step residuals around the slope estimate.
+        let mut var = 0.0f32;
+        for pair in history.windows(2) {
+            let r = (pair[1] - pair[0]) - slope;
+            var += r * r;
+        }
+        let sd = libm::sqrtf(var / (n - 1.0));
+
+        // 3σ with 2 °C absolute floor — prevents noisy-but-clean streams
+        // from being marked as outliers when σ is near zero, but still
+        // rejects genuine spikes.
+        (current_temp - predicted).abs() > (3.0 * sd).max(2.0)
+    }
+}
+
+/// Stateful formatter that emits the continuous `#`-prefixed telemetry stream
+/// and tracks bean-temperature history for rate-of-rise calculation.
+pub struct MutableArtisanFormatter {
+    /// Time the current telemetry session started.
+    start_time: Instant,
+    /// Most recent bean temperature used for RoR deltas.
+    last_bt: f32,
+    /// Explicit initialisation flag — a legitimate BT reading of 0 °C must
+    /// not re-initialise the RoR state and discard history.
+    is_initialised: bool,
+    /// Rolling bean-temperature window for RoR slope estimation.
+    bt_history: Deque<f32, BT_HISTORY_SIZE>,
+    /// Timestamps paired with `bt_history` entries.
+    timestamp_history: Deque<Instant, BT_HISTORY_SIZE>,
+    /// Last IIR-filtered RoR value, persisted across samples.
+    last_filtered_ror: f32,
+}
+
+impl Default for MutableArtisanFormatter {
+    fn default() -> Self {
+        Self {
+            start_time: Instant::now(),
+            last_bt: 0.0,
+            is_initialised: false,
+            bt_history: Deque::<f32, BT_HISTORY_SIZE>::new(),
+            timestamp_history: Deque::<Instant, BT_HISTORY_SIZE>::new(),
+            last_filtered_ror: 0.0,
+        }
+    }
+}
+
+impl MutableArtisanFormatter {
+    /// Create a fresh formatter with no accumulated history.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Clear all RoR/telemetry state back to a fresh session.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Render the current status as a `#`-prefixed continuous-telemetry line.
+    pub fn format(
+        &mut self,
+        status: &SystemStatus,
+    ) -> Result<HeaplessString<REPORT_BUFFER_SIZE>, OutputError> {
+        // Read the clock once per `format()` call.
+        let elapsed = self.start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs();
+        let elapsed_ms = elapsed.as_millis() % 1000;
+
+        // Use original Celsius for ROR calculation
+        let bt_c = status.bean_temp;
+        let ror = self.calculate_ror(bt_c, Instant::now());
+
+        // Convert temperatures for display. Every field goes through
+        // `normalize_read_value` — including a faulted ET (supported config:
+        // ET unplugged → NaN after debounce), which must report 0.0 here
+        // exactly as READ does.
+        let et = ArtisanFormatter::normalize_read_value(
+            status
+                .temperature_settings
+                .convert_to_display(status.env_temp),
+        );
+        let bt_display = ArtisanFormatter::normalize_read_value(
+            status.temperature_settings.convert_to_display(bt_c),
+        );
+        let gas = ArtisanFormatter::normalize_read_value(status.ssr_output); // SSR output as gas control
+
+        // Emit continuous-stream RoR in degrees-per-minute of the
+        // active display scale (Artisan convention). Internally `ror` is the
+        // °C/s value computed by `calculate_ror` so apply the same ×60
+        // °C/s → °C/min scaling and the 9/5 scale conversion for °F.
+        let ror_display = if status.temperature_settings.is_fahrenheit() {
+            ror * (9.0 / 5.0) * 60.0
+        } else {
+            ror * 60.0
+        };
+        let ror_display = ArtisanFormatter::normalize_read_value(ror_display);
+
+        let time_str = ArtisanFormatter::format_time(elapsed_secs, elapsed_ms);
+        let line =
+            ArtisanFormatter::format_artisan_line(&time_str, et, bt_display, ror_display, gas);
+
+        // Prefix the spontaneous continuous-telemetry line with '#' so
+        // a line-oriented client can distinguish it from a synchronous `READ`
+        // response (emitted via `format_read_response_full`, starting with
+        // a digit and using a different field count). Artisan
+        // tolerates a leading '#' on continuous telemetry.
+        let mut prefixed = HeaplessString::<REPORT_BUFFER_SIZE>::new();
+        let _ = prefixed.push('#');
+        let _ = prefixed.push_str(&line);
+        Ok(prefixed)
+    }
+
+    /// Update the BT history and compute the IIR-filtered rate of rise.
+    fn calculate_ror(&mut self, current_bt: f32, now: Instant) -> f32 {
+        // A single non-finite BT would poison the IIR forever
+        // (`last_filtered_ror = α·NaN + (1-α)·prev = NaN`, and every
+        // subsequent clean sample still mixes with `NaN`). Return the last
+        // filtered RoR and DO NOT advance history with garbage — the next
+        // finite sample finds a clean window so the IIR recovers immediately.
+        if !current_bt.is_finite() {
+            return self.last_filtered_ror;
+        }
+
+        // Use the explicit initialisation flag instead of treating
+        // `last_bt == 0.0` as the "first sample" sentinel: a legitimate BT
+        // of 0 °C no longer corrupts ROR state by re-seeding the history.
+        if !self.is_initialised {
+            self.last_bt = current_bt;
+            self.is_initialised = true;
+            Self::update_bt_history_with_timestamp(
+                &mut self.bt_history,
+                &mut self.timestamp_history,
+                current_bt,
+                now,
+            );
+            return 0.0;
+        }
+
+        if current_bt == self.last_bt {
+            // No early-return on equal BT: holding temp (a normal pre/post 1C
+            // stall) tracks whatever trend exists in the window instead of
+            // dropping the RoR to 0 for the duration of the plateau. Advance
+            // history with the new timestamp and let the normal RoR path
+            // compute the rate from the window. A duplicated sample in the
+            // middle of a ramp contributes 0 d(BT) for that step but the rest
+            // of the window still slopes.
+        }
+
+        // ALWAYS advance the history so the mean/variance track the
+        // trend, and the only side-effect of an outlier is suppressing the
+        // RoR value emitted for THIS sample (return the last filtered
+        // RoR). The next clean sample finds a window that has moved on
+        // rather than one frozen at the start of the roast.
+        let is_outlier = {
+            // Combine both deque slices into a single window (as the RoR
+            // calc a few lines below already does) so the test uses the
+            // statistics of the WHOLE history.
+            let mut window: heapless::Vec<f32, BT_HISTORY_SIZE> = heapless::Vec::new();
+            let (front, back) = self.bt_history.as_slices();
+            let _ = window.extend_from_slice(front);
+            let _ = window.extend_from_slice(back);
+            ArtisanFormatter::is_temperature_outlier(current_bt, &window)
+        };
+        self.last_bt = current_bt;
+        Self::update_bt_history_with_timestamp(
+            &mut self.bt_history,
+            &mut self.timestamp_history,
+            current_bt,
+            now,
+        );
+        if is_outlier {
+            // Suppress the RoR for this sample; keep the window advancing.
+            return self.last_filtered_ror;
+        }
+
+        // Compute ROR from Deque history using as_slices
+        let (bt_front, bt_back) = self.bt_history.as_slices();
+        let (ts_front, ts_back) = self.timestamp_history.as_slices();
+        let combined_len = bt_front.len() + bt_back.len();
+        if combined_len < ROR_MIN_SAMPLES {
+            return 0.0;
+        }
+
+        // Build temp arrays for ROR calculation
+        let mut bt_arr = [0.0f32; BT_HISTORY_SIZE];
+        for (i, &v) in bt_front.iter().enumerate() {
+            bt_arr[i] = v;
+        }
+        for (i, &v) in bt_back.iter().enumerate() {
+            bt_arr[bt_front.len() + i] = v;
+        }
+
+        let mut ts_arr = [Instant::from_millis(0); BT_HISTORY_SIZE];
+        for (i, &v) in ts_front.iter().enumerate() {
+            ts_arr[i] = v;
+        }
+        for (i, &v) in ts_back.iter().enumerate() {
+            ts_arr[ts_front.len() + i] = v;
+        }
+
+        let usable_bt = &bt_arr[..combined_len];
+        let usable_ts = &ts_arr[..combined_len];
+
+        // Calculate ROR using actual elapsed time
+        let ror = Self::compute_ror_with_timestamps(usable_bt, usable_ts);
+
+        // Apply IIR filter for smoothing
+        let filtered_ror =
+            ArtisanFormatter::apply_iir_filter(ror, self.last_filtered_ror, ROR_FILTER_ALPHA);
+
+        self.last_filtered_ror = filtered_ror;
+        filtered_ror
+    }
+
+    /// Push a BT sample and its timestamp, evicting the oldest if full.
+    fn update_bt_history_with_timestamp(
+        bt_history: &mut Deque<f32, BT_HISTORY_SIZE>,
+        timestamp_history: &mut Deque<Instant, BT_HISTORY_SIZE>,
+        current_bt: f32,
+        now: Instant,
+    ) {
+        if bt_history.len() >= BT_HISTORY_SIZE {
+            let _ = bt_history.pop_front();
+        }
+        let _ = bt_history.push_back(current_bt);
+
+        if timestamp_history.len() >= BT_HISTORY_SIZE {
+            let _ = timestamp_history.pop_front();
+        }
+        let _ = timestamp_history.push_back(now);
+    }
+
+    /// Compute raw RoR (°C/s) from a BT window and its real timestamps.
+    fn compute_ror_with_timestamps(bt: &[f32], timestamps: &[Instant]) -> f32 {
+        if bt.len() < 2 {
+            return 0.0;
+        }
+
+        let first_bt = bt[0];
+        let last_bt = bt[bt.len() - 1];
+        let first_ts = timestamps[0];
+        let last_ts = timestamps[timestamps.len() - 1];
+
+        // Use a single `as_millis()` reading divided by 1000 to get the real
+        // span: `as_millis()` returns the FULL millisecond count (not the
+        // sub-second remainder), so adding `as_secs()` would double-count
+        // windows >= 1 s and halve the reported RoR.
+        let time_elapsed_secs =
+            (last_ts.saturating_duration_since(first_ts).as_millis() as f32) / 1000.0;
+        if time_elapsed_secs > 0.0 {
+            (last_bt - first_bt) / time_elapsed_secs
+        } else {
+            0.0
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        RoasterState, SsrHardwareStatus, SystemStatus, TemperatureScale, TemperatureSettings,
+    };
+    use proptest::prelude::*;
+
+    fn create_test_status() -> SystemStatus {
+        SystemStatus {
+            chan_poll_rate_hz: 0, // Artisan CHAN polling-rate request
+            requested_filter: 0,  // Artisan FILT filter request
+            state: RoasterState::Stable,
+            bean_temp: 150.5,
+            env_temp: 120.3,
+            target_temp: 200.0,
+            ssr_output: 75.0,
+            fan_output: 50.0,
+            pid_enabled: false,
+            artisan_control: false,
+            fault_condition: false,
+            ssr_hardware_status: SsrHardwareStatus::Available,
+            ssr_last_duty_delta_ticks: 0,
+            ssr_retry_count: 0,
+            ssr_cycle_guard_busy_until_ms: 0,
+            watchdog_feed_ok: true,
+            watchdog_last_failure: None,
+            watchdog_consecutive_failures: 0,
+            ledc_guard_timeouts: 0,
+            overtemp_regression_active: false,
+            temperature_settings: TemperatureSettings::new(),
+            ..SystemStatus::default()
+        }
+    }
+
+    fn create_instrumented_status() -> SystemStatus {
+        let mut status = create_test_status();
+        status.pv = 150.5;
+        status.mv = 88.5;
+        status.integrator_value = 37.1;
+        status.derivative_rate = -0.42;
+        status.saturation_active = true;
+        status.integrator_clamped = true;
+        status.derivative_available = true;
+        status
+    }
+
+    #[test]
+    fn test_format_read_response() {
+        let status = create_test_status();
+        let fan_speed = 25.0;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "120.3,150.5,75.0,25.0");
+
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 4);
+
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "75.0");
+        assert_eq!(parts[3], "25.0");
+    }
+
+    #[test]
+    fn test_format_read_response_out_of_range_values() {
+        let mut status = create_test_status();
+        status.ssr_output = 123.46;
+        let fan_speed = -7.6;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "120.3,150.5,123.5,-7.6");
+        assert_eq!(output.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_read_response_invalid_values() {
+        let mut status = create_test_status();
+        status.env_temp = f32::NAN;
+        status.ssr_output = f32::INFINITY;
+        let fan_speed = 25.0;
+
+        let output = ArtisanFormatter::format_read_response(&status, fan_speed);
+
+        assert_eq!(output, "0.0,150.5,0.0,25.0");
+        assert_eq!(output.split(',').count(), 4);
+    }
+
+    #[test]
+    fn test_format_status_response_columns_order() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 20);
+
+        assert_eq!(parts[0], "120.3");
+        assert_eq!(parts[1], "150.5");
+        assert_eq!(parts[2], "88.0");
+        assert_eq!(parts[3], "42.0");
+        assert_eq!(parts[4], "0");
+        assert_eq!(parts[5], "3");
+        assert_eq!(parts[6], "timeout");
+        assert_eq!(parts[7], "7");
+        assert_eq!(parts[8], "1");
+        assert_eq!(parts[9], "150.5");
+        assert_eq!(parts[10], "88.5");
+        assert_eq!(parts[11], "37.1");
+        // STATUS field 12 (derivative) is in °C/min of the active scale.
+        // −0.42 °C/s × 60 = −25.20 °C/min (formatter is `{:.2}`).
+        assert_eq!(parts[12], "-25.20");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "1");
+        assert_eq!(parts[16], "1250");
+        assert_eq!(parts[17], "5000");
+        assert_eq!(parts[18], "0");
+        assert_eq!(parts[19], "0"); // fault_condition = false
+    }
+
+    #[test]
+    fn test_format_status_response_flags_reflect_system_status() {
+        let mut status = create_test_status();
+        status.saturation_active = false;
+        status.integrator_clamped = true;
+        status.derivative_available = false;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 20);
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "0");
+    }
+
+    #[test]
+    fn test_format_status_response_derivative_integrator_values_reflect_system_status() {
+        let mut status = create_test_status();
+        status.integrator_value = 51.2;
+        status.derivative_rate = 0.73;
+        status.saturation_active = true;
+        status.integrator_clamped = false;
+        status.derivative_available = true;
+
+        let output = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = output.split(',').collect();
+
+        assert_eq!(parts.len(), 20);
+        assert_eq!(parts[11], "51.2");
+        // Derivative is °C/min on the wire. 0.73 °C/s × 60 = 43.8 °C/min.
+        assert_eq!(parts[12], "43.80");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "1");
+    }
+
+    #[test]
+    fn test_format_status_response_none_reason() {
+        let status = create_test_status();
+        let output = ArtisanFormatter::format_status_response(&status);
+
+        assert!(output.contains(",none,"));
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 20);
+        // Zero °C/s × 60 = 0.00 °C/min (documenting the unit).
+        assert_eq!(parts[12], "0.00");
+        assert_eq!(parts[13], "0");
+        assert_eq!(parts[14], "0");
+        assert_eq!(parts[15], "0");
+    }
+
+    #[test]
+    fn test_format_csv_output() {
+        // Uses the production `MutableArtisanFormatter`, which emits the
+        // same wire shape.
+        let mut formatter = MutableArtisanFormatter::new();
+        let status = create_test_status();
+
+        let result = formatter.format(&status);
+
+        assert!(result.is_ok());
+        let output = match result {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
+
+        let parts: Vec<&str> = output.split(',').collect();
+        assert_eq!(parts.len(), 5);
+
+        // Continuous-telemetry lines are prefixed with '#'
+        // so they can be distinguished from a synchronous `READ` response on
+        // the same wire. The time field carries that prefix.
+        assert!(
+            parts[0].starts_with('#'),
+            "telemetry line must start with '#' prefix, got: {}",
+            parts[0]
+        );
+        assert_eq!(parts[1], "120.3");
+        assert_eq!(parts[2], "150.5");
+        assert_eq!(parts[3], "0.00");
+        assert_eq!(parts[4], "75.0");
+    }
+
+    #[test]
+    fn test_mutable_formatter_ror() {
+        let mut formatter = MutableArtisanFormatter::new();
+
+        let status1 = SystemStatus {
+            bean_temp: 100.0,
+            env_temp: 120.0,
+            ssr_output: 50.0,
+            ..create_test_status()
+        };
+        let result1 = formatter.format(&status1);
+        assert!(result1.is_ok());
+        let output1 = match result1 {
+            Ok(val) => val,
+            Err(e) => {
+                log::error!("Failed to process Artisan output (result1): {:?}", e);
+                panic!("Artisan output processing failed");
+            }
+        };
+        let parts1: Vec<&str> = output1.split(',').collect();
+        assert_eq!(parts1[3], "0.00");
+
+        let status2 = SystemStatus {
+            bean_temp: 102.0,
+            env_temp: 121.0,
+            ssr_output: 55.0,
+            ..create_test_status()
+        };
+        let result2 = formatter.format(&status2);
+        assert!(result2.is_ok());
+    }
+
+    #[test]
+    fn test_time_format_seconds_only() {
+        let time = ArtisanFormatter::format_time(5, 0);
+        assert_eq!(time, "5.00");
+    }
+
+    #[test]
+    fn test_time_format_with_milliseconds() {
+        let time = ArtisanFormatter::format_time(5, 50);
+        assert_eq!(time, "5.05");
+    }
+
+    #[test]
+    fn test_time_format_zero_seconds() {
+        let time = ArtisanFormatter::format_time(0, 150);
+        assert_eq!(time, "0.15");
+    }
+
+    #[test]
+    fn test_time_format_capped_decimals() {
+        let time = ArtisanFormatter::format_time(10, 999);
+        assert_eq!(time, "10.99");
+    }
+
+    #[test]
+    fn test_time_format_typical_value() {
+        let time = ArtisanFormatter::format_time(123, 456);
+        assert_eq!(time, "123.45");
+    }
+
+    #[test]
+    fn test_format_chan_ack() {
+        let result = ArtisanFormatter::format_chan_ack(1200);
+        assert_eq!(result, "#1200");
+    }
+
+    #[test]
+    fn test_format_chan_ack_various_values() {
+        assert_eq!(ArtisanFormatter::format_chan_ack(1), "#1");
+        assert_eq!(ArtisanFormatter::format_chan_ack(9999), "#9999");
+        assert_eq!(ArtisanFormatter::format_chan_ack(0), "#0");
+    }
+
+    #[test]
+    fn test_format_handshake_ack() {
+        // UNITS/FILT acks must satisfy Artisan's handshake check
+        // (`len == 0 or startswith('#')`) so the ArduinoTC4 initialisation
+        // completes instead of raising "could not set temperature unit".
+        assert_eq!(ArtisanFormatter::format_handshake_ack(), "#OK");
+        assert!(ArtisanFormatter::format_handshake_ack().starts_with('#'));
+    }
+
+    #[test]
+    fn test_format_err() {
+        let result = ArtisanFormatter::format_err(1, "Unknown command");
+        assert_eq!(result, "ERR 1 Unknown command");
+    }
+
+    #[test]
+    fn test_format_err_various() {
+        assert_eq!(
+            ArtisanFormatter::format_err(2, "Invalid value"),
+            "ERR 2 Invalid value"
+        );
+        assert_eq!(ArtisanFormatter::format_err(0, "Success"), "ERR 0 Success");
+    }
+
+    #[test]
+    fn test_format_read_response_tc4_format() {
+        let status = create_test_status();
+        let response = ArtisanFormatter::format_read_response_full(&status);
+
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(
+            parts.len(),
+            5,
+            "TC4 READ must have exactly 5 values (AMB,ET,BT,CHAN3,CHAN4)"
+        );
+    }
+
+    #[test]
+    fn test_format_read_response_full_uses_tc4_order() {
+        let mut status = create_test_status();
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.ambient_temp = 25.0;
+
+        // Test Celsius (default) — TC4 order: AMB,ET,BT,0,0
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(
+            parts[0], "25.0",
+            "AMB should be ambient_temp (first per TC4)"
+        );
+        assert_eq!(parts[1], "125.5", "ET should be env_temp (second per TC4)");
+        assert_eq!(parts[2], "155.7", "BT should be bean_temp (third per TC4)");
+        assert_eq!(parts[3], "0.0", "CHAN3 placeholder");
+        assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
+
+        // Test Fahrenheit conversion: ET/BT convert to °F; AMB stays raw.
+        // `ambient_temp` is an always-0.0 placeholder (no ambient probe),
+        // so AMB is emitted raw in both scales (PROTOCOL §4: absent channel = 0.0).
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
+        let response_f = ArtisanFormatter::format_read_response_full(&status);
+        let parts_f: Vec<&str> = response_f.split(',').collect();
+        // 25.0°C = 77.0°F, 125.5°C = 257.9°F, 155.7°C = 312.3°F
+        assert_eq!(parts_f[0], "25.0", "AMB emitted raw, not °F-converted");
+        assert_eq!(parts_f[1], "257.9", "ET converted to Fahrenheit");
+        assert_eq!(parts_f[2], "312.3", "BT converted to Fahrenheit");
+        assert_eq!(parts_f[3], "0.0", "CHAN3 unchanged");
+        assert_eq!(parts_f[4], "0.0", "CHAN4 unchanged");
+    }
+
+    #[test]
+    fn test_tc4_read_invalid_values_normalized() {
+        let mut status = create_test_status();
+        status.bean_temp = f32::NEG_INFINITY;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "0.0", "AMB default");
+        assert_eq!(parts[1], "120.3", "ET valid");
+        assert_eq!(parts[2], "0.0", "BT normalized from -inf");
+        assert_eq!(parts[3], "0.0");
+        assert_eq!(parts[4], "0.0");
+    }
+
+    #[test]
+    fn test_tc4_read_one_decimal_format() {
+        let status = create_test_status();
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "0.0", "AMB shows one decimal");
+        assert_eq!(parts[1], "120.3", "ET shows one decimal");
+        assert_eq!(parts[2], "150.5", "BT shows one decimal");
+    }
+
+    // ── TC4 READ with PID data (8-value format) ──────────────────
+
+    #[test]
+    fn test_read_response_pid_disabled_5_values() {
+        let mut status = create_test_status();
+        // pid_enabled is false by default in create_test_status
+        status.bean_temp = 155.7;
+        status.env_temp = 125.5;
+        status.ambient_temp = 25.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 5, "PID off → 5 values (AMB,ET,BT,CHAN3,CHAN4)");
+    }
+
+    #[test]
+    fn test_read_response_pid_enabled_8_values() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.bean_temp = 155.7;
+        status.env_temp = 125.5;
+        status.target_temp = 200.0;
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(
+            parts.len(),
+            8,
+            "PID on → 8 values (AMB,ET,BT,CHAN3,CHAN4,heater,fan,SV)"
+        );
+    }
+
+    #[test]
+    fn test_read_response_pid_values_at_correct_indices() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.target_temp = 200.0;
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 8);
+        assert_eq!(parts[0], "0.0", "AMB");
+        assert_eq!(parts[1], "125.5", "ET");
+        assert_eq!(parts[2], "155.7", "BT");
+        assert_eq!(parts[3], "0.0", "CHAN3");
+        assert_eq!(parts[4], "0.0", "CHAN4");
+        assert_eq!(parts[5], "75.0", "Heater % (TC4 res[5])");
+        assert_eq!(parts[6], "50.0", "Fan % (TC4 res[6])");
+        assert_eq!(parts[7], "200.0", "SV setpoint (TC4 res[7])");
+    }
+
+    #[test]
+    fn test_read_response_pid_sv_respects_fahrenheit() {
+        let mut status = create_test_status();
+        status.pid_enabled = true;
+        status.env_temp = 125.5;
+        status.bean_temp = 155.7;
+        status.target_temp = 200.0; // 200°C = 392°F
+        status.ssr_output = 75.0;
+        status.fan_output = 50.0;
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
+
+        let response = ArtisanFormatter::format_read_response_full(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 8);
+        // Temperatures converted: 125.5°C=257.9°F, 155.7°C=312.3°F, 200°C=392.0°F
+        assert_eq!(parts[1], "257.9", "ET converted to °F");
+        assert_eq!(parts[2], "312.3", "BT converted to °F");
+        assert_eq!(parts[7], "392.0", "SV converted to °F");
+        // Heater/fan are percentages — NOT converted
+        assert_eq!(parts[5], "75.0", "Heater % must not be converted");
+        assert_eq!(parts[6], "50.0", "Fan % must not be converted");
+    }
+
+    #[test]
+    fn test_format_status_response_celsius() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+
+        let response = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 20);
+
+        assert_eq!(parts[0], "120.3", "ET in Celsius");
+        assert_eq!(parts[1], "150.5", "BT in Celsius");
+        assert_eq!(parts[2], "88.0", "Heater unchanged");
+        assert_eq!(parts[3], "42.0", "Fan unchanged");
+        assert_eq!(parts[4], "0");
+        assert_eq!(parts[5], "3");
+        assert_eq!(parts[6], "timeout");
+        assert_eq!(parts[7], "7");
+        assert_eq!(parts[8], "1");
+        assert_eq!(parts[9], "150.5", "PV in Celsius");
+        assert_eq!(parts[10], "88.5", "MV in Celsius");
+        assert_eq!(parts[11], "37.1", "Integrator in Celsius");
+        assert_eq!(parts[12], "-25.20", "Derivative in °C/min (M8)");
+        assert_eq!(parts[13], "1");
+        assert_eq!(parts[14], "1");
+        assert_eq!(parts[15], "1");
+        assert_eq!(parts[16], "1250");
+        assert_eq!(parts[17], "5000");
+        assert_eq!(parts[18], "0");
+        assert_eq!(parts[19], "0", "fault_condition should be false");
+    }
+
+    #[test]
+    fn test_format_status_response_fahrenheit() {
+        let mut status = create_instrumented_status();
+        status.watchdog_feed_ok = false;
+        status.watchdog_consecutive_failures = 3;
+        status.watchdog_last_failure = Some("timeout");
+        status.ledc_guard_timeouts = 7;
+        status.overtemp_regression_active = true;
+        status.ssr_output = 88.0;
+        status.fan_output = 42.0;
+        status.command_latency_us = 1250;
+        status.max_command_latency_us = 5000;
+        status
+            .temperature_settings
+            .set_scale(TemperatureScale::Fahrenheit);
+
+        let response = ArtisanFormatter::format_status_response(&status);
+        let parts: Vec<&str> = response.split(',').collect();
+        assert_eq!(parts.len(), 20);
+
+        // Temperatures in CSV convert to °F: 120.3°C → 248.5°F, 150.5°C → 302.9°F
+        assert_eq!(parts[0], "248.5", "ET converted to Fahrenheit");
+        assert_eq!(parts[1], "302.9", "BT converted to Fahrenheit");
+        // Heater and fan are percentages — NOT temperatures, NOT converted.
+        assert_eq!(parts[2], "88.0", "Heater % must not be converted");
+        assert_eq!(parts[3], "42.0", "Fan % must not be converted");
+        assert_eq!(parts[9], "302.9", "PV converted to Fahrenheit");
+        // `mv` and `integrator_value` are percentages (PID output terms),
+        // not temperatures — they are emitted unchanged in both scales.
+        assert_eq!(parts[10], "88.5", "MV must NOT be converted (it is a %)");
+        assert_eq!(
+            parts[11], "37.1",
+            "Integrator must NOT be converted (it is a %)"
+        );
+        // `derivative_rate` is in °C/s internally. Artisan in °F mode
+        // expects a rate in °F/min, not "°F as if it were a temperature":
+        // multiply by 9/5×60, NOT °C→°F.
+        // −0.42 °C/s × 1.8 × 60 = −45.36 °F/min.
+        assert_eq!(
+            parts[12], "-45.36",
+            "Derivative must be °F/min (rate), not °F (temperature)"
+        );
+    }
+
+    // ── calculate_ror with non-finite BT ──
+
+    #[test]
+    fn calculate_ror_nan_bt_does_not_poison_filter() {
+        // A NaN must return the last filtered RoR WITHOUT advancing history,
+        // so the next finite sample finds a clean window.
+        let mut fmt = MutableArtisanFormatter::new();
+
+        // Seed a history and a baseline RoR.
+        let t0 = Instant::from_millis(0);
+        let r0 = fmt.calculate_ror(100.0, t0); // init
+        assert_eq!(r0, 0.0);
+        let t1 = Instant::from_millis(1000);
+        let _ = fmt.calculate_ror(110.0, t1); // finite RoR
+        let baseline = fmt.calculate_ror(120.0, Instant::from_millis(2000));
+        // The filter is finite and non-zero after a 10 °C/s jump (α=0.25).
+        assert!(
+            baseline.is_finite(),
+            "baseline must be finite: {}",
+            baseline
+        );
+        assert!(baseline > 0.0, "baseline must be positive: {}", baseline);
+
+        // Inject a NaN — the method MUST return the last filtered RoR (which
+        // is finite) and NOT propagate NaN into the IIR state.
+        let t_nan = Instant::from_millis(3000);
+        let r_nan = fmt.calculate_ror(f32::NAN, t_nan);
+        assert!(
+            r_nan.is_finite(),
+            "NaN BT must not propagate to the emitted RoR: {}",
+            r_nan
+        );
+
+        // A subsequent finite sample recovers a finite RoR — the IIR was not
+        // poisoned by the NaN.
+        let r_after = fmt.calculate_ror(130.0, Instant::from_millis(4000));
+        assert!(
+            r_after.is_finite(),
+            "RoR after a NaN sample must be finite (IIR not poisoned): {}",
+            r_after
+        );
+        assert!(r_after > 0.0);
+    }
+
+    // ── outlier test uses the COMBINED history window ─────────
+
+    #[test]
+    fn outlier_test_uses_combined_window_on_linear_ramp() {
+        // The test combines both slices into a single window so the
+        // classification uses the whole history; on a linear ramp the
+        // deviation from the combined window stays small for the bulk of
+        // the samples.
+        //
+        // A neat way to exercise this is to fill the BT_HISTORY_SIZE=5 deque
+        // (which forces a wrap, splitting front/back) and check that the
+        // LAST sample of a clean ramp is NOT classified as an outlier.
+        let mut fmt = MutableArtisanFormatter::new();
+
+        // Drive a clean linear ramp 100, 102, 104, 106, 108 °C at 1 s steps.
+        // To force a true front+back split, drive 6 samples.
+        let bt_series = [100.0_f32, 102.0, 104.0, 106.0, 108.0, 110.0];
+        let mut last_ror = 0.0_f32;
+        for (i, &bt) in bt_series.iter().enumerate() {
+            let t = Instant::from_millis((i as u64) * 1000);
+            last_ror = fmt.calculate_ror(bt, t);
+            // Every sample of a clean, monotonic ramp must produce a finite
+            // RoR. The IIR must update on every one of them.
+            assert!(
+                last_ror.is_finite(),
+                "RoR at sample {} must be finite: {}",
+                i,
+                last_ror
+            );
+        }
+        // A 2 °C/s ramp filtered with α=0.25 from 0 must end meaningfully
+        // above zero. 5 updates of 2°C/s × 0.25 → ≥ 0.5 °C/s.
+        assert!(
+            last_ror > 0.5,
+            "RoR must advance on a clean ramp (per-slice bug froze it): {}",
+            last_ror
+        );
+    }
+
+    proptest! {
+        /// Formatting a `SystemStatus` whose
+        /// numeric fields carry NaN / ±Inf / huge / negative values must
+        /// never panic and must never emit a literal "NaN" / "inf" token
+        /// that could corrupt Artisan's numeric parsing of the READ line.
+        ///
+        /// Huge-but-finite values (e.g. f32::MAX) format to ~40 chars and the
+        /// fixed-size `HeaplessString<REPORT_BUFFER_SIZE>` would truncate
+        /// mid-number, producing a corrupt line. `normalize_read_value`
+        /// clamps finite values to ±1000.0, so every emitted token stays
+        /// short and parseable.
+        #[test]
+        fn format_read_never_panics_with_hostile_status(
+            bean_temp in hostile_f32(),
+            env_temp in hostile_f32(),
+            pv in hostile_f32(),
+            target_temp in hostile_f32(),
+            derivative_rate in hostile_f32(),
+            ssr_output in hostile_f32(),
+            fan_output in hostile_f32(),
+        ) {
+            let status = SystemStatus {
+                bean_temp,
+                env_temp,
+                pv,
+                target_temp,
+                derivative_rate,
+                ssr_output,
+                fan_output,
+                ..SystemStatus::default()
+            };
+            let formatted = ArtisanFormatter::format_read_response_full(&status);
+            let text: &str = formatted.as_str();
+            assert!(!text.is_empty(), "READ response must not be empty");
+            // The formatted line must not contain unparseable float tokens
+            // (the formatter's `normalize_read_value` maps non-finite to 0.0
+            // and clamps huge finites to ±1000 — this property proves NO
+            // field bypasses that sanitization).
+            for token in text.split([',', ' ', '\n', '\r']) {
+                if token.is_empty() || token.starts_with('#') {
+                    continue;
+                }
+                let parsed = token.parse::<f32>();
+                assert!(
+                    parsed.is_ok(),
+                    "READ line must not carry an unparseable token, got {token:?} in {text:?}"
+                );
+            }
+        }
+    }
+
+    fn hostile_f32() -> impl proptest::strategy::Strategy<Value = f32> {
+        use proptest::prelude::*;
+        prop_oneof![
+            any::<f32>(),
+            Just(f32::NAN),
+            Just(f32::INFINITY),
+            Just(f32::NEG_INFINITY),
+            Just(f32::MAX),
+            Just(f32::MIN),
+            Just(f32::MIN_POSITIVE),
+            -1e30f32..1e30,
+        ]
+    }
+}

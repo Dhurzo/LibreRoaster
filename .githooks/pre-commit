@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit hook: reject commit if Rust formatting is not clean.
+# Mirrors the CI `cargo fmt --all -- --check` check so failures are
+# caught before pushing.
+#
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "🔍 Checking Rust formatting..."
+
+# Check if cargo is available
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "⚠️  cargo not found — skipping format check"
+    exit 0
+fi
+
+# Run the same check as CI
+cargo fmt --all -- --check
+
+# Capture exit code explicitly (set -e would catch a non-zero from the
+# previous command before we can print our message)
+status=$?
+if [ $status -ne 0 ]; then
+    echo ""
+    echo "❌ Formatting check failed. Run \`cargo fmt --all\` to fix, then stage and commit again."
+    exit $status
+fi
+
+echo "✅ Formatting looks good!"

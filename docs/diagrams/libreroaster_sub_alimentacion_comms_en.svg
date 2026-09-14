@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="640" viewBox="0 0 980 640" font-family="Helvetica,Arial,sans-serif">
+  <defs><style>
+    .box{stroke:#333;stroke-width:1.5;}
+    .chip{fill:#2b2b3a;stroke:#000;stroke-width:2;}
+    .t{fill:#111;font-size:14px;font-weight:bold;} .tw{fill:#fff;font-size:14px;font-weight:bold;}
+    .p{fill:#111;font-size:12px;} .pw{fill:#fff;font-size:12px;}
+    .n{fill:#444;font-size:11px;} .w{fill:#b00;font-size:11px;font-weight:bold;}
+    .wire{stroke-width:2.6;fill:none;}
+  </style></defs>
+  <rect width="980" height="640" fill="#f7f7f9"/>
+  <text x="490" y="30" text-anchor="middle" class="t" font-size="18">Subsystem 4 — POWER + COMMUNICATION (Artisan)</text>
+  <text x="490" y="50" text-anchor="middle" class="n">3.3 V logic · 12 V fan (separate) · star ground · native USB-C or 3.3 V USB-UART adapter</text>
+
+  <!-- ESP -->
+  <rect x="380" y="200" width="220" height="220" rx="8" class="chip"/>
+  <text x="490" y="226" text-anchor="middle" class="tw">ESP32-C3</text>
+  <circle cx="380" cy="270" r="4" fill="#E53935"/><text x="392" y="274" class="pw">3V3</text>
+  <circle cx="380" cy="360" r="4" fill="#bbb"/><text x="392" y="364" class="pw">GND</text>
+  <circle cx="600" cy="270" r="4" fill="#00897B"/><text x="588" y="274" text-anchor="end" class="pw">GPIO21·TX</text>
+  <circle cx="600" cy="300" r="4" fill="#00ACC1"/><text x="588" y="304" text-anchor="end" class="pw">GPIO20·RX</text>
+  <circle cx="600" cy="380" r="4" fill="#3949AB"/><text x="588" y="384" text-anchor="end" class="pw">USB-C</text>
+
+  <!-- 3.3V source -->
+  <rect x="40" y="120" width="240" height="120" rx="6" fill="#fff" class="box"/>
+  <text x="160" y="142" text-anchor="middle" class="t" font-size="13">3.3 V supply (logic)</text>
+  <text x="54" y="164" class="n">Option A: devkit USB-C (5 V→3.3 V internal)</text>
+  <text x="54" y="182" class="n">Option B: AMS1117-3.3 LDO from 5 V</text>
+  <text x="54" y="204" class="p">Powers: ESP · MAX31856 ×2 · sense logic</text>
+  <text x="54" y="224" class="w">≥ 200 mA · 3.3 V ±5 % · NEVER 5 V on the rail</text>
+  <polyline class="wire" stroke="#E53935" points="280,170 330,170 330,270 380,270"/>
+
+  <!-- decoupling -->
+  <rect x="40" y="270" width="240" height="90" rx="6" fill="#f3f3f3" class="box"/>
+  <text x="160" y="292" text-anchor="middle" class="t" font-size="13">Decoupling (near the ESP)</text>
+  <text x="54" y="314" class="n">100 µF electrolytic + 10 µF ceramic</text>
+  <text x="54" y="332" class="n">0.1 µF per IC (ESP, MAX×2)</text>
+  <text x="54" y="350" class="n">between 3V3 and GND</text>
+
+  <!-- GND star -->
+  <rect x="40" y="430" width="540" height="70" rx="6" fill="#f3f3f3" class="box"/>
+  <text x="310" y="452" text-anchor="middle" class="t" font-size="13">STAR ground point</text>
+  <text x="54" y="474" class="n">Common GND: ESP · MAX×2 · MOSFET source · 12 V supply · UART adapter · sense</text>
+  <text x="54" y="492" class="w">A single point. No ground loops. The AC side is isolated (does not share this ground).</text>
+  <line x1="380" y1="360" x2="330" y2="360" class="wire" stroke="#999"/>
+  <polyline class="wire" stroke="#999" points="330,360 330,430"/>
+
+  <!-- USB-UART adapter -->
+  <rect x="700" y="200" width="240" height="150" rx="6" fill="#e8f5e9" class="box"/>
+  <text x="820" y="222" text-anchor="middle" class="t" font-size="13">USB-UART adapter (opt.)</text>
+  <text x="712" y="246" class="p">RX ← GPIO21 (TX)</text>
+  <text x="712" y="266" class="p">TX → GPIO20 (RX)  [1 kΩ series]</text>
+  <text x="712" y="286" class="p">GND ↔ common GND (mandatory)</text>
+  <text x="712" y="308" class="w">⚠ Selector at 3.3 V (not 5 V)</text>
+  <text x="712" y="326" class="w">⚠ Do NOT tie adapter VCC to the rail</text>
+  <text x="712" y="344" class="n">115200 8N1 · → PC running Artisan+</text>
+  <line x1="600" y1="270" x2="700" y2="246" class="wire" stroke="#00897B"/>
+  <line x1="600" y1="300" x2="700" y2="266" class="wire" stroke="#00ACC1"/>
+
+  <!-- USB-C native -->
+  <rect x="700" y="370" width="240" height="80" rx="6" fill="#e3f2fd" class="box"/>
+  <text x="820" y="392" text-anchor="middle" class="t" font-size="13">Native USB-C (recommended)</text>
+  <text x="712" y="414" class="n">Native CDC: Artisan + flashing + power</text>
+  <text x="712" y="432" class="n">Direct USB-C cable to the PC. No adapter.</text>
+  <line x1="600" y1="380" x2="700" y2="400" class="wire" stroke="#3949AB"/>
+
+  <!-- note: one or the other -->
+  <rect x="40" y="520" width="900" height="90" rx="6" fill="#fff" class="box"/>
+  <text x="54" y="542" class="t" font-size="13">Notes</text>
+  <text x="54" y="564" class="n">• Artisan uses UART OR USB-C, not both at once (the multiplexer latches the first channel with traffic for 60 s).</text>
+  <text x="54" y="582" class="n">• For development/flashing, native USB-C is simplest. UART is useful for debugging or isolation.</text>
+  <text x="54" y="600" class="w">• Roaster control is autonomous: if the PC disconnects, the loop keeps governing heater/fan.</text>
+
+  <text x="490" y="632" text-anchor="middle" class="n">LibreRoaster · power + communication · UART_TX=GPIO21, UART_RX=GPIO20 @115200 · native USB CDC</text>
+</svg>
