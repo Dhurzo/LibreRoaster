@@ -217,6 +217,23 @@ That workflow is the right place for:
 
 If a change affects actuation timing, telemetry layout, or hardware behavior, HIL validation is more authoritative than host-only tests.
 
+### Capturing HIL example output: unplug native USB first
+
+The HIL examples (`examples/hil_*.rs`, `examples/gpio_roast_test.rs`) print
+via `esp-println` with its default `auto` printer, which routes **each line**
+to USB-Serial-JTAG as soon as the host enumerates the native USB port (SOF
+flag, sticky once set) and to UART0 otherwise. The examples never initialise
+USB, so anything printed after host enumeration lands in an unread FIFO and
+is silently lost — this looks exactly like the firmware hanging mid-suite
+(observed 2026-09-14 with `hil_c1`: output always stopped after test 02
+while the suite kept running to 5/5 unseen).
+
+Reliable procedure for short HIL suites: physically unplug the native-USB
+cable and capture only UART0 (`/dev/ttyUSB0`). With no USB host present no
+SOF ever arrives and 100 % of the output stays on UART. (The production
+firmware is unaffected: it initialises USB CDC for real, so its `auto`
+routing has a live reader on the USB side.)
+
 ## 10. Common failure modes developers should expect
 
 ### Build succeeds, flash fails
