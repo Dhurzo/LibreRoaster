@@ -1,12 +1,10 @@
 //! Fault injection MID-ROAST.
 //!
 //! These tests inject hardware faults into a live `RoasterControl` session
-//! (after the roast started) and assert the safety escalation. They close the
-//! coverage gaps found by the audit:
-//!   - heater write failure mid-roast   (Bug B / EC-23 — was untested)
-//!   - fan write failure mid-roast      (Bug B fan path, roaster_control.rs:898)
+//! (after the roast started) and assert the safety escalation:
+//!   - heater write failure mid-roast
+//!   - fan write failure mid-roast
 //!   - sensor disconnect mid-roast      (debounce → NaN → emergency)
-//!   - software watchdog timeout        (watchdog.rs:78-81 — was untested)
 //!   - interleaved USB/UART routing     (multiplexer, byte/command level)
 //!
 //! Run: cargo test --test safety_injection_midroast_tests --features test
@@ -55,7 +53,7 @@ fn start_roast(ctrl: &mut RoasterControl) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// T1 — Heater write failure mid-roast (Bug B / EC-23 escalation path)
+// T1 — Heater write failure mid-roast
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -85,7 +83,6 @@ fn heater_write_failure_mid_roast_escalates_to_latched_emergency() {
     );
     assert_eq!(ctrl.get_state(), RoasterState::Error);
     assert!(ctrl.get_status().fault_condition, "latch must be armed");
-    // S7 fix (2026-08-05): `ssr_output` is only zeroed when the heater
     // physically acknowledged the off write. Here every write failed (tick +
     // EMERGENCY_HEATER_OFF_RETRIES), so the field must keep the last APPLIED
     // duty instead of claiming a cut that never happened.
@@ -105,7 +102,6 @@ fn heater_write_failure_mid_roast_escalates_to_latched_emergency() {
         ssr.write_calls() >= 4,
         "1 tick write + EMERGENCY_HEATER_OFF_RETRIES retries expected"
     );
-    // S7 evidence: the honest signal for a heater that never acknowledged the
     // off write is `ssr_hardware_status == Error`; `ssr_output` keeps the last
     // applied duty, and the mock's last successful write is non-zero.
     assert!(
@@ -115,7 +111,7 @@ fn heater_write_failure_mid_roast_escalates_to_latched_emergency() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// T2 — Fan write failure mid-roast (Bug B fan path)
+// T2 — Fan write failure mid-roast
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -210,7 +206,6 @@ fn sensor_disconnect_mid_roast_escalates_after_debounce() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// T4 — Software watchdog timeout branch (watchdog.rs:78-81, was untested)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]

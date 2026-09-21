@@ -1,10 +1,6 @@
-//! Fault injection scenarios for SOLID-02 verification — Bug M2 rewrite
-//! (2026-07-26).
+//! Fault injection scenarios.
 //!
-//! The previous harness built a `SystemStatus` FROM the scenario expectations
-//! (`status_for_scenario`) and then asserted that the status matched those
-//! expectations — a tautology that verified the helper, not production code.
-//! These tests now inject real faults into a real `RoasterControl` (stub
+//! These tests inject real faults into a real `RoasterControl` (stub
 //! heater/fan) and assert on the resulting state, exercising the actual
 //! production paths: overtemp detection, the STOP/emergency latch, and the
 //! host recovery door.

@@ -50,13 +50,11 @@ fn expected_warm_status() -> &'static str {
     // guard_timeouts,regression_flag,pv,mv,integrator,derivative,saturation,integrator_clamp,
     // derivative_available,cmd_latency,max_cmd_latency,temp_scale,fault_flag
     //
-    // Bug M8 (2026-07-25): derivative column 12 is now emitted in °C/min
     // (Artisan convention) instead of internal °C/s. 0.24 °C/s → 14.40 °C/min.
     "0.8,4.7,0.0,0.0,1,0,none,0,1,150.0,75.0,12.0,14.40,1,1,1,0,0,0,0"
 }
 
 fn expected_cold_status() -> &'static str {
-    // Bug M8 (2026-07-25): 0.08 °C/s → 4.80 °C/min.
     "0.0,-0.3,0.0,0.0,1,0,none,0,1,-10.2,60.5,-3.2,4.80,0,0,1,0,0,0,0"
 }
 
@@ -76,8 +74,8 @@ fn status_from_sample(
     derivative_available: bool,
 ) -> SystemStatus {
     SystemStatus {
-        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
-        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
+        chan_poll_rate_hz: 0,
+        requested_filter: 0,
         state: RoasterState::Idle,
         bean_temp: sample.bean_temp,
         env_temp: sample.env_temp,
@@ -293,7 +291,6 @@ mod column_order_verification {
         assert_eq!(parts[9], "150.0", "Column 9 (pv) should be 150.0");
         assert_eq!(parts[10], "75.0", "Column 10 (mv) should be 75.0");
         assert_eq!(parts[11], "12.0", "Column 11 (integrator) should be 12.0");
-        // Bug M8 (2026-07-25): STATUS field 12 (derivative) is now emitted
         // in °C/min (Artisan convention), not the internal °C/s. The fixture's
         // 0.24 °C/s → 0.24 × 60 = 14.40 °C/min.
         assert_eq!(
@@ -348,8 +345,6 @@ mod fixture_hub_agreement {
             status.fault_condition = sample.bean_fault.has_fault() || sample.env_fault.has_fault();
             status.overtemp_regression_active = true; // Regression fixtures run with flag set
 
-            // Parse expected line to extract pv/mv/integrator/etc. Bug M8
-            // (2026-07-25): column 12 of `expected_line` is in °C/min (the
             // Artisan-facing unit the formatter emits), but `status.derivative_rate`
             // is the INTERNAL value in °C/s. Parsing the °C/min figure back
             // into `derivative_rate` then re-running the formatter's `× 60`

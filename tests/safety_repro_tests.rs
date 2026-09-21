@@ -1,12 +1,6 @@
-//! S1–S8 reproduction tests for the critical-safety bug hunt.
 //!
 //! Each test documents a candidate finding. Tests that document current
-//! (possibly undesirable) behaviour PASS and serve as evidence for the report;
-//! S5 (the NaN heater-output invariant) now asserts the FIXED behaviour
-//! (`Err(RoasterError::InvalidState("non_finite_heater_output"))`) as a
-//! plain `#[test]` — the historical `#[ignore]` marker was removed when the
-//! fix landed (Audit A-TC4, 2026-08-12: the stale header above used to claim
-//! the `#[ignore]` still existed).
+//! (possibly undesirable) behaviour PASS and serve as evidence for the report.
 
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -30,7 +24,7 @@ use libreroaster::control::traits::Fan;
 use libreroaster::control::RoasterError;
 use libreroaster::hardware::sensors::SensorConversionHub;
 
-/// Build a stub `RoasterControl` for the S1–S8 safety repro tests.
+/// Build a stub `RoasterControl` for the safety repro tests.
 fn make_control() -> RoasterControl {
     RoasterControl::new(
         Box::new(StubHeater::new()),
@@ -81,7 +75,7 @@ impl Fan for DeadFan {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// S1 — (candidate CRÍTICO-SEGURIDAD) manual mode with a dead probe has NO
+// Manual mode with a dead probe has NO
 // sensor-based supervision
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -90,8 +84,7 @@ impl Fan for DeadFan {
 //   - overtemp trap: never fires (0 °C < 260 °C)
 //   - NaN trap:      never fires (0.0 is finite)
 //   - RoR guard:     not armed in manual mode (pid_enabled == false)
-//   - probe-stuck:   armed at any duty > 0 (Bug S1 fix); two-stage in manual
-//                    mode since Audit A-TC4-C — warning at 120 s, latch at
+//   - probe-stuck:   armed at any duty > 0; two-stage in manual
 //                    300 s. This repro's loop spans only milliseconds of REAL
 //                    time, so neither window elapses inside it.
 //   - staleness:     reads keep arriving, so never stale
@@ -106,9 +99,7 @@ fn s1_dead_probe_manual_roast_runs_without_sensor_supervision() {
     let t0 = Instant::now();
     tick(&mut ctrl, 25.0, 30.0, t0);
 
-    // Manual session: OT1 30. Post-fix S1 the probe-stuck detector arms at
     // any duty > 0, but this loop advances only REAL milliseconds of clock,
-    // so neither the 120 s warning nor the 300 s manual latch (A-TC4-C) can
     // elapse inside it.
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(30))
         .expect("OT1 30");
@@ -162,7 +153,6 @@ fn s1_dead_probe_manual_roast_runs_without_sensor_supervision() {
 // (roaster_control.rs:1004-1019) and START calls
 // `clear_emergency_explicit` (roaster_control.rs:1125-1127), so any serial
 // client that can emit START + OT1 defeats the emergency latch. This is a
-// deliberate trust-the-operator design (Bug P3), recorded here as evidence.
 #[test]
 fn s2_serial_start_clears_latched_emergency_and_reenergizes() {
     let mut ctrl = make_control();
@@ -274,16 +264,10 @@ fn s3_pid_cycle_time_huge_freezes_regulation() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// S4 — (OPERATIVO, FIX 2026-08-05) internal-trap emergencies must propagate a
-// total fan failure
+// Internal-trap emergencies must propagate a total fan failure
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Pre-fix, `ActuatorController::emergency_shutdown` ignored the
-// `force_fan_100` result for internal traps: the caller received
-// `Err(EmergencyShutdown)` whether the fan reached 100 % or never moved,
-// absorbing the failure silently. The command-driven paths (STOP, safety
-// outcomes) already propagated fan failure — only the trap path absorbed it.
-// Post-fix (S4): a trap with an unresponsive fan escalates as
+// A trap with an unresponsive fan escalates as
 // `Err(HardwareError { source: "emergency_fan_failed" })` so the control loop
 // surfaces an ERR to Artisan ("no fan means unsafe to continue").
 #[test]
@@ -317,15 +301,11 @@ fn s4_internal_trap_absorbs_fan_failure() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// S5 — (latente, FIX 2026-08-05) NaN into the actuator is rejected instead of
-// poisoning ssr_output and disarming the temporal backstops
+// NaN into the actuator is rejected instead of poisoning ssr_output
+// and disarming the temporal backstops
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Pre-fix, `apply_guarded_heater` passed NaN through the clamp and the slew:
-// `status.ssr_output` became NaN, and the comms-idle / MAX_ROAST_TIME gates
-// (`ssr_output > 0.0`) then evaluated `NaN > 0.0 == false` and disarmed.
-// Physically the heater was OFF (NaN → duty 0), but the supervision was blind.
-// Post-fix (S5): non-finite `desired` is rejected with
+// Non-finite `desired` is rejected with
 // `Err(InvalidState(non_finite_heater_output))` before any state mutation —
 // the control loop escalates it to a latched emergency (fail-safe).
 #[test]
@@ -367,20 +347,14 @@ fn s5_nan_input_poisons_ssr_output_and_disarms_backstops() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// S6 — (OPERATIVO, bajo, FIX 2026-08-05) OT2 below the fan floor is clamped on
-// the command path too
+// OT2 below the fan floor is clamped on the command path too
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Pre-fix, the command path (`apply_policy_outcome`) wrote the fan value
-// directly with no `FAN_MIN_SAFETY_PCT` floor; the floor re-asserted only on
-// the next control tick. In between, a hot heater ran with 0 % airflow (+ up
-// to ~1.1 s of hardware fade to recover). Post-fix (S6): the command path
-// applies the same interlock whenever the heater is energized, so the fan
-// never dips below the floor even for one command.
+// The command path applies the same interlock whenever the heater is energized,
+// so the fan never dips below the floor even for one command.
 #[test]
 fn s6_ot2_zero_bypasses_fan_floor_until_next_tick() {
     let mut ctrl = make_control();
-    // Bug fix (2026-08-10): the host time driver has 1 µs tick resolution —
     // consecutive `Instant::now()` calls can return the SAME tick, which
     // zeroes the slew limiter's dt (`actual_output = slewing + 50·dt = 0`)
     // and leaves `ssr_output == 0.0` — the clamp gate below would then see

@@ -303,10 +303,6 @@ fn stop_roast_turns_off_heater_and_full_fan() {
     let output_after = control
         .update_control(Instant::now())
         .expect("update after stop");
-    // Audit MT-7 (2026-08-11): the status snapshot used to be taken BEFORE
-    // this final `update_control`, so `fan_output >= 99.0` was asserted on a
-    // pre-tick snapshot while `output_after == 0.0` came from the post-tick
-    // return — the two sides of the same STOP behaviour were pinned at
     // different points in time. Take ONE post-tick snapshot and assert both
     // the heater-off and fan-full behaviour from it.
     let status = control.get_status();
@@ -451,9 +447,7 @@ fn fault_condition_rejects_mutating_commands() {
         .emergency_shutdown("test")
         .expect_err("emergency_shutdown returns Err");
 
-    // Audit A-TC4: the latch must be announced on the wire (previously the
-    // internal traps were silent and the host only discovered the fault via
-    // the next rejected command or a STATUS poll).
+    // The latch is announced on the wire.
     let output = drain_output();
     assert!(
         output
@@ -478,10 +472,8 @@ fn fault_condition_rejects_mutating_commands() {
         "STATUS should still work during fault"
     );
 
-    // Audit A-TC4: the handshake commands must stay accepted during the
-    // latch — otherwise a reconnecting Artisan hits "Arduino could not set
-    // channels/units/filters" and re-initialises forever without ever
-    // polling READ. They have no actuator side effects (poll-rate record,
+    // The handshake commands stay accepted during the latch.
+    // They have no actuator side effects (poll-rate record,
     // display scale, requested filter), so the safety whitelist loses
     // nothing by admitting them.
     control

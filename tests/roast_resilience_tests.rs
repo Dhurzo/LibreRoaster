@@ -11,11 +11,9 @@ use libreroaster::input::parser::{parse_artisan_command, store_profile, take_pro
 
 #[test]
 fn no_profile_start_falls_back_to_default_target() {
-    // Audit MT-7 (2026-08-11): the test name claims the *fallback* behaviour
     // — that START without a PROFILE applies DEFAULT_TARGET_TEMP — but the
     // old body only asserted boot-time defaults. Drive a START and verify
     // the target lands on DEFAULT_TARGET_TEMP, which is the contract the
-    // name promises and the audit (F2-MT7) was missing.
     let heater = MockSsr::new();
     let fan = MockFan::new();
     let hub = SensorConversionHub::new();
@@ -90,7 +88,6 @@ fn bt_below_fifty_no_charge_check() {
 
 #[test]
 fn fan_profile_empty_does_not_break_control() {
-    // Audit MT-7 (2026-08-11): the old body poked `status.fan_output = 30.0`
     // directly and only asserted `is_ok()`. That was vacuous: with no roast
     // running, `update_control` recomputes the fan from the selector
     // (roaster_control.rs:936-943), so the stale poke was overwritten with
@@ -127,7 +124,6 @@ fn fan_profile_empty_does_not_break_control() {
 
 #[test]
 fn start_without_preheat_parses_and_runs_end_to_end() {
-    // Audit MT-7 (2026-08-11): renamed from `start_without_preheat_uses_default_or_profile`
     // (overclaiming — old body only called the parser). Now also exercises the
     // control layer to assert START in the absence of PREHEAT actually enters
     // the Heating state with a target, which is the contract the name implied.
@@ -152,7 +148,6 @@ fn start_without_preheat_parses_and_runs_end_to_end() {
 
 #[test]
 fn preheat_then_start_transitions_normally() {
-    // Audit MT-7 (2026-08-11): the old body only parsed two strings and a
     // comment admitted "the transition is in RoasterControl handler". Drive
     // PREHEAT → START through RoasterControl and assert the real transition
     // (Preheating → Heating). Note the target contract: with NO profile
@@ -216,7 +211,6 @@ fn stop_during_idle_does_not_crash() {
     let hub = SensorConversionHub::new();
     let mut rc = RoasterControl::new(Box::new(heater), Box::new(fan), hub).expect("init");
 
-    // Bug #3 regression: EmergencyStop from Idle now LATCHES the emergency
     // (state = Error) rather than no-op'ing back to Idle, and recovery is
     // reserved for the explicit `StopRoast` command. The previous test
     // expected `Idle` here, which was the un-latching bug: pressing STOP
@@ -239,7 +233,6 @@ fn stop_during_idle_does_not_crash() {
 
 #[test]
 fn preheat_parser_edge_values() {
-    // Bug B9: parser accepts any finite temperature; the handler validates
     // after the display→°C conversion. So PREHEAT 49 is parsed fine, and
     // PREHEAT 301 °F (~149 °C) is a normal preheat that was previously
     // rejected by the parser's incorrect °C check.
@@ -323,7 +316,6 @@ fn charge_detection_reset_on_stop() {
     rc.process_artisan_command(ArtisanCommand::EmergencyStop)
         .expect("emergency stop should work");
 
-    // Bug #3 regression: EmergencyStop LATCHES (state = Error) and does not
     // clear `charge_detected` itself (charge reset happens on the next START
     // via the recovery path). Recovering requires an explicit `StopRoast`.
     assert_eq!(
@@ -371,7 +363,6 @@ fn empty_commands_handled_gracefully() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Bug B9 — display-unit (°F) setpoints must pass the parser
 // ─────────────────────────────────────────────────────────────────────────
 // A U.S. user running Artisan in Fahrenheit routinely issues setpoints
 // above 300 °F (e.g. PID;SV;385 ≈ 196 °C) and below 50 °F (cold-start
@@ -422,7 +413,6 @@ fn b9_parser_still_rejects_non_finite() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Bug B8 — long PROFILE / FANPROFILE (>128 bytes) must parse, not truncate
 // ─────────────────────────────────────────────────────────────────────────
 // PROFILE/FANPROFILE routinely reach ~170 bytes with 16 setpoints. The
 // previous `String<128>` normaliser dropped the overflow silently with
@@ -465,7 +455,6 @@ fn b8_long_fanprofile_above_128_bytes_parses() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Audit A-TC4 — degenerate PROFILE/FANPROFILE shapes at the control layer
 // ─────────────────────────────────────────────────────────────────────────
 // Artisan's profile editor can emit setpoints out of time order (the user
 // drags a point past its neighbour) and duplicated timestamps are legal on

@@ -31,8 +31,8 @@ use libreroaster::output::artisan::{ArtisanFormatter, MutableArtisanFormatter};
 /// Helper to create test SystemStatus
 fn create_test_status() -> SystemStatus {
     SystemStatus {
-        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
-        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
+        chan_poll_rate_hz: 0,
+        requested_filter: 0,
         state: RoasterState::Stable,
         bean_temp: 150.5,
         env_temp: 120.3,
@@ -53,8 +53,8 @@ fn create_test_status() -> SystemStatus {
 /// Helper to create minimal SystemStatus for ROR tests
 fn create_minimal_status(bean_temp: f32, env_temp: f32, ssr_output: f32) -> SystemStatus {
     SystemStatus {
-        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
-        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
+        chan_poll_rate_hz: 0,
+        requested_filter: 0,
         bean_temp,
         env_temp,
         ssr_output,
@@ -221,8 +221,7 @@ fn test_full_command_pipeline() {
 
     // After parsing, test that formatter can create output
     let status = create_test_status();
-    // Bug M12 (2026-08-10): the stateful `ArtisanFormatter` (dead impl) was
-    // removed; the production formatter is `MutableArtisanFormatter`.
+    // The production formatter is `MutableArtisanFormatter`.
     let mut formatter = MutableArtisanFormatter::new();
 
     let csv_result = formatter.format(&status);
@@ -435,7 +434,7 @@ fn test_artisan_csv_format() {
 
     // Verify field structure
     assert!(!parts[0].is_empty(), "Time field should not be empty");
-    // Bug #7 regression: continuous-telemetry lines now start with '#' so
+    // Continuous-telemetry lines start with '#' so
     // they can be distinguished from a synchronous `READ` response.
     assert!(
         parts[0].starts_with('#'),

@@ -211,7 +211,6 @@ fn start_ot1_io3_stop_sequence_updates_state() {
     process_command_data(b"STOP\r");
     drain_and_process_commands();
 
-    // Bug #3 regression: the protocol string `STOP` maps to
     // `ArtisanCommand::EmergencyStop` (that mapping is intentional and tested
     // by the proptest table in `parser.rs`), so it now LATCHES the emergency
     // (state = Error) rather than silently returning to Idle. Heaters are

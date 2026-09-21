@@ -7,8 +7,8 @@
 //! scenarios that must never regress: charge detection reset between roasts, every safety
 //! backstop (max-roast, comms-idle, stale sensor, overtemp, NaN PV), fault recovery via the
 //! OFF command, PID↔manual transitions and integrator reset, SSR slew limiting, profile
-//! following, fan/cooldown latch (B3), PID-not-disabled-by-fan (B4), gain mid-roast (B5),
-//! single-fault debounce (B7), and up/down heater commands.
+//! following, fan/cooldown latch, PID-not-disabled-by-fan, gain mid-roast,
+//! single-fault debounce, and up/down heater commands.
 //!
 //! Each test holds `TEST_MUTEX` so the shared `ServiceContainer`/channels are not raced.
 
@@ -136,18 +136,6 @@ fn max_roast_time_triggers_emergency_shutdown() {
         .expect("temps");
     let _ = ctrl.update_control(far_future);
 
-    // Audit MT-1 (2026-08-11): the previous
-    // `is_emergency_active() || fault_condition` assert was tautological —
-    // `emergency_shutdown()` latches *both* facts atomically, so the OR
-    // added no discriminating power and a *different* emergency (e.g. a
-    // plain stale-sensor trip masking a broken MAX_ROAST_TIME gate) would
-    // have passed silently. The strong form requires both: the latched
-    // emergency AND the Error state (`emergency_shutdown` always sets
-    // both). This deliberately-constructed `far_future` tick genuinely
-    // trips overlapping backstops (stale sensor + max-roast); the
-    // isolation of each mechanism is provided by the *negative* test
-    // `roast_within_max_time_does_not_trigger_emergency` below plus the
-    // dedicated stale-sensor test (separator 7).
     assert!(
         ctrl.safety().is_emergency_active()
             && ctrl.get_status().state == libreroaster::config::RoasterState::Error,
@@ -236,13 +224,6 @@ fn full_emergency_recovery_cycle() {
     assert!(ctrl.get_status().fault_condition);
     assert!(ctrl.safety().is_emergency_active());
 
-    // Bug C3 doctrine (2026-07-25): `ArtisanCommand::Stop` (token "OFF") is the
-    // *unconditional* recovery door for the host. A latched emergency with no
-    // reachable recovery used to brick the device until a power cycle, because
-    // `RoasterCommand::StopRoast` (the only un-latch path) had no producer in
-    // production code. OFF now clears the latch first and then runs the
-    // normal stop, so the device always returns to `Idle` on the visible
-    // Artisan button.
     ctrl.process_artisan_command(ArtisanCommand::Stop)
         .expect("OFF is the recovery path; must not panic");
 
@@ -309,11 +290,11 @@ fn pid_to_manual_back_to_pid_resets_integrator() {
     );
 
     // Drive the integrator with a target *close* to the current temperature,
-    // so the PID is NOT pinned at the output_max rail. Bug B6 conditional
-    // anti-windup now stops integrating once the predictive MV hits the
-    // controller's own clamp; the previous test used DEFAULT_TARGET_TEMP with
-    // BT=25 → error ≈ 200 → P-term alone pins MV to 100% → integrator is
-    // (correctly) held at 0 by anti-windup. We instead use a small error so
+    // so the PID is NOT pinned at the output_max rail. Conditional
+    // anti-windup stops integrating once the predictive MV hits the
+    // controller's own clamp; with DEFAULT_TARGET_TEMP and
+    // BT=25 the error is large and the P-term alone pins MV to 100%, so the
+    // integrator is (correctly) held at 0 by anti-windup. We instead use a small error so
     // MV stays inside [0,100] and the integrator actually accumulates. Target
     // must be inside `is_valid_target_temp`'s 50..=300 °C window.
     ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(60.0))
@@ -571,8 +552,7 @@ fn exactly_at_overtemp_threshold_triggers_emergency() {
 
 #[test]
 fn overtemp_just_below_threshold_does_not_trigger() {
-    // Audit MT-2 (2026-08-11): the overtemp suite only covered `>=`
-    // OVERTEMP_THRESHOLD. Add the negative boundary: `threshold - 1.0` must
+    // Negative boundary: `threshold - 1.0` must
     // NOT trip (severity is decided at the `>=` boundary in
     // controllers/sensor.rs), and repeated sub-threshold samples must not
     // accumulate into a trip.
@@ -607,11 +587,6 @@ fn ssr_not_detected_forces_zero_output_in_manual_mode() {
     let _guard = acquire_lock();
     let heater = StubHeater::new();
     let fan = StubFan::new();
-    // Audit H-8 (2026-08-11): the original `if status.ssr_hardware_status !=
-    // Available` guard made the assert unreachable (StubHeater defaults to
-    // Available), so the "stuck/unknown SSR must gate output to zero" rule
-    // never ran. Mirror T6 in safety_injection_midroast_tests.rs: force Error
-    // (BEFORE the move into RoasterControl), assert unconditionally.
     heater.set_status(libreroaster::config::constants::SsrHardwareStatus::Error);
     let mut ctrl = RoasterControl::new(Box::new(heater), Box::new(fan), SensorConversionHub::new())
         .expect("build");
@@ -688,8 +663,7 @@ fn up_command_increments_heater() {
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(50))
         .expect("base 50%");
 
-    // Bug #8 fix: SetHeater stores manual_heater=50 (ssr_output is
-    // slew-rate-limited separately). UP must use manual_heater as the
+    // UP must use manual_heater as the
     // baseline — NOT ssr_output — so the operator's manual setting is
     // honoured regardless of where the slew limiter currently is.
     let manual_before_up = ctrl.dispatch().artisan_manual_heater();
@@ -812,12 +786,8 @@ fn stop_sets_fan_to_100_percent_for_cooling() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 14b. BUG B3 — Cooldown fan latch survives the next update_control tick
+// Cooldown fan latch survives the next update_control tick
 // ═══════════════════════════════════════════════════════════════════════════
-// The pre-existing `stop_sets_fan_to_100_percent_for_cooling` test never ran
-// a tick after STOP, so it passed even though `update_control` immediately
-// overwrote the fan to 0% via `artisan_manual_fan()` (cleared by STOP's
-// `clear_manual`). This test runs the tick and asserts the cooldown latch.
 
 #[test]
 fn stop_cooldown_fan_survives_next_tick() {
@@ -850,7 +820,6 @@ fn stop_cooldown_fan_survives_next_tick() {
         "STOP must set fan to 100% (immediate effect)"
     );
 
-    // The single tick that the original test omitted — this is where B3 lived.
     tick_now(&mut ctrl, 200.0, 220.0);
     assert!(
         !ctrl.safety().is_emergency_active(),
@@ -968,7 +937,7 @@ fn start_roast_drops_cooldown_latch() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 14c. BUG B4 — OT2 (fan) command must NOT disable PID or drop the heater
+// OT2 (fan) command must NOT disable PID or drop the heater
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -1001,7 +970,7 @@ fn fan_command_does_not_disable_pid() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 14d. BUG B5 — Tuning PID gains mid-roast must NOT silently disable the PID
+// Tuning PID gains mid-roast must NOT silently disable the PID
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -1009,12 +978,11 @@ fn set_pid_gains_keeps_pid_enabled() {
     let _guard = acquire_lock();
     let mut ctrl = build_control();
 
-    // Bug fix (2026-08-10): `tick_now` uses REAL wall-clock time and the host
+    // `tick_now` uses REAL wall-clock time and the host
     // time driver has 1 µs resolution, so two consecutive ticks can share a
     // tick (slew dt == 0 → applied output 0) and `update_pid_control` only
     // recomputes once `pid_cycle_time_ms` (100 ms) has elapsed since the last
-    // computation. Both effects made the final `mv > 0` assert flaky depending
-    // on scheduler timing. Drive the clock explicitly (+200 ms per tick) so
+    // computation. Drive the clock explicitly (+200 ms per tick) so
     // the slew always advances and the PID cycle gate is deterministically
     // open.
     let t0 = Instant::now();
@@ -1030,8 +998,7 @@ fn set_pid_gains_keeps_pid_enabled() {
     ctrl.process_artisan_command(ArtisanCommand::SetPidGain(2.5, 0.3, 0.08))
         .expect("pid gains");
 
-    // The bug: status.pid_enabled stayed true but the controller was rebuilt
-    // with enabled=false, so compute_output returned 0.0. A tick must show
+    // A tick must show
     // the PID actively computing (non-zero desired output when below target).
     assert!(
         ctrl.get_status().pid_enabled,
@@ -1213,15 +1180,8 @@ fn set_target_temp_nan_rejected() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 14e. BUG B7 — A single transient sensor fault must NOT latch an emergency
+// A single transient sensor fault must NOT latch an emergency
 // ═══════════════════════════════════════════════════════════════════════════
-// `RoasterControl::update_temperatures` poisons bean_temp/env_temp with NaN
-// on the FIRST faulted sample. The PID downstream treats NaN PV as a faulted
-// sensor and triggers a latched `emergency_shutdown` on the same tick. B7
-// makes the poisoning conditional on `consecutive_fault_count >=
-// SENSOR_FAULT_DEBOUNCE`, holding the last valid value until the fault is
-// confirmed persistent — matching the F4.11 debouncer that already protects
-// `fault_condition`.
 
 #[test]
 fn single_sensor_fault_does_not_latch_emergency() {
@@ -1236,14 +1196,11 @@ fn single_sensor_fault_does_not_latch_emergency() {
     tick_now(&mut ctrl, 200.0, 220.0);
     assert!(
         !ctrl.safety().is_emergency_active(),
-        "precondition: no emergency armed at start of B7 test"
+        "precondition: no emergency armed at start of test"
     );
 
     // Inject aSensorFault directly: simulate one transient SPI glitch by
-    // calling `update_temperatures` with bean_fault set. Pre-B7 this would
-    // set `status.bean_temp = NaN`, and the subsequent `update_control`
-    // would call `emergency_shutdown("Sensor fault (NaN/infinite)")`.
-    // Per B7, the value is held (NOT NaN) and no emergency is armed.
+    // calling `update_temperatures` with bean_fault set. The value is held (NOT NaN) and no emergency is armed.
     use libreroaster::hardware::sensors::conversion::SensorFault;
     let transient_fault = SensorFault {
         fault_detected: true,

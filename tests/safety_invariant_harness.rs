@@ -5,17 +5,15 @@
 //! fan roto, SSR atascado) y verifica por tick las invariantes de seguridad:
 //!
 //!   I1: emergency activo ⟹ ssr_output == 0
-//!       (excepción: ssr_hardware_status == Error — S7 fix: si el heater no
-//!       pudo apagarse, ssr_output conserva el último duty aplicado y el
-//!       campo honesto es el status de hardware)
-//!   I2: heater > 0 ⟹ ¬fault_condition ∧ ¬emergency (misma excepción S7)
+//!       (excepción: si el heater no pudo apagarse, ssr_output conserva
+//!       el último duty aplicado y el campo honesto es el status de hardware)
+//!   I2: heater > 0 ⟹ ¬fault_condition ∧ ¬emergency (misma excepción)
 //!   I3: heater > 0 ∧ ¬emergency ⟹ fan ≥ FAN_MIN_SAFETY_PCT (S6 fix: el floor
 //!       también se aplica en el path de comando, ya no hay tick exento)
 //!   I4: gap de sensor > TEMP_VALIDITY_TIMEOUT_MS ⟹ heater == 0 ∨ emergency
 //!   I5: sample limpio con BT ≥ OVERTEMP ⟹ emergency en el mismo tick
 //!   I6: heater > 0 ⟹ existe supervisión EFECTIVA (overtemp, RoR, probe-stuck,
-//!       comms-idle). Con sonda muerta / desconectada la exposición S1 era
-//!       ESPERADA y se contaba (no assert); tras el fix S1 el detector
+//!       comms-idle). Con sonda muerta / desconectada el detector
 //!       probe-stuck se arma a cualquier duty > 0, así que la exposición debe
 //!       caer a ~0 y una violación (con o sin sonda) aborta.
 //!   I7: ssr_output / fan_output siempre finitos.
@@ -45,7 +43,7 @@ use libreroaster::hardware::sensors::{SensorConversionHub, SensorFault};
 use libreroaster::hardware::test_mocks::{MockFan, MockSsr};
 
 // 130 s de roast simulado: cubre el detector probe-stuck (120 s) para que los
-// roasts con sonda muerta alcancen la emergencia y la exposición S1 caiga a 0.
+// roasts con sonda muerta alcancen la emergencia y la exposición caiga a 0.
 /// Number of simulated control ticks per roast (~130 s at `TICK_MS`), long
 /// enough for the probe-stuck detector (120 s) to reach emergency.
 const TICKS_PER_ROAST: u32 = 650;
@@ -212,8 +210,8 @@ fn initial_command_burst(rng: &mut Rng) -> Vec<ArtisanCommand> {
 /// Per-seed result: the fault profile plus I6 supervision-exposure counters.
 struct RoastOutcome {
     cfg: RoastConfig,
-    i6_expected: u32,   // exposición S1 documentada (sonda muerta/desconectada)
-    i6_unexpected: u32, // violación en roast con sonda efectiva = bug nuevo
+    i6_expected: u32,   // exposición documentada (sonda muerta/desconectada)
+    i6_unexpected: u32, // violación en roast con sonda efectiva
 }
 
 /// Runs one full simulated roast for `seed`, asserting safety invariants I1–I7.
@@ -288,7 +286,6 @@ fn run_roast(seed: u64) -> RoastOutcome {
             s.fan_output
         );
 
-        // I1 — emergencia ⟹ heater a 0 (S7 fix: si el heater no pudo apagarse,
         // el status de hardware Error es la verdad y ssr_output conserva el
         // último duty aplicado — ventana del tick del fallo).
         assert!(
@@ -298,7 +295,7 @@ fn run_roast(seed: u64) -> RoastOutcome {
             s.ssr_hardware_status
         );
 
-        // I2 — heater > 0 ⟹ sin fault ni emergencia (misma excepción S7).
+        // I2 — heater > 0 ⟹ sin fault ni emergencia (misma excepción).
         assert!(
             !heater_on
                 || (!s.fault_condition && !emergency)
@@ -310,7 +307,7 @@ fn run_roast(seed: u64) -> RoastOutcome {
             s.ssr_hardware_status
         );
 
-        // I3 — floor del fan (S6 fix: también en el path de comando, estricto).
+        // I3 — floor del fan (también en el path de comando, estricto).
         if heater_on && !emergency {
             assert!(
                 s.fan_output >= FAN_MIN_SAFETY_PCT,
@@ -342,7 +339,6 @@ fn run_roast(seed: u64) -> RoastOutcome {
         }
 
         // I6 — supervisión EFECTIVA cuando hay heater.
-        // Tras el fix S1 el detector probe-stuck se arma con cualquier
         // duty > 0, así que con el heater encendido la supervisión siempre
         // existe (o el overtemp real lee, o el RoR está armado, o el
         // probe-stuck, o comms-idle) — cualquier tick sin supervisión es un
@@ -352,7 +348,6 @@ fn run_roast(seed: u64) -> RoastOutcome {
             let state = ctrl.get_state();
             let ror_armed = matches!(state, RoasterState::Heating | RoasterState::Stable)
                 || (state == RoasterState::Idle && s.pid_enabled && heater_on);
-            // Replica del gate post-fix S1 (roaster_control.rs, probe-stuck:
             // armado con ssr_output > 0, antes >= PROBE_STUCK_HEATER_MIN_PCT).
             let probe_stuck_armed = s.ssr_output > 0.0;
             let comms_idle_armed =
@@ -375,7 +370,6 @@ fn run_roast(seed: u64) -> RoastOutcome {
                     s.ssr_output, s.pid_enabled
                 );
             } else {
-                // Sonda muerta/desconectada: tras el fix S1 la exposición S1
                 // debe ser 0 (el probe-stuck cubre); si aparece, se cuenta y
                 // aborta en el proptest (i6_expected > 0 ⇒ fail).
                 i6_expected += 1;
@@ -397,7 +391,6 @@ proptest! {
     })]
 
     /// 1000 roasts aleatorios: ninguna invariante I1–I7 debe violarse. Tras el
-    /// fix S1 el detector probe-stuck cubre la sonda muerta a cualquier duty,
     /// así que `i6_expected` (exposición sin supervisión) también debe ser 0.
     /// El shrinking de proptest minimiza el seed de cualquier violación.
     #[test]
@@ -432,13 +425,11 @@ fn harness_prng_is_deterministic() {
 
 #[test]
 fn dead_probe_manual_roast_now_trips_probe_stuck() {
-    // Verificación del fix S1 + Audit A-TC4-C: sonda muerta (TC corto lee
     // 0.0 °C válido, sin fault bit) + manual mode a 30 % (bajo el antiguo
     // umbral del detector) + polling de Artisan cada 3 ticks (neutraliza
     // comms-idle). El detector probe-stuck — armado con cualquier duty > 0 —
     // es ahora de DOS ETAPAS en modo manual: a los 120 s (600 ticks) solo
     // avisa por el wire; el latch real llega a los 300 s (1500 ticks),
-    // dejando el heater a 0. Pre-fix este roast corría a ciegas hasta
     // MAX_ROAST_TIME.
     let mut rng = Rng(7);
     let mut ctrl = RoasterControl::new(

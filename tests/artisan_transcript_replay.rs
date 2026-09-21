@@ -1,4 +1,4 @@
-//! Artisan golden-transcript replay (Audit A-TC4, 2026-08-12).
+//! Artisan golden-transcript replay.
 //!
 //! The wire-format assertions in the rest of the suite were pinned against
 //! the firmware's own documentation — a format regression on the READ/STATUS
@@ -77,7 +77,6 @@ fn drain_channels() {
 /// Feed a transcript (one `\n`-terminated command per line) through the
 /// UART transport entry point, exactly as a real serial session arrives.
 ///
-/// Audit A-TC4-D (2026-08-12): the harness must mirror PRODUCTION drain
 /// cadences on BOTH channels, or its own fixtures overflow the fixed
 /// capacities and produce false failures:
 /// - the OUTPUT channel (16 deep) fills with the TRACE event each enqueue
@@ -375,7 +374,6 @@ fn firmware_pid_session_replays_cleanly() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. Light-roast slider session (Audit A-TC4-D, 2026-08-12)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]

@@ -192,10 +192,8 @@ mod hub_integration {
         //
         // Per the MAX31856 datasheet, 0x04 is NOT a "short to GND" fault (the
         // MAX31856 has no such bit — that name came from the older MAX6675).
-        // The previous test asserted `short_to_gnd` here, blessing the bug in
-        // conversion.rs. We now assert the correctly-mapped `tc_low`.
+        // Assert the correctly-mapped `tc_low`.
         //
-        // Audit CI (2026-08-11): the `!sample.env_fault.short_to_gnd` negative
         // assert was removed — the field is `#[deprecated]` (it does not exist
         // on the MAX31856) and is unconditionally `false` by construction in
         // `SensorFault::decode` (conversion.rs). The behavior it guarded is

@@ -1,4 +1,4 @@
-//! Bounded pipeline soak (Audit A-TC4, 2026-08-12).
+//! Bounded pipeline soak.
 //!
 //! The longest deterministic run in the suite was ~5800 ticks at the
 //! `RoasterControl` level; nothing stressed the FULL pipeline (transport
@@ -126,7 +126,6 @@ const COMMANDS: &[&str] = &[
 /// TRACE event into the 16-deep shared channel); without the per-feed drain
 /// the channel fills with TRACE lines and responses drop through the
 /// best-effort `try_send` (production `dual_output_task` drains every 5 ms —
-/// mirror it here). Audit A-TC4-D (2026-08-12).
 fn feed(command: &str, via_usb: bool, collected: &mut Vec<StdString>) {
     let mut bytes = command.as_bytes().to_vec();
     bytes.push(b'\r');

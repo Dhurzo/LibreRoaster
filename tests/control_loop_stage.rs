@@ -4,7 +4,6 @@
 //! elapsed/guard/watchdog state, including a fault-injected `watchdog=fail`
 //! marker.
 
-// Audit A-TC4 (2026-08-12): added the `test` feature gate — the stage
 // instrumentation path pulls the host Embassy time driver, which fails to
 // link on a plain `cargo test` without the `test` feature (same failure
 // mode documented in CONTEXT.md).

@@ -537,7 +537,6 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
     let t0 = Instant::now();
 
     // Manual mode (no PID): OT1 60 energizes the heater; BT frozen at 80 °C.
-    // Audit A-TC4-C (2026-08-12): manual mode is TWO-STAGE — at ~120 s the
     // firmware emits `ERR probe_stuck_warning` on the wire WITHOUT latching
     // (a legitimately slow finish can hold BT <1 °C for 2 min at low duty);
     // the real latch lands at ~300 s and announces itself with
@@ -588,7 +587,6 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// A-TC4-D — LIGHT ROAST verification (Audit A-TC4-D, 2026-08-12)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // A normal Artisan light roast: preheat ET ≈ 200 °C, charge dip to ~95 °C,
@@ -980,7 +978,6 @@ fn light_roast_boundary_slow_finish_does_not_trip_probe_stuck() {
     // A very slow manual light finish: RoR 0.05 °C/s (3 °C/min) with the
     // heater on. BT moves 6 °C per 120 s — far above the 1 °C probe-stuck
     // variation — so neither the 120 s warning nor the 300 s manual latch
-    // may fire over a 400 s window (A-TC4-C two-stage detector).
     let _guard = acquire_lock();
     let mut ctrl = build_control();
     let t0 = Instant::now();

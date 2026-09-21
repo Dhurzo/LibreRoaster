@@ -52,8 +52,8 @@ use mock_usb_driver::MockUsbCdcDriver;
 /// Create a standard test SystemStatus for READ response validation.
 fn test_status() -> SystemStatus {
     SystemStatus {
-        chan_poll_rate_hz: 0, // Bug DRA-7: Artisan CHAN polling-rate request
-        requested_filter: 0,  // Bug DRA-7: Artisan FILT filter request
+        chan_poll_rate_hz: 0,
+        requested_filter: 0,
         state: RoasterState::Stable,
         bean_temp: 155.7,
         env_temp: 125.5,
@@ -210,7 +210,6 @@ fn test_tc4_read_respects_fahrenheit() {
     let parts: Vec<&str> = response.split(',').collect();
 
     assert_eq!(parts.len(), 5);
-    // Bug L15 (2026-08-10): AMB is emitted raw (no °F conversion) — the
     // firmware has no ambient probe and `ambient_temp` is an always-0.0
     // placeholder; converting 0 °C to 32 °F emitted a phantom reading.
     assert_eq!(parts[0], "25.0", "AMB raw (no °F conversion)");
@@ -462,7 +461,6 @@ fn test_read_response_after_stop() {
     println!("TEST-READ-USB-14: READ response after STOP");
 
     // A STOP puts the system in Idle; the READ response should still be valid
-    // Audit M-A7 (2026-08-11): used `Error` (the production fault state) —
     // `EmergencyStop` variant was removed as dead.
     let mut status = test_status();
     status.state = RoasterState::Error;
