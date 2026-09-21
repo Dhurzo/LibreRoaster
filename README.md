@@ -149,7 +149,7 @@ LibreRoaster implements a TC4-compatible serial interface with 20+ commands span
 - **Continuous telemetry** streams `#<time>,ET,BT,ROR,Gas` (leading `#`, so clients can distinguish it from command responses) during active sessions; the spontaneous `#CHARGE dt=NN.N` event marks bean charge
 - **Errors** return `ERR <token>` lines (e.g. `ERR unknown_command unknown_command` for parse failures, `ERR handler_failed <token>:<source>` for handler failures)
 
-If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`.
+If you need the exact field ordering and command grammar, use the deeper protocol reference in `docs/PROTOCOL.md`. For roast workflows, see `docs/ARTISAN_MODES.md` (manual vs profile mode with Artisan).
 
 ---
 
@@ -279,6 +279,7 @@ The main technical documents are:
 - **`docs/HARDWARE.md`** — pins, buses, PWM topology, electrical constraints, implementation notes
 - **`docs/CONNECTION_TYPES.md`** — USB vs UART: which connection to use, why USB boots reliably without extra hardware
 - **`docs/ARTISAN_CONNECTION.md`** — how the official Artisan app should be configured against LibreRoaster
+- **`docs/ARTISAN_MODES.md`** — manual vs profile roast modes with Artisan (commands, examples, rules)
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
