@@ -122,7 +122,7 @@ static_cell = "2.1.1"
 embassy-sync = "0.6.1"
 futures = { version = "0.3", features = ["thread-pool"] }
 proptest = "1"
-proptest-derive = "0.5"
+proptest-derive = "0.8"
 
 [profile.dev]
 # Rust debug is too slow.
