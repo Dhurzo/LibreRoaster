@@ -1100,7 +1100,7 @@ version = "0.0.1-alpha"
 dependencies = [
  "critical-section",
  "embassy-executor",
- "embassy-sync 0.6.2",
+ "embassy-sync 0.7.2",
  "embassy-time",
  "embassy-time-driver",
  "embedded-hal 0.2.7",
