@@ -76,7 +76,7 @@ critical-section = "1.2.0"
 static_cell = "2.1.1"
 log              = "0.4.27"
 embassy-sync     = "0.6.1"
-embassy-executor = { version = "0.9.1", features = ["log"] }
+embassy-executor = { version = "0.10.0", features = ["log"] }
 portable-atomic = "1.13"
 libm = "0.2"
 # Bug L11 (2026-07-25): `embedded-hal-mock` was an `optional = true` dep that
