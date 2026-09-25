@@ -2,7 +2,7 @@
 use super::*;
 use crate::common::{StubFan, StubHeater};
 use crate::config::{ArtisanCommand, RoasterCommand, RoasterState, SsrHardwareStatus};
-use crate::control::traits::Fan;
+use crate::control::traits::{Fan, Heater};
 use crate::hardware::sensors::SensorConversionHub;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -1476,6 +1476,167 @@ fn start_resets_heat_session_clock() {
     assert!(ctrl.profile_start_time.is_some());
 }
 
+// ── AUDIT 2026-09-25 (BUG 1): PREHEAT during an active roast is ignored ──
+
+#[test]
+fn preheat_during_active_roast_is_ignored() {
+    // A PREHEAT issued while a roast is actually active (Heating/Stable)
+    // must be IGNORED exactly like START. Without the gate the state
+    // degraded to `Preheating` mid-roast with the heater energized,
+    // silently disarming the RoR guard, the MAX_ROAST_TIME budget and
+    // charge detection while the host saw a plain Ok.
+    let mut ctrl = make_control();
+    ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0))
+        .expect("set target");
+    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+        .expect("start roast");
+    assert_eq!(ctrl.get_state(), RoasterState::Heating);
+
+    let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+    assert!(r.is_ok(), "ignored PREHEAT must not surface an error");
+    assert_eq!(
+        ctrl.get_state(),
+        RoasterState::Heating,
+        "PREHEAT mid-roast must not degrade the FSM out of Heating"
+    );
+    // The roast must stay fully armed: PID still enabled toward the START
+    // target (DEFAULT_TARGET_TEMP when no profile was loaded — H12 only
+    // preserves a pre-set target when coming from Preheating), no fault
+    // raised, clock still anchored.
+    let s = ctrl.get_status();
+    assert!(s.pid_enabled, "PID must stay enabled after ignored PREHEAT");
+    assert!(!s.fault_condition);
+    assert_eq!(
+        s.target_temp,
+        crate::config::constants::DEFAULT_TARGET_TEMP,
+        "the roast target must be untouched (START anchored it to the default)"
+    );
+    assert!(
+        ctrl.profile_start_time.is_some(),
+        "the roast clock must stay anchored"
+    );
+}
+
+#[test]
+fn preheat_from_idle_still_transitions_after_gate() {
+    // The gate only covers Heating/Stable: the documented preheat flow from
+    // Idle must still transition to Preheating.
+    let mut ctrl = make_control();
+    let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+    assert!(r.is_ok());
+    assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+}
+
+#[test]
+fn preheat_from_error_state_still_recovers() {
+    // Latch recovery through PREHEAT must be preserved: a latched device is
+    // in `Error` (not Heating/Stable), so the gate must not block it.
+    let mut ctrl = make_control();
+    let _ = ctrl.emergency_shutdown("test latch");
+    assert_eq!(ctrl.get_state(), RoasterState::Error);
+
+    let r = ctrl.process_artisan_command(ArtisanCommand::Preheat(180.0));
+    assert!(r.is_ok());
+    assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "PREHEAT must keep clearing the latch from Error"
+    );
+}
+
+// ── AUDIT 2026-09-25 (BUG 2): manual session during Preheating keeps the
+// MAX_MANUAL_HEAT_SESSION_SECS budget ──────────────────────────────────────
+
+#[test]
+fn manual_session_during_preheating_keeps_manual_time_budget() {
+    // H2 hole: `PREHEAT` → `OT1` (manual takeover; the PID is disabled but
+    // the state STAYS `Preheating`) used to escape every time budget — the
+    // Preheating exemption was written for PID preheats, not manual
+    // sessions. The manual cap must apply, matching the same session
+    // started from Idle.
+    let mut ctrl = make_control();
+    ctrl.process_artisan_command(ArtisanCommand::Preheat(200.0))
+        .expect("preheat");
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(50))
+        .expect("manual takeover");
+    assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+    assert!(!ctrl.get_status().pid_enabled, "manual mode after OT1");
+
+    let t0 = Instant::from_millis(1_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(25.0, 25.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    // Second tick so the heat-session clock sees the applied heater output.
+    let t1 = Instant::from_millis(1_000_310);
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(25.5, 25.5, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+    assert!(
+        ctrl.get_status().ssr_output > 0.0,
+        "test precondition: manual heater energized"
+    );
+    assert!(
+        ctrl.heat_session_start.is_some(),
+        "test precondition: the heat-session clock is armed"
+    );
+
+    // Tick at a timestamp implying ≥ 90 minutes of manual session time
+    // (BT moves +2 °C across the gap so the probe-stuck detector stays
+    // disarmed and only the time budget can trip).
+    let t_far = Instant::from_millis(1_000_000 + 5_500_000);
+    ctrl.status_mut().last_command_received_at_ms = t_far.as_millis();
+    ctrl.update_temperatures(27.5, 27.5, t_far).unwrap();
+    let r = ctrl.update_control(t_far);
+
+    assert!(
+        r.is_err(),
+        "a manual session during Preheating must keep the manual budget"
+    );
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "MAX_MANUAL_HEAT_SESSION_SECS must latch a manual mid-preheat session"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Error);
+}
+
+#[test]
+fn pid_preheat_session_still_exempt_from_time_budget() {
+    // Contrast for BUG 2: the exemption stays for a firmware-PID preheat
+    // (the documented big-drum case). The tick is driven past BOTH caps
+    // (1800 s roast, 5400 s manual) — if `pid_preheating` were wrongly
+    // false the manual budget would latch here, so this test pins the
+    // exemption at its boundary. Complements
+    // `preheat_does_not_count_toward_max_roast_time` (P6).
+    let mut ctrl = make_control();
+    ctrl.process_artisan_command(ArtisanCommand::Preheat(200.0))
+        .expect("preheat");
+    assert!(ctrl.get_status().pid_enabled);
+
+    let t0 = Instant::from_millis(1_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(25.0, 25.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let t1 = Instant::from_millis(1_000_310);
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(25.5, 25.5, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+    assert!(
+        ctrl.get_status().ssr_output > 0.0,
+        "test precondition: PID preheat heater energized"
+    );
+
+    let t_far = Instant::from_millis(1_000_000 + 5_500_000); // +5500 s > BOTH caps
+    ctrl.status_mut().last_command_received_at_ms = t_far.as_millis();
+    ctrl.update_temperatures(27.5, 27.5, t_far).unwrap();
+    let _ = ctrl.update_control(t_far);
+
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "a firmware-PID preheat must stay exempt from the time budgets"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Preheating);
+}
+
 // ── H2: manual sessions get the 90-min cap, named roasts keep 30 min ──
 
 #[test]
@@ -1958,5 +2119,153 @@ fn artisan_stop_fan_success_returns_ok() {
         ctrl.get_status().fan_output,
         100.0,
         "B-H: successful fan write must publish 100 %"
+    );
+}
+
+// ── AUDIT 2026-09-25 (BUG 3): honest `ssr_output` when the heater-off
+// write fails on a STOP path ────────────────────────────────────────────────
+
+/// Heater stub that accepts every energizing write but REFUSES every
+/// off-write (`set_power(0.0)` fails, all retries) — simulates an SSR whose
+/// physical state is stuck ON / unknown. The `Heater` trait needs no shared
+/// counter here: the failure condition is the duty value itself.
+struct StuckOnHeater;
+
+impl Heater for StuckOnHeater {
+    fn set_power(&mut self, duty: f32) -> Result<(), RoasterError> {
+        if duty <= 0.0 {
+            Err(RoasterError::HardwareError {
+                source: Some("test_heater_stuck_on"),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_status(&self) -> SsrHardwareStatus {
+        SsrHardwareStatus::Available
+    }
+}
+
+fn make_control_with_heater(heater: Box<dyn Heater + Send>) -> RoasterControl {
+    let fan = Box::new(StubFan::new());
+    RoasterControl::new(heater, fan, SensorConversionHub::new()).expect("test control should build")
+}
+
+/// Energize the heater and return the duty the SSR latched.
+fn energize_and_duty(ctrl: &mut RoasterControl) -> f32 {
+    ctrl.process_artisan_command(ArtisanCommand::SetHeater(60))
+        .expect("energize write must succeed");
+    let duty = ctrl.get_status().ssr_output;
+    assert!(duty > 0.0, "test precondition: heater energized");
+    duty
+}
+
+#[test]
+fn internal_trap_keeps_honest_duty_when_heater_off_fails() {
+    // Control case pinning the EXISTING contract: the internal trap
+    // (`emergency_shutdown`) deliberately keeps the last duty on the wire
+    // when the off-write fails — `ssr_hardware_status = Error` is the
+    // honest signal (see `ActuatorController::emergency_shutdown`).
+    let mut ctrl = make_control_with_heater(Box::new(StuckOnHeater));
+    let duty = energize_and_duty(&mut ctrl);
+
+    let _ = ctrl.emergency_shutdown("test internal trap");
+    let s = ctrl.get_status();
+    assert_eq!(s.ssr_hardware_status, SsrHardwareStatus::Error);
+    assert_eq!(
+        s.ssr_output, duty,
+        "internal trap must keep the honest duty on a failed off-write"
+    );
+}
+
+#[test]
+fn emergency_stop_keeps_honest_duty_when_heater_off_fails() {
+    // BUG 3: with every off-write failing, the operator STOP path must NOT
+    // publish `ssr_output = 0.0` — the heater's last duty is physical truth
+    // and the supervision gates (comms-idle / MAX_ROAST_TIME) key on a
+    // non-zero duty. The STOP path must match the internal-trap contract.
+    let mut ctrl = make_control_with_heater(Box::new(StuckOnHeater));
+    let duty = energize_and_duty(&mut ctrl);
+
+    ctrl.process_artisan_command(ArtisanCommand::EmergencyStop)
+        .expect("STOP is Ok when the fan reaches 100 %");
+    let s = ctrl.get_status();
+    assert_eq!(s.ssr_hardware_status, SsrHardwareStatus::Error);
+    assert_eq!(
+        s.ssr_output, duty,
+        "STOP must keep the honest duty on a failed off-write (not 0.0)"
+    );
+
+    // The next control tick escalates: the cleared manual state forces a
+    // 0 % write, which fails the same way → "Heater control failure"
+    // emergency latches, still with the honest duty preserved.
+    let t0 = Instant::from_millis(50_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(30.0, 30.0, t0).unwrap();
+    let r = ctrl.update_control(t0);
+    assert!(r.is_err(), "the failed 0 % write must escalate");
+    assert!(ctrl.safety().is_emergency_active());
+    assert_eq!(
+        ctrl.get_status().ssr_output,
+        duty,
+        "the escalation latch must keep the honest duty"
+    );
+}
+
+#[test]
+fn pid_off_keeps_honest_duty_when_heater_off_fails() {
+    // BUG 3, PID;OFF path: `ArtisanCommand::Stop` → `handle_stop` →
+    // `stop_streaming` must publish 0 % ONLY after a successful off-write.
+    // With the stuck heater the duty stays honest; the following tick
+    // escalates to the "Heater control failure" emergency.
+    let mut ctrl = make_control_with_heater(Box::new(StuckOnHeater));
+    let duty = energize_and_duty(&mut ctrl);
+
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("PID;OFF is Ok when the fan write succeeds");
+    assert_eq!(
+        ctrl.get_status().ssr_output,
+        duty,
+        "PID;OFF must keep the honest duty on a failed off-write"
+    );
+
+    let t0 = Instant::from_millis(50_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(30.0, 30.0, t0).unwrap();
+    let r = ctrl.update_control(t0);
+    assert!(r.is_err(), "the failed 0 % write must escalate");
+    assert!(ctrl.safety().is_emergency_active());
+    assert_eq!(ctrl.get_status().ssr_output, duty, "duty stays honest");
+}
+
+#[test]
+fn stop_paths_zero_duty_when_heater_off_succeeds() {
+    // Control case: with a healthy heater every STOP path still publishes
+    // 0 % (the zero moved from `dispatch.stop_streaming` to the callers —
+    // the success path must be byte-identical with the old behaviour).
+    let mut ctrl = make_control();
+    let duty = energize_and_duty(&mut ctrl);
+    assert!(duty > 0.0);
+
+    // PID;OFF (Stop → handle_stop → stop_streaming)
+    ctrl.process_artisan_command(ArtisanCommand::Stop)
+        .expect("PID;OFF succeeds with a healthy heater");
+    assert_eq!(
+        ctrl.get_status().ssr_output,
+        0.0,
+        "successful off-write must publish 0 %"
+    );
+
+    // EmergencyStop (STOP → handle_emergency_stop)
+    let mut ctrl2 = make_control();
+    energize_and_duty(&mut ctrl2);
+    ctrl2
+        .process_artisan_command(ArtisanCommand::EmergencyStop)
+        .expect("STOP succeeds with a healthy heater");
+    assert_eq!(
+        ctrl2.get_status().ssr_output,
+        0.0,
+        "successful off-write must publish 0 %"
     );
 }

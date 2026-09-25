@@ -492,7 +492,18 @@ impl RoasterControl {
         // without cooling. H10: go through `force_heater_off` (retried, and
         // resyncs the slew limiter) instead of a raw write, so the next
         // re-energize ramps from 0 instead of jumping.
-        if !self.actuator.force_heater_off(&mut self.status) {
+        let heater_off_ok = self.actuator.force_heater_off(&mut self.status);
+        // Zero the published duty ONLY when the off-write actually reached
+        // the SSR. On failure the last duty stays on the wire — the honest
+        // signal is `ssr_hardware_status = Error` (set by
+        // `force_heater_off`), same rule as `ActuatorController::emergency_shutdown`;
+        // the next control tick's `apply_guarded_heater(0.0)` fails the same
+        // way and escalates to the "Heater control failure" emergency, which
+        // re-arms the comms-idle / MAX_ROAST_TIME gates through the honest
+        // non-zero duty.
+        if heater_off_ok {
+            self.status.ssr_output = 0.0;
+        } else {
             log::error!("stop_streaming: heater off failed — continuing to fan 100%");
         }
         // Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
@@ -645,15 +656,22 @@ impl RoasterControl {
         // with no START (preheat + back-to-back batches) is capped by the
         // separate 90-minute `MAX_MANUAL_HEAT_SESSION_SECS` — a 15–30 min
         // drum preheat must not abort the roast mid-development.
-        // Exclude the Preheating state from the cap. A big drum can
-        // legitimately preheat for well over 30 minutes; counting that time
-        // against the roast budget would abort with
+        // Exclude the Preheating state from the cap ONLY while the firmware
+        // PID is the thing heating. A big drum can legitimately preheat for
+        // well over 30 minutes under PID; counting that time against the
+        // roast budget would abort with
         // `emergency_shutdown("Maximum roast time exceeded")` before the beans
-        // are ever loaded. The START handoff anchors the clock to
-        // `profile_start_time`, and comms-idle (above) still covers a
-        // forgotten preheat.
-        let max_roast_time_armed = (heater_energized
-            && !matches!(self.state, RoasterState::Preheating))
+        // are ever loaded. But once the operator takes over manually
+        // (OT1/UP: `artisan_control = true`, PID disabled) the session is a
+        // MANUAL heat session and must keep the manual budget — otherwise the
+        // H2 cap had a hole whenever the takeover happened mid-preheat,
+        // leaving a heater at fixed duty with no time backstop at all.
+        // The START handoff anchors the clock to `profile_start_time`, and
+        // comms-idle (above) still covers a forgotten preheat.
+        let pid_preheating = matches!(self.state, RoasterState::Preheating)
+            && self.status.pid_enabled
+            && !self.status.artisan_control;
+        let max_roast_time_armed = (heater_energized && !pid_preheating)
             || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
         if max_roast_time_armed {
             let (start, limit) = match (self.profile_start_time, self.heat_session_start) {
@@ -1482,11 +1500,21 @@ impl RoasterControl {
         // Use the shared retried force methods; the fan failure escalates to
         // an `Err` so the control loop emits an ERR to Artisan ("no fan means
         // unsafe to continue", same rule as `stop_streaming`).
-        self.actuator.force_heater_off(&mut self.status);
+        let heater_off_ok = self.actuator.force_heater_off(&mut self.status);
         let fan_ok = self.actuator.force_fan_100(&mut self.status);
 
         // Stop streaming the protocol output without touching the latch.
         self.dispatch.stop_streaming(&mut self.status);
+        // Zero the published duty ONLY when the off-write actually reached
+        // the SSR — same rule as `RoasterControl::stop_streaming` and
+        // `ActuatorController::emergency_shutdown`. On failure the last duty
+        // stays on the wire next to the honest `ssr_hardware_status = Error`,
+        // and the next control tick escalates the failed
+        // `apply_guarded_heater(0.0)` to the "Heater control failure"
+        // emergency.
+        if heater_off_ok {
+            self.status.ssr_output = 0.0;
+        }
         crate::logging::roast_logger::stop_roast();
 
         if !fan_ok {
@@ -1761,6 +1789,23 @@ impl RoasterControl {
     }
 
     fn handle_preheat(&mut self, target: f32) -> Result<(), RoasterError> {
+        // Gate by *state*: a PREHEAT during an actually-active roast
+        // (Heating/Stable) is "ignored", mirroring `handle_start_roast`'s
+        // START gate. Without the gate the state would degrade to
+        // `Preheating` mid-roast with the heater energized, silently
+        // disarming the RoR guard (armed only in Heating/Stable — plus
+        // Idle-with-PID), the MAX_ROAST_TIME / manual-session budgets
+        // (Preheating-exempt) and charge detection, while the host sees a
+        // plain Ok. Latch recovery is unaffected: a latched device is in
+        // `Error`, which this gate does not block.
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            info!(
+                "Artisan+ PREHEAT ignored - roast already active (state={:?})",
+                self.state
+            );
+            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+            return Ok(());
+        }
         // PREHEAT is a deliberate re-energize action — clear any latched
         // emergency/fault so the STOP → PREHEAT flow works (same rationale as
         // the START recovery in `handle_start_roast`).

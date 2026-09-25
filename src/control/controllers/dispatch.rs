@@ -152,7 +152,14 @@ impl CommandDispatcher {
 
     /// Stop streaming: disable continuous output, PID, and manual state.
     ///
-    /// Zeros SSR output; the caller sets fan speed separately.
+    /// Does NOT zero `status.ssr_output`: the duty a heater last latched is
+    /// physical truth. Each caller zeroes it ONLY after its `force_heater_off`
+    /// write succeeded (`RoasterControl::stop_streaming`,
+    /// `handle_emergency_stop`), mirroring the honesty rule documented on
+    /// `ActuatorController::emergency_shutdown` — a failed off-write keeps the
+    /// last duty on the wire with `ssr_hardware_status = Error` as the honest
+    /// signal, and keeps the comms-idle / MAX_ROAST_TIME supervision gates
+    /// armed on a possibly stuck-on heater (they key on `ssr_output > 0`).
     pub fn stop_streaming(&mut self, status: &mut SystemStatus) {
         self.temp_handler
             .get_output_manager_mut()
@@ -161,7 +168,6 @@ impl CommandDispatcher {
         status.pid_enabled = false;
         status.artisan_control = false;
         self.artisan_handler.clear_manual();
-        status.ssr_output = 0.0;
         // fan_output is set by caller (roaster_control.rs stop_streaming) after set_fan_raw
         status.ssr_cycle_guard_busy_until_ms = 0;
     }

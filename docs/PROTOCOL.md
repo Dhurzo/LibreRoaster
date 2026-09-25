@@ -314,6 +314,24 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 - `START`
 - `PREHEAT <temp>`
 
+### `PREHEAT` and `START` state gating
+
+`START` and `PREHEAT` are **ignored** (acknowledged with no state change, no
+error) while a roast is actually active (`Heating`/`Stable`) — re-sending
+either command mid-roast neither re-anchors the roast clock nor degrades the
+state machine. Without this gate a mid-roast `PREHEAT` used to flip the state
+to `Preheating`, silently disarming the rate-of-rise guard, the
+maximum-roast-time budget and charge detection while the heater stayed
+energized (audit 2026-09-25, BUG 1). The latch-recovery semantics are
+unaffected: a latched device is in `Error`, so `PREHEAT` still clears the
+latch and starts a preheat from there.
+
+Relatedly, a **manual** heat session (`OT1`/`UP` takeover) that begins while
+the state is `Preheating` is capped by `MAX_MANUAL_HEAT_SESSION_SECS`
+(90 min) exactly like a manual session started from `Idle` — only a
+firmware-PID preheat is exempt from the time budgets (audit 2026-09-25,
+BUG 2).
+
 ### Key validation rules
 
 - target temperature values must parse as finite floats at the parser layer
