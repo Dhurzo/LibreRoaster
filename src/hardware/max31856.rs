@@ -6,7 +6,7 @@
 
 use crate::control::traits::Thermometer;
 use crate::control::RoasterError;
-use crate::hardware::sensors::conversion::convert_raw_temp;
+use crate::hardware::sensors::conversion::{convert_cj_temp, convert_raw_temp};
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::spi::SpiDevice;
 
@@ -54,6 +54,9 @@ pub struct Max31856Reading {
     pub raw_temp: u32,
     /// Fault-status register value read alongside the temperature.
     pub fault: u8,
+    /// Cold-junction (board) temperature in °C, decoded from CJTH:CJTL in
+    /// the same burst. Feeds the `AMB` field of the Artisan `READ` line.
+    pub cj_temp_c: f32,
 }
 
 impl embedded_hal::spi::Error for Max31856Error {
@@ -111,9 +114,9 @@ where
     pub fn new_tolerant(spi: SPI) -> (Self, bool) {
         let mut max31856 = Max31856 { spi };
 
-        // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01 (comparator
-        // mode on bits 5:4 per datasheet table for register 00h/80h), FILT50=1
-        // (50 Hz notch filter, bit 0).
+        // CR0 (0x80): CMODE=0 (normally off), 1SHOT=0, OCFAULT=01
+        // (open-circuit detection on bits 5:4 per datasheet table for
+        // register 00h/80h), FILT50=1 (50 Hz notch filter, bit 0).
         // Bit layout: 0b0001_0001 = 0x11. The 50 Hz filter is selected by
         // CR0 bit 0 (not CR1 bit 3); conversion time maxes at 185 ms (datasheet).
         let mut ok = max31856.write_register(0x80, 0x11).is_ok();
@@ -241,11 +244,14 @@ where
     }
 
     fn read_conversion_block(&mut self) -> Result<Max31856Reading, Max31856Error> {
-        // Read all 4 bytes (0x0C-0x0F) in single SPI burst for better performance
-        let mut rx_buffer = [0u8; 4];
+        // Read all 6 bytes (0x0A-0x0F) in a single SPI burst: CJTH, CJTL,
+        // LTCB0-2, fault. One burst guarantees every byte comes from the
+        // same conversion update (datasheet requirement for both the CJ
+        // pair and the LTC triplet).
+        let mut rx_buffer = [0u8; 6];
         let mut operations = [
-            embedded_hal::spi::Operation::Write(&[0x0C & 0x7F]), // Address with read bit (A7=0)
-            embedded_hal::spi::Operation::Read(&mut rx_buffer),  // Read 4 bytes continuously
+            embedded_hal::spi::Operation::Write(&[0x0A & 0x7F]), // Address with read bit (A7=0)
+            embedded_hal::spi::Operation::Read(&mut rx_buffer),  // Read 6 bytes continuously
         ];
 
         match self.spi.transaction(&mut operations) {
@@ -257,22 +263,39 @@ where
             }
         }
 
+        // H13: a bus with MISO stuck LOW returns 0x00 in every byte — a
+        // 0.0 °C temperature with a clean fault register, i.e. a VALID
+        // reading that would drive the heater blind. An all-zero frame is
+        // not a reading.
+        if rx_buffer == [0u8; 6] {
+            return Err(Max31856Error::CommunicationError {
+                source: "all_zero_frame",
+            });
+        }
+
+        let cj_temp_c = convert_cj_temp(rx_buffer[0], rx_buffer[1]);
         let raw_temp =
-            ((rx_buffer[0] as u32) << 16) | ((rx_buffer[1] as u32) << 8) | (rx_buffer[2] as u32);
-        let fault = rx_buffer[3];
+            ((rx_buffer[2] as u32) << 16) | ((rx_buffer[3] as u32) << 8) | (rx_buffer[4] as u32);
+        let fault = rx_buffer[5];
 
         // High-frequency read path (~6/s): keep at `debug!` level so routine
         // reads do not flood the UART/USB channel carrying the Artisan protocol.
         log::debug!(
-            "MAX31856 raw: temp_reg=[0x{:02X},0x{:02X},0x{:02X}] fault=0x{:02X} raw_temp={:#010x}",
+            "MAX31856 raw: cj=[0x{:02X},0x{:02X}] temp_reg=[0x{:02X},0x{:02X},0x{:02X}] fault=0x{:02X} raw_temp={:#010x}",
             rx_buffer[0],
             rx_buffer[1],
             rx_buffer[2],
+            rx_buffer[3],
+            rx_buffer[4],
             fault,
             raw_temp
         );
 
-        Ok(Max31856Reading { raw_temp, fault })
+        Ok(Max31856Reading {
+            raw_temp,
+            fault,
+            cj_temp_c,
+        })
     }
 
     /// Synchronous temperature read with busy-wait delay.
@@ -355,7 +378,7 @@ where
     }
 
     /// Async temperature read using embassy-time Timer instead of blocking spin loop.
-    /// This prevents blocking the async executor during the 160ms conversion delay.
+    /// This prevents blocking the async executor during the 210 ms conversion delay.
     pub async fn read_temperature_async(&mut self) -> Result<f32, Max31856Error> {
         let reading = self.read_raw_temperature_async().await?;
         // MAX31856 Fault Register (0x0F): Open(0x01), OVUV(0x02), TC Low(0x04),
@@ -639,5 +662,41 @@ mod tests {
                 source: "no_thermocouple_channel_responded"
             })
         ));
+    }
+
+    #[test]
+    fn conversion_block_rejects_all_zero_frame() {
+        // H13: MISO stuck LOW returns 0x00 in every byte — a 0.0 °C
+        // temperature with a clean fault register. An all-zero frame is
+        // not a reading.
+        let mut dev = Max31856 {
+            spi: ScriptedSpi {
+                registers: [0u8; 16],
+                fail_all: false,
+                fail_reads: false,
+                no_store: false,
+            },
+        };
+        assert!(matches!(
+            dev.read_conversion_block(),
+            Err(Max31856Error::CommunicationError {
+                source: "all_zero_frame"
+            })
+        ));
+    }
+
+    #[test]
+    fn conversion_block_decodes_cj_and_temp() {
+        // CJTH:CJTL = 0x19:0x00 → 25.0 °C (14-bit code 1600 × 0.015625);
+        // LTC bytes come from the healthy fixture, fault must stay clean.
+        let mut spi = ScriptedSpi::healthy();
+        spi.registers[0x0A] = 0x19;
+        spi.registers[0x0B] = 0x00;
+        let mut dev = Max31856 { spi };
+        let reading = dev
+            .read_conversion_block()
+            .expect("healthy burst must decode");
+        assert!((reading.cj_temp_c - 25.0).abs() < 0.001);
+        assert_eq!(reading.fault, 0x00);
     }
 }

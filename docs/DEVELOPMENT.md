@@ -48,7 +48,7 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 - **`instrumentation`** — enables telemetry/instrumentation hooks (pulled in by `test`)
 - **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
 - **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
-- **`no-heat-sense`** — disables heat-source interpretation for builds without the GPIO1 current-sense circuit (all other safety layers stay active)
+- **`heat-sense`** — opt-in GPIO1 current-sense interpretation for builds with a validated stretched-pulse circuit (default: not interpreted; all other safety layers stay active)
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
 - **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
 

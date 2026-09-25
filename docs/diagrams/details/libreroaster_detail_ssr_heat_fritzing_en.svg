@@ -75,7 +75,7 @@
 <text x="70" y="576" class="n">• HIGH only meaningful at duty ≥50% (observable window = 1 sample/period @310ms tick)</text>
 <text x="70" y="594" class="n">• Debounce: 5× consecutive HIGH @≥50% → NotDetected (~1.7s) · Single LOW → Available immediately</text>
 <text x="70" y="612" class="n">• Stuck-on: 10× consecutive LOW @duty 0 → Error (~3.3s)</text>
-<text x="70" y="630" class="n">• <tspan font-weight="bold">Without circuit:</tspan> always HIGH → NotDetected @≥50% → heater forced 0% → use <tspan font-family="monospace">--features no-heat-sense</tspan></text>
+<text x="70" y="630" class="n">• <tspan font-weight="bold">Without circuit (default):</tspan> GPIO1 not interpreted → heater works → builds with circuit add <tspan font-family="monospace">--features heat-sense</tspan></text>
 
 <!-- Right: Safety flowchart -->
 <rect x="640" y="320" width="520" height="340" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
@@ -87,7 +87,7 @@
 <text x="660" y="432" class="n">≥50% + LOW (heat) ──→ Available immediately</text>
 <text x="660" y="450" class="n">duty 0 + LOW (residual) ──→ heat_present_count 10× → Error (stuck-on)</text>
 <rect x="660" y="470" width="480" height="50" rx="6" fill="#fff" stroke="#cbd5e1" stroke-width="1"/>
-<text x="670" y="490" class="w" font-size="10">Build: cargo run --example hil_gpio (GPIO1 pull-up) · hil_ssr (PWM) · Simulated: no-heat-sense disables this</text>
+<text x="670" y="490" class="w" font-size="10">Build: cargo run --example hil_gpio (GPIO1 pull-up) · hil_ssr (PWM) · Simulated: pin never interpreted without heat-sense</text>
 <text x="670" y="508" class="n">Recovery: OFF/START/PREHEAT/StopRoast → SsrControlBase::rearm() → Available (see HARDWARE.md §8)</text>
 <text x="660" y="530" class="n">• OVERTEMP 260°C → emergency_shutdown() → ERR safety_fault</text>
 <text x="660" y="548" class="n">• Stale temp 1000ms, RoR &gt;0.5°C/s soft 12× / 1.0°C/s hard 3×, probe stuck 120s warn → 300s latch</text>

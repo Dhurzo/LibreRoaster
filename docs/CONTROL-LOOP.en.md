@@ -148,10 +148,11 @@ if (heater_energized || roast_active) &&
    now - last_command_received_at_ms > COMMS_IDLE_TIMEOUT_MS (30000)
     → emergency_shutdown("Comms idle timeout")
 
-// 4. MAX_ROAST_TIME (30 min = 1800 s)
-//    From profile_start_time (START) OR heat_session_start (manual)
+// 4. MAX_ROAST_TIME (H2: two budgets)
+//    START/PROFILE-anchored roast: 1800 s (MAX_ROAST_TIME_SECS)
+//    Manual OT1 session without START: 5400 s (MAX_MANUAL_HEAT_SESSION_SECS)
 //    EXCLUDES Preheating
-if elapsed > MAX_ROAST_TIME_SECS
+if elapsed > limit_for(start)
     → emergency_shutdown("Maximum roast time exceeded")
 
 // 5. Cooldown latch (STOP → fan 100% until BT < 50 °C)
@@ -162,9 +163,10 @@ if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (50.0) && BT finite > 0
 //    BT history: 10 samples / 3 s (CHARGE_SAMPLE_TICK_DIV = 1)
 //    Drop > CHARGE_DROP_THRESHOLD_C (10.0) → #CHARGE event
 
-// 7. RoR Guards (TIERED — A‑TC4‑D)
+// 7. RoR Guards (TIERED — A‑TC4‑D, recalibrated H6b)
 //    HARD (> MAX_BT_RATE_OF_RISE_HARD = 1.0 °C/s): ROR_EXCEEDED_CONSECUTIVE_LIMIT = 3 ticks
-//    SOFT (MAX_BT_RATE_OF_RISE = 0.5 .. 1.0 °C/s): ROR_SOFT_DEBOUNCE_LIMIT = 12 ticks (~3.7 s)
+//    SOFT (MAX_BT_RATE_OF_RISE = 0.75 .. 1.0 °C/s): ROR_SOFT_DEBOUNCE_LIMIT = 12 ticks (~3.7 s)
+//    Armed only when the FIRMWARE PID is in control (H6: artisan_control disarms)
 //    BT‑only guard INDEPENDENT of PID channel (check_bt_rate vs check_rate_of_rise)
 
 // 8. Probe stuck
@@ -383,10 +385,12 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 |----------|-------|-----|
 | `CONTROL_LOOP_PERIOD_MS` | 100 | Nominal timer (real ~310‑330 ms) |
 | `MAX31856_CONVERSION_TIME_MS` | 210 | One‑shot conversion wait |
-| `TEMP_VALIDITY_TIMEOUT_MS` | 5000 | Staleness guard |
-| `COMMS_IDLE_TIMEOUT_MS` | 30000 | Comms idle emergency |
-| `MAX_ROAST_TIME_SECS` | 1800 | 30 min budget |
-| `OVERTEMP_THRESHOLD` | 300.0 | °C overtemp latch |
+| `TEMP_VALIDITY_TIMEOUT_MS` | 1000 | Staleness guard (tolerates ~2 missed ticks, H9) |
+| `COMMS_IDLE_TIMEOUT_MS` | 15000 | Comms idle emergency |
+| `MAX_ROAST_TIME_SECS` | 1800 | 30 min roast budget (START/PROFILE anchor) |
+| `MAX_MANUAL_HEAT_SESSION_SECS` | 5400 | 90 min manual OT1 session cap (H2) |
+| `OVERTEMP_THRESHOLD` | 260.0 | °C overtemp latch |
+| `MAX_BT_RATE_OF_RISE` | 0.75 | °C/s soft RoR band (H6b) |
 | `FAN_MIN_SAFETY_PCT` | 20.0 | Interlock minimum with heater>0 |
 | `SENSOR_FAULT_DEBOUNCE` | 5 | Fault latch threshold |
 | `MAX_BT_RATE_OF_RISE` | 0.5 | °C/s soft band start |

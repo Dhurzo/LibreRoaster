@@ -15,8 +15,9 @@ use log::warn;
 const DERIVATIVE_FILTER_ALPHA: f32 = 0.3;
 
 /// Two-tier rate-of-rise debounce (light-roast verification). Aggressive
-/// light-roast turnarounds can legitimately climb 0.5-1.0 °C/s for a few
-/// seconds right after charge. The guard runs two bands:
+/// light-roast turnarounds can legitimately peak at 30–35 °C/min (0.5–0.6 °C/s)
+/// right after charge, so the soft band starts at 0.75 °C/s (H6b). The guard
+/// runs two bands:
 ///
 /// - HARD (> `MAX_BT_RATE_OF_RISE_HARD`): a genuine runaway — latches after
 ///   `ROR_EXCEEDED_CONSECUTIVE_LIMIT` consecutive ticks (~1 s).
@@ -60,7 +61,7 @@ pub struct SensorController {
     /// Dedicated sample pair for the BT-only RoR guard. The guard stays on
     /// BT always while the PID feed follows whatever PV is configured; they
     /// are independent measurements. With `PID;CHAN;1` (ET as PV) the
-    /// 0.5 °C/s threshold calibrated for the sluggish BT would otherwise be
+    /// 0.75 °C/s threshold calibrated for the sluggish BT would otherwise be
     /// applied to the faster ET, tripping on a healthy roast while a real BT
     /// runaway goes unguarded.
     last_bt_guard_sample: Option<(f32, Instant)>,
@@ -77,6 +78,13 @@ pub struct SensorController {
     // NaN decision.
     consecutive_bean_faults: u8,
     consecutive_env_faults: u8,
+    // Per-channel out-of-range spike counters (S3). A single raw SPI glitch
+    // (e.g. +300 °C with no fault bit) must not latch — only 2 consecutive
+    // out-of-range samples abort. Genuine overtemp (≥ 260 °C but inside the
+    // valid band) still latches on the first sample via the overtemp check
+    // below.
+    consecutive_bean_range_faults: u8,
+    consecutive_env_range_faults: u8,
 }
 
 impl SensorController {
@@ -94,6 +102,8 @@ impl SensorController {
             bt_ror_exceeded_count: 0,
             consecutive_bean_faults: 0,
             consecutive_env_faults: 0,
+            consecutive_bean_range_faults: 0,
+            consecutive_env_range_faults: 0,
         }
     }
 
@@ -112,6 +122,11 @@ impl SensorController {
     /// Sample both channels and update `status` (debounced faults, held/poisoned temps).
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;
+        // H13: the cold-junction ambient rides with the sample (mean of the
+        // healthy channels, held on total fault) — publish before the
+        // temperature update so telemetry stays alive even when that update
+        // returns an overtemp error.
+        status.ambient_temp = sample.ambient_temp;
         // Debounce each channel against its own counter.
         self.apply_fault_debounce(
             sample.bean_fault.has_fault(),
@@ -187,16 +202,42 @@ impl SensorController {
         // Only validate temperature for channels without fault.
         // A sensor with open thermocouple (e.g. ET not connected) may return
         // garbage temperatures; we should not let that invalidate the entire read.
-        if !bean_fault.has_fault() && !Self::is_temperature_valid(bean_temp) {
+        //
+        // S3: a FINITE out-of-range spike needs 2 consecutive samples — a
+        // single raw SPI glitch holds the previous value instead of
+        // aborting. Non-finite input (NaN/Inf, an explicit fault marker,
+        // never a real reading) aborts immediately, as does genuine
+        // overtemp inside the valid band (checked below).
+        if !bean_fault.has_fault()
+            && (!bean_temp.is_finite() || !Self::is_temperature_valid(bean_temp))
+        {
+            if bean_temp.is_finite() {
+                self.consecutive_bean_range_faults =
+                    self.consecutive_bean_range_faults.saturating_add(1);
+                if self.consecutive_bean_range_faults < 2 {
+                    return Ok(());
+                }
+            }
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("temperature_out_of_valid_range"),
             });
         }
-        if !env_fault.has_fault() && !Self::is_temperature_valid(env_temp) {
+        self.consecutive_bean_range_faults = 0;
+        if !env_fault.has_fault()
+            && (!env_temp.is_finite() || !Self::is_temperature_valid(env_temp))
+        {
+            if env_temp.is_finite() {
+                self.consecutive_env_range_faults =
+                    self.consecutive_env_range_faults.saturating_add(1);
+                if self.consecutive_env_range_faults < 2 {
+                    return Ok(());
+                }
+            }
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("temperature_out_of_valid_range"),
             });
         }
+        self.consecutive_env_range_faults = 0;
 
         // Write `status.*_temp` ONLY when the channel is not faulted; if the
         // channel is faulted AND its own debounce counter has reached the
@@ -412,6 +453,18 @@ impl SensorController {
             self.bt_ror_exceeded_count = 0;
         }
         Ok(())
+    }
+
+    /// Drop all RoR-guard state (H6). Called whenever the guard disarms —
+    /// e.g. the operator takes the sliders after a `START` — so a stale
+    /// counter or a pre-manual derivative pair cannot trip on the first
+    /// re-armed tick. Also clears the BT-guard sample pair so the next
+    /// arming starts from a fresh slope instead of a stale one.
+    pub fn reset_ror_guard(&mut self) {
+        self.bt_ror_exceeded_count = 0;
+        self.pv_ror_exceeded_count = 0;
+        self.last_bt_guard_sample = None;
+        self.bt_guard_derivative = 0.0;
     }
 }
 
@@ -664,16 +717,15 @@ mod tests {
         assert_eq!(ctrl.pv_ror_exceeded_count, 1);
     }
 
-    /// The SOFT band (0.5..=1.0 °C/s — where aggressive light-roast
-    /// turnarounds live) requires the extended debounce: 11 consecutive soft
-    /// ticks stay tolerated, the 12th latches.
+    /// The SOFT band (0.75..=1.0 °C/s) requires the extended debounce:
+    /// 11 consecutive soft ticks stay tolerated, the 12th latches.
     #[test]
     fn check_rate_of_rise_soft_band_requires_extended_debounce() {
         let hub = SensorConversionHub::new();
         let mut ctrl = SensorController::new(hub);
         let mut status = make_status();
         status.pid_enabled = true;
-        status.derivative_rate = 0.7; // soft band
+        status.derivative_rate = 0.85; // soft band
         status.derivative_available = true;
 
         for i in 0..(ROR_SOFT_DEBOUNCE_LIMIT - 1) {
@@ -696,13 +748,13 @@ mod tests {
 
         for i in 0..(ROR_SOFT_DEBOUNCE_LIMIT - 1) {
             assert!(
-                ctrl.check_bt_rate(0.7).is_ok(),
+                ctrl.check_bt_rate(0.85).is_ok(),
                 "soft tick {i} must not trip before the extended debounce"
             );
         }
         assert_eq!(ctrl.bt_ror_exceeded_count, ROR_SOFT_DEBOUNCE_LIMIT - 1);
         assert!(
-            ctrl.check_bt_rate(0.7).is_err(),
+            ctrl.check_bt_rate(0.85).is_err(),
             "the {ROR_SOFT_DEBOUNCE_LIMIT}th consecutive soft tick must latch"
         );
     }
@@ -735,7 +787,7 @@ mod tests {
         assert!(r1.is_ok());
         assert_eq!(ctrl.pv_ror_exceeded_count, 1);
 
-        // Reset to a rate below MAX_BT_RATE_OF_RISE (0.5°C/s)
+        // Reset to a rate below MAX_BT_RATE_OF_RISE (0.75 °C/s)
         status.derivative_rate = 0.3;
         let r2 = ctrl.check_rate_of_rise(&status);
         assert!(r2.is_ok());
@@ -769,6 +821,46 @@ mod tests {
 
         assert!(ctrl.check_rate_of_rise(&status).is_ok());
         assert_eq!(ctrl.pv_ror_exceeded_count, 1);
+    }
+
+    /// S3: a single out-of-range spike holds instead of aborting; only the
+    /// second consecutive spike latches. Genuine overtemp inside the valid
+    /// band still aborts on the first sample (covered by
+    /// `update_temperatures_bt_overtemp`).
+    #[test]
+    fn out_of_range_needs_two_consecutive_samples() {
+        let hub = SensorConversionHub::new();
+        let mut ctrl = SensorController::new(hub);
+        let mut status = make_status();
+        let fault = SensorFault::default();
+        let now = embassy_time::Instant::now();
+
+        // Seed a healthy reading.
+        ctrl.update_temperatures(150.0, 120.0, fault, fault, now, &mut status)
+            .unwrap();
+
+        // Single +300 °C spike with no fault bit: hold, no error.
+        let r = ctrl.update_temperatures(450.0, 120.0, fault, fault, now, &mut status);
+        assert!(r.is_ok(), "S3: a single out-of-range spike must hold");
+        assert_eq!(status.bean_temp, 150.0);
+
+        // Second consecutive spike: latch.
+        let r = ctrl.update_temperatures(450.0, 120.0, fault, fault, now, &mut status);
+        assert!(
+            matches!(
+                r,
+                Err(RoasterError::TemperatureOutOfRange {
+                    source: Some("temperature_out_of_valid_range")
+                })
+            ),
+            "S3: two consecutive out-of-range samples must latch"
+        );
+
+        // Recovery: a healthy reading resets the counter.
+        let r = ctrl.update_temperatures(150.0, 120.0, fault, fault, now, &mut status);
+        assert!(r.is_ok());
+        let r = ctrl.update_temperatures(450.0, 120.0, fault, fault, now, &mut status);
+        assert!(r.is_ok(), "S3: counter must reset after a healthy sample");
     }
 
     /// The BT runaway guard and the legacy PV-RoR check use SEPARATE

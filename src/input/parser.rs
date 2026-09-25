@@ -280,7 +280,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else if cmd.eq_ignore_ascii_case("#DUMP") && parts.len() == 1 {
         Ok(ArtisanCommand::DumpLog)
     } else if cmd.eq_ignore_ascii_case("PID,ON") {
-        Ok(ArtisanCommand::StartRoast)
+        Ok(ArtisanCommand::PidOn)
     } else if cmd.eq_ignore_ascii_case("PID,OFF") {
         Ok(ArtisanCommand::Stop)
     } else if cmd.to_ascii_uppercase().starts_with("PID,SV,") {
@@ -345,7 +345,7 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
     }
 
     match parts[0].trim().to_ascii_uppercase().as_str() {
-        "ON" => Ok(ArtisanCommand::StartRoast),
+        "ON" => Ok(ArtisanCommand::PidOn),
         "OFF" => Ok(ArtisanCommand::Stop),
         "SV" => {
             // Require exact arity — trailing junk (`PID;SV;250;junk`) is rejected.
@@ -448,16 +448,28 @@ fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
     }
 }
 
+/// Parse a heater/fan percentage (`OT1`/`IO3`/`DCFAN`).
+///
+/// Accepts decimals and rounds to the nearest integer (0.5 rounds up), like
+/// `parse_ot2_value` (S5): `OT1;45.5` → 46. Error mapping is preserved:
+/// negative or non-numeric input → `InvalidValue`, values above 100 →
+/// `OutOfRange` (still rejected, not clamped — unlike `OT2`).
 fn parse_percentage(value_str: &str) -> Result<u8, ParseError> {
     let value = value_str
-        .parse::<u8>()
+        .parse::<f32>()
         .map_err(|_| ParseError::InvalidValue)?;
 
-    if value <= 100 {
-        Ok(value)
-    } else {
-        Err(ParseError::OutOfRange)
+    // Non-finite input is rejected outright — casting `NaN`/`Inf` to int
+    // would silently saturate instead of reporting the bad value.
+    if !value.is_finite() || value < 0.0 {
+        return Err(ParseError::InvalidValue);
     }
+
+    if value > 100.0 {
+        return Err(ParseError::OutOfRange);
+    }
+
+    Ok((value + 0.5) as u8)
 }
 
 fn parse_float(value_str: &str) -> Result<f32, ParseError> {
@@ -676,7 +688,7 @@ mod tests {
                     ("UNITS;F", ArtisanCommand::Units(true)),
                     ("FILT;5", ArtisanCommand::Filt(5)),
                     ("FILT;70,70,70,70", ArtisanCommand::Filt(70)),
-                    ("PID;ON", ArtisanCommand::StartRoast),
+                    ("PID;ON", ArtisanCommand::PidOn),
                     ("PID;OFF", ArtisanCommand::Stop),
                     ("read", ArtisanCommand::ReadStatus),
                     ("status", ArtisanCommand::StatusReport),
@@ -888,6 +900,31 @@ mod tests {
     fn test_parse_io3_invalid_above() {
         let result = parse_artisan_command("IO3 150");
         assert!(matches!(result, Err(ParseError::OutOfRange)));
+    }
+
+    #[test]
+    fn test_parse_percentage_accepts_decimals_rounded() {
+        // S5: `OT1`/`IO3` accept decimals and round, like `OT2`.
+        assert_eq!(
+            parse_artisan_command("OT1;45.5"),
+            Ok(ArtisanCommand::SetHeater(46))
+        );
+        assert_eq!(
+            parse_artisan_command("OT1 45.4"),
+            Ok(ArtisanCommand::SetHeater(45))
+        );
+        assert_eq!(
+            parse_artisan_command("IO3 50.5"),
+            Ok(ArtisanCommand::SetFan(51))
+        );
+        assert!(matches!(
+            parse_artisan_command("OT1 -5"),
+            Err(ParseError::InvalidValue)
+        ));
+        assert!(matches!(
+            parse_artisan_command("OT1 100.4"),
+            Err(ParseError::OutOfRange)
+        ));
     }
 
     // Initialization handshake command tests (Phase 17)
@@ -1340,10 +1377,12 @@ mod tests {
     // ── TC4 PID commands ──────────────────────
 
     #[test]
-    fn test_pid_on_maps_to_start() {
+    fn test_pid_on_maps_to_pid_on_not_start() {
+        // H11: `PID;ON` enables firmware PID but NEVER clears a safety
+        // latch, so it must not alias `StartRoast` anymore.
         assert!(matches!(
             parse_artisan_command("PID,ON"),
-            Ok(ArtisanCommand::StartRoast)
+            Ok(ArtisanCommand::PidOn)
         ));
     }
 
@@ -1396,7 +1435,7 @@ mod tests {
     fn test_pid_semicolon_on() {
         assert!(matches!(
             parse_artisan_command("PID;ON"),
-            Ok(ArtisanCommand::StartRoast)
+            Ok(ArtisanCommand::PidOn)
         ));
     }
 
@@ -1544,7 +1583,7 @@ mod tests {
     fn test_pid_comma_still_works_on() {
         assert!(matches!(
             parse_artisan_command("PID,ON"),
-            Ok(ArtisanCommand::StartRoast)
+            Ok(ArtisanCommand::PidOn)
         ));
     }
 
@@ -1686,10 +1725,7 @@ mod tests {
     /// `PID,ON`/`PID,OFF`/`PID,SV,..` forms dispatched from `cmd`.
     #[test]
     fn test_pid_comma_forms_still_work_with_retokenise() {
-        assert_eq!(
-            parse_artisan_command("PID,ON"),
-            Ok(ArtisanCommand::StartRoast)
-        );
+        assert_eq!(parse_artisan_command("PID,ON"), Ok(ArtisanCommand::PidOn));
         assert_eq!(parse_artisan_command("PID,OFF"), Ok(ArtisanCommand::Stop));
         assert_eq!(
             parse_artisan_command("PID,SV,150"),

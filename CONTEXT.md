@@ -66,8 +66,24 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - 24 clippy warnings fixed, 17 files quality-improved
 - All 735 host tests pass, ESP32 build warning-free
 
+**Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
+- H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)
+- H2: two time budgets — `MAX_ROAST_TIME_SECS` (1800 s) anchors to START/PROFILE; manual OT1 sessions cap at `MAX_MANUAL_HEAT_SESSION_SECS` (5400 s)
+- H3: re-energizing via sliders (`OT1>0`/`UP`) drops the cooldown fan latch — back-to-back batches keep operator fan control
+- H4: heat-sense is now **opt-in** (`heat-sense` feature; default build never interprets GPIO1); cross-check samples once per tick (write path removed); time-window debounce (`HEAT_MISMATCH_WINDOW_MS` = 1500 ms) replaces consecutive-sample counting
+- H6/H6b: RoR guard armed only when the firmware PID is in control (`!artisan_control`), counters reset while disarmed; soft band recalibrated to 0.75 °C/s (45 °C/min)
+- H8: probe-stuck exempts hot manual equilibrium (BT > 60 °C within 100 °C of ET, no PID) — cold short signature still latches
+- H9: a persistently failing sensor channel NaN-marks only that channel (`resolve_channel` no longer aborts the whole sample)
+- H10: slew limiter anchored at 0 with a fresh timestamp on force-off/emergency (next energize ramps)
+- H11: `PID;ON` is a distinct `ArtisanCommand::PidOn` that NEVER clears a safety latch (START/PREHEAT/PID;OFF remain the recovery paths)
+- H12: START without a profile inherits the PREHEAT target
+- H13: MAX31856 reads CJTH:CJTL + LTC + fault in one 6-byte burst; all-zero frame (MISO stuck LOW) rejected; AMB on the wire is the real cold-junction mean
+- H14: `REG` checks the latch before signaling the runner
+- H5/S3/S4/S5/S6/S7 + doc fixes (STOP latch semantics, `CHAN;1200`, real safety-fault reason strings, logic-level MOSFET BOM, Schottky-only flyback, log transport via UART not USB-JTAG, `#CHARGE` gated by streaming)
+- Host tests: **748/748** (515 lib + 233 integration) with `--features test`, plus 16 regression, 18 heat-sense state-machine (feature-gated), 1 L3 simulated pipeline; race check (`-- --test-threads=1`) green
+
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
-- `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New `no-heat-sense` cargo feature for builds without the GPIO1 current-sense circuit (guards in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
+- `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New opt-in `heat-sense` cargo feature for builds with a validated GPIO1 current-sense circuit (default build does not interpret GPIO1; time-window debounce + one sample per tick in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
 - `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), "SSR cycle busy", and LEDC-GUARD timeouts now warn once per activation episode. The dedicated UART1 log sink remains deferred (needs bench validation).
 - Status LED is a real indicator — pure pattern logic in `src/hardware/status_led.rs` (host-tested), single owner stored in `ServiceContainer`, driven once per tick by the control loop. `enter_safe_shutdown` keeps `Peripherals::steal()` as documented fallback (app tasks are dead by then).
 - `Max31856::new_tolerant()` returns `(device, verified)`; `init_spi_sensors` degrades a single dead channel (BT-only / ET-only configs boot) and aborts only when BOTH channels are dead (`boot_policy` helper). `new()` keeps the hard-fail contract for HIL examples. Scripted SPI mock + 9 host tests.
@@ -154,9 +170,13 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 # All host tests:
 cargo test --target x86_64-unknown-linux-gnu --features test
 
+# SSR heat-sense state machine (H4): its pin-interpretation tests are gated
+# behind the opt-in feature — the default host run compiles them out:
+cargo test --target x86_64-unknown-linux-gnu --features test,heat-sense --lib hardware::ssr_logic
+
 # Race check (strongest cross-test interference check on the shared
 # ServiceContainer channels):
-cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --test-threads=1 --no-fail-fast
+cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1
 
 # Coverage (as CI): include regression + simulated-sensors, otherwise the
 # conversion math and the L3 pipeline show as uncovered:
@@ -165,4 +185,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-09-09. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-09-25. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

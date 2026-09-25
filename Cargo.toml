@@ -45,7 +45,12 @@ instrumentation = []
 async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
-no-heat-sense = []
+# H4: heat-source current-sense on GPIO1 is OPT-IN. The default build does
+# NOT interpret GPIO1, so boards without the sense circuit heat normally.
+# Enable `heat-sense` only with a validated stretched-pulse circuit (see
+# docs/HARDWARE.md §8): an unstretched AC optocoupler aliases with the 5 Hz
+# PWM and trips the safety latch on every roast.
+heat-sense = []
 # Bug V2-6: `regression` no longer pulls `embedded-hal-mock` (a std-only
 # crate) into the embedded build — that broke `riscv32 + regression` (the
 # `void` transitive dep wanted std, cascading into 14 errors). The
@@ -107,7 +112,7 @@ esp-backtrace = { version = "0.18.1", features = [
   "panic-handler",
   "println",
 ] }
-esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
+esp-println = { version = "0.16.1", default-features = false, features = ["esp32c3", "log-04", "uart", "critical-section"] }
 riscv-rt = { version = "0.16.0" }
 
 critical-section = "1.2.0"

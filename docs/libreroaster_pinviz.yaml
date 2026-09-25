@@ -128,7 +128,7 @@ devices:
   # FAN CONTROLLER — MOSFET Driver + DC Fan
   # ═══════════════════════════════════════════════════════════
   - id: mosfet_driver
-    label: "MOSFET Driver (IRF520 / IRLZ44N)"
+    label: "MOSFET Driver (IRLZ44N / IRLB8721 / AO3400 — logic-level only, NOT IRF520)"
     position: { x: 420, y: 180 }
     pins:
       - { name: "GATE",  gpio: 9,  note: "PWM signal → ESP32 GPIO9 (25kHz), series 1kΩ resistor to gate" }
@@ -330,7 +330,7 @@ bom:
   - { qty: 2, part: "MAX31856 Module",                 spec: "Type-K thermocouple amplifier, SPI",                cost: "$10-12 each" }
   - { qty: 2, part: "Type-K Thermocouple",             spec: "Probe type, 0-400°C range",                         cost: "$5-10 each" }
   - { qty: 1, part: "SSR-25DA",                       spec: "25A, zero-cross, DC 3-32V control",                  cost: "$5-10" }
-  - { qty: 1, part: "MOSFET (IRF520 / IRLZ44N)",       spec: "N-channel, logic-level gate",                       cost: "$1-3" }
+  - { qty: 1, part: "MOSFET (IRLZ44N / IRLB8721 / AO3400)", spec: "N-channel, TRUE logic-level gate (IRF520 is NOT logic-level: barely conducts at 3.3V)", cost: "$1-3" }
   - { qty: 1, part: "DC Fan 12V",                     spec: "12V/24V, 80-120mm, PWM-compatible",                  cost: "$5-15" }
   - { qty: 1, part: "Heating Element",                 spec: "AC, 800-2000W (depends on roaster size)",           cost: "$10-30" }
   - { qty: 1, part: "12V Power Supply",               spec: "5A minimum (for fan + logic)",                      cost: "$10-20" }

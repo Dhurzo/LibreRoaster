@@ -54,6 +54,10 @@ impl TemperatureCommandHandler {
     ///
     /// PID controller output value
     pub fn get_pid_output(&mut self, bean_temp: f32, current_time: Instant) -> f32 {
+        // S7: millis truncated to u32 wrap every ~49.7 days of uptime. The
+        // single tick straddling the wrap sees `delta == 0`-style fallback
+        // (saturating_sub) and integrates one default cycle — benign, and
+        // the H1 gap clamp bounds any larger jump.
         self.pid_controller
             .compute_output(bean_temp, current_time.as_millis() as u32)
     }

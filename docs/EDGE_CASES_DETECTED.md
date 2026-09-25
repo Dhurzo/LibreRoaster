@@ -31,7 +31,7 @@ El sistema funciona de punta a punta en un escenario real (Artisan + USB CDC / U
 | EC-12 | PREHEAT → START (handoff B14) | ✅ Transición limpia; `profile_start_time` fijado; backstops temporales activos | `src/control/roaster_control.rs:1096-1170` |
 | EC-13 | START desde Idle con PID ya habilitado (PID;SV) | ✅ Toma el handoff completo (el gate por `is_streaming()` previo tragaba START) | `src/control/roaster_control.rs:1089-1090` (V2-4) |
 | EC-14 | Desconexión de Artisan con heater encendido | ✅ `COMMS_IDLE_TIMEOUT_MS` (15 s) con gate físico `heater_energized || roast_active` → emergency (antes solo por estado de roast; manual mode desprotegido) | `src/control/roaster_control.rs:498-522` (V2-16c) |
-| EC-15 | Sesión manual sin START (solo OT1) | ✅ Mismo presupuesto temporal: `heat_session_start` (M3) + MAX_ROAST_TIME 1800 s + comms-idle | `src/control/roaster_control.rs:530-582` |
+| EC-15 | Sesión manual sin START (solo OT1) | ✅ Presupuesto temporal propio (H2): `heat_session_start` (M3) + cap manual 5400 s (`MAX_MANUAL_HEAT_SESSION_SECS`); el tostado anclado a START mantiene 1800 s + comms-idle | `src/control/roaster_control.rs:645-660` |
 | EC-16 | `OT1 0` momentáneo entre comandos | ✅ El presupuesto de MAX_ROAST_TIME no se reinicia: debounce de 60 s de heater-off | `src/control/roaster_control.rs:535-550` (R7) |
 | EC-17 | Preheating largo (> 30 min, tambor grande) | ✅ Excluido de MAX_ROAST_TIME (P6); comms-idle sigue cubriendo | `src/control/roaster_control.rs:567-569` |
 | EC-18 | RoR alto durante PREHEAT (tambor vacío) | ✅ Guard desarmado en Preheating (V2-16a); solo armado en Heating/Stable o Idle+PID+heater (P4) | `src/control/roaster_control.rs:699-737` |

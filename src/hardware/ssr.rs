@@ -297,10 +297,16 @@ where
         // band the `HEAT_ABSENT_DEBOUNCE` run-bound analysis relies on).
         // A GPIO read is negligible; the per-tick cadence also matches
         // `cross_check_heat_detection`.
+        // H4: this is the ONLY per-tick cross-check sample. The write path
+        // (`set_percentage`) must NOT cross-check: sampling the same instant
+        // twice per tick makes consecutive-sample counting alias with the
+        // PWM phase and false-trips on an ideal signal.
         self.detect_heat_source(current_time)?;
 
         self.base
-            .cross_check_heat_detection(self.base.current_duty, || self.detection_pin.is_low())?;
+            .cross_check_heat_detection(self.base.current_duty, current_time, || {
+                self.detection_pin.is_low()
+            })?;
 
         Ok(())
     }
@@ -338,9 +344,10 @@ where
             self.is_heating_available()
         );
 
-        self.base
-            .cross_check_heat_detection(self.base.current_duty, || self.detection_pin.is_low())?;
-
+        // H4: no cross-check on the write path. The per-tick `periodic_check`
+        // owns the single heat sample (after the duty has had a full PWM
+        // period to take effect); a second sample at this same instant would
+        // double-count one physical reading toward the mismatch latch.
         Ok(())
     }
 
@@ -349,7 +356,7 @@ where
     }
 
     pub fn is_pwm_enabled(&self) -> bool {
-        self.base.is_pwm_enabled
+        self.base.is_pwm_enabled()
     }
 
     pub fn last_lead_delta_ticks(&self) -> i16 {

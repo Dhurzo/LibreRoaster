@@ -175,10 +175,10 @@ impl AppError {
                 CommunicationError::TimeoutError => "Communication timeout",
             },
             AppError::Initialization { source } => match source {
-                InitError::ServiceContainer { what: _, .. } => "System initialization failed",
-                InitError::HardwareInit { what: _, .. } => "Hardware initialization failed",
-                InitError::TaskSpawn { what: _, .. } => "Task startup failed",
-                InitError::MemoryAllocation { what: _, .. } => "Memory allocation failed",
+                InitError::ServiceContainer { .. } => "System initialization failed",
+                InitError::HardwareInit { .. } => "Hardware initialization failed",
+                InitError::TaskSpawn { .. } => "Task startup failed",
+                InitError::MemoryAllocation { .. } => "Memory allocation failed",
             },
             AppError::Safety { severity } => match severity {
                 SafetyLevel::Warning => "Safety warning",

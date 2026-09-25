@@ -106,22 +106,27 @@ or optocoupler in the load path); at rest the internal pull-up keeps the pin
 HIGH. The exact sensor (current transformer, optocoupler) is builder's
 choice — the only contract is the polarity above.
 
-- **Without the circuit**, the pin floats HIGH ("no heat"). At duty ≥ 50 %
-  the HIGH samples accumulate (`HEAT_ABSENT_DEBOUNCE = 5` consecutive
-  samples ≈ 1.7 s) toward a `NotDetected` latch, forcing the heater to
-  0 % until an explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast`
-  re-arms the availability state machine). Below 50 % duty the pin cannot
-  inform (the sample may land in the PWM OFF window), so nothing
-  accumulates — but a single LOW still re-detects heat at any duty
-  (`SsrControlBase::detect_heat_source`, `src/hardware/ssr_logic.rs:160-195`).
-  Do not confuse this with the probe-stuck arming gate (`ssr_output > 0.0`,
-  `src/control/roaster_control.rs:1001`): `PROBE_STUCK_HEATER_MIN_PCT = 50` is
-  retained only as a conserved constant. For builds that deliberately omit
-  the circuit, compile with the `no-heat-sense` feature, which disables the
-  heat-source interpretation (all other safety layers stay active).
-- **With the circuit**, a transient "no heat" read is debounced
-  (`HEAT_ABSENT_DEBOUNCE = 5` consecutive samples ≈ 1.7 s) before the latch,
-  and a single LOW sample re-clears it.
+- **Without the circuit** (default build): GPIO1 is not interpreted at all.
+  The heat-source check is opt-in via the `heat-sense` cargo feature —
+  build with `--features embedded,heat-sense` only when the circuit below
+  is present and validated. Without the feature the availability state
+  machine stays `Available` and all other safety layers (overtemp, RoR,
+  probe-stuck, comms-idle, roast-time cap, watchdog, fan floor) stay active.
+- **With the circuit** (`heat-sense` build): the pin must stay LOW
+  **continuously** while the SSR conducts. A bare AC optocoupler follows
+  the mains sine and releases near every zero crossing — at the per-tick
+  sampling cadence those HIGH stretches trip the time-debounce window
+  (`HEAT_MISMATCH_WINDOW_MS = 1500 ms`) on every roast. Stretch the pulse
+  with an RC or a retriggerable monostable of 20 ms or more so GPIO1 reads
+  LOW for the whole conduction time. Validate with an oscilloscope at
+  50/75/100 % duty (`examples/hil_gpio.rs` + `examples/hil_ssr.rs`) before
+  trusting the interlock.
+- A transient "no heat" read is time-debounced (latch only after
+  `HEAT_MISMATCH_WINDOW_MS` with no LOW at observable duty ≥ 50 %;
+  `SsrControlBase::cross_check_heat_detection`,
+  `src/hardware/ssr_logic.rs`), and a single LOW sample re-clears the
+  window immediately. The cross-check samples exactly once per control
+  tick from `periodic_check` — never on the write path (H4).
 
 ### Status LED (GPIO8)
 

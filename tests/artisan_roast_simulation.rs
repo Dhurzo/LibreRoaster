@@ -503,7 +503,7 @@ fn test_stop_during_roast_reflected_in_read() {
     // Run a few control ticks with deterministic timestamps and constant
     // temperature.  Constant BT/ET means zero temperature delta between
     // ticks, so the rate-of-rise safety check sees 0.0°C/s — well under
-    // the 0.5°C/s threshold.  This avoids spurious emergency shutdowns
+    // the 0.75°C/s threshold.  This avoids spurious emergency shutdowns
     // that would otherwise occur when consecutive Instant::now() calls
     // differ by only microseconds on CI.
     let base = embassy_time::Instant::now();

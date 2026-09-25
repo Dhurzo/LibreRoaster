@@ -9,6 +9,7 @@ use crate::config::*;
 use crate::control::traits::{Fan, Heater};
 use crate::control::RoasterError;
 use crate::control::SsrCycleGuard;
+use crate::hardware::ssr_logic::effective_percentage;
 use crate::logging::edge_log_gate::EdgeLogGate;
 use alloc::boxed::Box;
 use embassy_time::Instant;
@@ -114,7 +115,11 @@ impl ActuatorController {
                 self.capture_ssr_monitor_metrics(status);
                 power_result?;
                 self.ssr_guard.mark_cycle(now);
-                status.ssr_output = actual_output;
+                // H7: publish what the SSR really delivers. Requests below
+                // the min-duty snap (`OT1 1..5`) land zero LEDC ticks —
+                // reporting them as-is would arm the fan floor and the
+                // supervision backstops with the heater physically off.
+                status.ssr_output = effective_percentage(actual_output);
                 status.saturation_active = false;
                 status.integrator_clamped = false;
                 self.update_guard_busy_ms(now, status);
@@ -180,12 +185,13 @@ impl ActuatorController {
         // off-branch (which is what normally resets `slewing_output`). If a
         // STOP and an `OT1` land in the same command drain with no
         // zero-output control tick in between, the limiter would otherwise
-        // start the next ramp from the stale pre-stop value. With
-        // `last_slew_update = None` the next `apply_guarded_heater` applies
-        // the commanded value directly — same semantics as
-        // `emergency_shutdown` below.
+        // start the next ramp from the stale pre-stop value. H10: anchor the
+        // limiter at 0 % NOW (instead of `None`, which would make the next
+        // write jump straight to the requested value) so the next
+        // energize ramps from 0 — same semantics as `emergency_shutdown`
+        // below.
         self.slewing_output = 0.0;
-        self.last_slew_update = None;
+        self.last_slew_update = Some(Instant::now());
         self.capture_ssr_monitor_metrics(status);
         ok
     }
@@ -227,8 +233,11 @@ impl ActuatorController {
         // the off-write actually succeeds (here, or via the next
         // control-tick `apply_guarded_heater(0.0)` off-branch).
         status.ssr_cycle_guard_busy_until_ms = 0;
+        // H10: anchor the slew limiter at 0 % with a fresh timestamp so the
+        // next energize ramps from 0 (at SSR_SLEW_RATE_PER_SEC) instead of
+        // jumping straight to the requested value.
         self.slewing_output = 0.0;
-        self.last_slew_update = None;
+        self.last_slew_update = Some(Instant::now());
 
         // The heater AND the fan are both retried. `force_fan_100` only
         // publishes the value on success.
@@ -333,6 +342,36 @@ impl ActuatorController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{StubFan, StubHeater};
+
+    #[test]
+    fn re_energize_after_force_off_ramps_from_zero() {
+        // H10: after `force_heater_off`, the slew limiter is anchored at
+        // 0 % with a fresh timestamp — re-energizing ramps (50 %/s) instead
+        // of jumping straight to the request (the old
+        // `last_slew_update = None` jumped).
+        use embassy_time::Duration;
+        let mut act =
+            ActuatorController::new(Box::new(StubHeater::new()), Box::new(StubFan::new()));
+        let mut status = SystemStatus::default();
+        let base = Instant::now();
+        let first = act
+            .apply_guarded_heater(100.0, base, false, &mut status)
+            .expect("first write");
+        assert_eq!(first, 100.0);
+
+        assert!(act.force_heater_off(&mut status));
+
+        // Past the 100 ms SSR cycle guard, 200 ms after the anchor: the
+        // limiter allows 50 %/s × 0.2 s = 10 % — not the full 100 %.
+        let second = act
+            .apply_guarded_heater(100.0, base + Duration::from_millis(200), false, &mut status)
+            .expect("re-energize");
+        assert!(
+            second <= 15.0,
+            "H10: re-energize 200 ms after force-off must ramp from 0, got {second}"
+        );
+    }
 
     mod proptest_tests {
         #![allow(clippy::unwrap_used)]

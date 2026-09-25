@@ -1,14 +1,20 @@
 //! Pure decision logic for SSR heat-source detection and availability.
 //!
+//! The physical pin interpretation is OPT-IN via the `heat-sense` cargo
+//! feature (H4): without it (default build, or under `simulated-sensors`)
+//! both methods are no-ops that keep `Available`, so boards without the
+//! GPIO1 current-sense circuit heat normally. Enable `heat-sense` only with
+//! a validated stretched-pulse circuit (see `docs/HARDWARE.md` §8).
+//!
 //! Kept in its own un-gated module (compiled on BOTH host and embedded) so
-//! the decision logic is covered by host unit tests.
+//! the decision logic is covered by host unit tests (run with
+//! `--features heat-sense`).
 
-#[cfg(not(feature = "no-heat-sense"))]
-use crate::config::constants::SSR_PWM_RESOLUTION;
-#[cfg(not(feature = "no-heat-sense"))]
+use crate::config::constants::{SSR_MIN_DUTY_TICKS, SSR_PWM_RESOLUTION};
+#[cfg(all(feature = "heat-sense", not(feature = "simulated-sensors")))]
 use crate::hardware::heat_presence::{debounce_heat_absent, HeatPresenceOutcome};
 use log::info;
-#[cfg(not(feature = "no-heat-sense"))]
+#[cfg(all(feature = "heat-sense", not(feature = "simulated-sensors")))]
 use log::{error, warn};
 
 /// Error returned by SSR control operations.
@@ -46,6 +52,12 @@ pub enum SsrHardwareStatus {
 
 /// Number of consecutive "heater ON but no heat detected" samples (at
 /// duty ≥ 50 %) before `hardware_status` latches to `Error`.
+///
+/// Legacy count-based trip, kept for the per-sample warn counter. The actual
+/// latch decision is time-based (`HEAT_MISMATCH_WINDOW_MS`): with one sample
+/// per control tick, counting consecutive samples of the SAME instant (the
+/// old write-path + periodic double-sample, H4) tripped an ideal square-wave
+/// signal mid-roast. Time debouncing is alias-proof.
 #[allow(dead_code)]
 const HEAT_MISMATCH_MAX: u8 = 5;
 /// `heat_mismatch_count`/`heat_present_count` thresholds are sampled every
@@ -57,6 +69,32 @@ const HEAT_MISMATCH_MAX: u8 = 5;
 /// when the SSR is genuinely stuck on.
 #[allow(dead_code)]
 const HEAT_PRESENT_MISMATCH_MAX: u8 = 10;
+
+/// Time-debounce window (H4): with duty observable (≥ 50 %) the cross-check
+/// only latches `Error` when NO heat sample (LOW) has been seen for longer
+/// than this window. ≈ 7 PWM periods at 5 Hz — a stretched-pulse circuit
+/// holds LOW continuously while conducting, while an unstretched AC
+/// optocoupler still shows long HIGH stretches and trips (correctly: that
+/// hardware cannot distinguish conduction, see `docs/HARDWARE.md` §8).
+pub const HEAT_MISMATCH_WINDOW_MS: u32 = 1_500;
+
+/// Percentage the SSR really delivers after the min-duty snap-to-zero (H7).
+///
+/// Mirrors `ssr::percentage_to_ledc_duty` (which is riscv-only): any
+/// positive request below one AC half-cycle (`SSR_MIN_DUTY_TICKS`) lands
+/// zero ticks on the LEDC. Telemetry and safety gates must use this
+/// effective value, not the requested one — otherwise `OT1 1..5` arms the
+/// fan floor, comms-idle, roast-time and probe-stuck supervision with the
+/// heater physically off.
+pub fn effective_percentage(requested: f32) -> f32 {
+    let max = ((1u32 << SSR_PWM_RESOLUTION) - 1) as f32;
+    let ticks = ((requested.clamp(0.0, 100.0) / 100.0) * max + 0.5) as u32;
+    if ticks > 0 && ticks < SSR_MIN_DUTY_TICKS as u32 {
+        0.0
+    } else {
+        requested.clamp(0.0, 100.0)
+    }
+}
 
 /// Common status queries implemented by SSR control types.
 pub trait StatusGetters {
@@ -92,9 +130,21 @@ pub struct SsrControlBase {
     /// would latch `NotDetected` mid-roast, which forces the heater to 0 %
     /// and (because duty 0 falls below the observability gate) dead-locks
     /// the heater until power cycle.
+    ///
+    /// Only interpreted with the `heat-sense` feature; otherwise written by
+    /// `new`/`rearm` but never read.
+    #[allow(dead_code)]
     heat_absent_count: u8,
     #[allow(dead_code)]
     heat_mismatch_count: u8,
+    /// Timestamp (ms) of the last heat-detected (LOW) cross-check sample.
+    /// `None` until the first observable sample; the time-debounce window
+    /// (`HEAT_MISMATCH_WINDOW_MS`) is measured from here. Reset by `rearm()`.
+    ///
+    /// Only interpreted with the `heat-sense` feature; otherwise written by
+    /// `new`/`rearm` but never read.
+    #[allow(dead_code)]
+    last_heat_seen_ms: Option<u32>,
     /// Debounce counter for the "heat present while heater off" branch.
     /// The SSR is PWM at 5 Hz; with a metal heat mass, residual heat can keep
     /// the sensor reading hot long after the duty drops to zero. We require
@@ -122,6 +172,7 @@ impl SsrControlBase {
             heat_absent_count: 0,
             heat_mismatch_count: 0,
             heat_present_count: 0,
+            last_heat_seen_ms: None,
         }
     }
 
@@ -137,6 +188,7 @@ impl SsrControlBase {
         self.heat_absent_count = 0;
         self.heat_mismatch_count = 0;
         self.heat_present_count = 0;
+        self.last_heat_seen_ms = None;
     }
 
     /// Detect heat source using a closure to read the detection pin.
@@ -165,13 +217,13 @@ impl SsrControlBase {
     where
         F: FnMut() -> Result<bool, E>,
     {
-        #[cfg(feature = "no-heat-sense")]
+        #[cfg(any(not(feature = "heat-sense"), feature = "simulated-sensors"))]
         {
             let _ = (_current_time, read_pin);
-            return Ok(());
+            Ok(())
         }
 
-        #[cfg(not(feature = "no-heat-sense"))]
+        #[cfg(all(feature = "heat-sense", not(feature = "simulated-sensors")))]
         {
             let mut read_pin = read_pin;
             // ≥50% duty ≈ one full sample interval of conduction per PWM period at
@@ -232,22 +284,34 @@ impl SsrControlBase {
     }
 
     /// Cross-check commanded duty against the detection pin to catch a stuck-on
-    /// or never-heating SSR (no-op under `simulated-sensors`/`no-heat-sense`).
+    /// or never-heating SSR.
+    ///
+    /// Active only with the `heat-sense` feature on real hardware; otherwise
+    /// (default build, `simulated-sensors`) a no-op. Call EXACTLY once per
+    /// control tick from `periodic_check` (H4): sampling the same instant
+    /// twice per tick makes consecutive-sample counting alias with the PWM
+    /// phase and false-trips on an ideal signal.
+    ///
+    /// Latch rule is time-based: `Error` only when no heat (LOW) has been
+    /// seen for `HEAT_MISMATCH_WINDOW_MS` with duty observable (≥ 50 %).
+    /// A single LOW is trustworthy evidence of current flow and resets the
+    /// window immediately.
     pub fn cross_check_heat_detection<F, E>(
         &mut self,
         current_duty: u16,
+        now_ms: u32,
         read_pin: F,
     ) -> Result<(), SsrError>
     where
         F: FnMut() -> Result<bool, E>,
     {
-        #[cfg(any(feature = "simulated-sensors", feature = "no-heat-sense"))]
+        #[cfg(any(feature = "simulated-sensors", not(feature = "heat-sense")))]
         {
-            let _ = (current_duty, read_pin);
-            return Ok(());
+            let _ = (current_duty, now_ms, read_pin);
+            Ok(())
         }
 
-        #[cfg(not(any(feature = "simulated-sensors", feature = "no-heat-sense")))]
+        #[cfg(all(feature = "heat-sense", not(feature = "simulated-sensors")))]
         {
             let mut read_pin = read_pin;
             match read_pin() {
@@ -267,16 +331,21 @@ impl SsrControlBase {
 
                     if duty_observable && !heat_detected {
                         self.heat_mismatch_count = self.heat_mismatch_count.saturating_add(1);
+                        // Time debounce (H4): the window is measured from the
+                        // last trustworthy LOW. The first observable-absent
+                        // sample anchors the baseline instead of tripping.
+                        let last_seen = *self.last_heat_seen_ms.get_or_insert(now_ms);
+                        let since_ms = now_ms.saturating_sub(last_seen);
                         warn!(
-                            "Heat detection mismatch: heater ON (duty {}) but no heat detected (mismatch count: {})",
-                            current_duty, self.heat_mismatch_count
+                            "Heat detection mismatch: heater ON (duty {}) but no heat detected (mismatch count: {}, {} ms since heat seen)",
+                            current_duty, self.heat_mismatch_count, since_ms
                         );
 
-                        if self.heat_mismatch_count >= HEAT_MISMATCH_MAX {
-                            error!("Heat detection mismatch limit reached - SSR error");
+                        if since_ms >= HEAT_MISMATCH_WINDOW_MS {
+                            error!("Heat detection mismatch window elapsed - SSR error");
                             self.hardware_status = SsrHardwareStatus::Error;
                             return Err(SsrError::HeatSourceNotDetected {
-                                source: "heat_mismatch_limit_reached",
+                                source: "heat_mismatch_window",
                             });
                         }
                     } else if current_duty == 0 && heat_detected {
@@ -299,6 +368,13 @@ impl SsrControlBase {
                             });
                         }
                     } else {
+                        // Heat seen (or duty unobservable): a LOW sample is
+                        // trustworthy evidence of current flow — refresh the
+                        // time-debounce baseline so the window measures from
+                        // the last proof of conduction.
+                        if heat_detected {
+                            self.last_heat_seen_ms = Some(now_ms);
+                        }
                         self.heat_mismatch_count = 0;
                         self.heat_present_count = 0;
                     }
@@ -353,7 +429,16 @@ impl StatusGetters for SsrControlBase {
     }
 }
 
-#[cfg(all(test, not(target_arch = "riscv32")))]
+/// State-machine tests. They exercise the real pin-interpretation path, so
+/// they only compile with the `heat-sense` feature on a non-simulated host
+/// (`--features heat-sense`); without it the methods are no-ops. CI runs
+/// this cell explicitly (see `.github/workflows/ci.yml`).
+#[cfg(all(
+    test,
+    not(target_arch = "riscv32"),
+    feature = "heat-sense",
+    not(feature = "simulated-sensors")
+))]
 mod tests {
     use super::*;
     use crate::hardware::heat_presence::HEAT_ABSENT_DEBOUNCE;
@@ -365,6 +450,8 @@ mod tests {
     }
 
     const DUTY_OBSERVABLE: u16 = (1u16 << (SSR_PWM_RESOLUTION - 1)) + 1;
+    /// Real control-loop cadence: one cross-check sample per tick.
+    const TICK_MS: u32 = 320;
 
     #[test]
     fn rearm_restores_available_from_not_detected() {
@@ -383,11 +470,13 @@ mod tests {
         base.heat_absent_count = 3;
         base.heat_mismatch_count = 4;
         base.heat_present_count = 9;
+        base.last_heat_seen_ms = Some(1234);
         base.rearm();
         assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
         assert_eq!(base.heat_absent_count, 0);
         assert_eq!(base.heat_mismatch_count, 0);
         assert_eq!(base.heat_present_count, 0);
+        assert_eq!(base.last_heat_seen_ms, None);
     }
 
     #[test]
@@ -456,19 +545,17 @@ mod tests {
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 
-    // `cross_check_heat_detection` is intentionally a no-op when the physical
-    // heat-presence pin is absent (`simulated-sensors` / `no-heat-sense`), so
-    // these latch tests only exercise the real-pin path.
-    #[cfg(not(any(feature = "simulated-sensors", feature = "no-heat-sense")))]
+    // The cross-check below only exercises the real-pin path (`heat-sense`
+    // on real hardware); without the feature the method is a no-op.
     #[test]
     fn stuck_on_requires_ten_consecutive_heat_samples_at_zero_duty() {
         let mut base = base_with_duty(0);
-        for _ in 0..9 {
-            base.cross_check_heat_detection(0, || Ok::<bool, ()>(true))
+        for i in 0..9 {
+            base.cross_check_heat_detection(0, i * TICK_MS, || Ok::<bool, ()>(true))
                 .expect("cross-check must not fail yet");
             assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
         }
-        let result = base.cross_check_heat_detection(0, || Ok::<bool, ()>(true));
+        let result = base.cross_check_heat_detection(0, 9 * TICK_MS, || Ok::<bool, ()>(true));
         assert!(matches!(
             result,
             Err(SsrError::HeatSourceNotDetected {
@@ -478,30 +565,113 @@ mod tests {
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 
-    #[cfg(not(any(feature = "simulated-sensors", feature = "no-heat-sense")))]
     #[test]
-    fn heat_mismatch_latches_error_after_five_samples() {
+    fn mismatch_window_trips_only_after_window_without_heat() {
+        // H4: no heat (stuck HIGH) at observable duty, one sample per tick.
+        // The first sample anchors the baseline; the latch fires once the
+        // window elapses with no LOW in between.
         let mut base = base_with_duty(DUTY_OBSERVABLE);
-        for _ in 0..4 {
-            base.cross_check_heat_detection(DUTY_OBSERVABLE, || Ok::<bool, ()>(false))
-                .expect("cross-check must not fail yet");
+        for i in 0..5 {
+            let t = i * TICK_MS;
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, t, || Ok::<bool, ()>(false))
+                .expect("cross-check must not fail inside the window");
             assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
         }
-        let result = base.cross_check_heat_detection(DUTY_OBSERVABLE, || Ok::<bool, ()>(false));
+        // t = 5 × 320 = 1600 ms ≥ HEAT_MISMATCH_WINDOW_MS (1500).
+        let result =
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, 5 * TICK_MS, || Ok::<bool, ()>(false));
         assert!(matches!(
             result,
             Err(SsrError::HeatSourceNotDetected {
-                source: "heat_mismatch_limit_reached"
+                source: "heat_mismatch_window"
             })
         ));
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 
     #[test]
+    fn rapid_same_instant_samples_do_not_trip() {
+        // H4 regression: repeating the SAME physical instant (the old
+        // write-path + periodic double-sample) must not accumulate toward
+        // the latch — the decision is time-based, not count-based.
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        for _ in 0..20 {
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, 1000, || Ok::<bool, ()>(false))
+                .expect("same-instant repeats must never trip");
+            assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+        }
+    }
+
+    #[test]
+    fn heat_seen_resets_mismatch_window() {
+        // A LOW sample refreshes the baseline: HIGH runs on both sides of
+        // it stay inside the window.
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        for i in 0..4 {
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, i * TICK_MS, || Ok::<bool, ()>(false))
+                .expect("pre-heat HIGHs inside window");
+        }
+        base.cross_check_heat_detection(DUTY_OBSERVABLE, 4 * TICK_MS, || Ok::<bool, ()>(true))
+            .expect("LOW resets window");
+        for i in 5..9 {
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, i * TICK_MS, || Ok::<bool, ()>(false))
+                .expect("post-heat HIGHs inside renewed window");
+            assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+        }
+        // 4 × 320 + 1500 = 2780 → t = 9 × 320 = 2880 trips.
+        let result =
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, 9 * TICK_MS, || Ok::<bool, ()>(false));
+        assert!(result.is_err());
+        assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn ideal_square_single_sample_per_tick_never_trips() {
+        // H4 correction #2 validation: with ONE sample per 320 ms tick, an
+        // ideal 5 Hz square wave (LOW while the LEDC is ON) at 55 % duty
+        // always shows a LOW within any 1500 ms window, whatever the phase.
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        for n in 0..300u32 {
+            // Phase drifts ~120 ms per tick (320 − 200), covering all alignments.
+            let t_ms = n * TICK_MS;
+            let phase = (t_ms % 200) as f32;
+            let on = phase < 0.55 * 200.0;
+            let t = t_ms;
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, t, || Ok::<bool, ()>(on))
+                .expect("ideal square must never trip with one sample per tick");
+            assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+        }
+    }
+
+    #[test]
+    fn no_circuit_trips_after_window() {
+        // Without the circuit the pin is always HIGH: single-sample ticks
+        // trip shortly after the window elapses (~1.6 s at 320 ms/tick).
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        let mut tripped_at = None;
+        for n in 0..20u32 {
+            let r = base
+                .cross_check_heat_detection(DUTY_OBSERVABLE, n * TICK_MS, || Ok::<bool, ()>(false));
+            if r.is_err() {
+                tripped_at = Some(n * TICK_MS);
+                break;
+            }
+        }
+        let t = tripped_at.expect("no-circuit must trip");
+        assert!(
+            (HEAT_MISMATCH_WINDOW_MS..=HEAT_MISMATCH_WINDOW_MS + TICK_MS).contains(&t),
+            "trip at {} ms, expected just after the {} ms window",
+            t,
+            HEAT_MISMATCH_WINDOW_MS
+        );
+        assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
     fn low_duty_cross_check_never_accumulates_mismatch() {
         let mut base = base_with_duty(100);
-        for _ in 0..(HEAT_MISMATCH_MAX * 2) {
-            base.cross_check_heat_detection(100, || Ok::<bool, ()>(false))
+        for i in 0..(HEAT_MISMATCH_MAX * 2) {
+            base.cross_check_heat_detection(100, i as u32 * TICK_MS, || Ok::<bool, ()>(false))
                 .expect("cross-check must succeed");
             assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
         }
@@ -522,5 +692,35 @@ mod tests {
                 .expect("detect must succeed");
             assert_eq!(via_low_sample.hardware_status, SsrHardwareStatus::Available);
         }
+    }
+}
+
+/// `effective_percentage` is feature-independent (telemetry honesty, H7),
+/// so its tests run on every host configuration.
+#[cfg(all(test, not(target_arch = "riscv32")))]
+mod effective_percentage_tests {
+    use super::effective_percentage;
+    use crate::config::constants::{SSR_MIN_DUTY_TICKS, SSR_PWM_RESOLUTION};
+
+    fn ticks(p: f32) -> u32 {
+        let max = ((1u32 << SSR_PWM_RESOLUTION) - 1) as f32;
+        ((p.clamp(0.0, 100.0) / 100.0) * max + 0.5) as u32
+    }
+
+    #[test]
+    fn sub_half_cycle_requests_report_zero() {
+        // H7: OT1 1..5 land below SSR_MIN_DUTY_TICKS (820) → zero ticks.
+        assert!(ticks(5.0) < SSR_MIN_DUTY_TICKS as u32);
+        assert_eq!(effective_percentage(1.0), 0.0);
+        assert_eq!(effective_percentage(5.0), 0.0);
+    }
+
+    #[test]
+    fn at_and_above_floor_reports_requested() {
+        assert!(ticks(6.0) >= SSR_MIN_DUTY_TICKS as u32);
+        assert_eq!(effective_percentage(0.0), 0.0);
+        assert_eq!(effective_percentage(6.0), 6.0);
+        assert_eq!(effective_percentage(50.0), 50.0);
+        assert_eq!(effective_percentage(100.0), 100.0);
     }
 }

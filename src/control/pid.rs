@@ -270,12 +270,20 @@ impl CoffeeRoasterPid {
     }
 
     /// Seconds since the last update, falling back to `cycle_time_ms` when unknown.
+    ///
+    /// Gaps longer than a couple of control cycles (safety latch, SSR
+    /// unavailable, stale-data hold — H1) restart the timing instead of
+    /// integrating: a 60 s latch with 10 °C of error must not add
+    /// 600 °C·s to the integrator in a single post-recovery tick.
     fn delta_seconds(&self, timestamp_ms: u32) -> f32 {
         let default_seconds = self.cycle_time_ms as f32 / 1000.0;
+        // saturating: a huge configured cycle time (PID;CT u32::MAX, S3)
+        // must not overflow this computation.
+        let max_gap_ms = self.cycle_time_ms.saturating_mul(2).max(2_000);
 
         if let Some(last_ms) = self.last_update_ms {
             let delta = timestamp_ms.saturating_sub(last_ms);
-            if delta == 0 {
+            if delta == 0 || delta > max_gap_ms {
                 return default_seconds;
             }
 
@@ -313,8 +321,8 @@ impl CoffeeRoasterPid {
         // so the output must NOT be re-clamped to the actuator's previously
         // applied value here — that would pin the output to the first slew
         // step (~5%) for the whole roast. The actuator's own slew-rate limiter
-        // (`SSR_SLEW_RATE_PER_SEC = 50.0`, ~5%/tick) physically bounds how
-        // fast the heater can ramp up. The PID now always returns its MV
+        // (`SSR_SLEW_RATE_PER_SEC = 50.0`, ≈15.5 %/tick at the ~310 ms
+        // control cadence) physically bounds how fast the heater can ramp up. The PID now always returns its MV
         // clamped to [output_min, output_max]; the actuator decides how much
         // to apply. The PID rises, but does not wind up, because the
         // integrator stops accumulating while the actuator is saturated
@@ -620,6 +628,28 @@ mod tests {
         pid.compute_output(35.0, PID_SAMPLE_TIME_MS);
 
         assert!(pid.is_saturation_active());
+    }
+
+    #[test]
+    fn long_gap_does_not_integrate_error_times_gap() {
+        // H1: a 60 s gap (safety latch, SSR unavailable, stale hold) must
+        // integrate at most one default cycle — not error × 60 s.
+        let mut pid = CoffeeRoasterPid::with_gains(2.0, 0.25, 0.05);
+        pid.enable();
+        pid.set_target(225.0).unwrap();
+
+        pid.compute_output(225.0, 0);
+        pid.update_feedback(PidFeedback::new(0.0, 0.0, false));
+        let before = pid.integrator_value();
+
+        pid.compute_output(215.0, 60_000);
+        let after = pid.integrator_value();
+        // error 10 °C × default dt 0.1 s = 1.0 °C·s; the buggy behavior
+        // added 10 × 60 = 600 °C·s.
+        assert!(
+            (after - before - 1.0).abs() < 0.01,
+            "H1: 60 s gap must integrate one cycle only, before={before} after={after}"
+        );
     }
 
     // ── Anti-windup must see the PID's own output clamp ──────────

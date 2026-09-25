@@ -57,7 +57,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
 - **Opt-in telemetry stream:** spontaneous `#` telemetry is OFF by default; enable with `STREAM;ON` (custom clients only — Artisan polls `READ`)
 - **Status LED:** GPIO8 state indicator (off/1 Hz/solid/4 Hz by roast state; `Error` blinks at 4 Hz)
-- **`no-heat-sense` feature:** build without the optional GPIO1 current-sense circuit (see `docs/HARDWARE.md` §8)
+- **`heat-sense` feature (opt-in):** GPIO1 current-sense interpretation is OFF by default; enable with `--features heat-sense` only with a validated stretched-pulse circuit (see `docs/HARDWARE.md` §8)
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 - **Focused controllers:** SensorController, ActuatorController (heater + fan together), SafetyController, CommandDispatcher (v5.4)
 - **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (no fixed % gate in CI)

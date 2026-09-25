@@ -60,10 +60,10 @@ Click **Configure** next to the driver dropdown:
 
 | Option | Setting | Notes |
 |--------|---------|-------|
-| **Channels** | 2 | LibreRoaster has BT + ET (CHAN;2 acknowledged) |
+| **Channels** | 1200 | Handshake rate Artisan sends (`CHAN;1200` acknowledged with `#1200`) |
 | **Temperature Unit** | Celsius / Fahrenheit | Sent via `UNITS;C` or `UNITS;F` on connect |
 | **Filter** | 70 (default) | Acknowledged via `FILT;70` — firmware stores first value only |
-| **Poll Rate (Hz)** | 1 | Artisan polls `READ` ~1Hz; firmware responds immediately |
+| **Poll interval** | ~1 s | Artisan polls `READ` ~1 Hz; firmware answers in the same tick |
 
 > **Note:** The `CHAN`/`UNITS`/`FILT` handshake commands are **accepted even when the safety latch is armed** (firmware v0.1+). Artisan can reconnect to a latched device without power cycling.
 
@@ -76,7 +76,7 @@ Click **Configure** next to the driver dropdown:
 ```
 1. Artisan opens serial port
 2. Artisan sends handshake (auto on connect):
-   CHAN;2          → #2
+   CHAN;1200     → #1200
    UNITS;C         → #OK
    FILT;70,70,70,70 → #OK
 3. Artisan polls READ (≈1 Hz):
@@ -93,7 +93,7 @@ Click **Configure** next to the driver dropdown:
 
 | Command | Sent by Artisan | LibreRoaster Response | Purpose |
 |---------|-----------------|----------------------|---------|
-| `CHAN;2` | Auto on connect | `#2` | Channel count acknowledgement |
+| `CHAN;1200` | Auto on connect | `#1200` | Channel handshake acknowledgement |
 | `UNITS;C` / `UNITS;F` | Auto on connect | `#OK` | Temperature scale |
 | `FILT;70` | Auto on connect | `#OK` | Filter coefficient (stored, not used) |
 
@@ -139,7 +139,7 @@ UP / DOWN  → Heater ±5%
 
 ### 6.2 PID Mode (Artisan PID Dialog)
 ```
-PID;ON           → StartRoast (enables PID, clears I-term)
+PID;ON           → Enable firmware PID (H11: never clears a safety latch)
 PID;SV;200       → Set target 200°C (display units)
 PID;T;2.0;0.25;0.05 → Set KP/KI/KD
 PID;LIMIT;0;100  → Output limits
@@ -149,6 +149,17 @@ PID;OFF          → StopRoast (disables PID)
 ```
 
 > **Important:** Artisan's ramp/soak re-sends `PID;SV` on every step. LibreRoaster **only enables PID on the first call**; subsequent `SV` updates the target without resetting the integrator (Bug A3 fix).
+
+> **S2 — what Artisan's PID handshake redefines.** Pressing PID ON makes
+> Artisan send its own `PID;T` gains (overwriting the firmware defaults),
+> `PID;CHAN;1` (feedback = **ET**, not BT), `PID;CT`, `PID;LIMIT` and
+> `PID;ON`. Consequences: the loop regulates **ET** toward the SV (BT
+> legitimately sits tens of degrees below it); the probe-stuck detector
+> stays disarmed (`pid_channel == 1`); the SV stays at its default until
+> the first `PID;SV`. To regulate bean temperature, set Artisan's PID
+> input to channel 2. Never enable "PID ON at CHARGE" (H11): an automatic
+> `PID;ON` can no longer recover a latched device — send
+> `START`/`PREHEAT`/`PID;OFF` deliberately instead.
 
 ### 6.3 Profile Mode (Artisan Profile Tab)
 ```
@@ -178,7 +189,7 @@ AMB,ET,BT,0.0,0.0,HEATER,FAN,SV
 ```
 Example: `0.0,120.3,150.5,0.0,0.0,75.0,50.0,200.0`
 
-> **AMB** is always `0.0` (no ambient sensor on hardware).
+> **AMB** is the cold-junction mean of the healthy MAX31856 channels (H13).
 
 ### 7.2 STATUS Response (Deep Diagnostics)
 ```
@@ -249,12 +260,12 @@ Example: `#123.45,120.3,150.5,12.50,75.0`
 ### 8.2 Safety Backstops (Automatic)
 | Backstop | Trigger | Action |
 |----------|---------|--------|
-| **Over-temp** | BT/ET ≥ 260°C | Emergency shutdown |
-| **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`, S1 fix; `PROBE_STUCK_HEATER_MIN_PCT` retained as constant only) | Emergency shutdown |
-| **Probe stuck (Manual)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`) | **Warning** `ERR probe_stuck_warning`; latch at 300s |
+| **Over-temp** | BT/ET ≥ 260°C (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
+| **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`; hot-equilibrium exempt only in manual, H8) | Emergency shutdown |
+| **Probe stuck (Manual)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`), hot BT-near-ET holds exempt (H8) | **Warning** `ERR probe_stuck_warning`; latch at 300s |
 | **Comms idle** | No command 15s @ heater >0 or roast active | Emergency shutdown |
-| **Max roast time** | 30min (1800s) @ heater >0 or Heating/Stable | Emergency shutdown |
-| **Sensor stale** | No valid reading 1s | Emergency shutdown |
+| **Max roast time** | 30 min (1800 s) anchored to START/PROFILE, or 90 min (5400 s) manual OT1 session without START (H2) | Emergency shutdown |
+| **Sensor stale** | No valid reading 1s (tolerates ~2 missed ticks, H9) | Emergency shutdown |
 | **RTC Watchdog** | Control loop hangs >2.2s | **CPU reset** (hardware) |
 | **SSR cycle guard** | Write attempted <100ms since last | Reject / adopt as setpoint |
 | **Fan floor** | Heater >0 & fan <20% | Raise fan to 20% |
@@ -264,7 +275,7 @@ Since v0.1 (Audit A-TC4), internal safety traps emit on the wire:
 ```
 ERR safety_fault <reason>
 ```
-Emitted **once per latch event** (not every tick). Reasons: `Overtemp`, `Probe stuck`, `Comms idle timeout`, `Maximum roast time exceeded`, `Temperature sensor timeout`, `Sensor fault`, `Watchdog failure`, `Heater control failure`.
+Emitted **once per latch event** (not every tick). Reasons: `Over-temperature detected`, `Temperature exceeds valid range`, `Probe stuck`, `Bean temperature rate-of-rise exceeded`, `Comms idle timeout`, `Maximum roast time exceeded`, `Temperature sensor timeout`, `Sensor fault (NaN/infinite temperature)`, `Watchdog failure`, `Consecutive sensor errors`, `Heater control failure`, `Fan control failure`.
 
 ---
 
@@ -281,7 +292,7 @@ Emitted **once per latch event** (not every tick). Reasons: `Overtemp`, `Probe s
 ### 9.3 Heater Won't Go Above 0%
 - **Cause:** Safety latch armed (`fault_condition = true`)
 - **Check:** `STATUS` field 20 = 1 → send `PID;OFF` (or `START`/`PREHEAT` to re-energize) to clear
-- **Also check:** `SSR hardware status` (field in STATUS) = `NotDetected` or `Error` → check GPIO1 current-sense circuit or use `no-heat-sense` feature
+- **Also check:** `SSR hardware status` (field in STATUS) = `NotDetected` or `Error` → check GPIO1 current-sense circuit (only interpreted in `heat-sense` builds; default builds never latch this)
 
 ### 9.4 Fan Stays at 0% in PID Mode
 - **Cause:** No `FANPROFILE` sent, `OT2` not set
@@ -298,7 +309,7 @@ Emitted **once per latch event** (not every tick). Reasons: `Overtemp`, `Probe s
 
 ### 9.7 PID Output Stays at 0% After `PID;SV`
 - **Cause:** `PID;SV` sent but `PID;ON` never received
-- **Fix:** Ensure Artisan sends `PID;ON` (maps to `START`) before `PID;SV`
+- **Fix:** Ensure Artisan sends `PID;ON` (enables firmware PID) before `PID;SV`
 
 ### 9.8 RoR False Trip on Light Roast Turnaround
 - **Symptom:** `ERR safety_fault Bean temperature rate-of-rise exceeded` at ~0.6°C/s after charge
@@ -343,7 +354,7 @@ All equivalent.
 |---------|--------|----------|
 | `embedded` | Real hardware build (required for device) | Production flash |
 | `simulated-sensors` | Synthetic temperature curves | Host testing / CI |
-| `no-heat-sense` | Disables GPIO1 current-sense check | Boards without detection circuit |
+| `heat-sense` | Opt-in GPIO1 current-sense check (needs stretched-pulse circuit) | Boards with validated detection circuit |
 | `instrumentation` | Debug log level (corrupts wire!) | **Never in production** |
 | `regression` | Overtemp self-test runner | Hardware validation |
 
@@ -392,7 +403,7 @@ UP / DOWN       → Heater ±5%
 
 ### PID
 ```
-PID;ON          → StartRoast
+PID;ON          → Enable firmware PID (no latch recovery, H11)
 PID;OFF         → StopRoast
 PID;SV;<temp>   → Set target (display units)
 PID;T;<kp>;<ki>;<kd> → Gains

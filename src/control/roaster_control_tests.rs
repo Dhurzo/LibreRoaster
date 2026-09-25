@@ -532,6 +532,116 @@ fn start_with_latch_rearms_ssr_hardware_status() {
     );
 }
 
+// ── H11: PID;ON never clears a safety latch ──────────────
+
+#[test]
+fn pid_on_rejected_while_latched_and_keeps_latch() {
+    // An automatic Artisan event (pidOnCHARGE sends PID;LIMIT + PID;ON)
+    // must NOT re-energize the heater after a safety latch.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+    assert!(ctrl.safety().is_emergency_active());
+
+    let r = ctrl.process_artisan_command(ArtisanCommand::PidOn);
+    assert!(
+        r.is_err(),
+        "PID;ON while latched must be rejected, got {:?}",
+        r
+    );
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "latch must stay armed after PID;ON"
+    );
+    assert!(
+        !ctrl.get_status().pid_enabled,
+        "PID must not engage while latched"
+    );
+}
+
+#[test]
+fn pid_on_without_latch_enables_pid_like_start() {
+    // Without a latch, PID;ON behaves like START (profile/default handoff)
+    // but the distinction matters only for the latch path above.
+    let mut ctrl = make_control();
+    let r = ctrl.process_artisan_command(ArtisanCommand::PidOn);
+    assert!(r.is_ok(), "PID;ON without latch must succeed: {:?}", r);
+    assert!(ctrl.get_status().pid_enabled);
+    assert_eq!(
+        ctrl.get_state(),
+        crate::config::constants::RoasterState::Heating
+    );
+}
+
+#[test]
+fn start_still_recovers_latched_roaster() {
+    // START keeps its documented deliberate-recovery semantics.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+    assert!(ctrl.safety().is_emergency_active());
+
+    let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert!(r.is_ok(), "START recovery must succeed: {:?}", r);
+    assert!(!ctrl.safety().is_emergency_active());
+}
+
+// ── H1: no integrator windup across latch recovery ──
+
+#[test]
+fn pid_integrator_does_not_wind_up_across_latch_recovery() {
+    // H1: regulate on target, hold an internal latch 60 s with BT sagging,
+    // then recover with START. The integrator must NOT jump by
+    // error × latch-duration (≈ 600 °C·s) in the first post-recovery tick.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert!(ctrl.get_status().pid_enabled);
+
+    let t0 = Instant::from_millis(2_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    for i in 0..6u64 {
+        let t = Instant::from_millis(t0.as_millis() + i * 310);
+        ctrl.update_temperatures(225.0, 245.0, t).unwrap();
+        let _ = ctrl.update_control(t);
+    }
+    let i_before = ctrl.dispatch().pid_integrator_value();
+
+    // Internal latch (heater cut, BT sags to 215 °C over 60 s). While
+    // latched the PID never computes, so its timing goes stale by the
+    // whole hold — the exact H1 setup.
+    let _ = ctrl.emergency_shutdown("repro latch");
+    assert!(ctrl.safety().is_emergency_active());
+    for i in 0..200u64 {
+        let t = Instant::from_millis(t0.as_millis() + 2000 + i * 310);
+        ctrl.update_temperatures(215.0, 235.0, t).unwrap();
+        let _ = ctrl.update_control(t);
+    }
+
+    // Recovery with START (== PID;ON semantics minus the latch clear —
+    // START clears deliberately as the sanctioned recovery).
+    let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert!(r.is_ok(), "START recovery must succeed: {:?}", r);
+    assert!(ctrl.get_status().pid_enabled);
+
+    let t_rec = Instant::from_millis(t0.as_millis() + 2000 + 200 * 310 + 310);
+    ctrl.status_mut().last_command_received_at_ms = t_rec.as_millis();
+    ctrl.update_temperatures(215.0, 235.0, t_rec).unwrap();
+    let _ = ctrl.update_control(t_rec);
+    let i_after = ctrl.dispatch().pid_integrator_value();
+
+    assert!(
+        (i_after - i_before).abs() < 50.0,
+        "H1: integrator jump across a 60 s latch must stay small, before={:.1} after={:.1}",
+        i_before,
+        i_after
+    );
+    // With BT 10 °C below SV the P-term alone asks ~20 % — nowhere near a
+    // windup-pinned 100 %.
+    assert!(
+        ctrl.last_desired_heater_output() < 90.0,
+        "H1: first post-recovery output must be sane, got {:.1}%",
+        ctrl.last_desired_heater_output()
+    );
+}
+
 #[test]
 fn heater_command_works_after_rearm() {
     let heater = StubHeater::new();
@@ -629,7 +739,7 @@ fn ror_guard_skipped_in_preheat_empty_drum() {
     assert_eq!(ctrl.get_state(), RoasterState::Preheating);
 
     // Inject two samples ~0.8s apart with a 1.0 °C jump → 1.25 °C/s,
-    // well above MAX_BT_RATE_OF_RISE (0.5 °C/s). The derivative filter
+    // well above MAX_BT_RATE_OF_RISE (0.75 °C/s). The derivative filter
     // (α=0.3) will produce a non-zero rate that exceeds the limit. The
     // guard must NOT fire in Preheating.
     let t0 = Instant::from_millis(0);
@@ -982,7 +1092,7 @@ fn off_start_preserves_fan_profile() {
 fn pid_channel_1_does_not_trigger_legacy_ror() {
     // With `PID;CHAN;1` (ET as PV), the legacy `check_rate_of_rise` consumes
     // `status.derivative_rate` — which `refresh_filtered_derivative` feeds
-    // from the ACTIVE PV (ET). The 0.5 °C/s threshold calibrated for the
+    // from the ACTIVE PV (ET). The 0.75 °C/s threshold calibrated for the
     // sluggish BT must not abort a healthy roast ~1 s into Heating.
     // Reproduce: CHAN;1, ET climbing ~1 °C/s for 5 ticks in Heating → no
     // emergency. The BT-only `check_bt_rate` guard (fed by
@@ -1076,8 +1186,8 @@ fn preheat_after_stop_recovers() {
 fn pid_sv_in_idle_energizes_with_ror_guard() {
     // `PID;SV`/`SETTARGET` from Idle enables the PID (state stays Idle) and
     // the heater heats toward the setpoint. The guard arms on
-    // (Idle && pid_enabled && heater_energized): BT climbing > 0.5 °C/s for 3
-    // ticks → emergency shutdown.
+    // (Idle && pid_enabled && heater_energized): BT climbing at 1.6 °C/s
+    // (hard band, > 1.0 °C/s) for 3 ticks → emergency shutdown.
     let mut ctrl = make_control();
     let r = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
     assert!(r.is_ok());
@@ -1096,8 +1206,8 @@ fn pid_sv_in_idle_energizes_with_ror_guard() {
     );
 
     // BT climbs ~1.6 °C/s (0.5 °C per 310 ms tick) toward the target.
-    // After the EMA filter warms up, the derivative exceeds 0.5 °C/s for
-    // 3 consecutive ticks → the extended guard must abort.
+    // After the EMA filter warms up, the derivative exceeds the hard band
+    // (> 1.0 °C/s) for 3 consecutive ticks → the guard must abort.
     let mut bt = 150.5;
     let mut now = Instant::from_millis(60_310);
     for _ in 0..6 {
@@ -1108,14 +1218,14 @@ fn pid_sv_in_idle_energizes_with_ror_guard() {
     }
     assert!(
         ctrl.safety().is_emergency_active(),
-        "P4: unsupervised PID;SV heater in Idle with BT rising >0.5 °C/s must abort"
+        "P4: unsupervised PID;SV heater in Idle with BT rising at 1.6 °C/s must abort"
     );
     assert_eq!(ctrl.get_state(), RoasterState::Error);
 }
 
 #[test]
 fn pid_sv_in_idle_does_not_abort_on_healthy_bt() {
-    // Regression guard for the Idle extension: a healthy BT drift (< 0.5 °C/s)
+    // Regression guard for the Idle extension: a healthy BT drift (< 0.75 °C/s)
     // under PID;SV from Idle must NOT trip the guard.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::SetTargetTemp(200.0));
@@ -1129,12 +1239,12 @@ fn pid_sv_in_idle_does_not_abort_on_healthy_bt() {
     for _ in 0..8 {
         ctrl.update_temperatures(bt, 120.0, now).unwrap();
         let _ = ctrl.update_control(now);
-        bt += 0.1; // ~0.32 °C/s — comfortably below the 0.5 °C/s limit
+        bt += 0.1; // ~0.32 °C/s — comfortably below the 0.75 °C/s limit
         now = Instant::from_millis(now.as_millis() + 310);
     }
     assert!(
         !ctrl.safety().is_emergency_active(),
-        "P4: a healthy <0.5 °C/s drift under PID;SV in Idle must not abort"
+        "P4: a healthy <0.75 °C/s drift under PID;SV in Idle must not abort"
     );
     assert_ne!(ctrl.get_state(), RoasterState::Error);
 }
@@ -1364,6 +1474,275 @@ fn start_resets_heat_session_clock() {
         "P6: START must reset the heat-session clock"
     );
     assert!(ctrl.profile_start_time.is_some());
+}
+
+// ── H2: manual sessions get the 90-min cap, named roasts keep 30 min ──
+
+#[test]
+fn manual_session_does_not_trip_at_30min_but_trips_at_90() {
+    // H2: a manual (OT1-driven, no START) session must survive a standard
+    // drum preheat + roast (31 min here) and only trip at the 90-min
+    // manual-session cap.
+    use crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS;
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetFan(40));
+
+    let t0 = Instant::from_millis(6_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(150.0, 200.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let t1 = Instant::from_millis(6_000_310);
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(151.0, 200.0, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+    assert!(
+        ctrl.get_status().ssr_output > 0.0,
+        "test precondition: manual heater must be energized"
+    );
+    assert!(ctrl.profile_start_time.is_none());
+
+    // 31 min of manual heat — past the OLD 30-min trip, must survive now.
+    ctrl.heat_session_start = Some(Instant::from_millis(t1.as_millis() - 31 * 60 * 1000));
+    let t2 = Instant::from_millis(t1.as_millis() + 310);
+    ctrl.status_mut().last_command_received_at_ms = t2.as_millis();
+    ctrl.update_temperatures(152.0, 200.0, t2).unwrap();
+    let _ = ctrl.update_control(t2);
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "H2: a 31-min manual session must NOT trip the 30-min roast budget"
+    );
+
+    // 91 min of manual heat — past the 90-min session cap, must trip.
+    ctrl.heat_session_start = Some(Instant::from_millis(
+        t2.as_millis() - (MAX_MANUAL_HEAT_SESSION_SECS as u64 + 60) * 1000,
+    ));
+    let t3 = Instant::from_millis(t2.as_millis() + 310);
+    ctrl.status_mut().last_command_received_at_ms = t3.as_millis();
+    ctrl.update_temperatures(153.0, 200.0, t3).unwrap();
+    let _ = ctrl.update_control(t3);
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "H2: a 91-min manual session must trip the manual-session cap"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Error);
+}
+
+// ── H6: RoR guard follows firmware control, not roast state ──
+
+#[test]
+fn ror_guard_disarmed_after_start_then_manual_sliders() {
+    // H6: START (as a "begin" button) then OT1 sliders — state stays
+    // Heating with artisan_control=true, so the firmware-PID RoR guard
+    // must stay disarmed: a 0.9 °C/s soft-band ramp must NOT trip.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(80));
+    assert_eq!(ctrl.get_state(), RoasterState::Heating);
+    assert!(ctrl.get_status().artisan_control);
+
+    let t0 = Instant::from_millis(800_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(100.0, 220.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let mut bt = 100.0;
+    let mut now = Instant::from_millis(800_310);
+    for _ in 0..16 {
+        bt += 0.28; // ~0.9 °C/s — inside the soft band
+        ctrl.update_temperatures(bt, 220.0, now).unwrap();
+        let _ = ctrl.update_control(now);
+        now = Instant::from_millis(now.as_millis() + 310);
+    }
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "H6: START+OT1 manual driving must keep the RoR guard disarmed"
+    );
+}
+
+#[test]
+fn ror_guard_armed_in_pure_firmware_pid() {
+    // Control: the same ramp under pure firmware PID (START, no sliders)
+    // keeps the guard armed and must trip on a sustained soft-band climb.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert!(!ctrl.get_status().artisan_control);
+
+    let t0 = Instant::from_millis(900_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(100.0, 220.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let mut bt = 100.0;
+    let mut now = Instant::from_millis(900_310);
+    for _ in 0..24 {
+        bt += 0.28; // ~0.9 °C/s — inside the soft band
+        ctrl.update_temperatures(bt, 220.0, now).unwrap();
+        let _ = ctrl.update_control(now);
+        now = Instant::from_millis(now.as_millis() + 310);
+    }
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "H6-control: sustained soft-band climb in firmware PID must trip"
+    );
+}
+
+// ── H8: hot manual equilibrium is not a stuck probe ──
+
+#[test]
+fn manual_hot_equilibrium_hold_does_not_latch_probe_stuck() {
+    // H8: OT1 hold with BT flat at 180 °C next to ET 210 °C (thermal
+    // equilibrium between batches) must NOT latch, even past 300 s.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(35));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetFan(40));
+
+    let t0 = Instant::from_millis(1_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(180.0, 210.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+
+    let t1 = Instant::from_millis(
+        1_000_000 + crate::config::constants::PROBE_STUCK_MANUAL_LATCH_SECS * 1000 + 1000,
+    );
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(180.0, 210.0, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+
+    assert!(
+        !ctrl.safety().is_emergency_active(),
+        "H8: a hot manual equilibrium hold must NOT latch probe-stuck"
+    );
+}
+
+#[test]
+fn manual_cold_flat_hold_still_latches_probe_stuck() {
+    // The classic short signature (cold flat BT far from ET) still latches:
+    // the H8 exemption only covers hot plausible holds.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(35));
+
+    let t0 = Instant::from_millis(1_100_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(25.0, 210.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+
+    let t1 = Instant::from_millis(
+        1_100_000 + crate::config::constants::PROBE_STUCK_MANUAL_LATCH_SECS * 1000 + 1000,
+    );
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(25.0, 210.0, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+
+    assert!(
+        ctrl.safety().is_emergency_active(),
+        "H8-control: a cold flat BT far from ET must still latch"
+    );
+}
+
+// ── H3: a manual next batch reclaims the fan from the cooldown latch ──
+
+#[test]
+fn manual_batch_after_pid_off_keeps_operator_fan() {
+    // H3: after PID;OFF, a manual next batch on a hot drum must follow the
+    // commanded fan — not stay pinned at the cooldown 100 %.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(60));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetFan(40));
+    let t0 = Instant::from_millis(3_000_000);
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(190.0, 200.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+
+    let _ = ctrl.process_artisan_command(ArtisanCommand::Stop); // PID;OFF
+                                                                // Next batch, drum still hot (BT > 60 °C).
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(60));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetFan(40));
+    let t1 = Instant::from_millis(3_030_000);
+    ctrl.status_mut().last_command_received_at_ms = t1.as_millis();
+    ctrl.update_temperatures(191.0, 200.0, t1).unwrap();
+    let _ = ctrl.update_control(t1);
+
+    let st = ctrl.get_status();
+    assert_eq!(
+        st.fan_output, 40.0,
+        "H3: operator fan must win over the cooldown latch on a new batch"
+    );
+    assert!(st.ssr_output > 0.0);
+}
+
+#[test]
+fn sliders_after_stop_then_pid_off_recovery_keep_operator_fan() {
+    // H3b: STOP (wire EmergencyStop) → OT1 rejected → PID;OFF recovery →
+    // sliders must drive the fan again.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(60));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+    assert!(
+        ctrl.process_artisan_command(ArtisanCommand::SetHeater(60))
+            .is_err(),
+        "OT1 while latched must be rejected"
+    );
+    let _ = ctrl.process_artisan_command(ArtisanCommand::Stop); // PID;OFF recovery
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(60));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetFan(30));
+    let t = Instant::from_millis(3_100_000);
+    ctrl.status_mut().last_command_received_at_ms = t.as_millis();
+    ctrl.update_temperatures(190.0, 200.0, t).unwrap();
+    let _ = ctrl.update_control(t);
+
+    assert_eq!(
+        ctrl.get_status().fan_output,
+        30.0,
+        "H3b: operator fan must win after STOP → PID;OFF → sliders"
+    );
+}
+
+// ── H12: START without a profile inherits the PREHEAT target ──
+
+#[test]
+fn start_without_profile_keeps_preheat_target() {
+    // H12: PREHEAT 200 → START (no profile) must keep regulating 200 °C,
+    // not jump to the 225 °C default.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(200.0));
+    assert_eq!(ctrl.get_status().target_temp, 200.0);
+
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert_eq!(
+        ctrl.get_status().target_temp,
+        200.0,
+        "H12: START without a profile must inherit the PREHEAT target"
+    );
+    assert_eq!(ctrl.get_state(), RoasterState::Heating);
+}
+
+#[test]
+fn start_without_profile_or_preheat_uses_default_target() {
+    // Without a preheat context the default still applies.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    assert_eq!(
+        ctrl.get_status().target_temp,
+        crate::config::constants::DEFAULT_TARGET_TEMP
+    );
+}
+
+// ── H14: REG never clears or bypasses the latch ──
+
+#[test]
+fn run_regression_rejected_while_latched() {
+    // The drain path (`tasks.rs`) checks the latch before signaling the
+    // runner; the command path itself must also reject while armed.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
+    assert!(ctrl.safety().is_emergency_active());
+
+    let r = ctrl.process_artisan_command(ArtisanCommand::RunRegression);
+    assert!(
+        r.is_err(),
+        "H14: REG while latched must be rejected, got {:?}",
+        r
+    );
+    assert!(ctrl.safety().is_emergency_active());
 }
 
 // ── #CHARGE fires on a realistic 2.26 °C/s drop ──────

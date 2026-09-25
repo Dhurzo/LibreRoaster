@@ -154,7 +154,11 @@ fn main() -> ! {
         );
     }
 
+    // S4: the suite verdict must reflect reality — count failures and
+    // measure BOTH channels instead of printing unconditional PASS.
+    let mut failures = 0u32;
     let mut bt_temps = [0.0; 3];
+    let mut et_temps = [0.0; 3];
     for i in 0..3 {
         match bt_sensor.read_raw_temperature() {
             Ok(reading) => {
@@ -165,7 +169,19 @@ fn main() -> ! {
                     "TEST:tc_raw_06_stability:FAIL:reason=reading_error_iteration_{}",
                     i + 1
                 );
-                loop {}
+                failures += 1;
+            }
+        }
+        match et_sensor.read_raw_temperature() {
+            Ok(reading) => {
+                et_temps[i] = convert_raw_temp(reading.raw_temp);
+            }
+            Err(_) => {
+                println!(
+                    "TEST:tc_raw_06_stability:FAIL:reason=et_reading_error_iteration_{}",
+                    i + 1
+                );
+                failures += 1;
             }
         }
 
@@ -176,18 +192,26 @@ fn main() -> ! {
 
     let max_temp = bt_temps.iter().fold(f32::MIN, |a, &b| a.max(b));
     let min_temp = bt_temps.iter().fold(f32::MAX, |a, &b| a.min(b));
-    let variance = max_temp - min_temp;
+    let bt_variance = max_temp - min_temp;
+    let et_max = et_temps.iter().fold(f32::MIN, |a, &b| a.max(b));
+    let et_min = et_temps.iter().fold(f32::MAX, |a, &b| a.min(b));
+    let et_variance = et_max - et_min;
 
-    if variance < 5.0 {
+    if bt_variance < 5.0 && et_variance < 5.0 {
         println!(
             "TEST:tc_raw_06_stability:PASS:et_variance={:.1},bt_variance={:.1}",
-            0.0, variance
+            et_variance, bt_variance
         );
     } else {
-        println!("TEST:tc_raw_06_stability:FAIL:et_variance={:.1},bt_variance={:.1}:reason=unstable_readings", 0.0, variance);
+        println!("TEST:tc_raw_06_stability:FAIL:et_variance={:.1},bt_variance={:.1}:reason=unstable_readings", et_variance, bt_variance);
+        failures += 1;
     }
 
-    println!("TESTSUITE:COMPLETE:6/6:PASS");
+    if failures == 0 {
+        println!("TESTSUITE:COMPLETE:6/6:PASS");
+    } else {
+        println!("TESTSUITE:COMPLETE:6/6:FAIL:failures={}", failures);
+    }
 
     loop {}
 }

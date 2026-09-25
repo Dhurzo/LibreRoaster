@@ -149,13 +149,16 @@ fn main() -> ! {
 
     // Initialize the esp-println logger before any info!() calls.
     //
-    // esp_println writes to the same physical channel as the Artisan
-    // protocol (USB-Serial-JTAG on the C3 by default, or UART0). In
-    // production we set the level filter to Warn so that the per-tick
-    // info!/debug! chatter (a ~6/s MAX31856 read dump, plus control loop
-    // telemetry) does NOT corrupt READ responses or continuous telemetry on
-    // the wire. The `instrumentation` feature on a debug build raises the
-    // filter to Debug — disable it for production flashes.
+    // H5: esp-println is built WITHOUT its default `auto` feature
+    // (Cargo.toml) and with the explicit `uart` transport, so logs go to
+    // UART0 — never to the USB-Serial-JTAG port that carries the Artisan
+    // protocol when connected over native USB. (If Artisan runs over UART0
+    // instead, rebuild with the `jtag-serial` transport — logs and protocol
+    // must never share a wire.) In production we additionally set the level
+    // filter to Warn so per-tick info!/debug! chatter (a ~6/s MAX31856 read
+    // dump, plus control loop telemetry) stays off the log wire. The
+    // `instrumentation` feature on a debug build raises the filter to
+    // Debug — disable it for production flashes.
     //
     // The long-term direction is a custom `log::Log` that writes to a
     // *separate* UART1 on GPIO2, so logs and protocol never share a wire.

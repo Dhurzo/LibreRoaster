@@ -10,7 +10,7 @@
 //! - Every tick pairs `update_temperatures(t)` with `update_control(t)`
 //!   (same instant) so the 1 s stale-sensor backstop never misfires.
 //! - Positive BT slope is capped at ~0.16 °C/s (9.7 °C/min) so the
-//!   rate-of-rise guards (0.5 °C/s filtered, 3 consecutive) never trip on a
+//!   rate-of-rise guards (0.75 °C/s soft / 1.0 °C/s hard, tiered debounce) never trip on a
 //!   healthy roast; the charge DIP is a fast FALL (negative slope) — both
 //!   RoR guards only trip on positive rate (sensor.rs `check_bt_rate` /
 //!   `check_rate_of_rise`).
@@ -536,11 +536,17 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
     let mut ctrl = build_control();
     let t0 = Instant::now();
 
-    // Manual mode (no PID): OT1 60 energizes the heater; BT frozen at 80 °C.
-    // firmware emits `ERR probe_stuck_warning` on the wire WITHOUT latching
-    // (a legitimately slow finish can hold BT <1 °C for 2 min at low duty);
-    // the real latch lands at ~300 s and announces itself with
+    // Manual mode (no PID): OT1 60 energizes the heater; BT frozen at 25 °C
+    // (the classic short signature — cold-junction temperature while ET sits
+    // at 85 °C). Firmware emits `ERR probe_stuck_warning` on the wire WITHOUT
+    // latching (a legitimately slow finish can hold BT <1 °C for 2 min at low
+    // duty); the real latch lands at ~300 s and announces itself with
     // `ERR safety_fault Probe stuck`.
+    // NOTE (H8): a HOT plausible flat (e.g. BT 180 next to ET 210, a
+    // stabilized preheat hold) is thermal equilibrium, not a dead probe, and
+    // stays exempt — the operator watches the Artisan curve there and the ET
+    // overtemp backstop stays armed. This test pins the unambiguous short
+    // signature, which must still latch.
     ctrl.process_artisan_command(ArtisanCommand::SetHeater(60))
         .expect("manual heater");
     drain_output_lines(); // clear stale lines from earlier tests in this binary
@@ -554,7 +560,7 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
         if i % READ_EVERY_TICKS == 0 {
             poll_read(&mut ctrl, t);
         }
-        if tick_at(&mut ctrl, 80.0, 85.0, t).is_err() {
+        if tick_at(&mut ctrl, 25.0, 85.0, t).is_err() {
             fired = true;
             break;
         }
@@ -597,7 +603,7 @@ fn s3_probe_stuck_manual_flat_bt_trips() {
 // rate-of-rise guard.
 //
 // Slopes used here stay ≤ 0.19 °C/s (11.4 °C/min) for the healthy phases —
-// comfortably under the 0.5 °C/s soft guard threshold (constants.rs), and
+// comfortably under the 0.75 °C/s soft guard threshold (constants.rs), and
 // the boundary tests below drive the intentional spikes.
 
 #[test]
@@ -798,9 +804,9 @@ fn light_roast_firmware_pid_full_flow() {
 // The guard is fed by `refresh_bt_guard_derivative` (IIR alpha 0.3, sensor.rs)
 // on the BT-only derivative. For a constant input rate r the filtered value
 // converges as r·(1 − 0.7ⁿ) per tick, so the filtered signal crosses the
-// 0.5 °C/s soft band ~4-6 ticks into a spike and the 1.0 °C/s hard band
+// 0.75 °C/s soft band ~4-6 ticks into a spike and the 1.0 °C/s hard band
 // ~3-4 ticks into a fast one. The tests below use 0.186 °C/tick = 0.6 °C/s,
-// 0.217 °C/tick = 0.7 °C/s and 0.465 °C/tick = 1.5 °C/s at TICK_MS = 310.
+// 0.263 °C/tick = 0.85 °C/s and 0.465 °C/tick = 1.5 °C/s at TICK_MS = 310.
 
 #[test]
 fn light_roast_boundary_manual_mode_ror_guard_disarmed() {
@@ -832,11 +838,12 @@ fn light_roast_boundary_manual_mode_ror_guard_disarmed() {
 
 #[test]
 fn light_roast_boundary_turnaround_does_not_trip_firmware_pid() {
-    // The key light-roast false-trip: a ~3 s, 0.6 °C/s turnaround right after
+    // The key light-roast false-trip: a ~3 s, 0.85 °C/s turnaround right after
     // charge in firmware-PID mode. With the old single-tier 3-tick rule the
-    // filtered derivative crossed 0.5 °C/s ~6 ticks in and latched ~2 ticks
-    // later — a false emergency on a healthy aggressive light roast. The
-    // soft band (ROR_SOFT_DEBOUNCE_LIMIT = 12) tolerates the brief spike.
+    // filtered derivative crossed the soft band ~6 ticks in and latched
+    // ~2 ticks later — a false emergency on a healthy aggressive light
+    // roast. The soft band (ROR_SOFT_DEBOUNCE_LIMIT = 12) tolerates the
+    // brief spike.
     let _guard = acquire_lock();
     let mut ctrl = build_control();
     let t0 = Instant::now();
@@ -854,7 +861,7 @@ fn light_roast_boundary_turnaround_does_not_trip_firmware_pid() {
         tick_at(&mut ctrl, bt, bt + 10.0, t).expect("seed");
     }
 
-    // Turnaround spike: 0.6 °C/s (soft band + 0.1) for 10 ticks (~3.1 s).
+    // Turnaround spike: 0.85 °C/s (soft band + 0.1) for 10 ticks (~3.1 s).
     // The per-tick step is derived FROM the production soft threshold so the
     // test keeps pinning the false-trip scenario if HIL calibration ever
     // moves MAX_BT_RATE_OF_RISE.
@@ -933,7 +940,7 @@ fn light_roast_boundary_hard_runaway_trips_firmware_pid() {
 
 #[test]
 fn light_roast_boundary_sustained_soft_band_trips_firmware_pid() {
-    // A marginal-but-SUSTAINED climb (0.7 °C/s) must still abort: the
+    // A marginal-but-SUSTAINED climb (0.95 °C/s) must still abort: the
     // filtered derivative enters the soft band ~6 ticks in and the 12-tick
     // debounce latches ~10 ticks later (~5 s sustained).
     let _guard = acquire_lock();
@@ -953,7 +960,7 @@ fn light_roast_boundary_sustained_soft_band_trips_firmware_pid() {
     }
 
     let mut fired = false;
-    let soft_step = (MAX_BT_RATE_OF_RISE + 0.2) * (TICK_MS as f32 / 1000.0); // 0.7 °C/s
+    let soft_step = (MAX_BT_RATE_OF_RISE + 0.2) * (TICK_MS as f32 / 1000.0); // 0.95 °C/s
                                                                              // Enters the soft band ~3 spike ticks in (IIR alpha 0.3); the extended
                                                                              // 12-tick debounce then latches — bound the loop on the production
                                                                              // debounce limit plus margin.

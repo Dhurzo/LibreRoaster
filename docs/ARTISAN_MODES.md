@@ -47,7 +47,7 @@ READ         → 0.0,120.3,150.5,0.0,0.0
 OT1 60       → heater 60 %
 OT2 50       → fan 50 %
 READ         → 0.0,121.0,151.2,0.0,0.0   (still 5 fields: no PID)
-STOP         → heater 0 %, fan 100 % (cooldown)
+STOP         → heater 0 %, fan 100 %, latch armed (recover: PID;OFF / START)
 ```
 
 ### Rules to know
@@ -55,9 +55,11 @@ STOP         → heater 0 %, fan 100 % (cooldown)
 * **Fan floor:** with heater > 0 % the fan never drops below `20 %`
   (`FAN_MIN_SAFETY_PCT`), even if you send `OT2 0`.
 * **Safety backstops also apply in manual mode:** comms-idle (15 s
-  without commands while heating), max roast time (30 min), two-stage
-  stuck-probe detector (`ERR probe_stuck_warning` after 120 s of flat
-  BT, latch at 300 s).
+  without commands while heating), manual heat-session cap (90 min without
+  `START`; 30 min once anchored by `START`), two-stage stuck-probe
+  detector (`ERR probe_stuck_warning` after 120 s of flat BT, latch at
+  300 s — hot BT-near-ET equilibrium holds exempt, H8), firmware-PID RoR
+  guard stays disarmed on the sliders even after `START` (H6).
 * **Artisan sends this on its own:** what stock Artisan sends without
   help is `CHAN`/`UNITS`/`FILT` on connect, `READ` polling, and the
   `OT1`/`OT2` sliders. See fixtures
@@ -77,8 +79,8 @@ roasts without moving sliders by hand.
 PROFILE;0,50;120,150;300,200;480,225
 FANPROFILE;0,30;60,60;300,80
 START            → start the profile roast (enables PID + following)
-PID;OFF          → stop and disable PID
-STOP             → stop: heater 0 %, fan 100 %
+PID;OFF          → stop and disable PID (also the latch recovery)
+STOP             → emergency stop: heater 0 %, fan 100 %, arms the safety latch
 ```
 
 * Up to `MAX_PROFILE_SETPOINTS = 16` points per profile
@@ -106,7 +108,7 @@ FANPROFILE;0,30;60,60;300,80
 START              → PID starts with SV = profile at t=0
 READ               → 0.0,120.3,150.5,0.0,0.0,75.0,45.0,150.0
 ...                → SV rises on its own along the curve
-STOP               → done: heater 0 %, fan 100 %
+STOP               → heater 0 %, fan 100 %, latch armed (recover: PID;OFF / START)
 ```
 
 ### Rules to know
@@ -134,7 +136,7 @@ With one nuance:
 
 | Artisan sends on its own | You have to trigger |
 |---|---|
-| `CHAN`/`UNITS`/`FILT` (on connect), `READ` (polling), `OT1`/`OT2` sliders, `PID;SV`, `START`/`STOP` | `PROFILE;...`, `FANPROFILE;...` |
+| `CHAN`/`UNITS`/`FILT` (on connect), `READ` (polling), `OT1`/`OT2` sliders, `PID;SV`, `PID;ON`/`PID;OFF` | `PROFILE;...`, `FANPROFILE;...`, `START`/`STOP` (LibreRoaster roast verbs — send via Artisan buttons, stock Artisan does not emit them) |
 
 Ways to send the profile:
 
@@ -158,7 +160,7 @@ Ways to send the profile:
 
 ```text
 # Manual
-OT1 60 / OT2 50 / UP / DOWN / STOP
+OT1 60 / OT2 50 / UP / DOWN / STOP (STOP = emergency latch; PID;OFF recovers)
 
 # Profile
 PROFILE;0,50;120,150;300,200

@@ -148,12 +148,11 @@ fn start_without_preheat_parses_and_runs_end_to_end() {
 
 #[test]
 fn preheat_then_start_transitions_normally() {
-    // comment admitted "the transition is in RoasterControl handler". Drive
-    // PREHEAT → START through RoasterControl and assert the real transition
-    // (Preheating → Heating). Note the target contract: with NO profile
-    // loaded, `handle_start_roast` (roaster_control.rs:1261-1268) falls back
-    // to `enable_pid_control(DEFAULT_TARGET_TEMP)`, so the PREHEAT target is
-    // intentionally NOT preserved across START — the test pins that too.
+    // Drive PREHEAT → START through RoasterControl and assert the real
+    // transition (Preheating → Heating). H12 target contract: with NO
+    // profile loaded, the START handoff now INHERITS the preheat target —
+    // the operator already chose a reachable setpoint for this drum, so
+    // jumping to the 225 °C default would overshoot the chosen curve.
     assert!(matches!(
         parse_artisan_command("PREHEAT 180"),
         Ok(ArtisanCommand::Preheat(180.0))
@@ -179,12 +178,12 @@ fn preheat_then_start_transitions_normally() {
         RoasterState::Heating,
         "START after PREHEAT must transition into Heating"
     );
-    // No profile loaded → START falls back to the default target (the
-    // PREHEAT target is a preheat-only setpoint, not carried into the roast).
+    // No profile loaded → START inherits the preheat target (H12) instead
+    // of jumping to DEFAULT_TARGET_TEMP.
     assert_eq!(
         rc.get_status().target_temp,
-        libreroaster::config::constants::DEFAULT_TARGET_TEMP,
-        "START without PROFILE must fall back to DEFAULT_TARGET_TEMP"
+        180.0,
+        "H12: START after PREHEAT must keep the preheat target"
     );
 }
 

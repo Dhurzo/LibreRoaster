@@ -9,7 +9,7 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 | GPIO  | Function              | Direction | Peripheral          | Notes / Warnings                                |
 |-------|-----------------------|-----------|---------------------|-------------------------------------------------|
 | 1     | Heat Detection        | Input     | SSR feedback        | Internal pull-up enabled. Reads LOW when SSR conducts. |
-| 2     | *(not used)*          | —         | —                   | **Strapping pin (VDD_SPI). Must be avoided.** Conflicts with FSPIQ. |
+| 2     | *(not used)*          | —         | —                   | **Strapping pin. Must be avoided.** Conflicts with FSPIQ. |
 | 3     | MAX31856 #1 CS        | Output    | Thermocouple ET     | Chip Select for Environment Temperature sensor. Shared SPI bus. |
 | 4     | MAX31856 #2 CS        | Output    | Thermocouple BT     | Chip Select for Bean Temperature sensor. Shared SPI bus. |
 | 5     | SPI MISO              | Input     | SPI (GPIO Matrix)   | Routed via GPIO Matrix because GPIO2 (native FSPIQ) is a strapping pin. |
@@ -148,7 +148,7 @@ GPIO8=HIGH + GPIO9=LOW is used; GPIO8=0 + GPIO9=0 is invalid.
 
 | Property          | Value                        |
 |-------------------|------------------------------|
-| Strapping Role    | **VDD_SPI** voltage selection |
+| Strapping Role    | Boot-mode strap (must float/high at reset; legacy ESP32 name "VDD_SPI" does not apply to the C3) |
 | Boot Effect       | Determines SPI flash voltage (1.8V vs 3.3V) |
 | Status            | **Deliberately avoided** in this design |
 
@@ -256,7 +256,13 @@ NOT USED (avoid connecting anything)
 - Verify with an oscilloscope that GPIO9 is >2.5V during the first 1 ms after power-on.
 
 ### Fan Driver Compatibility
-- If using a MOSFET to drive the fan, ensure the gate has a pull-down resistor (to keep fan OFF during ESP32-C3 boot) BUT the GPIO9 line itself must be pulled UP.
+- If using a MOSFET to drive the fan, the GPIO9 line itself must be pulled
+  UP (boot strap). Note the divider math honestly: 10 kΩ pull-up + 1 kΩ
+  series + 100 kΩ gate pull-down puts the gate at ≈2.97 V while GPIO9 is
+  HIGH — enough to turn a logic-level MOSFET ON, so the fan normally
+  **runs during boot**. That is the safe direction (airflow with no heat);
+  a guaranteed-OFF-at-boot needs an inverted driver stage, not a stronger
+  pull-down (which would break the strap).
 - **Solution:** Add both a pull-up (10 kΩ to 3.3V) on the GPIO9 line **and** a **weak** pull-down (100 kΩ to GND) on the MOSFET gate side, separated by a series resistor (1 kΩ) from GPIO9 to the gate.
 
 ```
@@ -265,7 +271,7 @@ GPIO9 ──┤ 1kΩ                 │──── MOSFET Gate
         │         10kΩ         │
         │ ┌─────/\/\/\/── 3.3V │  (pull-up ensures boot OK)
         │ │                    │
-        │ └─────/\/\/\/── GND  │  (pull-down keeps fan OFF during boot)
+        │ └─────/\/\/\/── GND  │  (weak pull-down: defined level when GPIO9 is Hi-Z; fan normally runs at boot — safe direction)
         └──────────────────────┘
 ```
 
@@ -378,8 +384,9 @@ GPIO9 ──┬── 1kΩ ──── MOSFET Gate
         │
         └── BAT54 ── 3.3V      (flyback catch diode to 3.3V)
         
-Add a flyback diode across the fan motor terminals:
-    Fan (+) ──┬── DIODE (1N4007 or Schottky) ──── Fan (−)
+Add a flyback diode across the fan motor terminals (Schottky only at
+25 kHz PWM — SS34 / 1N5819; a 1N4007 is far too slow for this):
+    Fan (+) ──┬── DIODE (Schottky) ──── Fan (−)
               │              cathode ◄── anode
               └───────────────────────────────────┘
               (diode cathode to Fan +, anode to Fan −)

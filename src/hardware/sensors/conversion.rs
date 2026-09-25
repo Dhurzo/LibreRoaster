@@ -23,12 +23,14 @@ use super::simulated::SimulatedSensorSource;
 /// LSB to bit 0 before multiplying by the LSB weight.
 pub const MAX31856_LSB: f32 = 0.0078125;
 
-/// Maximum consecutive sensor read fallbacks before reporting error.
-/// At the real tick cadence (~310 ms: 100 ms timer + 210 ms
-/// `MAX31856_CONVERSION_TIME_MS`), 5 fallbacks ≈ 1.55 s of stale data before
-/// `resolve_channel` returns `HardwareError`. Mirrors `SENSOR_FAULT_DEBOUNCE = 5`
-/// (same 5-tick persistence bar) and stays under `TEMP_VALIDITY_TIMEOUT_MS`
-/// (1000 ms freshness bound is enforced per-sample; this caps total fallback run).
+/// Maximum consecutive sensor read fallbacks before the channel is marked
+/// faulted (NaN + fault flags, H9). At the real tick cadence (~310 ms:
+/// 100 ms timer + 210 ms `MAX31856_CONVERSION_TIME_MS`), 5 fallbacks ≈ 1.55 s
+/// of stale data before `resolve_channel` poisons that channel — the OTHER
+/// channel's sample is preserved (single-channel degradation). Mirrors
+/// `SENSOR_FAULT_DEBOUNCE = 5` (same 5-tick persistence bar) and stays under
+/// `TEMP_VALIDITY_TIMEOUT_MS` (1000 ms freshness bound is enforced per-sample;
+/// this caps total fallback run).
 const MAX_CONSECUTIVE_SENSOR_FALLBACKS: u8 = 5;
 
 /// Exponential moving average alpha for temperature filtering.
@@ -50,6 +52,20 @@ pub fn convert_raw_temp(raw_temp: u32) -> f32 {
     } else {
         (raw_temp >> 5) as f32 * MAX31856_LSB
     }
+}
+
+/// Cold-junction temperature LSB in °C (datasheet Table 2 — distinct from
+/// the 0.0078125 °C thermocouple LSB).
+pub const MAX31856_CJ_LSB: f32 = 0.015625;
+
+/// Decode the CJTH:CJTL cold-junction registers into °C (H13).
+///
+/// 14-bit two's complement, left-justified in the 16-bit word (the low 2
+/// bits of CJTL are dead): arithmetic-shift right by 2, then scale.
+/// Feeds the `AMB` field of the Artisan `READ` line.
+pub fn convert_cj_temp(cjth: u8, cjtl: u8) -> f32 {
+    let raw = ((cjth as u16) << 8) | cjtl as u16;
+    ((raw as i16) >> 2) as f32 * MAX31856_CJ_LSB
 }
 
 /// Fault classification for a single MAX31856 thermocouple channel.
@@ -157,6 +173,9 @@ pub struct SensorSample {
     pub env_temp: f32,
     pub bean_fault: SensorFault,
     pub env_fault: SensorFault,
+    /// Cold-junction (board) temperature in °C (H13) — mean of the healthy
+    /// channels' CJ readings, held on total fault. Feeds `AMB` on the wire.
+    pub ambient_temp: f32,
     pub timestamp: Instant,
 }
 
@@ -167,6 +186,7 @@ impl SensorSample {
             env_temp: 0.0,
             bean_fault: SensorFault::default(),
             env_fault: SensorFault::default(),
+            ambient_temp: 0.0,
             timestamp,
         }
     }
@@ -340,6 +360,7 @@ impl SensorConversionHub {
     }
 
     /// Build a `SensorSample` from a `FixtureReading` (regression feature).
+    /// Fixtures carry no CJ bytes — ambient holds its previous value.
     #[cfg(feature = "regression")]
     pub fn sample_from_fixture(
         &mut self,
@@ -347,7 +368,7 @@ impl SensorConversionHub {
     ) -> Result<SensorSample, RoasterError> {
         let timestamp = Instant::now();
         let (bean_result, env_result) = fixture.to_channel_results();
-        self.build_sample(timestamp, bean_result, env_result)
+        self.build_sample(timestamp, bean_result, env_result, None, None)
     }
 
     /// Construct a hub pre-loaded with a single fixture sample (regression).
@@ -363,8 +384,8 @@ impl SensorConversionHub {
         #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
         {
             let timestamp = Instant::now();
-            let (bean, env) = self.sample_parallel().await;
-            self.build_sample(timestamp, bean, env)
+            let ((bean, bean_cj), (env, env_cj)) = self.sample_parallel().await;
+            self.build_sample(timestamp, bean, env, bean_cj, env_cj)
         }
         #[cfg(feature = "simulated-sensors")]
         {
@@ -372,7 +393,8 @@ impl SensorConversionHub {
             let (bean_temp, env_temp) = self.simulated_source.current_temperatures();
             let bean_result: SensorChannelResult = Ok((bean_temp, SensorFault::default()));
             let env_result: SensorChannelResult = Ok((env_temp, SensorFault::default()));
-            self.build_sample(timestamp, bean_result, env_result)
+            // No CJ hardware in simulation — ambient holds (0.0 on host).
+            self.build_sample(timestamp, bean_result, env_result, None, None)
         }
         #[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
         {
@@ -409,7 +431,12 @@ impl SensorConversionHub {
     }
 
     #[cfg(all(target_arch = "riscv32", not(feature = "simulated-sensors")))]
-    async fn sample_parallel(&mut self) -> (SensorChannelResult, SensorChannelResult) {
+    async fn sample_parallel(
+        &mut self,
+    ) -> (
+        (SensorChannelResult, Option<f32>),
+        (SensorChannelResult, Option<f32>),
+    ) {
         // Trigger both sensor conversions in parallel by starting both conversions
         // before any await, then wait once, then read both results.
         //
@@ -430,27 +457,44 @@ impl SensorConversionHub {
         ))
         .await;
 
-        // Read bean sensor result - fast SPI read, ~50us
+        // Read bean sensor result - fast SPI read, ~50us. The CJ reading
+        // rides along only when the channel itself is healthy (H13).
         let bean_result = bean_trigger_result
             .and_then(|_| self.bean_sensor.read_conversion_result())
             .map(|reading| {
                 (
-                    convert_raw_temp(reading.raw_temp),
-                    SensorFault::from_register(reading.fault),
+                    (
+                        convert_raw_temp(reading.raw_temp),
+                        SensorFault::from_register(reading.fault),
+                    ),
+                    reading.cj_temp_c,
                 )
             });
+        let (bean, bean_cj) = match bean_result {
+            Ok(((temp, fault), cj)) if !fault.has_fault() => (Ok((temp, fault)), Some(cj)),
+            Ok(((temp, fault), _)) => (Ok((temp, fault)), None),
+            Err(e) => (Err(e), None),
+        };
 
         // Read env sensor result - fast SPI read, ~50us
         let env_result = env_trigger_result
             .and_then(|_| self.env_sensor.read_conversion_result())
             .map(|reading| {
                 (
-                    convert_raw_temp(reading.raw_temp),
-                    SensorFault::from_register(reading.fault),
+                    (
+                        convert_raw_temp(reading.raw_temp),
+                        SensorFault::from_register(reading.fault),
+                    ),
+                    reading.cj_temp_c,
                 )
             });
+        let (env, env_cj) = match env_result {
+            Ok(((temp, fault), cj)) if !fault.has_fault() => (Ok((temp, fault)), Some(cj)),
+            Ok(((temp, fault), _)) => (Ok((temp, fault)), None),
+            Err(e) => (Err(e), None),
+        };
 
-        (bean_result, env_result)
+        ((bean, bean_cj), (env, env_cj))
     }
 
     #[allow(dead_code)]
@@ -459,10 +503,21 @@ impl SensorConversionHub {
         timestamp: Instant,
         bean_result: SensorChannelResult,
         env_result: SensorChannelResult,
+        bean_cj: Option<f32>,
+        env_cj: Option<f32>,
     ) -> Result<SensorSample, RoasterError> {
         let previous = self.last_sample;
         let mut sample = previous.unwrap_or_else(|| SensorSample::with_timestamp(timestamp));
         sample.timestamp = timestamp;
+
+        // H13: ambient is the mean of the healthy channels' CJ readings; on
+        // total fault the previous ambient holds (never NaN-poisoned).
+        sample.ambient_temp = match (bean_cj, env_cj) {
+            (Some(b), Some(e)) => (b + e) * 0.5,
+            (Some(b), None) => b,
+            (None, Some(e)) => e,
+            (None, None) => previous.map(|p| p.ambient_temp).unwrap_or(0.0),
+        };
 
         let mut bean_fb = self.bean_consecutive_fallbacks;
         let (mut bean_temp, bean_fault) =
@@ -517,9 +572,17 @@ impl SensorConversionHub {
             Err(err) => {
                 *consecutive_fallbacks = consecutive_fallbacks.saturating_add(1);
                 if *consecutive_fallbacks >= MAX_CONSECUTIVE_SENSOR_FALLBACKS {
-                    return Err(RoasterError::HardwareError {
-                        source: Some("consecutive_sensor_fallbacks_exceeded"),
-                    });
+                    // H9: a persistently failing channel must NOT invalidate
+                    // the other channel's sample. Mark this channel faulted
+                    // (NaN + fault flags) and let the per-channel debounce in
+                    // `SensorController` (SENSOR_FAULT_DEBOUNCE → NaN → hold)
+                    // decide — a dead ET keeps a BT-only roast alive, matching
+                    // the single-channel boot degradation of
+                    // `Max31856::new_tolerant`.
+                    let mut fault = SensorFault::from_max31856_error(&err);
+                    fault.communication_error = true;
+                    fault.fault_detected = true;
+                    return Ok((f32::NAN, fault));
                 }
                 let fallback_temp = match (channel, previous) {
                     (_, Some(prev)) => match channel {
@@ -540,5 +603,87 @@ impl SensorConversionHub {
 impl Default for SensorConversionHub {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn ok(temp: f32) -> SensorChannelResult {
+        Ok((temp, SensorFault::default()))
+    }
+
+    fn err() -> SensorChannelResult {
+        Err(Max31856Error::CommunicationError { source: "test" })
+    }
+
+    #[test]
+    fn cj_decode_vectors() {
+        // Datasheet Table 2 spot checks (14-bit code × 0.015625 °C).
+        assert!((convert_cj_temp(0x19, 0x00) - 25.0).abs() < 0.001);
+        assert!((convert_cj_temp(0x00, 0x00) - 0.0).abs() < 0.001);
+        assert!((convert_cj_temp(0xFF, 0x00) - -1.0).abs() < 0.001);
+        assert!((convert_cj_temp(0xC0, 0x00) - -64.0).abs() < 0.001);
+        assert!((convert_cj_temp(0x7F, 0xFC) - 127.984).abs() < 0.002);
+    }
+
+    #[test]
+    fn single_dead_channel_preserves_other_channel() {
+        // H9: 5 consecutive SPI errors on ONE channel must NaN-mark only
+        // that channel — the other channel's sample survives, matching the
+        // single-channel boot degradation of `Max31856::new_tolerant`.
+        let mut hub = SensorConversionHub::new();
+        let ts = Instant::from_millis(1_000);
+        let s = hub
+            .build_sample(ts, ok(150.0), ok(200.0), Some(25.0), Some(26.0))
+            .expect("first sample");
+        assert_eq!(s.bean_temp, 150.0);
+        assert_eq!(s.env_temp, 200.0);
+        assert!((s.ambient_temp - 25.5).abs() < 0.001);
+
+        // 4 fallbacks: previous temps hold, no fault latched.
+        for i in 1..5u64 {
+            let t = Instant::from_millis(1_000 + i * 310);
+            let s = hub
+                .build_sample(t, err(), ok(200.0), None, Some(26.0))
+                .expect("fallback holds");
+            assert_eq!(s.bean_temp, 150.0);
+            assert_eq!(s.env_temp, 200.0);
+            assert!(!s.bean_fault.has_fault() || s.bean_temp.is_finite());
+        }
+
+        // 5th consecutive error: bean NaN + fault flags, env intact.
+        let t = Instant::from_millis(1_000 + 5 * 310);
+        let s = hub
+            .build_sample(t, err(), ok(200.0), None, Some(26.0))
+            .expect("dead channel must not abort the sample");
+        assert!(s.bean_temp.is_nan());
+        assert!(s.bean_fault.communication_error);
+        assert!(s.bean_fault.fault_detected);
+        assert_eq!(s.env_temp, 200.0);
+        assert!(!s.env_fault.has_fault());
+        // Ambient falls back to the surviving channel, never NaN.
+        assert!((s.ambient_temp - 26.0).abs() < 0.001);
+        assert!(s.ambient_temp.is_finite());
+    }
+
+    #[test]
+    fn ambient_holds_on_total_fault() {
+        let mut hub = SensorConversionHub::new();
+        let ts = Instant::from_millis(2_000);
+        let s = hub
+            .build_sample(ts, ok(150.0), ok(200.0), Some(25.0), Some(27.0))
+            .expect("seed");
+        assert!((s.ambient_temp - 26.0).abs() < 0.001);
+
+        // Both channels faulted (but below the NaN threshold): ambient holds.
+        let t = Instant::from_millis(2_310);
+        let s = hub
+            .build_sample(t, err(), err(), None, None)
+            .expect("total fault holds");
+        assert!((s.ambient_temp - 26.0).abs() < 0.001);
+        assert!(s.ambient_temp.is_finite());
     }
 }

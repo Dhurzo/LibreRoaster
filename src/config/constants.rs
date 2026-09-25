@@ -108,14 +108,18 @@ pub const TEMPERATURE_READ_INTERVAL_MS: u32 = 160;
 pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 
 /// Safety: over-temperature emergency cutoff in °C.
-/// Triggers `emergency_shutdown("Overtemp")`. 40 °C below `MAX_TEMP` (300 °C)
-/// and 90 °C below `MAX_VALID_TEMP` (350 °C); 35 °C above the default
-/// target (225 °C) to avoid false trips on dark-roast profiles. See
-/// `SafetyController::check_overtemp` and `roaster_control::update_control`.
+/// Triggers `emergency_shutdown("Over-temperature detected")` (or
+/// `"Temperature exceeds valid range"` for out-of-band samples). 40 °C below
+/// `MAX_TEMP` (300 °C) and 90 °C below `MAX_VALID_TEMP` (350 °C); 35 °C above
+/// the default target (225 °C) to avoid false trips on dark-roast profiles.
+/// See `roaster_control::update_control` and
+/// `SensorController::update_temperatures`.
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
 /// Maximum age of a temperature sample before the PID treats it as stale
-/// and forces a safety hold. Covers ~3 ticks of missed sensor reads
-/// (`CONTROL_LOOP_TICK_MS` ≈ 310 ms).
+/// and forces a safety hold. Tolerates 2 fully-missed ticks (H9): the sample
+/// is stamped BEFORE the 210 ms conversion wait, so at the ~310 ms cadence
+/// the age at the check is n·≈320 ms + ≈210 ms — 2 misses ≈ 850 ms (held),
+/// 3 misses ≈ 1170 ms (latch). Raise to 1300 to really cover ~3 misses.
 pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 
 /// Bean temperature (°C) below which the post-STOP cooldown fan latch
@@ -125,13 +129,15 @@ pub const TEMP_VALIDITY_TIMEOUT_MS: u32 = 1000;
 /// 100% every tick regardless of the manual setting or fan profile.
 pub const COOLING_RELEASE_BEAN_TEMP_C: f32 = 60.0;
 
-/// Soft RoR guard threshold in °C/s (0.5 °C/s = 30 °C/min). Rates between
-/// this value and `MAX_BT_RATE_OF_RISE_HARD` — the band where aggressive
-/// light-roast turnarounds legitimately live for a few seconds — latch only
-/// after `ROR_SOFT_DEBOUNCE_LIMIT` consecutive ticks. Above this threshold
-/// during active heating indicates a possible runaway heater, stuck SSR, or
-/// thermocouple failure.
-pub const MAX_BT_RATE_OF_RISE: f32 = 0.5;
+/// Soft RoR guard threshold in °C/s (0.75 °C/s = 45 °C/min). Rates between
+/// this value and `MAX_BT_RATE_OF_RISE_HARD` latch only after
+/// `ROR_SOFT_DEBOUNCE_LIMIT` consecutive ticks. Calibrated (H6b) so
+/// aggressive light-roast turnarounds (peaks 30–35 °C/min ≈ 0.5–0.6 °C/s)
+/// stay tolerated, while a sustained marginal climb still aborts. A genuine
+/// runaway crosses into the hard band quickly, and the overtemp backstop
+/// (260 °C) covers slow climbs below this threshold. Provisional pending
+/// hardware calibration (HIL).
+pub const MAX_BT_RATE_OF_RISE: f32 = 0.75;
 /// Hard RoR guard threshold in °C/s (1.0 °C/s = 60 °C/min). No legitimate
 /// roast phase sustains this: rates above it latch after the FAST debounce
 /// (`ROR_EXCEEDED_CONSECUTIVE_LIMIT`). Both thresholds are provisional
@@ -257,17 +263,25 @@ pub enum ArtisanCommand {
     ReadStatus,
     /// `STATUS`/`#` — request an extended status report.
     StatusReport,
-    /// `START` — begin a roast.
+    /// `START` — begin a roast (deliberate re-energize: clears a latched
+    /// emergency/fault via `clear_emergency_explicit`).
     StartRoast,
+    /// `PID;ON` (or `PID,ON`) — enable firmware PID. Unlike `START`, this
+    /// NEVER clears a safety latch: while `fault_condition` is armed the
+    /// command is rejected, so an automatic Artisan event (e.g. pidOnCHARGE)
+    /// cannot re-energize the heater without an operator decision (H11).
+    PidOn,
     /// `OT1` — set heater output directly (manual %, 0-100).
     SetHeater(u8),
     /// `OT2` — set fan output directly (manual %, 0-100).
     SetFan(u8),
     /// `OT2` with ramp flag — set fan speed with ramp enable.
     SetFanSpeed(u8, bool),
-    /// `STOP` — terminate the roast (operator-initiated).
+    /// `PID;OFF` (or `PID,OFF`) — terminate the roast AND clear a latched
+    /// emergency/fault (operator recovery to `Idle`).
     Stop,
-    /// `ESTOP` — operator emergency stop.
+    /// `STOP` — operator emergency stop: cuts heat, forces fan 100 %, and
+    /// arms the safety latch (recovery via `PID;OFF`/`START`/`PREHEAT`).
     EmergencyStop,
     /// Increment heater output one step.
     IncreaseHeater,
@@ -360,7 +374,18 @@ pub const CHARGE_SAMPLE_TICK_DIV: u8 = {
 /// Maximum allowed roast duration in seconds (30 minutes).
 /// If exceeded during an active roast, emergency shutdown is triggered.
 /// This is a safety backstop — Artisan normally controls roast duration via STOP.
+///
+/// The budget anchors to `START`/`PROFILE` (`profile_start_time`). A manual
+/// (OT1-driven, no `START`) heat session — preheat plus back-to-back batches —
+/// is capped separately by `MAX_MANUAL_HEAT_SESSION_SECS` (H2): a drum needs
+/// 15–30 min of preheat, which must not consume the roast budget.
 pub const MAX_ROAST_TIME_SECS: u32 = 1800;
+
+/// Maximum allowed manual heat-session duration in seconds (90 minutes).
+/// Covers preheat + roast + back-to-back batches without a `START` anchor.
+/// Against a runaway heater the comms-idle (15 s), overtemp (260 °C) and
+/// probe-stuck backstops stay armed — this cap is only the outer time box.
+pub const MAX_MANUAL_HEAT_SESSION_SECS: u32 = 5400;
 
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
@@ -736,6 +761,7 @@ mod tests {
             assert!(MIN_TARGET_TEMP < MAX_TARGET_TEMP);
             assert!(MAX_BT_RATE_OF_RISE > 0.0);
             assert!(MAX_ROAST_TIME_SECS > 0);
+            assert!(MAX_MANUAL_HEAT_SESSION_SECS > MAX_ROAST_TIME_SECS);
         };
         // The feed interval and the HW timeout are the real values (tick
         // cadence vs programmed RWDT hold), so this assertion can actually

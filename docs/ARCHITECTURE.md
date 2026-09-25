@@ -204,7 +204,7 @@ The device controls:
 - **heater** through an SSR-backed LEDC channel,
 - **fan** through a separate LEDC-backed PWM path,
 - **heat detection** through a GPIO input used as a hardware sanity signal
-  (optional circuit — builds without it use the `no-heat-sense` feature;
+  (optional circuit — interpreted only with the opt-in `heat-sense` feature;
   see `docs/HARDWARE.md` §8).
 
 The LEDC subsystem is wrapped by a guard layer to catch long or stalled access paths.

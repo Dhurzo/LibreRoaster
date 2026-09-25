@@ -136,7 +136,7 @@ fn profile_temps(cfg: RoastConfig, tick: u32) -> (f32, f32, SensorFault, SensorF
         }
     }
 
-    // Curva de roast sana: ~0.4 °C/s (por debajo del guard BT de 0.5 °C/s).
+    // Curva de roast sana: ~0.4 °C/s (por debajo del guard BT de 0.75 °C/s).
     let bt_healthy = 25.0 + 0.08 * tick as f32;
     let et_healthy = bt_healthy + 18.0;
 
@@ -346,15 +346,16 @@ fn run_roast(seed: u64) -> RoastOutcome {
         if heater_on && !emergency {
             let probe_ok = probe_effective(cfg, tick);
             let state = ctrl.get_state();
-            let ror_armed = matches!(state, RoasterState::Heating | RoasterState::Stable)
+            let _ror_armed = matches!(state, RoasterState::Heating | RoasterState::Stable)
                 || (state == RoasterState::Idle && s.pid_enabled && heater_on);
             // armado con ssr_output > 0, antes >= PROBE_STUCK_HEATER_MIN_PCT).
             let probe_stuck_armed = s.ssr_output > 0.0;
             let comms_idle_armed =
                 sim_ms.saturating_sub(last_command_sim_ms) > COMMS_IDLE_TIMEOUT_MS as u64;
 
-            let supervised = (probe_ok) // overtemp efectivo: la sonda lee el calor real
-                || (probe_ok && ror_armed) // RoR efectivo
+            // (probe_ok && ror_armed) es subsumido por probe_ok; se lista
+            // ror_armed por documentación de la intención I6.
+            let supervised = probe_ok // overtemp efectivo: la sonda lee el calor real
                 || probe_stuck_armed // funciona también con sonda muerta
                 || comms_idle_armed;
 

@@ -489,12 +489,11 @@ impl RoasterControl {
         // Cut the heater AND force the fan independently; only a fan failure
         // propagates (no fan means unsafe to continue). A failed heater-off
         // write must not skip the fan-100% write and leave the hot bean mass
-        // without cooling.
-        if let Err(e) = self.actuator.set_heater_power(0.0) {
-            log::error!(
-                "stop_streaming: heater off failed: {:?} — continuing to fan 100%",
-                e
-            );
+        // without cooling. H10: go through `force_heater_off` (retried, and
+        // resyncs the slew limiter) instead of a raw write, so the next
+        // re-energize ramps from 0 instead of jumping.
+        if !self.actuator.force_heater_off(&mut self.status) {
+            log::error!("stop_streaming: heater off failed — continuing to fan 100%");
         }
         // Set fan to 100% for cooling during stop (matches README and emergency_shutdown)
         if let Err(e) = self.actuator.set_fan_raw(100.0) {
@@ -522,6 +521,15 @@ impl RoasterControl {
         self.status.fault_condition = false;
         self.state = crate::config::constants::RoasterState::Idle;
         self.status.state = self.state;
+        // H1: an internal latch never ran the PID, so its `last_update_ms`
+        // is stale by the whole latch duration. Disarm the loop here; the
+        // next `START`/`PREHEAT` re-arms it from scratch (`enable()` resets
+        // the integrator and timing), so the first post-recovery tick cannot
+        // integrate error × latch-duration in a single step.
+        if self.status.pid_enabled {
+            self.dispatch.disable_pid();
+            self.status.pid_enabled = false;
+        }
         // Explicit recovery also drops the cooldown latch — the operator is
         // taking over, so airflow returns to operator control.
         self.cooling_active = false;
@@ -632,9 +640,11 @@ impl RoasterControl {
         // Maximum roast time safety backstop. Same physical gate as
         // comms-idle — protect any roasting session with the heater energized,
         // not only the named roast states.
-        // Use `profile_start_time.or(heat_session_start)` so the cap covers
-        // BOTH named-roast (START with profile) AND manual (OT1/OT2 without
-        // START) heater sessions.
+        // H2: two budgets. The 30-minute roast budget anchors to
+        // `profile_start_time` (START/PROFILE); a manual OT1-driven session
+        // with no START (preheat + back-to-back batches) is capped by the
+        // separate 90-minute `MAX_MANUAL_HEAT_SESSION_SECS` — a 15–30 min
+        // drum preheat must not abort the roast mid-development.
         // Exclude the Preheating state from the cap. A big drum can
         // legitimately preheat for well over 30 minutes; counting that time
         // against the roast budget would abort with
@@ -646,13 +656,20 @@ impl RoasterControl {
             && !matches!(self.state, RoasterState::Preheating))
             || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
         if max_roast_time_armed {
-            if let Some(start) = self.profile_start_time.or(self.heat_session_start) {
+            let (start, limit) = match (self.profile_start_time, self.heat_session_start) {
+                (Some(s), _) => (Some(s), crate::config::constants::MAX_ROAST_TIME_SECS),
+                (None, Some(s)) => (
+                    Some(s),
+                    crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS,
+                ),
+                (None, None) => (None, 0),
+            };
+            if let Some(start) = start {
                 let elapsed_secs = current_time.saturating_duration_since(start).as_secs() as u32;
-                if elapsed_secs >= crate::config::constants::MAX_ROAST_TIME_SECS {
+                if elapsed_secs >= limit {
                     warn!(
                         "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
-                        elapsed_secs,
-                        crate::config::constants::MAX_ROAST_TIME_SECS
+                        elapsed_secs, limit
                     );
                     self.emergency_shutdown("Maximum roast time exceeded")?;
                 }
@@ -707,19 +724,26 @@ impl RoasterControl {
                             self.charge_time = Some(current_time);
                             self.status.charge_detected = true;
                             info!("#CHARGE detected — BT dropped {:.1}°C", drop);
-                            let output_channel =
-                                crate::application::service_container::ServiceContainer::get_output_channel();
-                            let mut charge_msg = heapless::String::<
-                                { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
-                            >::new();
-                            let _ = core::fmt::Write::write_fmt(
-                                &mut charge_msg,
-                                core::format_args!("#CHARGE dt={:.1}", drop),
-                            );
-                            crate::hardware::error_counters::try_send_output(
-                                output_channel,
-                                charge_msg,
-                            );
+                            // H5: the `#CHARGE` wire line is only useful to a
+                            // host that opted into spontaneous `#` traffic —
+                            // an unsolicited line in Artisan's 0.5 s READ
+                            // window costs a `-1` sample. Detection itself
+                            // always runs; only the wire copy is gated.
+                            if self.dispatch.is_streaming(&self.status) {
+                                let output_channel =
+                                    crate::application::service_container::ServiceContainer::get_output_channel();
+                                let mut charge_msg = heapless::String::<
+                                    { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
+                                >::new();
+                                let _ = core::fmt::Write::write_fmt(
+                                    &mut charge_msg,
+                                    core::format_args!("#CHARGE dt={:.1}", drop),
+                                );
+                                crate::hardware::error_counters::try_send_output(
+                                    output_channel,
+                                    charge_msg,
+                                );
+                            }
                         }
                     }
                 }
@@ -747,11 +771,11 @@ impl RoasterControl {
         // The RoR guard only protects once beans are present. Gate it to the
         // post-charge roasting states (`Heating` / `Stable`); Idle/Preheating
         // must not trigger it (Preheating is by definition heating an empty
-        // drum, whose low-mass probe can heat faster than 0.5 °C/s).
+        // drum, whose low-mass probe can heat faster than 0.75 °C/s).
         //
         // FEED the guard from the BT-only `refresh_bt_guard_derivative`, not
         // from `status.derivative_rate` (which is the active PV — either BT
-        // or ET). With `PID;CHAN;1` (ET-as-PV) the 0.5 °C/s threshold
+        // or ET). With `PID;CHAN;1` (ET-as-PV) the 0.75 °C/s threshold
         // calibrated for the sluggish BT would otherwise be applied to ET
         // (which climbs much faster) → spurious emergency on a healthy roast
         // while a genuine BT runaway remains unguarded.
@@ -762,10 +786,22 @@ impl RoasterControl {
         // actually energized; Preheating stays exempt (empty drum) and
         // pure-manual `OT1` sessions (`pid_enabled = false`) are not covered
         // (their runaway backstop is the comms-idle / MAX_ROAST_TIME gate).
-        let ror_guard_active = matches!(self.state, RoasterState::Heating | RoasterState::Stable)
-            || (matches!(self.state, RoasterState::Idle)
-                && self.status.pid_enabled
-                && heater_energized);
+        //
+        // H6: the guard protects firmware-PID heating only. An operator who
+        // pressed `START` as a "begin" button and then drives the sliders
+        // (`artisan_control = true`, state still `Heating`) must NOT inherit
+        // the firmware-PID guard — CONTEXT promises manual mode is
+        // RoR-disarmed. While disarmed the counters reset so no stale state
+        // trips on re-arm.
+        let firmware_in_control = !self.status.artisan_control;
+        let ror_guard_active = firmware_in_control
+            && (matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+                || (matches!(self.state, RoasterState::Idle)
+                    && self.status.pid_enabled
+                    && heater_energized));
+        if !ror_guard_active {
+            self.sensor.reset_ror_guard();
+        }
         if ror_guard_active {
             if let Some(bt_rate) = self
                 .sensor
@@ -784,8 +820,8 @@ impl RoasterControl {
             //
             // This legacy check consumes `status.derivative_rate`, which is
             // refreshed from the ACTIVE PV (`env_temp` under `PID;CHAN;1`).
-            // The 0.5 °C/s threshold is calibrated for the sluggish BT; with
-            // ET-as-PV a healthy heat-up (ET climbing >0.5 °C/s) would abort
+            // The 0.75 °C/s threshold is calibrated for the sluggish BT; with
+            // ET-as-PV a healthy heat-up (ET climbing >0.75 °C/s) would abort
             // every roast ~1 s after entering the guard. Gate the legacy check
             // to the BT channel only — the genuine runaway protection for
             // CHAN;1 is `check_bt_rate` above (BT-only). Telemetry still sees
@@ -995,9 +1031,25 @@ impl RoasterControl {
         // PID controls ET (pid_channel == 1), the detector disarms entirely —
         // a BT flat while ET is regulated is a telemetry concern, not a
         // control hazard, and BT may legitimately sit far below the setpoint.
-        let regulating = self.status.pid_enabled
-            && ((self.status.target_temp - self.status.pv).abs() <= PROBE_STUCK_TARGET_MARGIN_C
-                || self.status.pid_channel == 1);
+        //
+        // H8: in manual mode (`pid_enabled = false`) a hot BT flat TOGETHER
+        // with a nearby ET is thermal equilibrium (preheat hold, between
+        // batches) — not a dead probe. A shorted thermocouple reads ~cold-
+        // junction temperature (tens of °C) or diverges from ET; it does not
+        // sit at 180 °C next to a 210 °C ET. Without this exemption every
+        // stabilized manual preheat latched at 300 s. Trade-off (accepted,
+        // fail-safe): a BT probe frozen at a hot plausible value goes
+        // undetected in manual mode — there the operator watches the Artisan
+        // curve, and the ET overtemp backstop stays armed.
+        let manual_equilibrium = !self.status.pid_enabled
+            && probe_bt > 60.0
+            && self.status.env_temp.is_finite()
+            && (self.status.env_temp - probe_bt).abs() < 100.0;
+        let regulating = manual_equilibrium
+            || (self.status.pid_enabled
+                && ((self.status.target_temp - self.status.pv).abs()
+                    <= PROBE_STUCK_TARGET_MARGIN_C
+                    || self.status.pid_channel == 1));
         if self.status.ssr_output > 0.0 && probe_bt.is_finite() && !regulating {
             match self.probe_stuck_last_bt {
                 None => {
@@ -1149,6 +1201,10 @@ impl RoasterControl {
 
         match command {
             crate::config::ArtisanCommand::StartRoast => self.handle_start_roast(),
+            // H11: `PID;ON` enables firmware PID but is NOT in the latch
+            // whitelist above — while `fault_condition` holds it is rejected
+            // with `fault_condition_active` instead of clearing the latch.
+            crate::config::ArtisanCommand::PidOn => self.handle_pid_on(),
             crate::config::ArtisanCommand::SetHeater(value) => {
                 self.handle_set_heater(value, current_time)
             }
@@ -1216,7 +1272,6 @@ impl RoasterControl {
     // Artisan command handlers (extracted from process_artisan_command)
 
     fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
-        use crate::config::constants::DEFAULT_TARGET_TEMP;
         // Gate by *state*: a START during an actually-active roast
         // (Heating/Stable) is "ignored"; every other state (Idle-with-PID,
         // Idle-manual, Preheating, Error recovery) takes the full handoff.
@@ -1248,64 +1303,106 @@ impl RoasterControl {
             if self.status.fault_condition || self.safety.is_emergency_active() {
                 self.clear_emergency_explicit();
             }
-            // Reset the charge-detection state on START so every path into a
-            // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
-            // a STOP (PREHEAT → START cadence). Clearing here makes START
-            // idempotent for every path into a new roast.
-            // Clear the history deque and its sampling divider too — otherwise
-            // the deque would still hold the previous batch's pre-charge BT
-            // and the first samples of the new batch would compare fresh BT
-            // against the old batch's values and fire a FALSE `#CHARGE`,
-            // also disabling the real detection for the rest of the batch.
-            self.charge_detected = false;
-            self.charge_time = None;
-            self.status.charge_detected = false;
-            self.bt_charge_history.clear();
-            self.charge_history_tick_div = 0;
-            // Reset the manual heat-session clock on START. The 30-minute
-            // MAX_ROAST_TIME budget then anchors to `profile_start_time` (set
-            // below) — preheat time (which can legitimately exceed half an
-            // hour on big drums, and which the time-cap gate excludes) must
-            // not carry into the new roast.
-            self.heat_session_start = None;
-            self.cooling_active = false;
-            // Drop any pending `#DUMP` rows from a previous roast so they do
-            // not interleave with the new roast's live telemetry.
-            self.dump_pending.clear();
-            self.status.artisan_control = true;
-            // Use loaded profile if available, otherwise fall back to default target
-            if self.active_profile.is_some() {
-                self.profile_start_time = Some(embassy_time::Instant::now());
-                // Set initial target from profile
-                let elapsed = 0u32;
-                if let Some(target) = self
-                    .active_profile
-                    .as_ref()
-                    .and_then(|p| p.target_at(elapsed))
-                {
-                    self.status.target_temp = target;
-                    self.enable_pid_control(target)?;
-                }
-                info!(
-                    "Artisan+ roast started with profile ({} setpoints)",
-                    self.active_profile
-                        .as_ref()
-                        .map_or(0, |p| p.setpoints.len())
-                );
-            } else {
-                self.profile_start_time = Some(embassy_time::Instant::now());
-                self.enable_pid_control(DEFAULT_TARGET_TEMP)?;
-                info!(
-                    "Artisan+ roast started with default target {:.1}°C",
-                    DEFAULT_TARGET_TEMP
-                );
-            }
-            crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
-            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
-            self.state = crate::config::constants::RoasterState::Heating;
-            self.status.state = self.state;
-            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+            self.start_roast_handoff()?
         }
+        Ok(())
+    }
+
+    /// `PID;ON` (or `PID,ON`) — enable firmware PID like `START`, but NEVER
+    /// a recovery: while an emergency/fault latch is armed the command is
+    /// rejected (H11), so an automatic Artisan event such as pidOnCHARGE
+    /// cannot re-energize the heater without an operator decision. The
+    /// latch whitelist in `process_artisan_command` already rejects `PidOn`
+    /// while `fault_condition` holds; the guard below is defense-in-depth
+    /// for any path that reaches the handler with the latch armed.
+    fn handle_pid_on(&mut self) -> Result<(), RoasterError> {
+        if self.status.fault_condition || self.safety.is_emergency_active() {
+            warn!("PID;ON rejected: fault condition active (use START/PREHEAT/PID;OFF to recover)");
+            return Err(RoasterError::InvalidState {
+                source: Some("fault_condition_active"),
+            });
+        }
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            info!(
+                "Artisan+ PID;ON ignored - roast already active (state={:?})",
+                self.state
+            );
+            self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+        } else {
+            self.start_roast_handoff()?
+        }
+        Ok(())
+    }
+
+    /// Shared `START`/`PID;ON` roast handoff: charge-detection reset, manual
+    /// heat-session clock reset, cooldown-latch drop, profile (or default
+    /// target) PID arm, and transition to `Heating`. Latch clearing is NOT
+    /// part of the handoff — `handle_start_roast` clears explicitly before
+    /// calling, `handle_pid_on` never clears (H11).
+    fn start_roast_handoff(&mut self) -> Result<(), RoasterError> {
+        use crate::config::constants::DEFAULT_TARGET_TEMP;
+        // Reset the charge-detection state on START so every path into a
+        // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
+        // a STOP (PREHEAT → START cadence). Clearing here makes START
+        // idempotent for every path into a new roast.
+        // Clear the history deque and its sampling divider too — otherwise
+        // the deque would still hold the previous batch's pre-charge BT
+        // and the first samples of the new batch would compare fresh BT
+        // against the old batch's values and fire a FALSE `#CHARGE`,
+        // also disabling the real detection for the rest of the batch.
+        self.charge_detected = false;
+        self.charge_time = None;
+        self.status.charge_detected = false;
+        self.bt_charge_history.clear();
+        self.charge_history_tick_div = 0;
+        // Reset the manual heat-session clock on START. The 30-minute
+        // MAX_ROAST_TIME budget then anchors to `profile_start_time` (set
+        // below) — preheat time (which can legitimately exceed half an
+        // hour on big drums, and which the time-cap gate excludes) must
+        // not carry into the new roast.
+        self.heat_session_start = None;
+        self.cooling_active = false;
+        // Drop any pending `#DUMP` rows from a previous roast so they do
+        // not interleave with the new roast's live telemetry.
+        self.dump_pending.clear();
+        self.status.artisan_control = true;
+        // Use loaded profile if available, otherwise fall back to default target
+        if self.active_profile.is_some() {
+            self.profile_start_time = Some(embassy_time::Instant::now());
+            // Set initial target from profile
+            let elapsed = 0u32;
+            if let Some(target) = self
+                .active_profile
+                .as_ref()
+                .and_then(|p| p.target_at(elapsed))
+            {
+                self.status.target_temp = target;
+                self.enable_pid_control(target)?;
+            }
+            info!(
+                "Artisan+ roast started with profile ({} setpoints)",
+                self.active_profile
+                    .as_ref()
+                    .map_or(0, |p| p.setpoints.len())
+            );
+        } else {
+            // H12: a PREHEAT → START handoff without a loaded profile keeps
+            // the preheat target instead of jumping to the 225 °C default —
+            // the operator already chose a reachable setpoint for this drum.
+            let target = if matches!(self.state, RoasterState::Preheating) {
+                self.preheat_target.unwrap_or(DEFAULT_TARGET_TEMP)
+            } else {
+                DEFAULT_TARGET_TEMP
+            };
+            self.profile_start_time = Some(embassy_time::Instant::now());
+            self.enable_pid_control(target)?;
+            info!("Artisan+ roast started with default target {:.1}°C", target);
+        }
+        crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
+        self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
+        self.state = crate::config::constants::RoasterState::Heating;
+        self.status.state = self.state;
+        self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         Ok(())
     }
 
@@ -1314,6 +1411,13 @@ impl RoasterControl {
             crate::config::RoasterCommand::SetHeaterManual(value),
             current_time,
         )?;
+        // H3: re-energizing from the sliders is a deliberate new batch —
+        // hand the fan back to the operator instead of pinning it at the
+        // cooldown 100 %. (FAN_MIN_SAFETY_PCT still applies while heating.)
+        // A cut to 0 % keeps the latch: cooling a hot drum still needs air.
+        if value > 0 {
+            self.cooling_active = false;
+        }
         info!("Artisan+ heater command processed: {}%", value);
         Ok(())
     }
@@ -1404,6 +1508,9 @@ impl RoasterControl {
             crate::config::RoasterCommand::IncreaseHeater,
             current_time,
         )?;
+        // H3: UP is always a deliberate heat-up — same new-batch handoff as
+        // `handle_set_heater`: release the cooldown fan latch.
+        self.cooling_active = false;
         info!("Artisan+ UP command processed");
         Ok(())
     }

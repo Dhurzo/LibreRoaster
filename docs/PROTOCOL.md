@@ -73,7 +73,12 @@ Current behavior is intentionally shallow: the firmware acknowledges the command
 
 ### `READ`
 
-`READ` is the main temperature polling command.
+`READ` is the main temperature polling command. It is answered in the
+drain phase of the same control tick (S1) — worst-case latency is one tick
+(~310–330 ms: 100 ms timer + 210 ms MAX31856 conversion wait), inside
+Artisan's ~0.5 s budget (0.1 s wait + 0.4 s timeout) with ~170 ms of
+margin. A stretched tick (SPI fallback, LEDC-guard contention) can still
+cost one `-1` sample; see `STATUS` latency fields for measurement.
 
 #### PID disabled
 
@@ -85,15 +90,11 @@ AMB,ET,BT,0.0,0.0
 
 Field meaning:
 
-1. ambient temperature
+1. ambient temperature (cold-junction mean of the healthy MAX31856 channels, H13)
 2. environment temperature
 3. bean temperature
 4. unused channel placeholder
 5. unused channel placeholder
-
-> Note: the ambient field is a structural placeholder. There is no ambient
-> sensor in the hardware model, so the firmware always emits `0.0` on a live
-> device (the field is only populated in host test code).
 
 #### PID enabled
 
@@ -206,7 +207,9 @@ When the firmware detects the bean-charge event (a BT drop of more than
 ```
 
 `dt` is the observed temperature drop. This is a one-shot event emitted at
-charge detection time, not a periodic line.
+charge detection time, not a periodic line. The wire copy is gated by the
+streaming state (`STREAM;ON`, PID or manual control active, H5) — detection
+itself always runs and latches `charge_detected` in `STATUS`.
 
 ## 6. Manual actuator commands
 
@@ -296,7 +299,7 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 
 ### Supported forms
 
-- `PID;ON` (alias for `START` — begins a roast, not just "PID on")
+- `PID;ON` (enables the firmware PID; begins a roast when none is active, but NEVER clears a safety latch — H11; recovery is `START`/`PREHEAT`/`PID;OFF`)
 - `PID;OFF`
 - `PID;SV;<temp>`
 - `PID;T;<kp>;<ki>;<kd>`
