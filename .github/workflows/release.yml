@@ -59,7 +59,7 @@ jobs:
             echo "notes_file=" >> $GITHUB_OUTPUT
           fi
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: LibreRoaster ${{ github.ref_name }}
           body_path: ${{ steps.release_notes.outputs.notes_file }}
