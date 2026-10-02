@@ -348,7 +348,7 @@ fn run_roast(seed: u64) -> RoastOutcome {
             let state = ctrl.get_state();
             let _ror_armed = matches!(state, RoasterState::Heating | RoasterState::Stable)
                 || (state == RoasterState::Idle && s.pid_enabled && heater_on);
-            // armado con ssr_output > 0, antes >= PROBE_STUCK_HEATER_MIN_PCT).
+            // armado con ssr_output > 0.
             let probe_stuck_armed = s.ssr_output > 0.0;
             let comms_idle_armed =
                 sim_ms.saturating_sub(last_command_sim_ms) > COMMS_IDLE_TIMEOUT_MS as u64;

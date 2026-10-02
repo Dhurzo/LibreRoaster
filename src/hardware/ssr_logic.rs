@@ -709,16 +709,20 @@ mod effective_percentage_tests {
 
     #[test]
     fn sub_half_cycle_requests_report_zero() {
-        // H7: OT1 1..5 land below SSR_MIN_DUTY_TICKS (820) → zero ticks.
-        assert!(ticks(5.0) < SSR_MIN_DUTY_TICKS as u32);
+        // R1: 1–4 % land below SSR_MIN_DUTY_TICKS (819) → zero ticks.
+        assert!(ticks(4.0) < SSR_MIN_DUTY_TICKS as u32);
         assert_eq!(effective_percentage(1.0), 0.0);
-        assert_eq!(effective_percentage(5.0), 0.0);
+        assert_eq!(effective_percentage(4.0), 0.0);
     }
 
     #[test]
     fn at_and_above_floor_reports_requested() {
+        assert_eq!(SSR_MIN_DUTY_TICKS, 819);
+        assert_eq!(ticks(5.0), 819);
+        assert!(ticks(5.0) >= SSR_MIN_DUTY_TICKS as u32);
         assert!(ticks(6.0) >= SSR_MIN_DUTY_TICKS as u32);
         assert_eq!(effective_percentage(0.0), 0.0);
+        assert_eq!(effective_percentage(5.0), 5.0);
         assert_eq!(effective_percentage(6.0), 6.0);
         assert_eq!(effective_percentage(50.0), 50.0);
         assert_eq!(effective_percentage(100.0), 100.0);

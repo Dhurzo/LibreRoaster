@@ -56,15 +56,15 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ Firmware compiles and flashes to ESP32-C3
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
-- ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
- - ✅ All host tests pass (**735 as of 2026-09-09** — 502 lib + 233 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+ - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
+  - ✅ All host tests pass (**779 as of 2026-10-02** — 529 lib + 250 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 735 host tests pass, ESP32 build warning-free
+- All 779 host tests pass, ESP32 build warning-free
 
 **Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
 - H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)
@@ -72,7 +72,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - H3: re-energizing via sliders (`OT1>0`/`UP`) drops the cooldown fan latch — back-to-back batches keep operator fan control
 - H4: heat-sense is now **opt-in** (`heat-sense` feature; default build never interprets GPIO1); cross-check samples once per tick (write path removed); time-window debounce (`HEAT_MISMATCH_WINDOW_MS` = 1500 ms) replaces consecutive-sample counting
 - H6/H6b: RoR guard armed only when the firmware PID is in control (`!artisan_control`), counters reset while disarmed; soft band recalibrated to 0.75 °C/s (45 °C/min)
-- H8: probe-stuck exempts hot manual equilibrium (BT > 60 °C within 100 °C of ET, no PID) — cold short signature still latches
+- H8: probe-stuck exempts hot manual equilibrium (BT > 60 °C with ET flat within 3 °C since the BT anchor, no PID; a frozen BT with a moving ET still latches) — cold short signature still latches
 - H9: a persistently failing sensor channel NaN-marks only that channel (`resolve_channel` no longer aborts the whole sample)
 - H10: slew limiter anchored at 0 with a fresh timestamp on force-off/emergency (next energize ramps)
 - H11: `PID;ON` is a distinct `ArtisanCommand::PidOn` that NEVER clears a safety latch (START/PREHEAT/PID;OFF remain the recovery paths)
@@ -80,13 +80,13 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - H13: MAX31856 reads CJTH:CJTL + LTC + fault in one 6-byte burst; all-zero frame (MISO stuck LOW) rejected; AMB on the wire is the real cold-junction mean
 - H14: `REG` checks the latch before signaling the runner
 - H5/S3/S4/S5/S6/S7 + doc fixes (STOP latch semantics, `CHAN;1200`, real safety-fault reason strings, logic-level MOSFET BOM, Schottky-only flyback, log transport via UART not USB-JTAG, `#CHARGE` gated by streaming)
-- Host tests: **748/748** (515 lib + 233 integration) with `--features test`, plus 16 regression, 18 heat-sense state-machine (feature-gated), 1 L3 simulated pipeline; race check (`-- --test-threads=1`) green
+- Host tests: **779/779** (529 lib + 250 integration) with `--features test`, plus 16 regression, 18 heat-sense state-machine (feature-gated), 1 L3 simulated pipeline; race check (`-- --test-threads=1`) green
 
 **Deep-audit fix round (2026-09-26, bugs found by two-pass code audit + executable reproduction):**
 - BUG 1 (state-gate): `PREHEAT` during an active roast (Heating/Stable) is now **ignored** exactly like START (`handle_preheat` gate mirroring `handle_start_roast`). Previously a mid-roast PREHEAT degraded the FSM to `Preheating`, silently disarming the RoR guard, the roast-time budgets and charge detection while the heater stayed energized. Latch recovery via PREHEAT is unaffected (a latched device is in `Error`, which the gate does not block).
 - BUG 2 (time-budget hole): the Preheating exemption from the time caps now applies ONLY while the firmware PID is the thing heating (`pid_preheating = Preheating && pid_enabled && !artisan_control`). A manual OT1/UP takeover during Preheating keeps the `MAX_MANUAL_HEAT_SESSION_SECS` (90 min) budget, matching the same session started from Idle — previously it escaped every time budget.
 - BUG 3 (telemetry honesty): `dispatch.stop_streaming` no longer unconditionally zeroes `status.ssr_output`; each caller (`RoasterControl::stop_streaming`, `handle_emergency_stop`) zeroes it ONLY after `force_heater_off` succeeded — matching the documented `ActuatorController::emergency_shutdown` contract. A STOP with a failed off-write now keeps the honest duty on the wire next to `ssr_hardware_status = Error` (which also re-arms the comms-idle/MAX_ROAST_TIME gates on a possibly stuck-on heater); the next tick escalates to the "Heater control failure" emergency. This aligns the STOP path with invariant I1 of the safety-invariant harness.
-- Regression tests: 9 new in `roaster_control_tests.rs` (mid-roast PREHEAT ignore + Idle/Error transitions preserved, manual-during-preheat budget + PID exemption contrast, honest-duty on failed off-write for EmergencyStop/PID;OFF/internal-trap + success-path zero preserved). Docs: PROTOCOL.md §7 (`PREHEAT`/`START` state gating). Host tests: **757/757** (524 lib + 233 integration), sim-suite 791, embedded build green.
+- Regression tests: 9 new in `roaster_control_tests.rs` (mid-roast PREHEAT ignore + Idle/Error transitions preserved, manual-during-preheat budget + PID exemption contrast, honest-duty on failed off-write for EmergencyStop/PID;OFF/internal-trap + success-path zero preserved). Docs: PROTOCOL.md §7 (`PREHEAT`/`START` state gating). Host tests: **779/779** (529 lib + 250 integration), sim-suite 791, embedded build green.
 
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
 - `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New opt-in `heat-sense` cargo feature for builds with a validated GPIO1 current-sense circuit (default build does not interpret GPIO1; time-window debounce + one sample per tick in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.

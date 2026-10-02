@@ -28,6 +28,34 @@ use crate::logging::edge_log_gate::EdgeLogGate;
 /// resetting the MAX_ROAST_TIME budget.
 const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
 
+/// Which safety backstops are armed on this tick. Computed ONCE per tick by
+/// `RoasterControl::guard_arming()` — the single place where "which guard
+/// protects which operating mode" is decided.
+///
+/// | Guard | Armed when |
+/// |---|---|
+/// | Overtemp 260 °C, stale (1 s), NaN, out-of-range (2 samples) | always (`read_sensors`, `update_control` head, `sensor.rs`) |
+/// | Comms-idle 15 s | heater>0 or roast/preheat state |
+/// | Time budget | `(heater>0 && !PID-preheating)` or Heating/Stable; 1800 s anchored to START, 5400 s to `heat_session_start` (manual) |
+/// | RoR (0.75 / 1.0 °C/s) | firmware in control (`!artisan_control`) and (Heating/Stable or (Idle + PID + heater>0)) |
+/// | Probe-stuck (mode part) | NOT PID-regulating; call site adds `ssr_output>0 && BT finite`. Manual equilibrium (both probes flat, BT hot) re-anchors the clock instead of disarming |
+/// | Heat-sense GPIO1 | only with `heat-sense` feature; 1 sample/tick; 1500 ms window |
+/// | Fan floor 20 % | heater actually delivering (`ssr_output>0`) |
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuardArming {
+    pub comms_idle: bool,
+    /// `Some((anchor, limit_secs))` when the time budget is armed.
+    pub time_budget: Option<(Instant, u32)>,
+    pub ror: bool,
+    /// Mode part of the probe-stuck gate; the call site adds
+    /// `ssr_output > 0 && BT finite` with the freshly applied output.
+    pub probe_stuck_mode: bool,
+    /// Manual-equilibrium exemption (R2): both probes flat with BT hot.
+    /// When set the detector re-anchors its clock instead of counting
+    /// towards a latch — a frozen BT with a moving ET still latches.
+    pub probe_stuck_equilibrium_exempt: bool,
+}
+
 /// Central control object: roast state machine, safety latches and the
 /// single writer that applies sensor/actuator/safety/dispatch decisions.
 pub struct RoasterControl {
@@ -75,6 +103,11 @@ pub struct RoasterControl {
     /// manual / Artisan software-PID mode is two-stage — see `update_control`.
     probe_stuck_last_bt: Option<f32>,
     probe_stuck_last_change: Option<Instant>,
+    /// ET anchor for the manual-equilibrium discriminator (R2). Set where
+    /// `probe_stuck_last_bt` is set, cleared where it is cleared. While BT
+    /// stays flat, ET must stay within `PROBE_STUCK_ET_FLAT_C` of this anchor
+    /// to count as equilibrium; a moving ET with a frozen BT is a dead probe.
+    probe_stuck_et_anchor: Option<f32>,
     /// Manual-mode two-stage probe-stuck flag. Set once the
     /// `ERR probe_stuck_warning` wire line has been emitted for the current
     /// stuck episode; cleared on BT movement > `PROBE_STUCK_VARIATION_C`, on
@@ -134,6 +167,7 @@ impl RoasterControl {
             charge_history_tick_div: 0,
             probe_stuck_last_bt: None,
             probe_stuck_last_change: None,
+            probe_stuck_et_anchor: None,
             probe_stuck_warning_sent: false,
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
@@ -569,6 +603,65 @@ impl RoasterControl {
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
+    /// Which safety backstops are armed on this tick. Computed ONCE per tick —
+    /// the single place where "which guard protects which operating mode" is
+    /// decided (see `GuardArming` table).
+    pub fn guard_arming(&self, heater_energized: bool, current_pv: f32) -> GuardArming {
+        let roast_active = matches!(
+            self.state,
+            RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
+        );
+        let comms_idle = heater_energized || roast_active;
+
+        let pid_preheating = matches!(self.state, RoasterState::Preheating)
+            && self.status.pid_enabled
+            && !self.status.artisan_control;
+        let max_roast_time_armed = (heater_energized && !pid_preheating)
+            || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
+        let time_budget = if max_roast_time_armed {
+            match (self.profile_start_time, self.heat_session_start) {
+                (Some(s), _) => Some((s, crate::config::constants::MAX_ROAST_TIME_SECS)),
+                (None, Some(s)) => {
+                    Some((s, crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS))
+                }
+                (None, None) => None,
+            }
+        } else {
+            None
+        };
+
+        let firmware_in_control = !self.status.artisan_control;
+        let ror = firmware_in_control
+            && (matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+                || (matches!(self.state, RoasterState::Idle)
+                    && self.status.pid_enabled
+                    && heater_energized));
+
+        let probe_bt = self.status.bean_temp;
+        let et_now = self.status.env_temp;
+        // R2: equilibrium = hot BT + ET flat since the BT anchor was set.
+        // Both flat is equilibrium; a frozen BT with a moving ET is a dead
+        // probe. A cold BT (short signature) never counts as equilibrium.
+        let manual_equilibrium = !self.status.pid_enabled
+            && probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
+            && et_now.is_finite()
+            && self.probe_stuck_et_anchor.is_some_and(|et0| {
+                (et_now - et0).abs() <= crate::config::constants::PROBE_STUCK_ET_FLAT_C
+            });
+        let regulating = self.status.pid_enabled
+            && ((self.status.target_temp - current_pv).abs() <= PROBE_STUCK_TARGET_MARGIN_C
+                || self.status.pid_channel == 1);
+        let probe_stuck_mode = !regulating;
+
+        GuardArming {
+            comms_idle,
+            time_budget,
+            ror,
+            probe_stuck_mode,
+            probe_stuck_equilibrium_exempt: manual_equilibrium,
+        }
+    }
+
     /// Run one control-loop tick: staleness guard, safety backstops, output selection and actuator writes.
     pub fn update_control(&mut self, current_time: Instant) -> Result<f32, RoasterError> {
         if let Some(last_read) = self.sensor.last_temp_read() {
@@ -603,29 +696,11 @@ impl RoasterControl {
         // Idle; the `ssr_output > 0` arm covers manual heater commands too.
         // Preheating/Heating/Stable stay covered by the OR state arm.
         let heater_energized = self.status.ssr_output > 0.0;
-        let roast_active = matches!(
-            self.state,
-            RoasterState::Preheating | RoasterState::Heating | RoasterState::Stable
-        );
-        if heater_energized || roast_active {
-            let idle_ms = current_time
-                .as_millis()
-                .saturating_sub(self.status.last_command_received_at_ms);
-            if idle_ms > crate::config::constants::COMMS_IDLE_TIMEOUT_MS {
-                warn!(
-                    "SAFETY COMMS-IDLE: no command for {}ms (>{COMMS_IDLE_TIMEOUT_MS}ms) — emergency shutdown",
-                    idle_ms
-                );
-                self.emergency_shutdown("Comms idle timeout")?;
-            }
-        }
 
         // Track when the heater first crosses 0 → positive and clear it on 0
         // again, so manual-mode (no `START`) heater sessions also get a time
-        // budget. The instrumentation is colocated here (next to the
-        // `roast_active` gate that already inspects the same state) because
-        // both decisions conceptually belong together: "what is the physical
-        // session for this tick?".
+        // budget. Moved above the guards: the bookkeeping does not depend on
+        // comms-idle, and `guard_arming()` reads the fresh `heat_session_start`.
         if heater_energized {
             if self.heat_session_start.is_none() {
                 self.heat_session_start = Some(current_time);
@@ -648,6 +723,28 @@ impl RoasterControl {
             self.heat_session_off_since = Some(current_time);
         }
 
+        // PV for the guard table (`regulating` compares target vs PV).
+        // `status.pv` itself is published later, next to the NaN guard.
+        let current_pv = if self.status.pid_channel == 1 {
+            self.status.env_temp
+        } else {
+            self.status.bean_temp
+        };
+        let arming = self.guard_arming(heater_energized, current_pv);
+
+        if arming.comms_idle {
+            let idle_ms = current_time
+                .as_millis()
+                .saturating_sub(self.status.last_command_received_at_ms);
+            if idle_ms > crate::config::constants::COMMS_IDLE_TIMEOUT_MS {
+                warn!(
+                    "SAFETY COMMS-IDLE: no command for {}ms (>{COMMS_IDLE_TIMEOUT_MS}ms) — emergency shutdown",
+                    idle_ms
+                );
+                self.emergency_shutdown("Comms idle timeout")?;
+            }
+        }
+
         // Maximum roast time safety backstop. Same physical gate as
         // comms-idle — protect any roasting session with the heater energized,
         // not only the named roast states.
@@ -657,40 +754,17 @@ impl RoasterControl {
         // separate 90-minute `MAX_MANUAL_HEAT_SESSION_SECS` — a 15–30 min
         // drum preheat must not abort the roast mid-development.
         // Exclude the Preheating state from the cap ONLY while the firmware
-        // PID is the thing heating. A big drum can legitimately preheat for
-        // well over 30 minutes under PID; counting that time against the
-        // roast budget would abort with
-        // `emergency_shutdown("Maximum roast time exceeded")` before the beans
-        // are ever loaded. But once the operator takes over manually
-        // (OT1/UP: `artisan_control = true`, PID disabled) the session is a
-        // MANUAL heat session and must keep the manual budget — otherwise the
-        // H2 cap had a hole whenever the takeover happened mid-preheat,
-        // leaving a heater at fixed duty with no time backstop at all.
-        // The START handoff anchors the clock to `profile_start_time`, and
-        // comms-idle (above) still covers a forgotten preheat.
-        let pid_preheating = matches!(self.state, RoasterState::Preheating)
-            && self.status.pid_enabled
-            && !self.status.artisan_control;
-        let max_roast_time_armed = (heater_energized && !pid_preheating)
-            || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
-        if max_roast_time_armed {
-            let (start, limit) = match (self.profile_start_time, self.heat_session_start) {
-                (Some(s), _) => (Some(s), crate::config::constants::MAX_ROAST_TIME_SECS),
-                (None, Some(s)) => (
-                    Some(s),
-                    crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS,
-                ),
-                (None, None) => (None, 0),
-            };
-            if let Some(start) = start {
-                let elapsed_secs = current_time.saturating_duration_since(start).as_secs() as u32;
-                if elapsed_secs >= limit {
-                    warn!(
-                        "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
-                        elapsed_secs, limit
-                    );
-                    self.emergency_shutdown("Maximum roast time exceeded")?;
-                }
+        // PID is the thing heating (see `guard_arming`). The START handoff
+        // anchors the clock to `profile_start_time`, and comms-idle (above)
+        // still covers a forgotten preheat.
+        if let Some((start, limit_secs)) = arming.time_budget {
+            let elapsed_secs = current_time.saturating_duration_since(start).as_secs() as u32;
+            if elapsed_secs >= limit_secs {
+                warn!(
+                    "MAX_ROAST_TIME exceeded ({}s >= {}s) — emergency shutdown",
+                    elapsed_secs, limit_secs
+                );
+                self.emergency_shutdown("Maximum roast time exceeded")?;
             }
         }
 
@@ -768,11 +842,6 @@ impl RoasterControl {
             }
         }
 
-        let current_pv = if self.status.pid_channel == 1 {
-            self.status.env_temp
-        } else {
-            self.status.bean_temp
-        };
         self.status.pv = current_pv;
 
         // Reject NaN / infinite PV (faulted sensor) — force heater off.
@@ -786,41 +855,13 @@ impl RoasterControl {
         self.sensor
             .refresh_filtered_derivative(current_pv, current_time, &mut self.status);
 
-        // The RoR guard only protects once beans are present. Gate it to the
-        // post-charge roasting states (`Heating` / `Stable`); Idle/Preheating
-        // must not trigger it (Preheating is by definition heating an empty
-        // drum, whose low-mass probe can heat faster than 0.75 °C/s).
-        //
-        // FEED the guard from the BT-only `refresh_bt_guard_derivative`, not
-        // from `status.derivative_rate` (which is the active PV — either BT
-        // or ET). With `PID;CHAN;1` (ET-as-PV) the 0.75 °C/s threshold
-        // calibrated for the sluggish BT would otherwise be applied to ET
-        // (which climbs much faster) → spurious emergency on a healthy roast
-        // while a genuine BT runaway remains unguarded.
-        //
-        // Extend the gate — `PID;SV`/`SETTARGET` from `Idle` enables the PID
-        // (state stays `Idle`) and the heater heats toward the setpoint. Arm
-        // the guard in `Idle` whenever the PID is enabled AND the heater is
-        // actually energized; Preheating stays exempt (empty drum) and
-        // pure-manual `OT1` sessions (`pid_enabled = false`) are not covered
-        // (their runaway backstop is the comms-idle / MAX_ROAST_TIME gate).
-        //
-        // H6: the guard protects firmware-PID heating only. An operator who
-        // pressed `START` as a "begin" button and then drives the sliders
-        // (`artisan_control = true`, state still `Heating`) must NOT inherit
-        // the firmware-PID guard — CONTEXT promises manual mode is
-        // RoR-disarmed. While disarmed the counters reset so no stale state
-        // trips on re-arm.
-        let firmware_in_control = !self.status.artisan_control;
-        let ror_guard_active = firmware_in_control
-            && (matches!(self.state, RoasterState::Heating | RoasterState::Stable)
-                || (matches!(self.state, RoasterState::Idle)
-                    && self.status.pid_enabled
-                    && heater_energized));
-        if !ror_guard_active {
+        // The RoR guard only protects once beans are present (see
+        // `guard_arming` for the arm table). While disarmed the counters reset
+        // so no stale state trips on re-arm.
+        if !arming.ror {
             self.sensor.reset_ror_guard();
         }
-        if ror_guard_active {
+        if arming.ror {
             if let Some(bt_rate) = self
                 .sensor
                 .refresh_bt_guard_derivative(self.status.bean_temp, current_time)
@@ -976,16 +1017,16 @@ impl RoasterControl {
         // above 0 %, the fan never drops below `FAN_MIN_SAFETY_PCT`. Explicit
         // operator values at or above the floor pass through untouched.
         let mut fan_output = fan_output;
-        if desired_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT {
+        if self.status.ssr_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT {
             if self.fan_floor_gate.rising(true) {
                 warn!(
                     "SAFETY FAN-FLOOR: heater at {:.1}% with fan at {:.1}% — raising fan to minimum {:.0}%",
-                    desired_output, fan_output, FAN_MIN_SAFETY_PCT
+                    self.status.ssr_output, fan_output, FAN_MIN_SAFETY_PCT
                 );
             } else {
                 debug!(
                     "SAFETY FAN-FLOOR active: heater {:.1}%, fan raised to {:.0}%",
-                    desired_output, FAN_MIN_SAFETY_PCT
+                    self.status.ssr_output, FAN_MIN_SAFETY_PCT
                 );
             }
             fan_output = FAN_MIN_SAFETY_PCT;
@@ -1041,7 +1082,6 @@ impl RoasterControl {
         // 120 s latch: the `regulating` disarm below already protects healthy
         // PID holds, so a flat PV far from the setpoint remains a genuine
         // control hazard there.
-        let probe_bt = self.status.bean_temp;
         // Gate the detector on the REGULATED variable: the stuck-probe
         // signature is a flat PV far from the target the loop is chasing.
         // With `PID;CHAN;1` the PID regulates ET (`status.pv = env_temp`) and
@@ -1052,32 +1092,25 @@ impl RoasterControl {
         //
         // H8: in manual mode (`pid_enabled = false`) a hot BT flat TOGETHER
         // with a nearby ET is thermal equilibrium (preheat hold, between
-        // batches) — not a dead probe. A shorted thermocouple reads ~cold-
-        // junction temperature (tens of °C) or diverges from ET; it does not
-        // sit at 180 °C next to a 210 °C ET. Without this exemption every
-        // stabilized manual preheat latched at 300 s. Trade-off (accepted,
-        // fail-safe): a BT probe frozen at a hot plausible value goes
-        // undetected in manual mode — there the operator watches the Artisan
-        // curve, and the ET overtemp backstop stays armed.
-        let manual_equilibrium = !self.status.pid_enabled
-            && probe_bt > 60.0
-            && self.status.env_temp.is_finite()
-            && (self.status.env_temp - probe_bt).abs() < 100.0;
-        let regulating = manual_equilibrium
-            || (self.status.pid_enabled
-                && ((self.status.target_temp - self.status.pv).abs()
-                    <= PROBE_STUCK_TARGET_MARGIN_C
-                    || self.status.pid_channel == 1));
-        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && !regulating {
+        // batches) — not a dead probe (see `guard_arming` for the mode gate).
+        let probe_bt = self.status.bean_temp;
+        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && arming.probe_stuck_mode {
             match self.probe_stuck_last_bt {
                 None => {
                     self.probe_stuck_last_bt = Some(probe_bt);
                     self.probe_stuck_last_change = Some(current_time);
+                    self.probe_stuck_et_anchor = Some(self.status.env_temp);
                     self.probe_stuck_warning_sent = false;
                 }
                 Some(prev) => {
                     if (probe_bt - prev).abs() > PROBE_STUCK_VARIATION_C {
                         self.probe_stuck_last_bt = Some(probe_bt);
+                        self.probe_stuck_last_change = Some(current_time);
+                        self.probe_stuck_et_anchor = Some(self.status.env_temp);
+                        self.probe_stuck_warning_sent = false;
+                    } else if arming.probe_stuck_equilibrium_exempt {
+                        // Both probes flat with BT hot: equilibrium. Re-anchor the clock so that
+                        // when ET starts moving BT gets the full window to respond.
                         self.probe_stuck_last_change = Some(current_time);
                         self.probe_stuck_warning_sent = false;
                     } else if let Some(last_change) = self.probe_stuck_last_change {
@@ -1121,9 +1154,10 @@ impl RoasterControl {
                 }
             }
         } else {
-            // Heater below the threshold (or BT faulted) — disarm.
+            // Heater off, BT faulted, or PID regulating — disarm.
             self.probe_stuck_last_bt = None;
             self.probe_stuck_last_change = None;
+            self.probe_stuck_et_anchor = None;
             self.probe_stuck_warning_sent = false;
         }
 
@@ -2063,6 +2097,16 @@ impl RoasterControl {
     }
 
     // Immutable accessor methods
+    /// Test-only: re-anchor the roast budget to a synthetic instant.
+    /// `handle_start_roast` stamps `profile_start_time` with the real clock,
+    /// which a synthetic-time harness cannot advance.
+    #[cfg(feature = "test")]
+    pub fn set_profile_start_for_test(&mut self, t: Instant) {
+        if self.profile_start_time.is_some() {
+            self.profile_start_time = Some(t);
+        }
+    }
+
     /// Immutable access to the `SensorController`.
     pub fn sensor(&self) -> &SensorController {
         &self.sensor
