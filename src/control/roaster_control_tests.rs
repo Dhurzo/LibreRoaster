@@ -1367,7 +1367,7 @@ fn probe_stuck_detector_does_not_fire_on_moving_bt() {
 fn probe_stuck_does_not_fire_when_regulating_near_target() {
     // A healthy roast in steady state holds BT nearly flat BY DESIGN (the
     // PID's job), and on a cold ambient / big drum the equilibrium duty
-    // can sit at or above PROBE_STUCK_HEATER_MIN_PCT. The detector must
+    // can sit at or above 50 %. The detector must
     // disarm within PROBE_STUCK_TARGET_MARGIN_C of the setpoint —
     // otherwise a stable roast at ≥50 % duty trips a FALSE "Probe stuck"
     // emergency.
@@ -1385,7 +1385,7 @@ fn probe_stuck_does_not_fire_when_regulating_near_target() {
     let _ = ctrl.update_control(t0);
     assert!(
         ctrl.get_status().ssr_output >= 50.0,
-        "test precondition: steady-state duty must be ≥ PROBE_STUCK_HEATER_MIN_PCT \
+        "test precondition: steady-state duty must be ≥ 50 % \
              (got {:.1}%)",
         ctrl.get_status().ssr_output
     );
@@ -2268,4 +2268,106 @@ fn stop_paths_zero_duty_when_heater_off_succeeds() {
         0.0,
         "successful off-write must publish 0 %"
     );
+}
+
+// ── R0: guard_arming table ──
+
+#[test]
+fn guard_arming_table_idle_manual() {
+    // Idle + OT1 60, 1 tick: manual heat session.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(60));
+    let t0 = Instant::now();
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(150.0, 180.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let heater_energized = ctrl.get_status().ssr_output > 0.0;
+    assert!(heater_energized);
+    let pv = ctrl.get_status().bean_temp;
+    let arming = ctrl.guard_arming(heater_energized, pv);
+    assert!(arming.comms_idle);
+    let (anchor, limit) = arming
+        .time_budget
+        .expect("manual session must arm time budget");
+    assert_eq!(
+        limit,
+        crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS
+    );
+    assert_eq!(Some(anchor), ctrl.heat_session_start);
+    assert!(!arming.ror);
+    // R2: BT 150 hot with ET 180 flat since the anchor → equilibrium exempt,
+    // but the detector stays armed (it re-anchors the clock instead).
+    assert!(arming.probe_stuck_mode);
+    assert!(arming.probe_stuck_equilibrium_exempt);
+}
+
+#[test]
+fn guard_arming_table_heating_fw_pid() {
+    // Heating after START (firmware PID in control).
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
+    let t0 = Instant::now();
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(180.0, 220.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let heater_energized = ctrl.get_status().ssr_output > 0.0;
+    let pv = ctrl.get_status().bean_temp;
+    let arming = ctrl.guard_arming(heater_energized, pv);
+    assert!(arming.comms_idle);
+    assert!(arming.ror, "Heating under FW-PID must arm RoR");
+    let (_, limit) = arming.time_budget.expect("Heating must arm time budget");
+    assert_eq!(limit, crate::config::constants::MAX_ROAST_TIME_SECS);
+}
+
+#[test]
+fn guard_arming_table_preheat_pid_exempt() {
+    // PREHEAT under firmware PID with heater on: exempt from time budget, RoR off.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(200.0));
+    let t0 = Instant::now();
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(150.0, 170.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let heater_energized = ctrl.get_status().ssr_output > 0.0;
+    assert!(heater_energized, "PREHEAT must energize heater");
+    let pv = ctrl.get_status().bean_temp;
+    let arming = ctrl.guard_arming(heater_energized, pv);
+    assert!(arming.comms_idle);
+    assert!(
+        arming.time_budget.is_none(),
+        "PID preheating must be exempt from the time cap"
+    );
+    assert!(!arming.ror);
+}
+
+#[test]
+fn guard_arming_table_preheat_manual_takeover_keeps_budget() {
+    // BUG 2: PREHEAT + OT1 takeover stays a manual session with the 90 min cap.
+    let mut ctrl = make_control();
+    let _ = ctrl.process_artisan_command(ArtisanCommand::Preheat(200.0));
+    let _ = ctrl.process_artisan_command(ArtisanCommand::SetHeater(50));
+    let t0 = Instant::now();
+    ctrl.status_mut().last_command_received_at_ms = t0.as_millis();
+    ctrl.update_temperatures(150.0, 170.0, t0).unwrap();
+    let _ = ctrl.update_control(t0);
+    let heater_energized = ctrl.get_status().ssr_output > 0.0;
+    assert!(heater_energized);
+    let pv = ctrl.get_status().bean_temp;
+    let arming = ctrl.guard_arming(heater_energized, pv);
+    let (_, limit) = arming
+        .time_budget
+        .expect("manual takeover mid-preheat must keep the manual budget");
+    assert_eq!(
+        limit,
+        crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS
+    );
+}
+
+#[test]
+fn guard_arming_table_idle_no_heat_all_off() {
+    let ctrl = make_control();
+    let arming = ctrl.guard_arming(false, 25.0);
+    assert!(!arming.comms_idle);
+    assert!(arming.time_budget.is_none());
+    assert!(!arming.ror);
 }

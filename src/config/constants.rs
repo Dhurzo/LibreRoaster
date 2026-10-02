@@ -74,11 +74,12 @@ pub const SSR_DUTY_TOLERANCE_TICKS: u16 = 128;
 /// non-zero-cross-synchronised LEDC output, a ~2.4 ms ON pulse (193 ticks)
 /// only coincides with a zero crossing ~25-30 % of the time, so a zero-cross
 /// SSR fires erratically at very low commanded power. The floor is one AC
-/// half-cycle (10 ms ≈ 820 ticks at 14-bit / 5 Hz) so a zero-cross SSR
+/// half-cycle (10 ms ≈ 819 ticks at 14-bit / 5 Hz) so a zero-cross SSR
 /// reliably lands at least one half-cycle of mains on every active PWM
 /// period, giving a deterministic minimum delivered power. Use 1639 (a full
 /// 20 ms mains cycle) if DC bias across the mains is a concern on the target SSR.
-pub const SSR_MIN_DUTY_TICKS: u16 = 820;
+/// 5 % of 14 bits = 819 ticks ≈ 9.99 ms — still one 50 Hz half-cycle (within 0.1 %), which makes the 5 % UP/DOWN step deliverable. 1–4 % still snap to 0.
+pub const SSR_MIN_DUTY_TICKS: u16 = 819;
 
 pub const DEFAULT_TARGET_TEMP: f32 = 225.0;
 // `MAX_TEMP` feeds `MAX_TARGET_TEMP`, so editing it changes what
@@ -154,12 +155,6 @@ pub const ROR_EXCEEDED_CONSECUTIVE_LIMIT: u8 = 3;
 /// Provisional pending hardware calibration (HIL).
 pub const ROR_SOFT_DEBOUNCE_LIMIT: u8 = 12;
 
-/// Probe-stuck detector — the heater output at or above this percentage
-/// arms the detector: a heater this hot must move the BT probe. If a probe
-/// holds a flat temperature while the heater runs this hot for
-/// `PROBE_STUCK_TIMEOUT_SECS`, the thermocouple is shorted or broken and
-/// `emergency_shutdown("Probe stuck")` fires.
-pub const PROBE_STUCK_HEATER_MIN_PCT: f32 = 50.0;
 /// The BT reading must vary by more than this many °C to count as a
 /// live probe. A shorted thermocouple reads a flat ~0 °C — a VALID
 /// temperature with no MAX31856 fault bit; a broken probe holds any flat
@@ -182,14 +177,20 @@ pub const PROBE_STUCK_TIMEOUT_SECS: u64 = 120;
 pub const PROBE_STUCK_MANUAL_LATCH_SECS: u64 = 300;
 /// The detector disarms while the PID is legitimately REGULATING within
 /// this many °C of the setpoint. A stable roast holds BT nearly flat by design (that is the PID's job), and on a cold ambient /
-/// big drum the equilibrium duty can sit at or above
-/// `PROBE_STUCK_HEATER_MIN_PCT` — without this margin a healthy steady-state
+/// big drum the equilibrium duty can sit at high output
+/// — without this margin a healthy steady-state
 /// roast would trip a false "Probe stuck" emergency. The stuck-probe
 /// signature is a flat BT FAR from the target the loop is chasing (a shorted
 /// thermocouple reads ~0 °C against a 200 °C setpoint); near the target,
 /// flat BT is expected control behaviour. Manual mode (`pid_enabled =
 /// false`) has no regulation target, so it stays fully armed.
 pub const PROBE_STUCK_TARGET_MARGIN_C: f32 = 5.0;
+/// Manual-mode probe-stuck exemption: BT must be above this to count as a
+/// plausible equilibrium hold (a shorted thermocouple reads near the cold junction).
+pub const PROBE_STUCK_EQUILIBRIUM_MIN_BT_C: f32 = 60.0;
+/// Manual-mode probe-stuck exemption: ET must have stayed within this band since
+/// the BT anchor was set. A dead BT with a moving ET is a dead probe; both flat is equilibrium.
+pub const PROBE_STUCK_ET_FLAT_C: f32 = 3.0;
 /// Contract: max ms to wait for SSR current-sense confirmation before flagging `NotDetected`/`Error`.
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.

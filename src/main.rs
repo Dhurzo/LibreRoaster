@@ -161,7 +161,7 @@ fn main() -> ! {
     // Debug — disable it for production flashes.
     //
     // The long-term direction is a custom `log::Log` that writes to a
-    // *separate* UART1 on GPIO2, so logs and protocol never share a wire.
+    // *separate* UART1 on GPIO0, so logs and protocol never share a wire.
     // That change requires HW validation on the bench and is left until the
     // board is physically wired; reducing the level here is the safe interim.
     #[cfg(not(feature = "instrumentation"))]
