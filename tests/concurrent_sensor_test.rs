@@ -1,14 +1,19 @@
 //! Concurrent sensor-read mutex stress test.
 //!
-//! Installs a host `critical_section` impl that serializes a `RefCell` borrow,
-//! then spawns N concurrent `roaster_async_sensor_read` tasks and asserts the
+//! Spawns N concurrent `roaster_async_sensor_read` tasks and asserts the
 //! async-lock depth never exceeds 1 (no overlapping holders).
+//!
+//! The host `critical_section` implementation comes from the
+//! `critical-section` crate's `std` feature (dev-dependencies): defining a
+//! second one here via `set_impl!` would duplicate the
+//! `_critical_section_1_0_acquire`/`_release` symbols and break the link on
+//! strict linkers (CI/lld, 2026-10-04). The crate's std implementation
+//! serializes entries with a global mutex, which is all this test needs.
 
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 
 extern crate std;
 
-use critical_section::RawRestoreState;
 use futures::executor::{block_on, ThreadPool};
 use futures::future::join_all;
 use futures::task::SpawnExt;
@@ -21,33 +26,7 @@ mod tests_common;
 
 use libreroaster::control::RoasterControl;
 use std::boxed::Box;
-use std::hint::spin_loop;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tests_common::{build_test_control, StubFan, StubHeater};
-
-// Atomic flag serializes host critical section entries so the RefCell borrow never overlaps.
-static TEST_CRITICAL_SECTION_LOCK: AtomicBool = AtomicBool::new(false);
-
-critical_section::set_impl!(TestCriticalSection);
-
-struct TestCriticalSection;
-
-unsafe impl critical_section::Impl for TestCriticalSection {
-    unsafe fn acquire() -> RawRestoreState {
-        while TEST_CRITICAL_SECTION_LOCK
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            spin_loop();
-        }
-
-        true
-    }
-
-    unsafe fn release(_restore_state: RawRestoreState) {
-        TEST_CRITICAL_SECTION_LOCK.store(false, Ordering::Release);
-    }
-}
 
 /// Number of concurrent sensor readers (and executor pool size).
 const CONCURRENT_READS: usize = 10;
