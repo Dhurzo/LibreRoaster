@@ -251,6 +251,14 @@ async fn handle_parsed_command(
     config: &TransportConfig,
 ) {
     let traced = TracedCommand::new(cmd, channel);
+    // BUG-2c-1 (audit 2026-10-04): PROFILE/FANPROFILE payloads are staged
+    // at parse time, so if the command is dropped below (channel full) its
+    // staged payload must be dropped too. Capture the kind before `cmd`
+    // moves into `traced`.
+    let is_profile_cmd = matches!(
+        cmd,
+        crate::config::ArtisanCommand::SetProfile | crate::config::ArtisanCommand::SetFanProfile
+    );
     let mut should_process = true;
     let mut sent = false;
     let mut channel_full = false;
@@ -287,6 +295,13 @@ async fn handle_parsed_command(
     // roaster in an unexpected state.
     if channel_full {
         send_channel_full_error(channel, config).await;
+    }
+
+    // BUG-2c-1 (audit 2026-10-04): a PROFILE/FANPROFILE dropped by a full
+    // command channel must also drop its staged payload — otherwise the
+    // orphaned FIFO entry is silently applied by the NEXT roast.
+    if channel_full && is_profile_cmd {
+        crate::input::parser::clear_staged_profiles();
     }
 
     // A command on the INACTIVE transport is refused with an explicit ERR

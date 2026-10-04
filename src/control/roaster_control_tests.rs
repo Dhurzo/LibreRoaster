@@ -322,6 +322,130 @@ fn artisan_set_fan_profile_with_no_data_returns_ok() {
     assert!(result.is_ok());
 }
 
+// ── BUG-2c-1 (audit 2026-10-04): a refused PROFILE/FANPROFILE must not
+// leave an orphaned staged payload behind ──────────
+//
+// Lib tests run in parallel threads over the SAME global parser FIFOs, and
+// the parser's own tests stage `0,180;120,200` / `0,20;60,50;120,100` /
+// `0,30` without consuming them — so these tests match leaked payloads by
+// UNIQUE marker content, never by FIFO position or emptiness.
+
+fn take_profiles_while_matching(marker_temp: f32) -> bool {
+    let mut leaked = false;
+    while let Some(profile) = crate::input::parser::take_profile() {
+        if profile
+            .setpoints
+            .iter()
+            .any(|sp| sp.temperature == marker_temp)
+        {
+            leaked = true;
+        }
+    }
+    leaked
+}
+
+fn take_fan_profiles_while_matching(marker_speed: u8) -> bool {
+    let mut leaked = false;
+    while let Some(profile) = crate::input::parser::fan_profile_take() {
+        if profile
+            .setpoints
+            .iter()
+            .any(|sp| sp.fan_speed == marker_speed)
+        {
+            leaked = true;
+        }
+    }
+    leaked
+}
+
+#[test]
+fn set_profile_rejected_under_latch_drains_staged_profile_fifo() {
+    let mut ctrl = make_control();
+    let _ = ctrl.emergency_shutdown("test latch");
+
+    // Parse-time staging is the production path: the payload lands in the
+    // parser FIFO when the PROFILE line is parsed, before dispatch.
+    assert!(matches!(
+        crate::input::parse_artisan_command("PROFILE;7,77;42,133"),
+        Ok(ArtisanCommand::SetProfile)
+    ));
+
+    // The latch gate refuses the command...
+    assert!(ctrl
+        .process_artisan_command(ArtisanCommand::SetProfile)
+        .is_err());
+
+    // ...and the staged payload (marker 77) must be GONE, not left for the
+    // next roast to silently apply.
+    assert!(
+        !take_profiles_while_matching(77.0),
+        "a refused PROFILE must not leave an orphaned staged payload"
+    );
+}
+
+#[test]
+fn set_fan_profile_rejected_under_latch_drains_staged_fifo() {
+    let mut ctrl = make_control();
+    let _ = ctrl.emergency_shutdown("test latch");
+
+    assert!(matches!(
+        crate::input::parse_artisan_command("FANPROFILE;11,77;22,33"),
+        Ok(ArtisanCommand::SetFanProfile)
+    ));
+
+    assert!(ctrl
+        .process_artisan_command(ArtisanCommand::SetFanProfile)
+        .is_err());
+
+    assert!(
+        !take_fan_profiles_while_matching(77),
+        "a refused FANPROFILE must not leave an orphaned staged payload"
+    );
+}
+
+#[test]
+fn profile_echo_across_latch_recovery_is_eliminated() {
+    // End-to-end shape of BUG-2c-1: the operator loads a profile while the
+    // device is latched (refused + drained), recovers, then loads the real
+    // profile — the applied roast curve must never be the refused one.
+    let mut ctrl = make_control();
+    let _ = ctrl.emergency_shutdown("test latch");
+
+    assert!(matches!(
+        crate::input::parse_artisan_command("PROFILE;7,77;42,133"),
+        Ok(ArtisanCommand::SetProfile)
+    ));
+    assert!(ctrl
+        .process_artisan_command(ArtisanCommand::SetProfile)
+        .is_err());
+
+    // Sanctioned recovery: `PID;OFF` parses to `ArtisanCommand::Stop` and
+    // clears the latch.
+    assert!(ctrl.process_artisan_command(ArtisanCommand::Stop).is_ok());
+    assert!(!ctrl.get_status().fault_condition);
+
+    // The new batch's profile stages and dispatches cleanly.
+    assert!(matches!(
+        crate::input::parse_artisan_command("PROFILE;13,123;99,210"),
+        Ok(ArtisanCommand::SetProfile)
+    ));
+    assert!(ctrl
+        .process_artisan_command(ArtisanCommand::SetProfile)
+        .is_ok());
+
+    // The applied curve must NOT contain the refused profile's marker
+    // (77); with the drain fix, only the fresh profile got applied.
+    let applied = ctrl
+        .active_profile
+        .as_ref()
+        .expect("a profile must be applied after dispatch");
+    assert!(
+        !applied.setpoints.iter().any(|sp| sp.temperature == 77.0),
+        "the refused profile must never be the one applied (got {:?})",
+        applied.setpoints
+    );
+}
+
 #[test]
 fn artisan_run_regression_returns_ok() {
     let mut ctrl = make_control();

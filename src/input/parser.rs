@@ -622,6 +622,21 @@ pub fn fan_profile_take() -> Option<FanProfile> {
     critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
 }
 
+/// Drop every staged PROFILE/FANPROFILE payload.
+///
+/// BUG-2c-1 (audit 2026-10-04): a refused or dropped PROFILE/FANPROFILE
+/// command must not leave its staged payload behind — the parser stages at
+/// parse time, so rejecting the command without draining would leave an
+/// orphaned FIFO entry that the NEXT session's roast silently applies.
+/// Called from the latch rejection gate (`process_artisan_command`) and
+/// from the transport channel-full drop path.
+pub fn clear_staged_profiles() {
+    critical_section::with(|cs| {
+        PARSED_PROFILE.borrow(cs).borrow_mut().clear();
+        PARSED_FAN_PROFILE.borrow(cs).borrow_mut().clear();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
