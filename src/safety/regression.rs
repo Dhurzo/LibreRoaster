@@ -152,7 +152,36 @@ mod target_impl {
             // regression in that state. Capture the shutdown result and, on
             // failure, emit a SAFETY error and abort before replaying any
             // fixtures or feeding the watchdog again.
-            let shutdown_failed = ServiceContainer::with_roaster_async(|roaster| {
+            // Outcome of the regression ramp + shutdown phase.
+            enum RampRun {
+                // The runner armed, ramped and shut down; `shutdown_failed`
+                // mirrors the post-shutdown SSR hardware status.
+                Ran { shutdown_failed: bool },
+                // A foreign safety latch was already armed when the run
+                // tried to start — nothing ran, latch left intact.
+                ForeignLatch,
+            }
+            let outcome = ServiceContainer::with_roaster_async(|roaster| {
+                // BUG-2d-1 entry guard (audit 2026-10-04): a foreign safety
+                // latch may already be armed when the run starts — the REG
+                // latch-check (`drain_commands`, H14) and this closure live
+                // on different tasks, and the control loop keeps ticking in
+                // between (V1 race: time-budget/RoR latch while the roast
+                // state still shows Heating). This closure is atomic under
+                // the RoasterControl mutex, so checking the latch HERE
+                // closes V1 completely: abort without ramping and WITHOUT
+                // touching the armed latch, which is not ours. Without this,
+                // the run would re-arm over it and the exit
+                // `clear_emergency_explicit` would erase the foreign latch —
+                // leaving the heater re-energizable with no operator
+                // decision (H11). The post-shutdown window (V2) only admits
+                // unconditional traps, which re-latch the very next tick
+                // (transient <1 tick), so the exit clear stays correct there.
+                if roaster.get_status().fault_condition || roaster.safety().is_emergency_active() {
+                    warn!("Regression aborted: foreign safety latch already armed");
+                    roaster.mark_overtemp_regression_active(false);
+                    return RampRun::ForeignLatch;
+                }
                 roaster.mark_overtemp_regression_active(true);
                 if let Err(err) = roaster.process_artisan_command(ArtisanCommand::SetHeater(100)) {
                     warn!("Regression heater ramp failed: {:?}", err);
@@ -169,12 +198,37 @@ mod target_impl {
                 if let Err(ref err) = shutdown_result {
                     warn!("Regression shutdown returned: {:?}", err);
                 }
-                roaster.get_status().ssr_hardware_status
-                    == crate::config::constants::SsrHardwareStatus::Error
+                RampRun::Ran {
+                    shutdown_failed: roaster.get_status().ssr_hardware_status
+                        == crate::config::constants::SsrHardwareStatus::Error,
+                }
             })
             .await;
 
-            let shutdown_failed = shutdown_failed.unwrap_or(true);
+            // Container failure is conservative: abort like `shutdown_failed`
+            // (keep any latch armed, touch nothing).
+            let ran = match outcome {
+                Ok(outcome) => outcome,
+                Err(_) => RampRun::Ran {
+                    shutdown_failed: true,
+                },
+            };
+
+            let shutdown_failed = match ran {
+                RampRun::ForeignLatch => {
+                    // The regression flag is already cleared inside the
+                    // closure; the armed foreign latch is left entirely
+                    // intact.
+                    let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
+                    let _ = safety.push_str("SAFETY OT-REGRESSION-ABORTED foreign_latch");
+                    crate::hardware::error_counters::try_send_output(
+                        ServiceContainer::get_output_channel(),
+                        safety,
+                    );
+                    return;
+                }
+                RampRun::Ran { shutdown_failed } => shutdown_failed,
+            };
 
             if shutdown_failed {
                 let mut safety = String::<TRACE_EVENT_MAX_LEN>::new();
@@ -236,6 +290,13 @@ mod target_impl {
             // state=Error). `clear_emergency_explicit` is the single
             // sanctioned un-latch path (same as the START recovery): it
             // returns the device to a recoverable `Idle`.
+            //
+            // BUG-2d-1 (audit 2026-10-04): this unconditional clear is safe
+            // ONLY because the entry guard above refused the run when a
+            // foreign latch was already armed (V1), and the traps that can
+            // arm during the run fire unconditionally and re-latch the very
+            // next tick (V2 transient) — so no foreign time-budget/RoR latch
+            // exists for this call to erase.
             let _ = ServiceContainer::with_roaster_async(|roaster| {
                 roaster.mark_overtemp_regression_active(false);
                 roaster.clear_emergency_explicit();
