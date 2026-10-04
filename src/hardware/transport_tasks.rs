@@ -224,7 +224,7 @@ const INACTIVE_ERR_COALESCE_MS: u32 = 1000;
 fn emit_inactive_channel_err_if_due() {
     let now = embassy_time::Instant::now().as_millis() as u32;
     let last = LAST_INACTIVE_ERR_MS.load(Ordering::Relaxed);
-    if now.saturating_sub(last) < INACTIVE_ERR_COALESCE_MS {
+    if inactive_err_suppressed(now, last) {
         return;
     }
     LAST_INACTIVE_ERR_MS.store(now, Ordering::Relaxed);
@@ -234,6 +234,16 @@ fn emit_inactive_channel_err_if_due() {
     try_send_output(output_channel, msg);
 }
 
+/// Coalesce decision for the inactive-channel ERR.
+///
+/// BUG-2b-2 (audit 2026-10-04): the `u32` millisecond clock wraps every
+/// ~49.7 days, so the elapsed-time check MUST be modular — with the old
+/// `saturating_sub`, the first wrap pinned the comparison at 0 and the
+/// notification stayed suppressed for another full wrap.
+fn inactive_err_suppressed(now_ms: u32, last_ms: u32) -> bool {
+    now_ms.wrapping_sub(last_ms) < INACTIVE_ERR_COALESCE_MS
+}
+
 /// Handle a parsed command: check multiplexer, push to artisan channel via try_send.
 async fn handle_parsed_command(
     cmd: crate::config::ArtisanCommand,
@@ -241,6 +251,14 @@ async fn handle_parsed_command(
     config: &TransportConfig,
 ) {
     let traced = TracedCommand::new(cmd, channel);
+    // BUG-2c-1 (audit 2026-10-04): PROFILE/FANPROFILE payloads are staged
+    // at parse time, so if the command is dropped below (channel full) its
+    // staged payload must be dropped too. Capture the kind before `cmd`
+    // moves into `traced`.
+    let is_profile_cmd = matches!(
+        cmd,
+        crate::config::ArtisanCommand::SetProfile | crate::config::ArtisanCommand::SetFanProfile
+    );
     let mut should_process = true;
     let mut sent = false;
     let mut channel_full = false;
@@ -277,6 +295,13 @@ async fn handle_parsed_command(
     // roaster in an unexpected state.
     if channel_full {
         send_channel_full_error(channel, config).await;
+    }
+
+    // BUG-2c-1 (audit 2026-10-04): a PROFILE/FANPROFILE dropped by a full
+    // command channel must also drop its staged payload — otherwise the
+    // orphaned FIFO entry is silently applied by the NEXT roast.
+    if channel_full && is_profile_cmd {
+        crate::input::parser::clear_staged_profiles();
     }
 
     // A command on the INACTIVE transport is refused with an explicit ERR
@@ -764,5 +789,23 @@ mod tests {
                 .is_err(),
             "the post-overflow fragment must never execute"
         );
+    }
+
+    /// BUG-2b-2: the coalesce window must behave identically before and
+    /// after the `u32` millisecond wrap (~49.7 days of uptime).
+    #[test]
+    fn inactive_err_coalesce_suppresses_within_window() {
+        assert!(inactive_err_suppressed(500, 100));
+        assert!(!inactive_err_suppressed(1500, 100));
+    }
+
+    #[test]
+    fn inactive_err_coalesce_is_wrap_aware() {
+        // 301 ms elapsed across the u32 wrap → still suppressed.
+        assert!(inactive_err_suppressed(100, u32::MAX - 200));
+        // 2101 ms elapsed across the wrap → due again. The old
+        // `saturating_sub` returned 0 here, suppressing the notification
+        // for another ~49.7 days.
+        assert!(!inactive_err_suppressed(100, u32::MAX - 2000));
     }
 }

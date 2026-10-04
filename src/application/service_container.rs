@@ -275,9 +275,11 @@ impl ServiceContainer {
     /// Holds the async mutex for the full sensor read duration (~160 ms on
     /// embedded). This is the documented trade-off: concurrent callers
     /// `.lock().await` and queue rather than fail (which is what
-    /// `concurrent_sensor_reads_verify_async_mutex` verifies). Mitigations:
-    /// - Priority-drain in tasks.rs: STOP/EmergencyStop commands process
-    ///   regardless of rate limit.
+    /// `concurrent_sensor_reads_verify_async_mutex` verifies).
+    /// Command-latency note (BUG-2d-2, audit 2026-10-04): `drain_commands`
+    /// (tasks.rs) processes the whole command-channel FIFO every control
+    /// tick — there is no rate limit to bypass, so STOP/EmergencyStop
+    /// latency is bounded by one tick (~330 ms) plus FIFO position.
     /// - Future optimization: split into trigger→unlock→wait→lock→read
     ///   phases if 160 ms latency becomes a problem.
     pub async fn roaster_async_sensor_read() -> Result<(), ContainerError> {

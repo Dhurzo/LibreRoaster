@@ -1242,6 +1242,19 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::SetStreaming(_) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
+                    // BUG-2c-1 (audit 2026-10-04): a refused PROFILE/
+                    // FANPROFILE must take its staged payload with it — the
+                    // parser stages the payload at parse time, so rejecting
+                    // without draining would leave an orphaned FIFO entry
+                    // that the NEXT roast silently applies (one-generation
+                    // profile echo).
+                    if matches!(
+                        command,
+                        crate::config::ArtisanCommand::SetProfile
+                            | crate::config::ArtisanCommand::SetFanProfile
+                    ) {
+                        crate::input::parser::clear_staged_profiles();
+                    }
                     return Err(RoasterError::InvalidState {
                         source: Some("fault_condition_active"),
                     });

@@ -69,7 +69,14 @@ impl UartTxDriver {
         match with_timeout(Duration::from_millis(50), self.tx.write_all(data)).await {
             Ok(Ok(())) => {}
             Ok(Err(_)) => return Err(UartError::TransmissionError),
-            Err(_timeout) => return Err(UartError::TransmissionError),
+            Err(_timeout) => {
+                // BUG-2c-3 (audit 2026-10-04): mirror the USB CDC driver — a
+                // partial write that timed out leaves the host parser
+                // mid-line; terminate the partial line best-effort so its
+                // tail cannot fuse with the head of the next response line.
+                let _ = with_timeout(Duration::from_millis(10), self.tx.write_all(b"\r\n")).await;
+                return Err(UartError::TransmissionError);
+            }
         }
         match with_timeout(Duration::from_millis(50), Write::flush(&mut self.tx)).await {
             Ok(Ok(_)) => Ok(()),

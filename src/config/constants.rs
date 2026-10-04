@@ -319,11 +319,11 @@ pub enum ArtisanCommand {
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
-// The bounded channel (ARTISAN_CMD_CHANNEL_SIZE = 16) caps the work per tick;
-// the per-tick budget equals the channel size so every command the channel
-// can hold is also processed in the same tick (the emergency bypass stays).
-pub const MAX_COMMANDS_PER_TICK: usize =
-    crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
+// BUG-2d-2 (audit 2026-10-04): there is NO per-tick command budget —
+// `drain_commands` (application/tasks.rs) processes the whole
+// `ARTISAN_CMD_CHANNEL_SIZE` channel every tick. The deleted
+// `MAX_COMMANDS_PER_TICK` constant described a mechanism that never
+// existed; do not reintroduce it without pairing it with a real loop bound.
 // The threshold is probe-attainable: the real sampling window is
 // `CHARGE_HISTORY_CAPACITY × CHARGE_SAMPLE_TICK_DIV × CONTROL_LOOP_TICK_MS`
 // ≈ 3.1 s, so 6.0 °C fires on a ≥ ~1.9 °C/s drop — comfortably inside the
