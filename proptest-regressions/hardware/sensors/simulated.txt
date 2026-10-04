@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 6c644407b168838a9db5751cb619f584068e883ba47a0dbc55a103872c89d0fa # shrinks to times = [0], bean_temps = [], env_temps = [], elapsed = 0
+cc d8a1179a847b13619215ea850729f32dcc8c5c605309f9b7e6570e7d2f00a425 # shrinks to times = [0, 0, 77922], bean_temps = [0.0], env_temps = [0.0, 236.89806, -21.284613], elapsed = 77922

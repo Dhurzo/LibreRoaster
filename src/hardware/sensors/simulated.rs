@@ -443,8 +443,28 @@ impl RoastCurve {
                     return (curr.bean_temp, curr.env_temp);
                 }
                 let frac = (elapsed_secs - prev.time_secs) as f32 / range as f32;
+                if frac >= 1.0 {
+                    // BUG-2b-1 (audit 2026-10-04): exact segment end — return
+                    // the authored waypoint itself. The two-step lerp
+                    // `a + fl(fl(b - a) * 1.0)` double-rounds and can land a
+                    // few ULP OUTSIDE the segment, breaking the envelope
+                    // property the regression proptest asserts.
+                    return (curr.bean_temp, curr.env_temp);
+                }
                 let bean = prev.bean_temp + (curr.bean_temp - prev.bean_temp) * frac;
                 let env = prev.env_temp + (curr.env_temp - prev.env_temp) * frac;
+                // Clamp to the segment so the pair can never leave
+                // [min(prev, curr), max(prev, curr)] for ANY frac — the
+                // regression proptest asserts results stay inside the
+                // authored envelope.
+                let bean = bean.clamp(
+                    prev.bean_temp.min(curr.bean_temp),
+                    prev.bean_temp.max(curr.bean_temp),
+                );
+                let env = env.clamp(
+                    prev.env_temp.min(curr.env_temp),
+                    prev.env_temp.max(curr.env_temp),
+                );
                 return (bean, env);
             }
         }
@@ -887,6 +907,35 @@ mod tests {
             env_temp: 99.0,
         }));
         assert_eq!(curve.len(), MAX_CURVE_POINTS);
+    }
+
+    #[test]
+    fn temperatures_at_exact_segment_end_returns_authored_waypoint() {
+        // BUG-2b-1 reproducer (baseline seed `cc d8a1179a...`): the env lerp
+        // at frac = 1.0 double-rounded ~5 ULP below the authored envelope
+        // minimum (-21.284622192382812 < -21.284613) and tripped the
+        // `temperatures_at_never_panics_and_stays_bounded` assertion.
+        let mut curve = RoastCurve::new();
+        assert!(curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 0.0,
+            env_temp: 0.0,
+        }));
+        assert!(curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 0.0,
+            env_temp: 236.89806,
+        }));
+        assert!(curve.add_point(CurvePoint {
+            time_secs: 77922,
+            bean_temp: 0.0,
+            env_temp: -21.284613,
+        }));
+
+        let (bt, et) = curve.temperatures_at(77922);
+        assert_eq!(bt, 0.0f32);
+        // The authored waypoint, exactly — not the double-rounded lerp.
+        assert_eq!(et, -21.284613f32);
     }
 
     #[test]
