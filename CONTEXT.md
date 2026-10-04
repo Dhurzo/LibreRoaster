@@ -57,14 +57,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
  - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-  - ✅ All host tests pass (**779 as of 2026-10-02** — 529 lib + 250 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+  - ✅ All host tests pass (**784 as of 2026-10-04** — 534 lib + 250 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 779 host tests pass, ESP32 build warning-free
+- All 784 host tests pass, ESP32 build warning-free
 
 **Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
 - H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)
@@ -87,6 +87,15 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - BUG 2 (time-budget hole): the Preheating exemption from the time caps now applies ONLY while the firmware PID is the thing heating (`pid_preheating = Preheating && pid_enabled && !artisan_control`). A manual OT1/UP takeover during Preheating keeps the `MAX_MANUAL_HEAT_SESSION_SECS` (90 min) budget, matching the same session started from Idle — previously it escaped every time budget.
 - BUG 3 (telemetry honesty): `dispatch.stop_streaming` no longer unconditionally zeroes `status.ssr_output`; each caller (`RoasterControl::stop_streaming`, `handle_emergency_stop`) zeroes it ONLY after `force_heater_off` succeeded — matching the documented `ActuatorController::emergency_shutdown` contract. A STOP with a failed off-write now keeps the honest duty on the wire next to `ssr_hardware_status = Error` (which also re-arms the comms-idle/MAX_ROAST_TIME gates on a possibly stuck-on heater); the next tick escalates to the "Heater control failure" emergency. This aligns the STOP path with invariant I1 of the safety-invariant harness.
 - Regression tests: 9 new in `roaster_control_tests.rs` (mid-roast PREHEAT ignore + Idle/Error transitions preserved, manual-during-preheat budget + PID exemption contrast, honest-duty on failed off-write for EmergencyStop/PID;OFF/internal-trap + success-path zero preserved). Docs: PROTOCOL.md §7 (`PREHEAT`/`START` state gating). Host tests: **779/779** (529 lib + 250 integration), sim-suite 791, embedded build green.
+
+**Audit fix round (2026-10-04, multi-agent audit `plan_auditoria_libreroaster.md` + independent `verificacion_informe_bugs.md`, both against `develop` @ `2443386` — 8/8 REAL bugs confirmed, note 6.9 FUNCIONARÍA CON REPAROS):**
+- BUG-2c-1 (profile echo): `parser::clear_staged_profiles()` drains both profile FIFOs when a `PROFILE`/`FANPROFILE` is refused by the safety latch or dropped by a full command channel — a refused profile can no longer be silently applied by the next roast
+- BUG-2b-1 (regression gate): `RoastCurve::temperatures_at` snaps to the authored waypoint at `frac >= 1.0` and clamps mid-segment lerps to the segment (the two-step f32 lerp could land ~5 ULP outside the envelope); the previously-failing proptest seed is committed as a pinned case — the `test,regression` battery is green again
+- BUG-2b-2: inactive-channel ERR coalesce uses modular `wrapping_sub` (was `saturating_sub`), so the u32 millis wrap (~49.7 days) no longer suppresses the notification for another full wrap
+- BUG-2c-3: UART `write_bytes` pushes a best-effort `\r\n` on a partial-write timeout, mirroring the USB CDC driver (no more fused lines on the host)
+- BUG-2d-1: the over-temp regression runner aborts with `SAFETY OT-REGRESSION-ABORTED foreign_latch` when a safety latch is already armed at run start (entry guard, whole first closure atomic under the roaster mutex) — a foreign time-budget/RoR latch can no longer be cleared away (H11)
+- BUG-2c-2/2d-2/2d-3 (docs): `ERR rate_limited` removed from PROTOCOL.md §10 (zero emitters); priority-drain/emergency-bypass comments rewritten to the real whole-channel drain; `MAX_COMMANDS_PER_TICK` deleted; `queue_metrics_snapshot` documented as future instrumentation (no wire consumer)
+- Host tests: **784/784** (534 lib + 250 integration) with `--features test`; regression battery **855/0** (`test,regression`); golden transcripts + pipeline soak byte-identical; race check (`-- --test-threads=1`) green; all three embedded builds (`embedded` / `embedded,heat-sense` / `embedded,regression`) warning-free; clippy (host + ESP32) 0 warnings
 
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
 - `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New opt-in `heat-sense` cargo feature for builds with a validated GPIO1 current-sense circuit (default build does not interpret GPIO1; time-window debounce + one sample per tick in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.

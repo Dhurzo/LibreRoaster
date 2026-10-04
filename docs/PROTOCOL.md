@@ -406,7 +406,6 @@ assume a rich structured error taxonomy.
 The wire can also carry these transport/scheduling-level `ERR` lines:
 
 - `ERR channel_full command_dropped` — the shared command channel was full; the command was dropped
-- `ERR rate_limited excess commands this tick` — more commands than the per-tick budget arrived
 - `ERR status_too_long` — a formatted response exceeded the output buffer
 - `ERR command_ignored_inactive_channel` — command arrived on a channel the firmware is not currently serving
 - `ERR buffer_overflow` — the transport byte buffer overflowed

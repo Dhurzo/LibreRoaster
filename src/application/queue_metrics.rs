@@ -1,8 +1,11 @@
 //! Command-channel saturation metrics for the Artisan command path.
 //!
 //! Tracks the live and peak command-channel depth and counts backlog events
-//! past `QUEUE_DEPTH_BACKLOG_THRESHOLD`, exposing a lock-free snapshot used by
-//! STATUS/telemetry so dropped-command backpressure is observable.
+//! past `QUEUE_DEPTH_BACKLOG_THRESHOLD`.
+//!
+//! BUG-2d-3 (audit 2026-10-04): the lock-free snapshot is collected for
+//! future instrumentation and currently has NO wire consumer — it is not
+//! wired into STATUS/telemetry.
 
 use crate::application::service_container::ARTISAN_CMD_CHANNEL_SIZE;
 use portable_atomic::{AtomicUsize, Ordering};
@@ -29,8 +32,7 @@ impl QueueProcessorMetrics {
         }
     }
 
-    /// Snapshot the three counters so STATUS/telemetry consumers (or future
-    /// instrumentation) can read them without a wire-format change.
+    /// Snapshot the three counters for future instrumentation consumers.
     pub fn snapshot(&self) -> (usize, usize, usize) {
         (
             self.queue_depth.load(Ordering::Relaxed),
@@ -75,6 +77,8 @@ pub fn record_queue_depth(depth: usize) {
 
 /// Observable snapshot of the queue metrics
 /// `(queue_depth, max_depth, backlog_events)`.
+///
+/// Currently unconsumed (BUG-2d-3): no STATUS/telemetry path reads it.
 pub fn queue_metrics_snapshot() -> (usize, usize, usize) {
     QUEUE_PROCESSOR_METRICS.snapshot()
 }
