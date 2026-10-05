@@ -593,6 +593,19 @@ impl RoasterControl {
         // Explicit recovery also drops the cooldown latch — the operator is
         // taking over, so airflow returns to operator control.
         self.cooling_active = false;
+        // N2 (re-audit 2026-10-05): a recovery ends the previous roast. Drop
+        // its time anchors, otherwise `STOP` → `PREHEAT` → `OT1` inherits
+        // `charge_time`/`pid_on_session` from the aborted roast and the
+        // 30-min budget fires in the middle of an empty-drum preheat.
+        self.profile_start_time = None;
+        self.charge_time = None;
+        self.charge_detected = false;
+        self.status.charge_detected = false;
+        self.bt_charge_history.clear();
+        self.charge_history_tick_div = 0;
+        self.pid_on_session = false;
+        self.heat_session_start = None;
+        self.heat_session_off_since = None;
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
