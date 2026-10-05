@@ -137,6 +137,29 @@ impl CoffeeRoasterPid {
         self.last_feedback = None;
     }
 
+    /// Bumpless manual→PID transfer: seed the integrator so the first output
+    /// after a re-enable equals `applied` (the duty the heater is delivering
+    /// right now) instead of restarting from `kp * error`.
+    ///
+    /// No-op unless: the controller is enabled, `applied > 0`, `error >= 0`
+    /// (PV at or below the setpoint — never hold heat above target), `ki > 0`,
+    /// and the P term alone is below `applied`. The seeded I-term is at most
+    /// `output_max`, so it can never wind past the output clamp.
+    pub fn preload_integrator(&mut self, applied: f32, error: f32) {
+        if !self.enabled || !applied.is_finite() || !error.is_finite() {
+            return;
+        }
+        if applied <= 0.0 || error < 0.0 || self.ki <= 0.0 {
+            return;
+        }
+        let applied = applied.clamp(self.output_min, self.output_max);
+        let i_term = applied - self.kp * error;
+        if i_term <= 0.0 {
+            return;
+        }
+        self.integrator = i_term / self.ki;
+    }
+
     /// Disable the controller; `compute_output` returns 0.0 while disabled.
     pub fn disable(&mut self) {
         self.enabled = false;

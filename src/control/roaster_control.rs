@@ -1413,10 +1413,24 @@ impl RoasterControl {
             });
         }
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
-            info!(
-                "Artisan+ PID;ON ignored - roast already active (state={:?})",
-                self.state
-            );
+            if self.status.pid_enabled {
+                info!(
+                    "Artisan+ PID;ON ignored - PID already active (state={:?})",
+                    self.state
+                );
+            } else {
+                // F-C5: the operator took over with OT1 mid-roast; PID;ON
+                // hands control back to the PID toward the last setpoint.
+                let target =
+                    if crate::config::constants::is_valid_target_temp(self.status.target_temp) {
+                        self.status.target_temp
+                    } else {
+                        crate::config::constants::DEFAULT_TARGET_TEMP
+                    };
+                let target = self.cap_pid_target(target);
+                self.resume_pid_bumpless(target)?;
+                info!("Artisan+ PID;ON - PID resumed at {:.1}°C (bumpless)", target);
+            }
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
             self.start_roast_handoff(true)?
@@ -1767,7 +1781,14 @@ impl RoasterControl {
         }
         let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
-        self.enable_pid_control(target_celsius)?;
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+            && !self.status.pid_enabled
+        {
+            // F-C6: SV during a manual takeover mid-roast → bumpless resume.
+            self.resume_pid_bumpless(target_celsius)?;
+        } else {
+            self.enable_pid_control(target_celsius)?;
+        }
         info!(
             "Target temperature set to {:.1}°C (raw input: {:.1})",
             target_celsius, target
@@ -2049,6 +2070,20 @@ impl RoasterControl {
     /// Last desired heater (SSR) output recorded by the actuator controller.
     pub fn last_desired_heater_output(&self) -> f32 {
         self.actuator.last_desired_heater_output()
+    }
+
+    /// Hand control back to the firmware PID mid-roast after a manual (OT1)
+    /// takeover, without a power bump (F-C5/F-C6). Keeps the roast clock,
+    /// `pid_on_session` and charge state untouched.
+    fn resume_pid_bumpless(&mut self, target: f32) -> Result<(), RoasterError> {
+        let was_enabled = self.status.pid_enabled;
+        let applied = self.status.ssr_output;
+        let pv = self.status.pv;
+        self.enable_pid_control(target)?;
+        if !was_enabled {
+            self.dispatch.preload_pid_integrator(applied, target - pv);
+        }
+        Ok(())
     }
 
     /// Clamp a PID setpoint to the over-temperature cutoff of the channel the
