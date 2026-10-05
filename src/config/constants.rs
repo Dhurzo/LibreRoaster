@@ -218,6 +218,22 @@ pub const PROBE_STUCK_EQUILIBRIUM_MIN_BT_C: f32 = 60.0;
 /// Manual-mode probe-stuck exemption: ET must have stayed within this band since
 /// the BT anchor was set. A dead BT with a moving ET is a dead probe; both flat is equilibrium.
 pub const PROBE_STUCK_ET_FLAT_C: f32 = 3.0;
+/// Firmware-PID mode only (N4, re-audit 2026-10-05): the hot-equilibrium
+/// exemption (BT and ET both flat, BT > 60 °C) is BOUNDED. With both probes
+/// frozen hot nothing else can end the roast before the time budget (60 min
+/// for a `PID;ON` session), so after this many seconds of exempt plateau with
+/// the heater at or above `PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT` the firmware
+/// emits `ERR probe_stuck_warning` ...
+pub const PROBE_STUCK_PID_PLATEAU_WARN_SECS: u64 = 300;
+/// ... and after this many seconds it latches "Probe stuck". A real plateau
+/// more than 5 °C below the setpoint at ≥ 50 % heater for 10 minutes means
+/// the drum cannot reach the setpoint. Manual mode keeps the unbounded
+/// exemption (operator present, R2).
+pub const PROBE_STUCK_PID_PLATEAU_LATCH_SECS: u64 = 600;
+/// Heater duty (%) from which the PID-mode plateau bound counts.
+pub const PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT: f32 = 50.0;
+const _: () = assert!(PROBE_STUCK_PID_PLATEAU_WARN_SECS < PROBE_STUCK_PID_PLATEAU_LATCH_SECS);
+const _: () = assert!((PROBE_STUCK_PID_PLATEAU_LATCH_SECS as u32) < MAX_ROAST_TIME_SECS);
 /// Contract: max ms to wait for SSR current-sense confirmation before flagging `NotDetected`/`Error`.
 pub const SSR_DETECTION_TIMEOUT_MS: u32 = 100;
 /// Number of retry attempts to turn off the heater during emergency shutdown.

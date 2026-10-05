@@ -114,6 +114,11 @@ pub struct RoasterControl {
     /// disarm (heater 0 / non-finite BT), and when a new episode begins.
     /// Guarantees exactly one warning line per episode.
     probe_stuck_warning_sent: bool,
+    /// N4: first tick at which the PID-mode equilibrium exemption applied with
+    /// the heater at or above `PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT`.
+    pid_plateau_since: Option<Instant>,
+    /// N4: `ERR probe_stuck_warning` already sent for this plateau.
+    pid_plateau_warning_sent: bool,
     // Latched cooling fan after a plain STOP. `stop_streaming` sets the fan
     // to 100% but does NOT arm the safety emergency latch (only
     // `emergency_shutdown` does). Without this flag, the next `update_control`
@@ -180,6 +185,8 @@ impl RoasterControl {
             probe_stuck_last_change: None,
             probe_stuck_et_anchor: None,
             probe_stuck_warning_sent: false,
+            pid_plateau_since: None,
+            pid_plateau_warning_sent: false,
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
             fan_floor_gate: EdgeLogGate::new(),
@@ -1190,6 +1197,8 @@ impl RoasterControl {
                     self.probe_stuck_last_change = Some(current_time);
                     self.probe_stuck_et_anchor = Some(self.status.env_temp);
                     self.probe_stuck_warning_sent = false;
+                    self.pid_plateau_since = None;
+                    self.pid_plateau_warning_sent = false;
                 }
                 Some(prev) => {
                     if (probe_bt - prev).abs() > PROBE_STUCK_VARIATION_C {
@@ -1197,12 +1206,50 @@ impl RoasterControl {
                         self.probe_stuck_last_change = Some(current_time);
                         self.probe_stuck_et_anchor = Some(self.status.env_temp);
                         self.probe_stuck_warning_sent = false;
+                        self.pid_plateau_since = None;
+                        self.pid_plateau_warning_sent = false;
                     } else if arming.probe_stuck_equilibrium_exempt {
                         // Both probes flat with BT hot: equilibrium. Re-anchor the clock so that
                         // when ET starts moving BT gets the full window to respond.
                         self.probe_stuck_last_change = Some(current_time);
                         self.probe_stuck_warning_sent = false;
+                        // N4 (re-audit 2026-10-05): in firmware-PID mode the
+                        // exemption is bounded. With both probes frozen hot
+                        // nothing else ends the roast before the time budget,
+                        // so warn at PROBE_STUCK_PID_PLATEAU_WARN_SECS and
+                        // latch at PROBE_STUCK_PID_PLATEAU_LATCH_SECS while the
+                        // heater is at or above the observable duty.
+                        if self.status.pid_enabled
+                            && self.status.ssr_output >= PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
+                        {
+                            let since = *self.pid_plateau_since.get_or_insert(current_time);
+                            let plateau_secs =
+                                current_time.saturating_duration_since(since).as_secs();
+                            if plateau_secs >= PROBE_STUCK_PID_PLATEAU_WARN_SECS
+                                && !self.pid_plateau_warning_sent
+                            {
+                                self.pid_plateau_warning_sent = true;
+                                self.send_text_response("ERR probe_stuck_warning");
+                                warn!(
+                                    "SAFETY PROBE-STUCK: PID plateau (BT {:.1}°C flat, ET flat) for ≥{}s at ≥{:.0}% heater — warning",
+                                    probe_bt, PROBE_STUCK_PID_PLATEAU_WARN_SECS, PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
+                                );
+                            }
+                            if plateau_secs >= PROBE_STUCK_PID_PLATEAU_LATCH_SECS {
+                                warn!(
+                                    "SAFETY PROBE-STUCK: PID plateau for ≥{}s at ≥{:.0}% heater — emergency",
+                                    PROBE_STUCK_PID_PLATEAU_LATCH_SECS, PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
+                                );
+                                self.emergency_shutdown("Probe stuck")?;
+                            }
+                        } else {
+                            self.pid_plateau_since = None;
+                            self.pid_plateau_warning_sent = false;
+                        }
                     } else if let Some(last_change) = self.probe_stuck_last_change {
+                        // Exemption ended (ET moved): the plateau bound is moot.
+                        self.pid_plateau_since = None;
+                        self.pid_plateau_warning_sent = false;
                         let flat_secs = current_time
                             .saturating_duration_since(last_change)
                             .as_secs();
@@ -2151,6 +2198,8 @@ impl RoasterControl {
         self.probe_stuck_last_change = None;
         self.probe_stuck_et_anchor = None;
         self.probe_stuck_warning_sent = false;
+        self.pid_plateau_since = None;
+        self.pid_plateau_warning_sent = false;
     }
 
     fn resume_pid_bumpless(&mut self, target: f32) -> Result<(), RoasterError> {
