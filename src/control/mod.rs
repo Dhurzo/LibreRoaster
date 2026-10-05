@@ -6,6 +6,8 @@
 
 /// Shared error type (`RoasterError`) and the `RoasterCommandHandler` trait.
 pub mod abstractions;
+/// Step-test PID autotune (pure logic, DIFF E4).
+pub mod autotune;
 /// Focused controllers: sensor, actuator (heater+fan), safety and command dispatch.
 pub mod controllers;
 /// Artisan/TC4 command handlers producing policy outcomes.
@@ -16,6 +18,8 @@ pub mod pid;
 pub mod policies;
 /// Central `RoasterControl` facade: state machine, safety latches, single hardware writer.
 pub mod roaster_control;
+/// RoR-follow setpoint generator (pure logic, DIFF E3).
+pub mod ror_follow;
 /// SSR zero-cross cycle guard (`SsrCycleGuard`) pacing heater cycles.
 pub mod ssr_scheduler;
 /// Hardware port traits (heater, fan, thermometer) for dependency injection.
