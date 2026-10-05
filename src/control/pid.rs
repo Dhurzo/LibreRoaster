@@ -46,6 +46,8 @@ pub struct CoffeeRoasterPid {
     kd: f32,
     integrator: f32,
     last_error: f32,
+    /// PV of the previous sample (derivative on measurement).
+    last_pv: f32,
     /// `last_error` is only meaningful after the controller has observed
     /// at least one real sample. Before that, `(error - last_error) / dt`
     /// would be `(error - 0) / dt` — a massive derivative spike that
@@ -88,6 +90,7 @@ impl CoffeeRoasterPid {
             kd,
             integrator: 0.0,
             last_error: 0.0,
+            last_pv: 0.0,
             last_error_initialized: false,
             derivative_rate: 0.0,
             last_update_ms: None,
@@ -243,7 +246,10 @@ impl CoffeeRoasterPid {
         // surge). On the first tick seed `last_error = error` so the next
         // tick computes a real slope, and emit derivative = 0.0.
         let derivative = if self.last_error_initialized && dt > 0.0 {
-            let derivative = (error - self.last_error) / dt;
+            // Derivative on MEASUREMENT: -dPV/dt. Equal to d(error)/dt while
+            // the setpoint is constant, but a setpoint step (PID;SV, profile
+            // ramp) no longer kicks the output.
+            let derivative = -(current_temp - self.last_pv) / dt;
             self.derivative_rate = derivative;
             derivative
         } else {
@@ -255,6 +261,7 @@ impl CoffeeRoasterPid {
         };
 
         self.last_error = error;
+        self.last_pv = current_temp;
         self.last_error_initialized = true;
         self.saturation_active = self
             .last_feedback
@@ -347,6 +354,29 @@ impl CoffeeRoasterPid {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn setpoint_step_does_not_kick_derivative() {
+        let mut pid = CoffeeRoasterPid::with_gains(2.0, 0.0, 20.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, 0);
+        let _ = pid.compute_output(90.0, 100);
+        pid.set_target(150.0).unwrap(); // SV step, PV unchanged
+        let out = pid.compute_output(90.0, 200);
+        assert_eq!(pid.derivative_value(), 0.0);
+        assert!((out - 100.0).abs() < 1e-3, "P only (2*60=120 → clamp 100), got {out}");
+    }
+
+    #[test]
+    fn falling_pv_gives_positive_derivative() {
+        let mut pid = CoffeeRoasterPid::with_gains(0.0, 0.0, 1.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, 0);
+        let _ = pid.compute_output(89.0, 1000); // PV falls 1 °C/s
+        assert!((pid.derivative_value() - 1.0).abs() < 1e-3);
+    }
 
     proptest! {
         // a) PID output always clamped to [output_min, output_max]
