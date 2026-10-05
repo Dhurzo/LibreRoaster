@@ -1231,10 +1231,7 @@ impl RoasterControl {
             }
         } else {
             // Heater off, BT faulted, or PID regulating — disarm.
-            self.probe_stuck_last_bt = None;
-            self.probe_stuck_last_change = None;
-            self.probe_stuck_et_anchor = None;
-            self.probe_stuck_warning_sent = false;
+            self.reset_probe_stuck_detector();
         }
 
         self.status.state = self.state;
@@ -1520,6 +1517,8 @@ impl RoasterControl {
         // hour on big drums, and which the time-cap gate excludes) must
         // not carry into the new roast.
         self.heat_session_start = None;
+        // N1: the PID rule must not inherit a manual-phase detector clock.
+        self.reset_probe_stuck_detector();
         self.cooling_active = false;
         // Drop any pending `#DUMP` rows from a previous roast so they do
         // not interleave with the new roast's live telemetry.
@@ -1993,6 +1992,8 @@ impl RoasterControl {
         self.state = RoasterState::Preheating;
         self.status.state = RoasterState::Preheating;
         self.enable_pid_control(target_celsius)?;
+        // N1: the PID rule must not inherit a manual-phase detector clock.
+        self.reset_probe_stuck_detector();
         self.dispatch
             .get_output_manager_mut()
             .disable_continuous_output();
@@ -2129,6 +2130,16 @@ impl RoasterControl {
     /// Hand control back to the firmware PID mid-roast after a manual (OT1)
     /// takeover, without a power bump (F-C5/F-C6). Keeps the roast clock,
     /// `pid_on_session` and charge state untouched.
+    /// N1 (re-audit 2026-10-05): forget the current probe-stuck episode. The
+    /// manual two-stage clock (latch at 300 s) must not be inherited by the
+    /// firmware-PID single-stage latch (120 s) when control is handed back.
+    fn reset_probe_stuck_detector(&mut self) {
+        self.probe_stuck_last_bt = None;
+        self.probe_stuck_last_change = None;
+        self.probe_stuck_et_anchor = None;
+        self.probe_stuck_warning_sent = false;
+    }
+
     fn resume_pid_bumpless(&mut self, target: f32) -> Result<(), RoasterError> {
         let was_enabled = self.status.pid_enabled;
         let applied = self.status.ssr_output;
@@ -2136,6 +2147,8 @@ impl RoasterControl {
         self.enable_pid_control(target)?;
         if !was_enabled {
             self.dispatch.preload_pid_integrator(applied, target - pv);
+            // N1: a fresh detector window for the PID rule.
+            self.reset_probe_stuck_detector();
         }
         Ok(())
     }
