@@ -116,6 +116,33 @@ pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 /// See `roaster_control::update_control` and
 /// `SensorController::update_temperatures`.
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
+/// Over-temperature emergency cutoff for the ENVIRONMENT (ET) probe, in °C.
+/// ET reads drum air / exhaust / heater outlet depending on probe placement
+/// and legitimately runs hotter than BT; sharing BT's 260 °C cutoff aborted
+/// normal roasts (F-C1, audit 2026-10-05). PROVISIONAL: measure the real ET
+/// peak of the machine on the bench (preheat + dark roast) and keep at least
+/// 20 °C of margin above it.
+pub const ET_OVERTEMP_THRESHOLD: f32 = 300.0;
+const _: () = {
+    assert!(ET_OVERTEMP_THRESHOLD >= OVERTEMP_THRESHOLD);
+    assert!(ET_OVERTEMP_THRESHOLD <= MAX_TEMP);
+    assert!(ET_OVERTEMP_THRESHOLD < MAX_VALID_TEMP);
+};
+/// Minimum gap (°C) between the highest PID setpoint and the over-temperature
+/// cutoff of the channel the PID regulates. A setpoint at the cutoff would
+/// latch the emergency on the first overshoot.
+pub const TARGET_OVERTEMP_MARGIN_C: f32 = 10.0;
+
+/// Highest setpoint the firmware PID may chase on `pid_channel`
+/// (1 = ET, anything else = BT, the conservative default).
+pub fn max_pid_target_for_channel(pid_channel: u8) -> f32 {
+    if pid_channel == 1 {
+        ET_OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C
+    } else {
+        OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C
+    }
+}
+const _: () = assert!(DEFAULT_TARGET_TEMP <= OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C);
 /// Maximum age of a temperature sample before the PID treats it as stale
 /// and forces a safety hold. Tolerates 2 fully-missed ticks (H9): the sample
 /// is stamped BEFORE the 210 ms conversion wait, so at the ~310 ms cadence
@@ -387,6 +414,11 @@ pub const MAX_ROAST_TIME_SECS: u32 = 1800;
 /// Against a runaway heater the comms-idle (15 s), overtemp (260 °C) and
 /// probe-stuck backstops stay armed — this cap is only the outer time box.
 pub const MAX_MANUAL_HEAT_SESSION_SECS: u32 = 5400;
+/// Time cap (s) for a `PID;ON` session BEFORE the bean charge is detected
+/// (drum preheat under the firmware PID). After the charge the normal
+/// `MAX_ROAST_TIME_SECS` applies, anchored to the charge (F-C2).
+pub const MAX_PID_UNCHARGED_SESSION_SECS: u32 = 3600;
+const _: () = assert!(MAX_PID_UNCHARGED_SESSION_SECS > MAX_ROAST_TIME_SECS);
 
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 

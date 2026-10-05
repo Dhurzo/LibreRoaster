@@ -99,6 +99,8 @@ Click **Configure** next to the driver dropdown:
 
 > **Protocol Note:** Responses are `#`-prefixed because Artisan's ArduinoTC4 driver **only accepts empty or `#`-prefixed lines during initialisation**. A plain `OK` would cause "Arduino could not set temperature unit" and infinite re-init loop.
 
+> To plot heater/fan/SV as extra curves, add `+ArduinoTC4_34` **together with** `+ArduinoTC4_56` / `+ArduinoTC4_78`. The READ line uses the 4-channel layout (`amb,ET,BT,0.0,0.0,heater,fan,SV`); without `+ArduinoTC4_34` Artisan reads the fields shifted.
+
 ---
 
 ## 5. Temperature Units (°C / °F)
@@ -120,7 +122,7 @@ UNITS;F  → #OK  (all subsequent READ/STATUS/telemetry in °F)
 UNITS;C  → #OK  (back to °C)
 ```
 
-Setpoints sent in °F (`PID;SV;392` = 200°C) are **converted to °C internally** before validation. The valid target range is **50–300°C** (122–572°F).
+Setpoints sent in °F (`PID;SV;392` = 200°C) are **converted to °C internally** before validation. The valid target range is **50–300°C** (122–572°F). The firmware PID additionally caps the target to **250 °C when regulating BT** and **290 °C when regulating ET**.
 
 ---
 
@@ -260,7 +262,7 @@ Example: `#123.45,120.3,150.5,12.50,75.0`
 ### 8.2 Safety Backstops (Automatic)
 | Backstop | Trigger | Action |
 |----------|---------|--------|
-| **Over-temp** | BT/ET ≥ 260°C (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
+| **Over-temp** | BT ≥ 260°C, ET ≥ 300°C (provisional) (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
 | **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`; hot-equilibrium exempt only in manual, H8) | Emergency shutdown |
 | **Probe stuck (Manual)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`), hot BT-near-ET holds exempt (H8) | **Warning** `ERR probe_stuck_warning`; latch at 300s |
 | **Comms idle** | No command 15s @ heater >0 or roast active | Emergency shutdown |
@@ -300,10 +302,10 @@ Emitted **once per latch event** (not every tick). Reasons: `Over-temperature de
 
 ### 9.5 `ERR channel_full command_dropped`
 - **Cause:** Command burst >16 commands in one tick (Artisan startup burst)
-- **Fix:** Artisan retries automatically; firmware channel size = 16
+- **Fix:** Artisan does not retry; the command is lost; firmware channel size = 16
 
 ### 9.6 Telemetry Corrupted / Garbled Lines
-- **Cause:** `esp_println` logs sharing USB/UART with protocol (Bug #6)
+- **Cause:** `esp_println` logs sharing UART with protocol (Bug #6). Logs go to UART0 only, never to the native USB port.
 - **Workaround:** Flash without `instrumentation` feature (log level = Warn)
 - **Permanent fix:** Requires dedicated UART1 log sink (planned Fase 6)
 

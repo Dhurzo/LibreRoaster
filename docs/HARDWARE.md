@@ -29,7 +29,7 @@ The constants and hardware init code define this effective mapping (single sourc
 | SPI MOSI | 7 | output, FSPI data out |
 | Status LED | 8 | output, push-pull, active-high; not sampled for normal boot (see §8) |
 | Fan PWM | 9 | output, LEDC 25 kHz; **strapping pin** — external pull-up 10 kΩ → 3.3 V mandatory on custom boards |
-| SSR control PWM | 10 | output, LEDC 5 Hz zero-cross, 14-bit |
+| SSR control PWM | 10 | output, LEDC 5 Hz zero-cross, 14-bit; external 10 kΩ pull-down mandatory |
 | UART RX | 20 | input, 3.3 V only, 115200 baud |
 | UART TX | 21 | output, 3.3 V only, 115200 baud |
 

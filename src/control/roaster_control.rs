@@ -38,7 +38,7 @@ const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
 /// | Comms-idle 15 s | heater>0 or roast/preheat state |
 /// | Time budget | `(heater>0 && !PID-preheating)` or Heating/Stable; 1800 s anchored to START, 5400 s to `heat_session_start` (manual) |
 /// | RoR (0.75 / 1.0 °C/s) | firmware in control (`!artisan_control`) and (Heating/Stable or (Idle + PID + heater>0)) |
-/// | Probe-stuck (mode part) | NOT PID-regulating; call site adds `ssr_output>0 && BT finite`. Manual equilibrium (both probes flat, BT hot) re-anchors the clock instead of disarming |
+/// | Probe-stuck (mode part) | NOT PID-regulating; call site adds `ssr_output>0 && BT finite`. Equilibrium in any mode (both probes flat, BT hot) re-anchors the clock instead of disarming |
 /// | Heat-sense GPIO1 | only with `heat-sense` feature; 1 sample/tick; 1500 ms window |
 /// | Fan floor 20 % | heater actually delivering (`ssr_output>0`) |
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,7 +50,7 @@ pub struct GuardArming {
     /// Mode part of the probe-stuck gate; the call site adds
     /// `ssr_output > 0 && BT finite` with the freshly applied output.
     pub probe_stuck_mode: bool,
-    /// Manual-equilibrium exemption (R2): both probes flat with BT hot.
+    /// Equilibrium exemption (any mode, R2 + F-C7): both probes flat with BT hot.
     /// When set the detector re-anchors its clock instead of counting
     /// towards a latch — a frozen BT with a moving ET still latches.
     pub probe_stuck_equilibrium_exempt: bool,
@@ -138,6 +138,17 @@ pub struct RoasterControl {
         { crate::logging::roast_logger::LOG_CAPACITY + 1 },
     >,
     fan_floor_gate: EdgeLogGate,
+    /// Rate-limits the "setpoint capped" warning to one line per episode (F-C8).
+    target_cap_gate: EdgeLogGate,
+    /// True when the current roast was started by `PID;ON` (Artisan's PID
+    /// button) rather than `START`. Such sessions usually include the drum
+    /// preheat, so the 30-min roast budget anchors to the detected charge
+    /// instead of the PID;ON instant (F-C2). Set by every handoff, cleared by
+    /// `stop_streaming`.
+    pid_on_session: bool,
+    /// BT samples for the MANUAL-session charge detector (F-C3). Separate
+    /// from `bt_charge_history`, which only runs in Heating/Stable.
+    manual_charge_history: heapless::Deque<f32, 10>,
 }
 
 impl RoasterControl {
@@ -172,6 +183,9 @@ impl RoasterControl {
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
             fan_floor_gate: EdgeLogGate::new(),
+            target_cap_gate: EdgeLogGate::new(),
+            pid_on_session: false,
+            manual_charge_history: heapless::Deque::new(),
         })
     }
 
@@ -508,6 +522,7 @@ impl RoasterControl {
         // fan profile is kept across STOP/OFF — the operator does not need to
         // re-send `FANPROFILE` for the next roast.
         self.profile_start_time = None;
+        self.pid_on_session = false;
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
         // against the time budget.
@@ -603,6 +618,58 @@ impl RoasterControl {
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
+    /// Manual-session charge detector (F-C3). A real bean charge drops BT
+    /// sharply; when it does during a manual heat session, restart the 90-min
+    /// session budget so back-to-back batches are not cut by preheat time.
+    /// Only ever moves the anchor LATER. Re-detections within
+    /// `HEAT_SESSION_OFF_DEBOUNCE_SECS` of the last anchor are ignored (a real
+    /// charge keeps dropping for 30-60 s).
+    fn track_manual_charge(&mut self, now: Instant) {
+        let bt = self.status.bean_temp;
+        if !bt.is_finite() || bt <= 50.0 {
+            self.manual_charge_history.clear();
+            return;
+        }
+        if self.manual_charge_history.len() >= 10 {
+            let _ = self.manual_charge_history.pop_front();
+        }
+        let _ = self.manual_charge_history.push_back(bt);
+        if self.manual_charge_history.len() < 5 {
+            return;
+        }
+        let first = self.manual_charge_history.front().copied().unwrap_or(bt);
+        let drop = first - bt;
+        if drop <= CHARGE_DROP_THRESHOLD_C {
+            return;
+        }
+        let recently_anchored = self.heat_session_start.is_some_and(|s| {
+            now.saturating_duration_since(s).as_secs() < HEAT_SESSION_OFF_DEBOUNCE_SECS
+        });
+        if !recently_anchored {
+            info!(
+                "Manual session: charge detected (BT -{:.1}°C) — heat-session budget restarts",
+                drop
+            );
+            self.heat_session_start = Some(now);
+        }
+        self.manual_charge_history.clear();
+    }
+
+    /// Roast-time budget for a session anchored at `start` (START / PID;ON).
+    /// START keeps 30 min from START. A PID;ON session (F-C2) gets
+    /// `MAX_PID_UNCHARGED_SESSION_SECS` until the charge is detected, then
+    /// 30 min from the charge.
+    fn roast_time_budget(&self, start: Instant) -> (Instant, u32) {
+        use crate::config::constants::{MAX_PID_UNCHARGED_SESSION_SECS, MAX_ROAST_TIME_SECS};
+        if !self.pid_on_session {
+            return (start, MAX_ROAST_TIME_SECS);
+        }
+        match self.charge_time {
+            Some(charge) => (charge, MAX_ROAST_TIME_SECS),
+            None => (start, MAX_PID_UNCHARGED_SESSION_SECS),
+        }
+    }
+
     /// Which safety backstops are armed on this tick. Computed ONCE per tick —
     /// the single place where "which guard protects which operating mode" is
     /// decided (see `GuardArming` table).
@@ -620,7 +687,7 @@ impl RoasterControl {
             || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
         let time_budget = if max_roast_time_armed {
             match (self.profile_start_time, self.heat_session_start) {
-                (Some(s), _) => Some((s, crate::config::constants::MAX_ROAST_TIME_SECS)),
+                (Some(s), _) => Some(self.roast_time_budget(s)),
                 (None, Some(s)) => {
                     Some((s, crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS))
                 }
@@ -639,11 +706,10 @@ impl RoasterControl {
 
         let probe_bt = self.status.bean_temp;
         let et_now = self.status.env_temp;
-        // R2: equilibrium = hot BT + ET flat since the BT anchor was set.
-        // Both flat is equilibrium; a frozen BT with a moving ET is a dead
-        // probe. A cold BT (short signature) never counts as equilibrium.
-        let manual_equilibrium = !self.status.pid_enabled
-            && probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
+        // R2 + F-C7: equilibrium = hot BT + ET flat since the BT anchor was set,
+        // in ANY mode. A dead BT under PID drives the heater up, ET moves out of
+        // the band and the exemption ends; a shorted BT reads cold (< 60 °C).
+        let equilibrium = probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
             && et_now.is_finite()
             && self.probe_stuck_et_anchor.is_some_and(|et0| {
                 (et_now - et0).abs() <= crate::config::constants::PROBE_STUCK_ET_FLAT_C
@@ -658,7 +724,7 @@ impl RoasterControl {
             time_budget,
             ror,
             probe_stuck_mode,
-            probe_stuck_equilibrium_exempt: manual_equilibrium,
+            probe_stuck_equilibrium_exempt: equilibrium,
         }
     }
 
@@ -721,6 +787,16 @@ impl RoasterControl {
         } else if self.heat_session_start.is_some() {
             // Heater off mid-session — start the debounce window.
             self.heat_session_off_since = Some(current_time);
+        }
+
+        // F-C3: manual-session charge re-anchor (only loosens the 90-min cap).
+        if matches!(self.state, RoasterState::Idle)
+            && self.status.artisan_control
+            && heater_energized
+        {
+            self.track_manual_charge(current_time);
+        } else {
+            self.manual_charge_history.clear();
         }
 
         // PV for the guard table (`regulating` compares target vs PV).
@@ -1368,7 +1444,7 @@ impl RoasterControl {
             if self.status.fault_condition || self.safety.is_emergency_active() {
                 self.clear_emergency_explicit();
             }
-            self.start_roast_handoff()?
+            self.start_roast_handoff(false)?
         }
         Ok(())
     }
@@ -1388,13 +1464,30 @@ impl RoasterControl {
             });
         }
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
-            info!(
-                "Artisan+ PID;ON ignored - roast already active (state={:?})",
-                self.state
-            );
+            if self.status.pid_enabled {
+                info!(
+                    "Artisan+ PID;ON ignored - PID already active (state={:?})",
+                    self.state
+                );
+            } else {
+                // F-C5: the operator took over with OT1 mid-roast; PID;ON
+                // hands control back to the PID toward the last setpoint.
+                let target =
+                    if crate::config::constants::is_valid_target_temp(self.status.target_temp) {
+                        self.status.target_temp
+                    } else {
+                        crate::config::constants::DEFAULT_TARGET_TEMP
+                    };
+                let target = self.cap_pid_target(target);
+                self.resume_pid_bumpless(target)?;
+                info!(
+                    "Artisan+ PID;ON - PID resumed at {:.1}°C (bumpless)",
+                    target
+                );
+            }
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
-            self.start_roast_handoff()?
+            self.start_roast_handoff(true)?
         }
         Ok(())
     }
@@ -1404,8 +1497,9 @@ impl RoasterControl {
     /// target) PID arm, and transition to `Heating`. Latch clearing is NOT
     /// part of the handoff — `handle_start_roast` clears explicitly before
     /// calling, `handle_pid_on` never clears (H11).
-    fn start_roast_handoff(&mut self) -> Result<(), RoasterError> {
+    fn start_roast_handoff(&mut self, via_pid_on: bool) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
+        self.pid_on_session = via_pid_on;
         // Reset the charge-detection state on START so every path into a
         // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
         // a STOP (PREHEAT → START cadence). Clearing here makes START
@@ -1739,8 +1833,16 @@ impl RoasterControl {
                 source: Some("target_temp_out_of_range"),
             });
         }
+        let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
-        self.enable_pid_control(target_celsius)?;
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+            && !self.status.pid_enabled
+        {
+            // F-C6: SV during a manual takeover mid-roast → bumpless resume.
+            self.resume_pid_bumpless(target_celsius)?;
+        } else {
+            self.enable_pid_control(target_celsius)?;
+        }
         info!(
             "Target temperature set to {:.1}°C (raw input: {:.1})",
             target_celsius, target
@@ -1878,6 +1980,7 @@ impl RoasterControl {
             });
         }
 
+        let target_celsius = self.cap_pid_target(target_celsius);
         self.preheat_target = Some(target_celsius);
         // Drop the cooldown latch on a deliberate re-energize — same
         // justification as `handle_start_roast`. Otherwise a consecutive batch
@@ -2023,6 +2126,39 @@ impl RoasterControl {
         self.actuator.last_desired_heater_output()
     }
 
+    /// Hand control back to the firmware PID mid-roast after a manual (OT1)
+    /// takeover, without a power bump (F-C5/F-C6). Keeps the roast clock,
+    /// `pid_on_session` and charge state untouched.
+    fn resume_pid_bumpless(&mut self, target: f32) -> Result<(), RoasterError> {
+        let was_enabled = self.status.pid_enabled;
+        let applied = self.status.ssr_output;
+        let pv = self.status.pv;
+        self.enable_pid_control(target)?;
+        if !was_enabled {
+            self.dispatch.preload_pid_integrator(applied, target - pv);
+        }
+        Ok(())
+    }
+
+    /// Clamp a PID setpoint to the over-temperature cutoff of the channel the
+    /// PID regulates (minus `TARGET_OVERTEMP_MARGIN_C`). F-C8: a setpoint above
+    /// the cutoff is a guaranteed latch, never a useful target.
+    fn cap_pid_target(&mut self, target: f32) -> f32 {
+        let cap = crate::config::constants::max_pid_target_for_channel(self.status.pid_channel);
+        if target > cap {
+            if self.target_cap_gate.rising(true) {
+                warn!(
+                    "PID setpoint {:.1}°C above channel {} limit — capped to {:.1}°C",
+                    target, self.status.pid_channel, cap
+                );
+            }
+            cap
+        } else {
+            self.target_cap_gate.rising(false);
+            target
+        }
+    }
+
     /// Run one PID update when due per `pid_cycle_time_ms`; returns the SSR duty to apply.
     fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {
         use crate::config::constants::SsrHardwareStatus;
@@ -2058,6 +2194,14 @@ impl RoasterControl {
                         debug!("Profile target: {:.1}°C at t={}s", new_target, elapsed);
                     }
                 }
+            }
+
+            // F-C8: re-apply the channel cap every PID cycle — covers profile
+            // setpoints and a `PID;CHAN` switch after the SV was accepted.
+            let capped = self.cap_pid_target(self.status.target_temp);
+            if capped != self.status.target_temp {
+                self.status.target_temp = capped;
+                let _ = self.dispatch.set_pid_target(capped);
             }
 
             let output = self.dispatch.get_pid_output(self.status.pv, current_time);

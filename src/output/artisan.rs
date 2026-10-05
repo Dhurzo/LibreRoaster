@@ -95,7 +95,7 @@ impl ArtisanFormatter {
 
     /// Format a TC4 READ response: AMB,ET,BT,CHAN3,CHAN4 plus PID fields.
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
-        // `ambient_temp` is an always-0.0 placeholder (no ambient probe).
+        // `ambient_temp` is the cold-junction temperature in °C (not converted to °F).
         // Emit the raw value so AMB stays 0.0 in both scales, matching PROTOCOL §4.
         let amb = Self::normalize_read_value(status.ambient_temp);
         let et = Self::normalize_read_value(
@@ -887,8 +887,8 @@ mod tests {
         assert_eq!(parts[4], "0.0", "CHAN4 placeholder");
 
         // Test Fahrenheit conversion: ET/BT convert to °F; AMB stays raw.
-        // `ambient_temp` is an always-0.0 placeholder (no ambient probe),
-        // so AMB is emitted raw in both scales (PROTOCOL §4: absent channel = 0.0).
+        // `ambient_temp` is the cold-junction temperature in °C (not converted to °F),
+        // so AMB is emitted raw in both scales.
         status
             .temperature_settings
             .set_scale(TemperatureScale::Fahrenheit);

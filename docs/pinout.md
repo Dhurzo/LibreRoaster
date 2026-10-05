@@ -124,6 +124,12 @@ If you see "waiting for download" instead of "LibreRoaster v0.0.1 Alpha starting
 
 ---
 
+### ⚠️ GPIO10 — SSR (heater)
+
+GPIO10 has no defined level between reset and firmware initialisation (a few hundred ms) and after every watchdog reset. **A 10 kΩ pull-down from the SSR control line to GND is mandatory**, especially when the SSR is driven through a transistor/MOSFET. Bench check: scope GPIO10 during boot — it must never go HIGH before the firmware drives it.
+
+---
+
 ### ⚠️ GPIO8 — Status LED (Not a Boot-Strapping Pin)
 
 GPIO8 is **not** sampled during normal flash boot — the boot mode control

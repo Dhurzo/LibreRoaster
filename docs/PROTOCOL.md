@@ -314,6 +314,8 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 - `START`
 - `PREHEAT <temp>`
 
+Setpoints are accepted in the 50–300 °C range, but the firmware PID caps the target to 250 °C when regulating BT and to 290 °C when regulating ET (10 °C below each channel's over-temperature cutoff).
+
 ### `PREHEAT` and `START` state gating
 
 `START` and `PREHEAT` are **ignored** (acknowledged with no state change, no

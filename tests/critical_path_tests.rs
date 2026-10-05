@@ -529,7 +529,11 @@ fn overtemp_et_triggers_emergency() {
     let _guard = acquire_lock();
     let mut ctrl = build_control();
 
-    let result = ctrl.update_temperatures(25.0, 270.0, Instant::now());
+    let result = ctrl.update_temperatures(
+        25.0,
+        libreroaster::config::constants::ET_OVERTEMP_THRESHOLD + 10.0,
+        Instant::now(),
+    );
     assert!(result.is_err());
     assert!(ctrl.get_status().fault_condition);
 }

@@ -111,6 +111,7 @@ esp-backtrace = { version = "0.18.1", features = [
   "esp32c3",
   "panic-handler",
   "println",
+  "custom-pre-backtrace",
 ] }
 esp-println = { version = "0.16.1", default-features = false, features = ["esp32c3", "log-04", "uart", "critical-section"] }
 riscv-rt = { version = "0.16.0" }

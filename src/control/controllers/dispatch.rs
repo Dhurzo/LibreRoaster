@@ -116,6 +116,11 @@ impl CommandDispatcher {
         self.temp_handler.disable_pid();
     }
 
+    /// Bumpless manual→PID transfer. Call right AFTER `enable_pid`.
+    pub fn preload_pid_integrator(&mut self, applied: f32, error: f32) {
+        self.temp_handler.preload_pid_integrator(applied, error);
+    }
+
     /// Compute the PID output for the given bean temperature.
     pub fn get_pid_output(&mut self, bean_temp: f32, current_time: Instant) -> f32 {
         self.temp_handler.get_pid_output(bean_temp, current_time)

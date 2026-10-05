@@ -280,7 +280,7 @@ impl SensorController {
                 source: Some("overtemp_detected"),
             });
         }
-        if !env_fault.has_fault() && status.env_temp >= OVERTEMP_THRESHOLD {
+        if !env_fault.has_fault() && status.env_temp >= ET_OVERTEMP_THRESHOLD {
             return Err(RoasterError::TemperatureOutOfRange {
                 source: Some("overtemp_detected"),
             });
@@ -516,7 +516,7 @@ mod tests {
         let now = embassy_time::Instant::now();
 
         let result =
-            ctrl.update_temperatures(150.0, OVERTEMP_THRESHOLD, fault, fault, now, &mut status);
+            ctrl.update_temperatures(150.0, ET_OVERTEMP_THRESHOLD, fault, fault, now, &mut status);
 
         assert!(result.is_err());
     }

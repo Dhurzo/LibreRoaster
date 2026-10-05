@@ -83,6 +83,8 @@ PID;OFF          → stop and disable PID (also the latch recovery)
 STOP             → emergency stop: heater 0 %, fan 100 %, arms the safety latch
 ```
 
+> `PID;OFF` stops the heater and sets the fan to 100 %: Artisan sends it on the OFF button and on DROP, so it must stay a stop. To switch to manual mid-roast, move the `OT1` slider (it disables the PID by itself). To return to the PID, press *PID ON*: it resumes the PID without a power bump.
+
 * Up to `MAX_PROFILE_SETPOINTS = 16` points per profile
   (`src/config/constants.rs:306`).
 * Temperatures are in **display units** (`UNITS;C/F`): converted to °C

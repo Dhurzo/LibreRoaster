@@ -33,6 +33,13 @@ use critical_section;
 use esp32c3;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+
+/// esp-backtrace `custom-pre-backtrace` hook: cut the heater before printing.
+#[cfg(target_arch = "riscv32")]
+#[no_mangle]
+pub fn custom_pre_backtrace() {
+    libreroaster::safety::panic_guard::cut_heater_on_panic();
+}
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 #[cfg(target_arch = "riscv32")]

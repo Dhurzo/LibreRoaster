@@ -29,9 +29,9 @@ impl Instant {
     }
 }
 
-// NOTE: Session handshake *ACK* (Artisan sends `CHAN` → firmware replies `#…`)
-// is DISABLED for Artisan Scope compatibility (Scope sends commands immediately
-// without waiting for `#OK`). The *receive* path still accepts `CHAN`/`UNITS`/`FILT`
+// NOTE: Session handshake *ACK* (Artisan sends `CHAN` → firmware replies `#…`):
+// the CHAN ACK (`#<rate>`) is sent.
+// The *receive* path still accepts `CHAN`/`UNITS`/`FILT`
 // while the safety latch is armed (see `input::parser` and `roaster_control`),
 // so a reconnecting Artisan can re-send its handshake even when latched.
 // If re-enabling the ACK, restore `init_state.rs` and uncomment the init flow.

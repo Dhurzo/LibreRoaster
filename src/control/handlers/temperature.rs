@@ -88,6 +88,11 @@ impl TemperatureCommandHandler {
         self.pid_controller.enable();
     }
 
+    /// Bumpless manual→PID transfer, see `CoffeeRoasterPid::preload_integrator`.
+    pub fn preload_pid_integrator(&mut self, applied: f32, error: f32) {
+        self.pid_controller.preload_integrator(applied, error);
+    }
+
     /// Expose the PID-enabled state so `enable_pid` in `CommandDispatcher`
     /// can decide whether to (re-)enable the controller or just update the
     /// target. Artisan's ramp/soak driver fires `PID;SV` on every setpoint

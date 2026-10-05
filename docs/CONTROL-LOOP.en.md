@@ -156,7 +156,7 @@ if elapsed > limit_for(start)
     → emergency_shutdown("Maximum roast time exceeded")
 
 // 5. Cooldown latch (STOP → fan 100% until BT < 50 °C)
-if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (50.0) && BT finite > 0
+if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (60.0) && BT finite > 0
     → cooling_active = false
 
 // 6. Charge detection (bean drop)
@@ -192,7 +192,7 @@ let desired_output = if safety.is_emergency_active() {
 
 `src/control/roaster_control.rs:1828`
 
-- **Throttle:** `pid_cycle_time_ms` (default 1000 ms, configurable via `PID;CT`, floor 10 ms)
+- **Throttle:** `pid_cycle_time_ms` (default 100 ms, configurable via `PID;CT`, floor 10 ms)
 - **Profile following:** interpolates `active_profile.target_at(elapsed_secs)`
 - **Stale hold:** if sensor data > 500 ms old → hold last *applied* output (not PID intent)
 - **Anti‑windup:** `PidFeedback { desired, applied, guard_busy }` → `dispatch.set_pid_feedback()`
@@ -218,7 +218,7 @@ let fan_output = if safety.is_emergency_active() || cooling_active {
 };
 
 // HEATER↔FAN INTERLOCK: if heater > 0% and fan < 20% → force fan = 20%
-if desired_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT (20.0) {
+if ssr_output > 0.0 && fan_output < FAN_MIN_SAFETY_PCT (20.0) {
     fan_output = FAN_MIN_SAFETY_PCT;
 }
 ```
@@ -393,14 +393,13 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 | `MAX_BT_RATE_OF_RISE` | 0.75 | °C/s soft RoR band (H6b) |
 | `FAN_MIN_SAFETY_PCT` | 20.0 | Interlock minimum with heater>0 |
 | `SENSOR_FAULT_DEBOUNCE` | 5 | Fault latch threshold |
-| `MAX_BT_RATE_OF_RISE` | 0.5 | °C/s soft band start |
 | `MAX_BT_RATE_OF_RISE_HARD` | 1.0 | °C/s hard band |
 | `ROR_EXCEEDED_CONSECUTIVE_LIMIT` | 3 | Hard band ticks |
 | `ROR_SOFT_DEBOUNCE_LIMIT` | 12 | Soft band ticks |
 | `PROBE_STUCK_TIMEOUT_SECS` | 120 | Warning (manual) / latch (PID) |
 | `PROBE_STUCK_MANUAL_LATCH_SECS` | 300 | Latch stage (manual) |
 | `PROBE_STUCK_VARIATION_C` | 1.0 | Minimum °C movement |
-| `COOLING_RELEASE_BEAN_TEMP_C` | 50.0 | Cooldown latch release |
+| `COOLING_RELEASE_BEAN_TEMP_C` | 60.0 | Cooldown latch release |
 | `DEFAULT_OUTPUT_INTERVAL_MS` | 1000 | Telemetry continuous rate |
 | `LOG_CAPACITY` | 256 | Ring buffer samples |
 | `HEAT_SESSION_OFF_DEBOUNCE_SECS` | 60 | Heat session end debounce |
