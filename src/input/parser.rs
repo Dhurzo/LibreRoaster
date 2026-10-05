@@ -5,7 +5,9 @@
 //! normalisation, value range/clamping, and FIFO staging of PROFILE/FANPROFILE
 //! payloads via interrupt-safe statics for the control loop to consume.
 
-use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RorPoint, RorProfile};
+use crate::config::{
+    ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RorPoint, RorProfile, TuneCommand,
+};
 use core::cell::RefCell;
 use critical_section::Mutex;
 
@@ -327,6 +329,22 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         }
     } else if cmd.eq_ignore_ascii_case("DROP") && parts.len() == 1 {
         Ok(ArtisanCommand::Drop)
+    } else if cmd.eq_ignore_ascii_case("TUNE") {
+        // DIFF E4: `TUNE;<step%>` | `TUNE;ABORT` | `TUNE;UNLOCK` | `TUNE;STATUS`.
+        if parts.len() != 2 {
+            return Err(ParseError::InvalidValue);
+        }
+        let arg = parts[1].trim();
+        if arg.eq_ignore_ascii_case("ABORT") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Abort))
+        } else if arg.eq_ignore_ascii_case("UNLOCK") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Unlock))
+        } else if arg.eq_ignore_ascii_case("STATUS") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Status))
+        } else {
+            let step = parse_percentage(arg)?;
+            Ok(ArtisanCommand::Tune(TuneCommand::Start(step)))
+        }
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
             let target = parse_float(parts[1])?;

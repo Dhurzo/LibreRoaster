@@ -356,6 +356,22 @@ pub enum ArtisanCommand {
     SetRorProfile,
     /// `RORPROFILE;OFF` — unload the RoR profile and stop RoR-follow (DIFF E3).
     ClearRorProfile,
+    /// `TUNE;...` — step-test PID autotune (DIFF E4).
+    Tune(TuneCommand),
+}
+
+/// Sub-commands of `TUNE` (DIFF E4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuneCommand {
+    /// `TUNE;<step%>` — start a step test `step` % above the current manual
+    /// heater duty.
+    Start(u8),
+    /// `TUNE;ABORT` — stop a running test (heater returns to the manual value).
+    Abort,
+    /// `TUNE;UNLOCK` — accept `PID;T` gains from Artisan again.
+    Unlock,
+    /// `TUNE;STATUS` — report the last result (`#TUNE ...` line).
+    Status,
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;

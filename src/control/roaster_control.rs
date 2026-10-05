@@ -13,6 +13,7 @@ use crate::control::controllers::{
     ActuatorController, CommandDispatchResult, CommandDispatcher, SafetyController,
     SensorController,
 };
+use crate::control::autotune::{StepTest, TuneResult, TuneTick};
 use crate::control::pid::PidFeedback;
 use crate::control::ror_follow::{RorFollower, RorStep};
 use crate::control::traits::{Fan, Heater};
@@ -173,6 +174,15 @@ pub struct RoasterControl {
     ror_follower: Option<RorFollower>,
     /// DIFF E3: RoR the generator is following right now (°C/min; 0 = none).
     ror_target_c_per_min: f32,
+    /// DIFF E4: `TUNE;<step>` accepted; the test starts on the next tick.
+    pending_tune: Option<u8>,
+    /// DIFF E4: running step test and its start instant (tick time base).
+    autotune: Option<(StepTest, Instant)>,
+    /// DIFF E4: host `PID;T`/`PIDGAIN` ignored while true (set by a
+    /// successful TUNE, cleared by `TUNE;UNLOCK` or a reboot).
+    pid_gains_locked: bool,
+    /// DIFF E4: last successful result.
+    last_tune: Option<TuneResult>,
 }
 
 impl RoasterControl {
@@ -217,6 +227,10 @@ impl RoasterControl {
             ror_profile: None,
             ror_follower: None,
             ror_target_c_per_min: 0.0,
+            pending_tune: None,
+            autotune: None,
+            pid_gains_locked: false,
+            last_tune: None,
         })
     }
 
@@ -1011,6 +1025,10 @@ impl RoasterControl {
             }
         }
 
+        // DIFF E4: advance a queued/running step test. Its duty only ever
+        // replaces the MANUAL heater value, for the duration of the test.
+        let tune_drive = self.advance_tune(current_time);
+
         let desired_output = if self.safety.is_emergency_active() {
             debug!("Emergency active - forcing SSR output to 0%");
             0.0
@@ -1021,7 +1039,8 @@ impl RoasterControl {
                 warn!("Artisan+ manual control: SSR not available - output: 0%");
                 0.0
             } else {
-                let manual_output = self.dispatch.artisan_manual_heater();
+                let manual_output =
+                    tune_drive.unwrap_or_else(|| self.dispatch.artisan_manual_heater());
                 debug!(
                     "Artisan+ control - manual heater output: {:.1}%",
                     manual_output
@@ -1326,6 +1345,23 @@ impl RoasterControl {
         // Record wall-clock (millis-since-boot) of last command for idle timeout.
         self.status.last_command_received_at_ms = embassy_time::Instant::now().as_millis();
 
+        // DIFF E4: any operator command except monitoring/handshake (and
+        // TUNE;STATUS) aborts a running step test — the operator took over.
+        if (self.autotune.is_some() || self.pending_tune.is_some())
+            && !matches!(
+                command,
+                crate::config::ArtisanCommand::ReadStatus
+                    | crate::config::ArtisanCommand::StatusReport
+                    | crate::config::ArtisanCommand::Chan(_)
+                    | crate::config::ArtisanCommand::Units(_)
+                    | crate::config::ArtisanCommand::Filt(_)
+                    | crate::config::ArtisanCommand::SetStreaming(_)
+                    | crate::config::ArtisanCommand::Tune(crate::config::TuneCommand::Status)
+            )
+        {
+            self.abort_tune();
+        }
+
         // Reject all commands when a fault condition is active. Prevents
         // heater ramp commands from worsening an over-temp situation detected
         // between sensor reads.
@@ -1456,6 +1492,7 @@ impl RoasterControl {
             crate::config::ArtisanCommand::Drop => self.handle_drop(),
             crate::config::ArtisanCommand::SetRorProfile => self.handle_set_ror_profile(),
             crate::config::ArtisanCommand::ClearRorProfile => self.handle_clear_ror_profile(),
+            crate::config::ArtisanCommand::Tune(cmd) => self.handle_tune(cmd),
         }
     }
 
@@ -1606,6 +1643,153 @@ impl RoasterControl {
         self.stop_ror_follow();
         info!("RoR profile cleared");
         Ok(())
+    }
+
+    /// DIFF E4: `TUNE;...` handler. `Start` only queues the request; the
+    /// test itself starts on the next control tick (`advance_tune`).
+    fn handle_tune(&mut self, cmd: crate::config::TuneCommand) -> Result<(), RoasterError> {
+        use crate::config::TuneCommand;
+        match cmd {
+            TuneCommand::Start(step) => {
+                if !self.status.artisan_control || self.status.pid_enabled {
+                    return Err(RoasterError::InvalidState {
+                        source: Some("tune_needs_manual_mode"),
+                    });
+                }
+                if self.cooling_active {
+                    return Err(RoasterError::InvalidState {
+                        source: Some("tune_cooling_active"),
+                    });
+                }
+                self.pending_tune = Some(step);
+                info!("TUNE requested: step {}%", step);
+                Ok(())
+            }
+            TuneCommand::Abort => {
+                self.abort_tune();
+                Ok(())
+            }
+            TuneCommand::Unlock => {
+                self.pid_gains_locked = false;
+                info!("TUNE: host PID gains accepted again");
+                Ok(())
+            }
+            TuneCommand::Status => {
+                self.send_tune_status();
+                Ok(())
+            }
+        }
+    }
+
+    /// DIFF E4: stop a pending/running test (no-op when idle).
+    fn abort_tune(&mut self) {
+        if self.autotune.is_some() || self.pending_tune.is_some() {
+            self.autotune = None;
+            self.pending_tune = None;
+            warn!("TUNE aborted");
+            self.send_text_response("ERR tune_aborted");
+        }
+    }
+
+    /// DIFF E4: one control tick of the step test. Returns the heater duty
+    /// the test is driving, or `None` when no test is running. Never runs
+    /// while latched or outside manual mode.
+    fn advance_tune(&mut self, now: Instant) -> Option<f32> {
+        if self.safety.is_emergency_active()
+            || !self.status.artisan_control
+            || self.status.pid_enabled
+        {
+            self.abort_tune();
+            return None;
+        }
+        if let Some(step) = self.pending_tune.take() {
+            let base = self.dispatch.artisan_manual_heater();
+            match StepTest::new(base, step as f32, self.status.bean_temp) {
+                Ok(test) => {
+                    info!("TUNE started: base {:.0}% + step {}%", base, step);
+                    self.autotune = Some((test, now));
+                }
+                Err(e) => {
+                    warn!("TUNE refused: {}", e.code());
+                    self.send_err_token(e.code());
+                    return None;
+                }
+            }
+        }
+        let (mut test, start) = self.autotune.take()?;
+        let t = now.saturating_duration_since(start).as_micros() as f32 * 1e-6;
+        match test.tick(t, self.status.bean_temp) {
+            TuneTick::Drive(duty) => {
+                self.autotune = Some((test, start));
+                Some(duty)
+            }
+            TuneTick::Done(result) => {
+                match self.dispatch.set_pid_gains(result.kp, result.ki, result.kd) {
+                    Ok(()) => {
+                        self.pid_gains_locked = true;
+                        self.last_tune = Some(result);
+                        info!(
+                            "TUNE done: Kp={:.3} Ki={:.4} Kd={:.3} (k={:.5}, theta={:.1}s)",
+                            result.kp, result.ki, result.kd, result.gain, result.dead_time_secs
+                        );
+                        self.send_tune_status();
+                    }
+                    Err(_) => self.send_err_token("tune_apply_failed"),
+                }
+                None
+            }
+            TuneTick::Failed(e) => {
+                warn!("TUNE failed: {}", e.code());
+                self.send_err_token(e.code());
+                None
+            }
+        }
+    }
+
+    /// DIFF E4: `#TUNE ...` report line.
+    fn send_tune_status(&self) {
+        use core::fmt::Write as _;
+        let mut line = heapless::String::<96>::new();
+        if self.autotune.is_some() || self.pending_tune.is_some() {
+            let _ = line.push_str("#TUNE running");
+        } else if let Some(r) = self.last_tune {
+            let _ = write!(
+                line,
+                "#TUNE kp={:.3} ki={:.4} kd={:.3} k={:.5} theta={:.1} locked={}",
+                r.kp,
+                r.ki,
+                r.kd,
+                r.gain,
+                r.dead_time_secs,
+                u8::from(self.pid_gains_locked)
+            );
+        } else {
+            let _ = line.push_str("#TUNE none");
+        }
+        self.send_text_response(line.as_str());
+    }
+
+    /// DIFF E4: `ERR <token>` line.
+    fn send_err_token(&self, token: &str) {
+        let mut line = heapless::String::<64>::new();
+        if line.push_str("ERR ").is_ok() && line.push_str(token).is_ok() {
+            self.send_text_response(line.as_str());
+        }
+    }
+
+    /// DIFF E4: true while a step test is queued or running.
+    pub fn tune_running(&self) -> bool {
+        self.autotune.is_some() || self.pending_tune.is_some()
+    }
+
+    /// DIFF E4: last successful step-test result.
+    pub fn last_tune_result(&self) -> Option<TuneResult> {
+        self.last_tune
+    }
+
+    /// DIFF E4: true while host PID gains are ignored.
+    pub fn pid_gains_locked(&self) -> bool {
+        self.pid_gains_locked
     }
 
     /// DIFF E2: values for READ channels 3/4, or `None` unless Artisan
@@ -2061,6 +2245,10 @@ impl RoasterControl {
     }
 
     fn handle_set_pid_gain(&mut self, kp: f32, ki: f32, kd: f32) -> Result<(), RoasterError> {
+        if self.pid_gains_locked {
+            info!("PID gains from host ignored - locked by TUNE (send TUNE;UNLOCK)");
+            return Ok(());
+        }
         self.dispatch.set_pid_gains(kp, ki, kd)?;
         info!("PID gains updated: Kp={}, Ki={}, Kd={}", kp, ki, kd);
         Ok(())

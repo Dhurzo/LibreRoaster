@@ -527,4 +527,118 @@ fn e2_extras_carry_ror_target_and_scale_to_fahrenheit() {
     assert!(xs.ch4.is_finite());
 }
 
+// ── D5: step-test autotune (E4) ──
+
+/// Integrating plant with 8 s dead time: dBT/dt = 0.005 + 0.003·(u(t−8) − 40).
+fn tune_plant_run(s: &mut Sim, secs: f32, bt: &mut f32, hist: &mut std::collections::VecDeque<f32>) -> f32 {
+    let delay = (8.0 / DT) as usize;
+    let mut max_u = 0.0f32;
+    for _ in 0..(secs / DT) as u64 {
+        if s.n % 6 == 0 {
+            s.cmd(ArtisanCommand::ReadStatus);
+        }
+        s.tick(*bt, *bt + 20.0);
+        let u = s.c.get_status().ssr_output;
+        max_u = max_u.max(u);
+        hist.push_back(u);
+        let delayed = if hist.len() > delay { hist[hist.len() - 1 - delay] } else { 40.0 };
+        *bt += (0.005 + 0.003 * (delayed - 40.0)) * DT;
+    }
+    max_u
+}
+
+fn manual_at_40(s: &mut Sim) -> (f32, std::collections::VecDeque<f32>) {
+    assert!(s.cmd(ArtisanCommand::SetHeater(40)));
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    let mut bt = 150.0f32;
+    let mut hist = std::collections::VecDeque::new();
+    tune_plant_run(s, 20.0, &mut bt, &mut hist);
+    (bt, hist)
+}
+
+#[test]
+fn e4_parse_tune() {
+    use libreroaster::config::TuneCommand;
+    assert_eq!(parse_artisan_command("TUNE;20"), Ok(ArtisanCommand::Tune(TuneCommand::Start(20))));
+    assert_eq!(parse_artisan_command("TUNE;abort"), Ok(ArtisanCommand::Tune(TuneCommand::Abort)));
+    assert_eq!(parse_artisan_command("TUNE;UNLOCK"), Ok(ArtisanCommand::Tune(TuneCommand::Unlock)));
+    assert_eq!(parse_artisan_command("TUNE;STATUS"), Ok(ArtisanCommand::Tune(TuneCommand::Status)));
+    assert!(parse_artisan_command("TUNE").is_err());
+    assert!(parse_artisan_command("TUNE;101").is_err());
+}
+
+#[test]
+fn e4_tune_identifies_plant_and_locks_gains() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let (mut bt, mut hist) = manual_at_40(&mut s);
+    assert!(wire(&mut s, "TUNE;20"));
+    let max_u = tune_plant_run(&mut s, 420.0, &mut bt, &mut hist);
+    assert!(s.fault_at_s().is_none(), "fault at {:?}", s.fault_at_s());
+    assert!(!s.c.tune_running());
+    let r = s.c.last_tune_result().expect("tune must finish with a result");
+    assert!((r.gain - 0.003).abs() < 0.0006, "gain {}", r.gain);
+    assert!(r.kp > 3.0 && r.kp < 40.0, "kp {}", r.kp);
+    assert!(max_u <= 60.0 + 1e-3, "heater never above base + step: {max_u}");
+    assert!((s.c.get_status().ssr_output - 40.0).abs() < 1e-3, "back to the manual duty");
+    assert!(s.c.pid_gains_locked());
+    // Artisan's PID ON handshake (PID;T) must not overwrite the tuned gains.
+    assert!(s.cmd(ArtisanCommand::SetPidGain(1.0, 1.0, 1.0)));
+    assert!(s.c.pid_gains_locked());
+    assert!(wire(&mut s, "TUNE;UNLOCK"));
+    assert!(!s.c.pid_gains_locked());
+}
+
+#[test]
+fn e4_operator_command_aborts_tune() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let (mut bt, mut hist) = manual_at_40(&mut s);
+    assert!(wire(&mut s, "TUNE;20"));
+    tune_plant_run(&mut s, 30.0, &mut bt, &mut hist);
+    assert!(s.c.tune_running());
+    assert!(s.cmd(ArtisanCommand::SetHeater(50)));
+    tune_plant_run(&mut s, 5.0, &mut bt, &mut hist);
+    assert!(!s.c.tune_running());
+    assert!((s.c.get_status().ssr_output - 50.0).abs() < 1e-3);
+    assert!(s.c.last_tune_result().is_none());
+}
+
+#[test]
+fn e4_tune_refused_outside_manual_mode_and_when_latched() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    assert!(!wire(&mut s, "TUNE;20"), "firmware PID in control: refused");
+    assert!(s.cmd(ArtisanCommand::EmergencyStop));
+    assert!(!wire(&mut s, "TUNE;20"), "latched: refused");
+    assert!(!s.c.tune_running());
+}
+
+#[test]
+fn e4_latch_aborts_running_tune() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let (mut bt, mut hist) = manual_at_40(&mut s);
+    assert!(wire(&mut s, "TUNE;20"));
+    tune_plant_run(&mut s, 10.0, &mut bt, &mut hist);
+    assert!(s.c.tune_running());
+    let _ = s.c.emergency_shutdown("test");
+    tune_plant_run(&mut s, 1.0, &mut bt, &mut hist);
+    assert!(!s.c.tune_running());
+    assert_eq!(s.c.get_status().ssr_output, 0.0);
+}
+
+#[test]
+fn e4_cold_probe_fails_without_touching_heater() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetHeater(40)));
+    s.run(5.0, |_| 30.0, |_| 35.0);
+    assert!(wire(&mut s, "TUNE;20"));
+    s.run(2.0, |_| 30.0, |_| 35.0);
+    assert!(!s.c.tune_running());
+    assert!((s.c.get_status().ssr_output - 40.0).abs() < 1e-3);
+}
+
 // @@ NEXT TESTS GO HERE (keep this line) @@
