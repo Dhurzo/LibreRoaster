@@ -140,6 +140,12 @@ pub struct RoasterControl {
     fan_floor_gate: EdgeLogGate,
     /// Rate-limits the "setpoint capped" warning to one line per episode (F-C8).
     target_cap_gate: EdgeLogGate,
+    /// True when the current roast was started by `PID;ON` (Artisan's PID
+    /// button) rather than `START`. Such sessions usually include the drum
+    /// preheat, so the 30-min roast budget anchors to the detected charge
+    /// instead of the PID;ON instant (F-C2). Set by every handoff, cleared by
+    /// `stop_streaming`.
+    pid_on_session: bool,
 }
 
 impl RoasterControl {
@@ -175,6 +181,7 @@ impl RoasterControl {
             dump_pending: heapless::Deque::new(),
             fan_floor_gate: EdgeLogGate::new(),
             target_cap_gate: EdgeLogGate::new(),
+            pid_on_session: false,
         })
     }
 
@@ -511,6 +518,7 @@ impl RoasterControl {
         // fan profile is kept across STOP/OFF — the operator does not need to
         // re-send `FANPROFILE` for the next roast.
         self.profile_start_time = None;
+        self.pid_on_session = false;
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
         // against the time budget.
@@ -606,6 +614,21 @@ impl RoasterControl {
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
+    /// Roast-time budget for a session anchored at `start` (START / PID;ON).
+    /// START keeps 30 min from START. A PID;ON session (F-C2) gets
+    /// `MAX_PID_UNCHARGED_SESSION_SECS` until the charge is detected, then
+    /// 30 min from the charge.
+    fn roast_time_budget(&self, start: Instant) -> (Instant, u32) {
+        use crate::config::constants::{MAX_PID_UNCHARGED_SESSION_SECS, MAX_ROAST_TIME_SECS};
+        if !self.pid_on_session {
+            return (start, MAX_ROAST_TIME_SECS);
+        }
+        match self.charge_time {
+            Some(charge) => (charge, MAX_ROAST_TIME_SECS),
+            None => (start, MAX_PID_UNCHARGED_SESSION_SECS),
+        }
+    }
+
     /// Which safety backstops are armed on this tick. Computed ONCE per tick —
     /// the single place where "which guard protects which operating mode" is
     /// decided (see `GuardArming` table).
@@ -623,7 +646,7 @@ impl RoasterControl {
             || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
         let time_budget = if max_roast_time_armed {
             match (self.profile_start_time, self.heat_session_start) {
-                (Some(s), _) => Some((s, crate::config::constants::MAX_ROAST_TIME_SECS)),
+                (Some(s), _) => Some(self.roast_time_budget(s)),
                 (None, Some(s)) => {
                     Some((s, crate::config::constants::MAX_MANUAL_HEAT_SESSION_SECS))
                 }
@@ -1371,7 +1394,7 @@ impl RoasterControl {
             if self.status.fault_condition || self.safety.is_emergency_active() {
                 self.clear_emergency_explicit();
             }
-            self.start_roast_handoff()?
+            self.start_roast_handoff(false)?
         }
         Ok(())
     }
@@ -1397,7 +1420,7 @@ impl RoasterControl {
             );
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
-            self.start_roast_handoff()?
+            self.start_roast_handoff(true)?
         }
         Ok(())
     }
@@ -1407,8 +1430,9 @@ impl RoasterControl {
     /// target) PID arm, and transition to `Heating`. Latch clearing is NOT
     /// part of the handoff — `handle_start_roast` clears explicitly before
     /// calling, `handle_pid_on` never clears (H11).
-    fn start_roast_handoff(&mut self) -> Result<(), RoasterError> {
+    fn start_roast_handoff(&mut self, via_pid_on: bool) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
+        self.pid_on_session = via_pid_on;
         // Reset the charge-detection state on START so every path into a
         // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
         // a STOP (PREHEAT → START cadence). Clearing here makes START

@@ -414,6 +414,11 @@ pub const MAX_ROAST_TIME_SECS: u32 = 1800;
 /// Against a runaway heater the comms-idle (15 s), overtemp (260 °C) and
 /// probe-stuck backstops stay armed — this cap is only the outer time box.
 pub const MAX_MANUAL_HEAT_SESSION_SECS: u32 = 5400;
+/// Time cap (s) for a `PID;ON` session BEFORE the bean charge is detected
+/// (drum preheat under the firmware PID). After the charge the normal
+/// `MAX_ROAST_TIME_SECS` applies, anchored to the charge (F-C2).
+pub const MAX_PID_UNCHARGED_SESSION_SECS: u32 = 3600;
+const _: () = assert!(MAX_PID_UNCHARGED_SESSION_SECS > MAX_ROAST_TIME_SECS);
 
 pub const PREHEAT_HOLD_TOLERANCE_C: f32 = 2.0;
 
