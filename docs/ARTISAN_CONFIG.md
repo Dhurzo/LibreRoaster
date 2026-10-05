@@ -137,7 +137,7 @@ DCFAN 50   → Alias for OT2
 UP / DOWN  → Heater ±5%
 ```
 - **PID disabled**, `artisan_control = true`
-- Safety backstops active: comms-idle (15s), max roast time (30min), probe-stuck warning (120s)
+- Safety backstops active: comms-idle (15 s), max roast time (30 min from START; `PID;ON`: 60 min until the charge, then 30 min; manual: 90 min session), probe-stuck warning (120 s)
 
 ### 6.2 PID Mode (Artisan PID Dialog)
 ```
@@ -263,10 +263,10 @@ Example: `#123.45,120.3,150.5,12.50,75.0`
 | Backstop | Trigger | Action |
 |----------|---------|--------|
 | **Over-temp** | BT ≥ 260°C, ET ≥ 300°C (provisional) (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
-| **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`; hot-equilibrium exempt only in manual, H8) | Emergency shutdown |
+| **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`). Hot equilibrium (BT > 60 °C, ET flat within 3 °C) is exempt in any mode (R2/F-C7); in PID mode the exemption is bounded: `ERR probe_stuck_warning` at 300 s and latch at 600 s while the heater is ≥ 50 % (N4) | Emergency shutdown |
 | **Probe stuck (Manual)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`), hot BT-near-ET holds exempt (H8) | **Warning** `ERR probe_stuck_warning`; latch at 300s |
 | **Comms idle** | No command 15s @ heater >0 or roast active | Emergency shutdown |
-| **Max roast time** | 30 min (1800 s) anchored to START/PROFILE, or 90 min (5400 s) manual OT1 session without START (H2) | Emergency shutdown |
+| **Max roast time** | 30 min (1800 s) anchored to START/PROFILE; `PID;ON` sessions: 60 min (3600 s) until the charge is detected, then 30 min from the charge (F-C2); 90 min (5400 s) manual OT1 session without START (H2) | Emergency shutdown |
 | **Sensor stale** | No valid reading 1s (tolerates ~2 missed ticks, H9) | Emergency shutdown |
 | **RTC Watchdog** | Control loop hangs >2.2s | **CPU reset** (hardware) |
 | **SSR cycle guard** | Write attempted <100ms since last | Reject / adopt as setpoint |
@@ -315,8 +315,8 @@ Emitted **once per latch event** (not every tick). Reasons: `Over-temperature de
 
 ### 9.8 RoR False Trip on Light Roast Turnaround
 - **Symptom:** `ERR safety_fault Bean temperature rate-of-rise exceeded` at ~0.6°C/s after charge
-- **Cause:** Light roast turnaround spike in soft band (0.5–1.0°C/s)
-- **Status:** Two-tier guard (A-TC4-D) — soft band needs 12 consecutive ticks (~3.7s). Thresholds provisional (`MAX_BT_RATE_OF_RISE=0.5`, `MAX_BT_RATE_OF_RISE_HARD=1.0`). May need HIL calibration.
+- **Cause:** Light roast turnaround spike in soft band (0.75–1.0°C/s)
+- **Status:** Two-tier guard (A-TC4-D) — soft band needs 12 consecutive ticks (~3.7s). Thresholds provisional (`MAX_BT_RATE_OF_RISE=0.75`, `MAX_BT_RATE_OF_RISE_HARD=1.0`). May need HIL calibration.
 
 ---
 

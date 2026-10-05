@@ -410,9 +410,11 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 - `ERR channel_full command_dropped` — the shared command channel was full; the command was dropped
 - `ERR status_too_long` — a formatted response exceeded the output buffer
 - `ERR command_ignored_inactive_channel` — command arrived on a channel the firmware is not currently serving
-- `ERR buffer_overflow` — the transport byte buffer overflowed
+- `ERR buffer_overflow buffer_overflow` — the transport byte buffer overflowed (parse errors are `ERR <code> <message>`)
 - `ERR regression_disabled` — `REG` sent on a build without the `regression` feature
 - `ERR OT2_CLAMPED fan=<n> heater_unchanged` — `OT2` value was clamped (see §6)
+- `SAFETY WATCHDOG <reason>` — the software watchdog feed failed (emitted when the reason changes)
+- `SAFETY LEDC-GUARD timeout` — an LEDC guard acquisition timed out (once per new timeout)
 - `ERR safety_fault <reason>` — an internal trap (overtemperature, stale
   sensor, NaN reading, rate-of-rise, probe-stuck, comms-idle, max roast
   time, watchdog or actuator-write failure) armed the emergency latch. The
@@ -423,8 +425,9 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   flat (< 1 °C variation) for 120 s with the heater on. Purely
   informational (a legitimately slow finish can hold BT flat at low duty);
   the latch lands at 300 s via `ERR safety_fault Probe stuck`. Emitted once
-  per stuck episode. Firmware-PID mode does not use this stage (it latches
-  directly at 120 s).
+  per stuck episode. Firmware-PID mode latches directly at 120 s, except
+  during a hot-equilibrium plateau (both probes flat, heater ≥ 50 %): there
+  it emits this warning at 300 s and latches at 600 s (N4).
 
 > RoR-guard tiering (A-TC4-D, 2026-08-12): the `rate_of_rise_exceeded` trap
 > is two-tier. Rates in the soft band (0.5–1.0 °C/s) latch only after ~3.7 s

@@ -137,7 +137,7 @@ async fn emit_telemetry_stage(...) {
 
 ```rust
 // 1. Staleness guard
-if last_temp_read > TEMP_VALIDITY_TIMEOUT_MS (5000 ms)
+if last_temp_read > TEMP_VALIDITY_TIMEOUT_MS (1000 ms)
     → emergency_shutdown("Temperature sensor timeout")
 
 // 2. SSR health check (mid‑roast)
@@ -145,7 +145,7 @@ actuator.periodic_health_check(current_time)
 
 // 3. Comms idle
 if (heater_energized || roast_active) &&
-   now - last_command_received_at_ms > COMMS_IDLE_TIMEOUT_MS (30000)
+   now - last_command_received_at_ms > COMMS_IDLE_TIMEOUT_MS (15000)
     → emergency_shutdown("Comms idle timeout")
 
 // 4. MAX_ROAST_TIME (H2: two budgets)
@@ -155,13 +155,13 @@ if (heater_energized || roast_active) &&
 if elapsed > limit_for(start)
     → emergency_shutdown("Maximum roast time exceeded")
 
-// 5. Cooldown latch (STOP → fan 100% until BT < 50 °C)
+// 5. Cooldown latch (STOP → fan 100% until BT < 60 °C)
 if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (60.0) && BT finite > 0
     → cooling_active = false
 
 // 6. Charge detection (bean drop)
 //    BT history: 10 samples / 3 s (CHARGE_SAMPLE_TICK_DIV = 1)
-//    Drop > CHARGE_DROP_THRESHOLD_C (10.0) → #CHARGE event
+//    Drop > CHARGE_DROP_THRESHOLD_C (6.0) → #CHARGE event
 
 // 7. RoR Guards (TIERED — A‑TC4‑D, recalibrated H6b)
 //    HARD (> MAX_BT_RATE_OF_RISE_HARD = 1.0 °C/s): ROR_EXCEEDED_CONSECUTIVE_LIMIT = 3 ticks
@@ -389,7 +389,10 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 | `COMMS_IDLE_TIMEOUT_MS` | 15000 | Comms idle emergency |
 | `MAX_ROAST_TIME_SECS` | 1800 | 30 min roast budget (START/PROFILE anchor) |
 | `MAX_MANUAL_HEAT_SESSION_SECS` | 5400 | 90 min manual OT1 session cap (H2) |
-| `OVERTEMP_THRESHOLD` | 260.0 | °C overtemp latch |
+| `OVERTEMP_THRESHOLD` | 260.0 | °C BT overtemp latch |
+| `ET_OVERTEMP_THRESHOLD` | 300.0 | °C ET overtemp latch (provisional) |
+| `MAX_PID_UNCHARGED_SESSION_SECS` | 3600 | s cap for a `PID;ON` session before the charge |
+| `PROBE_STUCK_PID_PLATEAU_WARN_SECS` / `_LATCH_SECS` | 300 / 600 | s bound of the PID-mode equilibrium exemption at ≥ 50 % heater |
 | `MAX_BT_RATE_OF_RISE` | 0.75 | °C/s soft RoR band (H6b) |
 | `FAN_MIN_SAFETY_PCT` | 20.0 | Interlock minimum with heater>0 |
 | `SENSOR_FAULT_DEBOUNCE` | 5 | Fault latch threshold |
