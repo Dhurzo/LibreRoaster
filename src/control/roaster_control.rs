@@ -1608,6 +1608,38 @@ impl RoasterControl {
         Ok(())
     }
 
+    /// DIFF E2: values for READ channels 3/4, or `None` unless Artisan
+    /// requested them with `CHAN;xx34` (both last digits non-zero).
+    pub fn read_extra_channels(&self) -> Option<crate::output::artisan::ExtraChannels> {
+        let chan = self.status.chan_poll_rate_hz;
+        if !(1000..=9999).contains(&chan)
+            || chan.is_multiple_of(10)
+            || (chan / 10).is_multiple_of(10)
+        {
+            return None;
+        }
+        // Rates scale by 9/5 in °F (no +32 offset: these are differences).
+        let scale = if self.status.temperature_settings.is_fahrenheit() {
+            1.8
+        } else {
+            1.0
+        };
+        let measured = if self.status.derivative_rate.is_finite() {
+            self.status.derivative_rate * 60.0
+        } else {
+            0.0
+        };
+        let target = if self.ror_follow_active() {
+            self.ror_target_c_per_min
+        } else {
+            0.0
+        };
+        Some(crate::output::artisan::ExtraChannels {
+            ch3: target * scale,
+            ch4: measured * scale,
+        })
+    }
+
     /// DIFF E3: true while RoR-follow is armed or running AND the firmware
     /// PID is in control. During an `OT1` takeover the follower is kept but
     /// suspended (nothing moves the setpoint); `PID;ON` resumes it, `PID;SV`

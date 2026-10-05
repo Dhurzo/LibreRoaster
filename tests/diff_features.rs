@@ -463,4 +463,68 @@ fn e3_et_channel_never_follows() {
     assert_eq!(s.c.ror_target_c_per_min(), 0.0);
 }
 
+// ── D4: READ extra channels (E2) ──
+
+#[test]
+fn e2_chan_1200_keeps_extras_off() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::Chan(1200)));
+    assert_eq!(s.c.read_extra_channels(), None);
+    assert!(s.cmd(ArtisanCommand::Chan(1234)));
+    assert!(s.c.read_extra_channels().is_some());
+    assert!(s.cmd(ArtisanCommand::Chan(1230)));
+    assert_eq!(s.c.read_extra_channels(), None, "both slots must be requested");
+}
+
+#[test]
+fn e2_read_line_is_byte_identical_without_extras() {
+    use libreroaster::output::artisan::ArtisanFormatter;
+    let _g = lock();
+    let mut s = Sim::new();
+    s.run(5.0, |_| 180.0, |_| 200.0);
+    let st = s.c.get_status();
+    assert_eq!(
+        ArtisanFormatter::format_read_response_full(&st),
+        ArtisanFormatter::format_read_response_with_extras(&st, None)
+    );
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    s.run(5.0, |_| 180.0, |_| 200.0);
+    let st = s.c.get_status();
+    assert_eq!(
+        ArtisanFormatter::format_read_response_full(&st),
+        ArtisanFormatter::format_read_response_with_extras(&st, None)
+    );
+}
+
+#[test]
+fn e2_extras_carry_ror_target_and_scale_to_fahrenheit() {
+    use libreroaster::output::artisan::ArtisanFormatter;
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    assert!(s.cmd(ArtisanCommand::Chan(1234)));
+    let _ = ror_roast(&mut s, &mut bt);
+    plant_run(&mut s, 120.0, &mut bt, |_, _| {});
+    let target = s.c.ror_target_c_per_min();
+    assert!(target > 0.0);
+    let x = s.c.read_extra_channels().unwrap();
+    assert!((x.ch3 - target).abs() < 1e-4);
+    assert!(x.ch4.is_finite());
+    let line = ArtisanFormatter::format_read_response_with_extras(&s.c.get_status(), Some(x));
+    let fields: Vec<&str> = line.as_str().split(',').collect();
+    assert_eq!(fields.len(), 8, "AMB,ET,BT,CH3,CH4,heater,fan,SV: {line}");
+    assert_eq!(fields[3], format!("{:.1}", target));
+    assert!(s.cmd(ArtisanCommand::Units(true)));
+    let xf = s.c.read_extra_channels().unwrap();
+    assert!((xf.ch3 - target * 1.8).abs() < 1e-3, "rates scale by 1.8 in °F");
+    // OT1 takeover suspends RoR-follow: channel 3 must be honest and read 0.
+    assert!(s.cmd(ArtisanCommand::Units(false)));
+    assert!(s.cmd(ArtisanCommand::SetHeater(50)));
+    plant_run(&mut s, 2.0, &mut bt, |_, _| {});
+    let xs = s.c.read_extra_channels().unwrap();
+    assert_eq!(xs.ch3, 0.0, "suspended follow reports 0 on channel 3");
+    assert!(xs.ch4.is_finite());
+}
+
 // @@ NEXT TESTS GO HERE (keep this line) @@
