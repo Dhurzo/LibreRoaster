@@ -106,20 +106,28 @@ impl CoffeeRoasterPid {
     }
 
     /// Update PID gains in place, preserving `enabled`, `target`,
-    /// `output_min/max`, `cycle_time_ms` and `derivative_rate`; resets the
-    /// integrator and last-error baseline.
+    /// `output_min/max` and `cycle_time_ms`.
     ///
-    /// Rebuilding the whole controller would reset `enabled` and `target`,
-    /// leaving telemetry reporting the PID as active while `compute_output`
-    /// returns 0.0 and cuts the heater. Resetting the integrator here avoids
-    /// a one-tick I-term jump from the new gain on the already-accumulated error.
+    /// N3 (re-audit 2026-10-05): Artisan re-sends `PID;T` on every *PID ON*
+    /// press, so this must be bumpless. Unchanged gains are a no-op. A Ki
+    /// change rescales the integrator so the I contribution `ki·integrator`
+    /// is unchanged (Ki → 0 zeroes it). The derivative skips one sample so a
+    /// new Kd cannot kick on a stale slope.
     pub fn set_gains(&mut self, kp: f32, ki: f32, kd: f32) {
+        if kp == self.kp && ki == self.ki && kd == self.kd {
+            return;
+        }
+        if self.ki > 0.0 && ki > 0.0 {
+            self.integrator *= self.ki / ki;
+        } else {
+            self.integrator = 0.0;
+        }
         self.kp = kp;
         self.ki = ki;
         self.kd = kd;
-        self.integrator = 0.0;
         self.last_error = 0.0;
         self.last_error_initialized = false;
+        self.derivative_rate = 0.0;
     }
 
     /// Enable the controller, resetting integrator and derivative state.
@@ -377,6 +385,24 @@ impl CoffeeRoasterPid {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn set_gains_unchanged_is_a_no_op_and_ki_change_keeps_i_contribution() {
+        let mut pid = CoffeeRoasterPid::with_gains(1.0, 0.1, 0.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        for i in 0..10u32 {
+            let _ = pid.compute_output(95.0, i * 100);
+        }
+        let i0 = pid.integrator_value();
+        assert!(i0 > 0.0);
+        pid.set_gains(1.0, 0.1, 0.0);
+        assert_eq!(pid.integrator_value(), i0, "unchanged gains must not touch the integrator");
+        pid.set_gains(1.0, 0.2, 0.0);
+        assert!((pid.integrator_value() - i0 / 2.0).abs() < 1e-5, "I contribution preserved");
+        pid.set_gains(1.0, 0.0, 0.0);
+        assert_eq!(pid.integrator_value(), 0.0, "Ki = 0 zeroes the integrator");
+    }
 
     #[test]
     fn setpoint_step_does_not_kick_derivative() {
