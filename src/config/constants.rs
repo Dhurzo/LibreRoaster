@@ -351,6 +351,11 @@ pub enum ArtisanCommand {
     /// Pure marker: ends RoR-follow and re-arms charge detection for the next
     /// batch; never changes heater or fan.
     Drop,
+    /// `RORPROFILE;t,ror;...` — load a rate-of-rise profile (DIFF E3). The
+    /// payload is staged in the parser FIFO, like `PROFILE`.
+    SetRorProfile,
+    /// `RORPROFILE;OFF` — unload the RoR profile and stop RoR-follow (DIFF E3).
+    ClearRorProfile,
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;

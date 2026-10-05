@@ -14,6 +14,7 @@ use crate::control::controllers::{
     SensorController,
 };
 use crate::control::pid::PidFeedback;
+use crate::control::ror_follow::{RorFollower, RorStep};
 use crate::control::traits::{Fan, Heater};
 use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
@@ -166,6 +167,12 @@ pub struct RoasterControl {
     explicit_charge_seen: bool,
     /// DIFF E1: batch weight from `CHARGE;<grams>` (Artisan `{WEIGHTin}`).
     batch_grams: Option<u16>,
+    /// DIFF E3: loaded RoR profile (°C/min against seconds since charge).
+    ror_profile: Option<RorProfile>,
+    /// DIFF E3: active RoR-follow generator (`Some` between CHARGE and DROP).
+    ror_follower: Option<RorFollower>,
+    /// DIFF E3: RoR the generator is following right now (°C/min; 0 = none).
+    ror_target_c_per_min: f32,
 }
 
 impl RoasterControl {
@@ -207,6 +214,9 @@ impl RoasterControl {
             pending_charge_since: None,
             explicit_charge_seen: false,
             batch_grams: None,
+            ror_profile: None,
+            ror_follower: None,
+            ror_target_c_per_min: 0.0,
         })
     }
 
@@ -547,6 +557,7 @@ impl RoasterControl {
         self.pending_charge = false;
         self.pending_charge_since = None;
         self.explicit_charge_seen = false;
+        self.stop_ror_follow();
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
         // against the time budget.
@@ -617,6 +628,7 @@ impl RoasterControl {
         // Explicit recovery also drops the cooldown latch — the operator is
         // taking over, so airflow returns to operator control.
         self.cooling_active = false;
+        self.stop_ror_follow();
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
@@ -639,6 +651,7 @@ impl RoasterControl {
         self.safety.activate_emergency();
         self.status.fault_condition = true;
         self.state = RoasterState::Error;
+        self.stop_ror_follow();
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
@@ -918,6 +931,8 @@ impl RoasterControl {
                             self.charge_time = Some(current_time);
                             self.status.charge_detected = true;
                             info!("#CHARGE detected — BT dropped {:.1}°C", drop);
+                            // DIFF E3: an automatic charge also arms RoR-follow.
+                            self.maybe_start_ror_follow();
                             // H5: the `#CHARGE` wire line is only useful to a
                             // host that opted into spontaneous `#` traffic —
                             // an unsolicited line in Artisan's 0.5 s READ
@@ -1357,6 +1372,7 @@ impl RoasterControl {
                         command,
                         crate::config::ArtisanCommand::SetProfile
                             | crate::config::ArtisanCommand::SetFanProfile
+                            | crate::config::ArtisanCommand::SetRorProfile
                     ) {
                         crate::input::parser::clear_staged_profiles();
                     }
@@ -1438,6 +1454,8 @@ impl RoasterControl {
             }
             crate::config::ArtisanCommand::Charge(grams) => self.handle_charge(grams),
             crate::config::ArtisanCommand::Drop => self.handle_drop(),
+            crate::config::ArtisanCommand::SetRorProfile => self.handle_set_ror_profile(),
+            crate::config::ArtisanCommand::ClearRorProfile => self.handle_clear_ror_profile(),
         }
     }
 
@@ -1456,6 +1474,7 @@ impl RoasterControl {
 
     /// DIFF E1: `DROP` marker. Never touches heater or fan.
     fn handle_drop(&mut self) -> Result<(), RoasterError> {
+        self.stop_ror_follow();
         self.pending_charge = false;
         self.pending_charge_since = None;
         self.explicit_charge_seen = false;
@@ -1501,6 +1520,12 @@ impl RoasterControl {
                 self.bt_charge_history.clear();
                 self.charge_history_tick_div = 0;
                 info!("CHARGE marker applied - roast budget anchored to the charge");
+                // DIFF E3: arm RoR-follow from the real charge. A follower that
+                // is already ramping (late button press) is kept as it is.
+                if !self.ror_follower.is_some_and(|f| f.ramping()) {
+                    self.ror_follower = None;
+                    self.maybe_start_ror_follow();
+                }
             }
             RoasterState::Preheating => {
                 // Keep the marker: START / PID;ON turns Preheating into Heating.
@@ -1526,6 +1551,75 @@ impl RoasterControl {
                 }
             }
         }
+    }
+
+    /// DIFF E3: arm RoR-follow when a profile is loaded and the firmware
+    /// PID is in control of a roast on the BT channel. No-op otherwise
+    /// (manual mode and `PID;CHAN;1` included: the profile is a BT rate).
+    fn maybe_start_ror_follow(&mut self) {
+        if self.ror_follower.is_none()
+            && self.ror_profile.is_some()
+            && self.status.pid_enabled
+            && !self.status.artisan_control
+            && self.status.pid_channel != 1
+            && matches!(self.state, RoasterState::Heating | RoasterState::Stable)
+        {
+            self.ror_follower = Some(RorFollower::new());
+            info!("RoR-follow armed - waiting for the turning point");
+        }
+    }
+
+    /// DIFF E3: stop RoR-follow (the PID keeps its current setpoint).
+    fn stop_ror_follow(&mut self) {
+        if self.ror_follower.is_some() {
+            info!("RoR-follow stopped");
+        }
+        self.ror_follower = None;
+        self.ror_target_c_per_min = 0.0;
+    }
+
+    /// DIFF E3: `RORPROFILE;...` — convert °F/min to °C/min, validate, store.
+    fn handle_set_ror_profile(&mut self) -> Result<(), RoasterError> {
+        let Some(mut profile) = crate::input::parser::ror_profile_take() else {
+            warn!("SetRorProfile received but no RoR profile staged");
+            return Ok(());
+        };
+        if self.status.temperature_settings.is_fahrenheit() {
+            for p in profile.points.iter_mut() {
+                p.ror_c_per_min /= 1.8;
+            }
+        }
+        if let Err(reason) = profile.validate() {
+            warn!("RORPROFILE rejected: {}", reason);
+            return Err(RoasterError::InvalidState {
+                source: Some(reason),
+            });
+        }
+        info!("RoR profile loaded: {} points", profile.points.len());
+        self.ror_profile = Some(profile);
+        Ok(())
+    }
+
+    /// DIFF E3: `RORPROFILE;OFF`.
+    fn handle_clear_ror_profile(&mut self) -> Result<(), RoasterError> {
+        self.ror_profile = None;
+        self.stop_ror_follow();
+        info!("RoR profile cleared");
+        Ok(())
+    }
+
+    /// DIFF E3: true while RoR-follow is armed or running AND the firmware
+    /// PID is in control. During an `OT1` takeover the follower is kept but
+    /// suspended (nothing moves the setpoint); `PID;ON` resumes it, `PID;SV`
+    /// ends it.
+    pub fn ror_follow_active(&self) -> bool {
+        self.ror_follower.is_some() && self.status.pid_enabled && !self.status.artisan_control
+    }
+
+    /// DIFF E3: profile RoR being followed (°C/min; 0.0 before the turning
+    /// point or when inactive).
+    pub fn ror_target_c_per_min(&self) -> f32 {
+        self.ror_target_c_per_min
     }
 
     /// DIFF E1: batch weight (g) from the last `CHARGE;<grams>`, if any.
@@ -1624,6 +1718,7 @@ impl RoasterControl {
         // DIFF E1: a new roast starts a new batch. `pending_charge` is KEPT:
         // Artisan's pidOnCHARGE may send CHARGE right before PID;ON.
         self.explicit_charge_seen = false;
+        self.stop_ror_follow();
         // Reset the charge-detection state on START so every path into a
         // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
         // a STOP (PREHEAT → START cadence). Clearing here makes START
@@ -1957,6 +2052,8 @@ impl RoasterControl {
                 source: Some("target_temp_out_of_range"),
             });
         }
+        // DIFF E3: an explicit setpoint is an operator override of RoR-follow.
+        self.stop_ror_follow();
         let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
@@ -2141,6 +2238,10 @@ impl RoasterControl {
 
     fn handle_set_pid_channel(&mut self, ch: u8) -> Result<(), RoasterError> {
         self.status.pid_channel = ch;
+        if ch == 1 {
+            // DIFF E3: the RoR profile is a BT rate; never follow it on ET.
+            self.stop_ror_follow();
+        }
         info!(
             "PID input channel set to {} ({})",
             ch,
@@ -2307,15 +2408,38 @@ impl RoasterControl {
             }
 
             // Profile-following: update PID target from profile interpolation
-            if let (Some(ref profile), Some(start)) =
-                (&self.active_profile, self.profile_start_time)
-            {
+            // DIFF E3: the temperature profile is suspended while RoR-follow runs.
+            let ror_following = self.ror_follower.is_some();
+            if let (Some(ref profile), Some(start)) = (
+                &self.active_profile,
+                self.profile_start_time.filter(|_| !ror_following),
+            ) {
                 let elapsed = current_time.saturating_duration_since(start).as_secs() as u32;
                 if let Some(new_target) = profile.target_at(elapsed) {
                     if (new_target - self.status.target_temp).abs() > 0.5 {
                         self.status.target_temp = new_target;
                         let _ = self.dispatch.set_pid_target(new_target);
                         debug!("Profile target: {:.1}°C at t={}s", new_target, elapsed);
+                    }
+                }
+            }
+
+            // DIFF E3: RoR-follow turns the RoR profile into the PID setpoint
+            // after the turning point. Runs after the temperature profile (so
+            // it wins) and before the F-C8 cap (so the cap still applies).
+            if let (Some(follower), Some(profile), Some(charge)) = (
+                self.ror_follower.as_mut(),
+                self.ror_profile.as_ref(),
+                self.charge_time,
+            ) {
+                let elapsed =
+                    current_time.saturating_duration_since(charge).as_micros() as f32 * 1e-6;
+                match follower.step(profile, elapsed, self.status.bean_temp) {
+                    RorStep::WaitingTurningPoint => self.ror_target_c_per_min = 0.0,
+                    RorStep::Setpoint { sv, target_ror } => {
+                        self.ror_target_c_per_min = target_ror;
+                        self.status.target_temp = sv;
+                        let _ = self.dispatch.set_pid_target(sv);
                     }
                 }
             }

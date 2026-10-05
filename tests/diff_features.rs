@@ -286,4 +286,181 @@ fn e1_unused_marker_expires_after_grace() {
     assert!(!s.c.get_status().charge_detected, "a 10 s old marker must not anchor a new roast");
 }
 
+// ── D3: RoR-follow (E3) ──
+
+/// PID;ON at t=0, SV 200, RoR profile 15→10→6 °C/min, 600 s preheat on the
+/// plant, CHARGE (BT jumps to 95, like beans hitting the probe).
+fn ror_roast(s: &mut Sim, bt: &mut f32) -> f32 {
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    let now = s.now();
+    s.c.set_profile_start_for_test(now);
+    assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
+    assert!(wire(s, "RORPROFILE;0,15;300,10;600,6"));
+    plant_run(s, 600.0, bt, |_, _| {});
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    *bt = 95.0;
+    s.secs()
+}
+
+#[test]
+fn e3_parse_ror_profile() {
+    assert_eq!(
+        parse_artisan_command("RORPROFILE;0,15;300,10"),
+        Ok(ArtisanCommand::SetRorProfile)
+    );
+    let _ = libreroaster::input::parser::ror_profile_take();
+    assert_eq!(parse_artisan_command("RORPROFILE;OFF"), Ok(ArtisanCommand::ClearRorProfile));
+    assert!(parse_artisan_command("RORPROFILE;0").is_err());
+    assert!(parse_artisan_command("RORPROFILE;x,10").is_err());
+}
+
+#[test]
+fn e3_ror_follow_tracks_profile_and_stays_near_bt() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    let tc = ror_roast(&mut s, &mut bt);
+    let mut max_gap = 0.0f32;
+    let mut samples: Vec<(f32, f32)> = Vec::new();
+    plant_run(&mut s, 600.0, &mut bt, |s, _| {
+        if s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0 {
+            let st = s.c.get_status();
+            max_gap = max_gap.max((st.target_temp - st.bean_temp).abs());
+        }
+        samples.push((s.secs() - tc, s.c.get_status().bean_temp));
+    });
+    assert!(s.fault_at_s().is_none(), "fault at {:?}", s.fault_at_s());
+    assert!(s.c.ror_follow_active());
+    assert!(max_gap <= 3.0 + 0.5, "setpoint left the ±3 °C band: {max_gap}");
+    // Measured BT RoR between 200 s and 400 s after the charge vs profile
+    // (≈11.7 → ≈8.7 °C/min, average ≈10.2).
+    let at = |t: f32| samples.iter().find(|p| p.0 >= t).map(|p| p.1).unwrap();
+    let ror = (at(400.0) - at(200.0)) / 200.0 * 60.0;
+    assert!((ror - 10.2).abs() <= 2.0, "measured RoR {ror:.2} °C/min");
+}
+
+#[test]
+fn e3_sv_command_stops_ror_follow() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    let _ = ror_roast(&mut s, &mut bt);
+    plant_run(&mut s, 120.0, &mut bt, |_, _| {});
+    assert!(s.c.ror_follow_active());
+    assert!(s.cmd(ArtisanCommand::SetTargetTemp(210.0)));
+    plant_run(&mut s, 5.0, &mut bt, |_, _| {});
+    assert!(!s.c.ror_follow_active(), "an explicit SV is an operator override");
+    assert_eq!(s.c.get_status().target_temp, 210.0);
+}
+
+#[test]
+fn e3_drop_and_pid_off_stop_ror_follow() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    let _ = ror_roast(&mut s, &mut bt);
+    plant_run(&mut s, 60.0, &mut bt, |_, _| {});
+    assert!(s.c.ror_follow_active());
+    assert!(s.cmd(ArtisanCommand::Drop));
+    assert!(!s.c.ror_follow_active());
+    assert_eq!(s.c.ror_target_c_per_min(), 0.0);
+    assert!(s.cmd(ArtisanCommand::Stop)); // PID;OFF
+    assert!(!s.c.ror_follow_active());
+}
+
+#[test]
+fn e3_profile_range_and_units() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(!wire(&mut s, "RORPROFILE;0,31"), "31 °C/min > 30 max");
+    assert!(!wire(&mut s, "RORPROFILE;60,10;60,9"), "times must increase");
+    assert!(wire(&mut s, "RORPROFILE;0,30"));
+    assert!(s.cmd(ArtisanCommand::Units(true)));
+    assert!(wire(&mut s, "RORPROFILE;0,54"), "54 °F/min = 30 °C/min");
+    assert!(!wire(&mut s, "RORPROFILE;0,55"), "55 °F/min > 30 °C/min");
+    assert!(wire(&mut s, "RORPROFILE;OFF"));
+}
+
+#[test]
+fn e3_latched_ror_profile_is_rejected_and_drained() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::EmergencyStop));
+    assert!(!wire(&mut s, "RORPROFILE;0,10"));
+    assert!(
+        libreroaster::input::parser::ror_profile_take().is_none(),
+        "BUG-2c-1 discipline: a refused profile must not stay staged"
+    );
+}
+
+#[test]
+fn e3_manual_mode_never_follows() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    assert!(s.cmd(ArtisanCommand::SetHeater(60)));
+    assert!(wire(&mut s, "RORPROFILE;0,15"));
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    plant_run(&mut s, 60.0, &mut bt, |_, _| {});
+    assert!(!s.c.ror_follow_active());
+    assert_eq!(s.c.get_status().ssr_output, 60.0);
+}
+
+#[test]
+fn e3_ot1_takeover_suspends_follow_and_pid_on_resumes_it() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    let _ = ror_roast(&mut s, &mut bt);
+    plant_run(&mut s, 120.0, &mut bt, |_, _| {});
+    assert!(s.c.ror_follow_active());
+    assert!(s.cmd(ArtisanCommand::SetHeater(50)));
+    plant_run(&mut s, 30.0, &mut bt, |_, _| {});
+    assert!(!s.c.ror_follow_active(), "suspended while OT1 controls the heater");
+    assert!((s.c.get_status().ssr_output - 50.0).abs() < 1e-3);
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    plant_run(&mut s, 10.0, &mut bt, |_, _| {});
+    assert!(s.c.ror_follow_active(), "PID;ON resumes RoR-follow");
+    let st = s.c.get_status();
+    assert!((st.target_temp - st.bean_temp).abs() <= 3.5, "no setpoint jump after the gap");
+}
+
+#[test]
+fn e3_late_charge_button_keeps_a_running_ramp() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    let now = s.now();
+    s.c.set_profile_start_for_test(now);
+    assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
+    assert!(wire(&mut s, "RORPROFILE;0,12"));
+    plant_run(&mut s, 600.0, &mut bt, |_, _| {});
+    // Beans in WITHOUT the button: automatic detection arms RoR-follow.
+    bt = 95.0;
+    plant_run(&mut s, 90.0, &mut bt, |_, _| {});
+    assert!(s.c.get_status().charge_detected, "automatic charge detected");
+    assert!(s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0, "ramping");
+    let sv_before = s.c.get_status().target_temp;
+    // The operator presses CHARGE 90 s late.
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    plant_run(&mut s, 2.0, &mut bt, |_, _| {});
+    assert!(s.c.ror_target_c_per_min() > 0.0, "the running ramp is kept");
+    assert!((s.c.get_status().target_temp - sv_before).abs() < 2.0);
+}
+
+#[test]
+fn e3_et_channel_never_follows() {
+    let _g = lock();
+    let mut s = Sim::new();
+    let mut bt = 150.0f32;
+    assert!(s.cmd(ArtisanCommand::SetPidChannel(1)));
+    let _ = ror_roast(&mut s, &mut bt);
+    plant_run(&mut s, 60.0, &mut bt, |_, _| {});
+    assert!(!s.c.ror_follow_active(), "RoR profile is a BT rate: refused on ET");
+    assert_eq!(s.c.ror_target_c_per_min(), 0.0);
+}
+
 // @@ NEXT TESTS GO HERE (keep this line) @@
