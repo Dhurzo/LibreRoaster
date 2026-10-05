@@ -1480,7 +1480,10 @@ impl RoasterControl {
                     };
                 let target = self.cap_pid_target(target);
                 self.resume_pid_bumpless(target)?;
-                info!("Artisan+ PID;ON - PID resumed at {:.1}°C (bumpless)", target);
+                info!(
+                    "Artisan+ PID;ON - PID resumed at {:.1}°C (bumpless)",
+                    target
+                );
             }
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {

@@ -120,7 +120,11 @@ fn t1_hot_et_below_et_cutoff_does_not_trip() {
     assert!(s.cmd(ArtisanCommand::SetHeater(60)));
     assert!(s.cmd(ArtisanCommand::SetFan(40)));
     s.run(60.0, |t| 180.0 + 0.1 * t, |_| 270.0);
-    assert!(s.fault_at_s().is_none(), "T1: ET 270 must not trip, fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "T1: ET 270 must not trip, fault at {:?}",
+        s.fault_at_s()
+    );
 }
 #[test]
 fn t1_et_above_et_cutoff_trips() {
@@ -169,9 +173,11 @@ fn pid_on_preheat_charge_roast(s: &mut Sim, roast_secs: f32) {
     let now = s.now();
     s.c.set_profile_start_for_test(now);
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
-    s.run(1500.0,
+    s.run(
+        1500.0,
         |t| 200.0 - 175.0 * libm::expf(-t / 300.0),
-        |t| 220.0 - 190.0 * libm::expf(-t / 300.0));
+        |t| 220.0 - 190.0 * libm::expf(-t / 300.0),
+    );
     let tc = s.secs();
     s.run(90.0, |t| charge_curve(t, tc, 200.0, 95.0), |_| 215.0);
     let tr = s.secs();
@@ -182,7 +188,11 @@ fn t3_pid_on_long_preheat_does_not_eat_roast_budget() {
     let _g = lock();
     let mut s = Sim::new();
     pid_on_preheat_charge_roast(&mut s, 720.0);
-    assert!(s.fault_at_s().is_none(), "T3: fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "T3: fault at {:?}",
+        s.fault_at_s()
+    );
 }
 #[test]
 fn t3_pid_on_cap_still_fires_30_min_after_charge() {
@@ -190,7 +200,9 @@ fn t3_pid_on_cap_still_fires_30_min_after_charge() {
     let mut s = Sim::new();
     pid_on_preheat_charge_roast(&mut s, 578.0);
     s.run(1900.0, |_| 199.0, |_| 225.0);
-    let f = s.fault_at_s().expect("T3: 30-min cap after charge must latch");
+    let f = s
+        .fault_at_s()
+        .expect("T3: 30-min cap after charge must latch");
     assert!((3290.0..=3330.0).contains(&f), "T3: latch at {:.1}", f);
 }
 #[test]
@@ -201,7 +213,11 @@ fn t4_pid_unreachable_sv_plateau_does_not_latch() {
     assert!(s.cmd(ArtisanCommand::PidOn));
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(240.0)));
     s.run(420.0, |_| 220.0, |_| 250.0);
-    assert!(s.fault_at_s().is_none(), "T4: fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "T4: fault at {:?}",
+        s.fault_at_s()
+    );
 }
 #[test]
 fn t4_pid_frozen_bt_with_moving_et_still_latches() {
@@ -220,8 +236,15 @@ fn pid_then_manual_takeover(s: &mut Sim) {
     s.run(30.0, |t| 150.0 + 0.1 * t, |_| 200.0);
     assert!(s.cmd(ArtisanCommand::SetHeater(60)));
     s.run(30.0, |t| 155.0 + 0.05 * (t - 30.0), |_| 200.0);
-    assert!(!s.c.get_status().pid_enabled, "precondition: manual took over");
-    assert!((s.c.get_status().ssr_output - 60.0).abs() < 0.5, "precondition: heater at 60 %, got {}", s.c.get_status().ssr_output);
+    assert!(
+        !s.c.get_status().pid_enabled,
+        "precondition: manual took over"
+    );
+    assert!(
+        (s.c.get_status().ssr_output - 60.0).abs() < 0.5,
+        "precondition: heater at 60 %, got {}",
+        s.c.get_status().ssr_output
+    );
 }
 #[test]
 fn t6_pid_on_after_ot1_resumes_pid_without_bump() {
@@ -230,7 +253,10 @@ fn t6_pid_on_after_ot1_resumes_pid_without_bump() {
     pid_then_manual_takeover(&mut s);
     assert!(s.cmd(ArtisanCommand::PidOn));
     let st = s.c.get_status();
-    assert!(st.pid_enabled && !st.artisan_control, "T6: PID;ON must resume the PID");
+    assert!(
+        st.pid_enabled && !st.artisan_control,
+        "T6: PID;ON must resume the PID"
+    );
     s.run(0.4, |_| 157.0, |_| 200.0);
     let out = s.c.last_desired_heater_output();
     assert!((50.0..=70.0).contains(&out), "T6: got {out}");
@@ -252,7 +278,11 @@ fn t6_no_preload_when_above_setpoint() {
     pid_then_manual_takeover(&mut s);
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(150.0)));
     s.run(0.4, |_| 157.0, |_| 200.0);
-    assert!(s.c.last_desired_heater_output() < 1.0, "got {}", s.c.last_desired_heater_output());
+    assert!(
+        s.c.last_desired_heater_output() < 1.0,
+        "got {}",
+        s.c.last_desired_heater_output()
+    );
 }
 #[test]
 fn t7_manual_three_batches_after_long_preheat_do_not_trip() {
@@ -260,9 +290,23 @@ fn t7_manual_three_batches_after_long_preheat_do_not_trip() {
     let mut s = Sim::new();
     assert!(s.cmd(ArtisanCommand::SetHeater(80)));
     assert!(s.cmd(ArtisanCommand::SetFan(40)));
-    s.run(2400.0,
-        |t| if t < 900.0 { 25.0 + 175.0 * t / 900.0 } else { 200.0 },
-        |t| if t < 900.0 { 30.0 + 190.0 * t / 900.0 } else { 220.0 });
+    s.run(
+        2400.0,
+        |t| {
+            if t < 900.0 {
+                25.0 + 175.0 * t / 900.0
+            } else {
+                200.0
+            }
+        },
+        |t| {
+            if t < 900.0 {
+                30.0 + 190.0 * t / 900.0
+            } else {
+                220.0
+            }
+        },
+    );
     for _ in 0..3 {
         let tc = s.secs();
         s.run(90.0, |t| charge_curve(t, tc, 200.0, 95.0), |_| 220.0);
@@ -272,5 +316,9 @@ fn t7_manual_three_batches_after_long_preheat_do_not_trip() {
         s.run(300.0, |t| 225.0 - 25.0 * (t - tb) / 300.0, |_| 220.0);
     }
     assert!(s.secs() > MAX_MANUAL_HEAT_SESSION_SECS as f32);
-    assert!(s.fault_at_s().is_none(), "T7: fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "T7: fault at {:?}",
+        s.fault_at_s()
+    );
 }

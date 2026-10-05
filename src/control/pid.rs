@@ -388,7 +388,10 @@ mod tests {
         pid.set_target(150.0).unwrap(); // SV step, PV unchanged
         let out = pid.compute_output(90.0, 200);
         assert_eq!(pid.derivative_value(), 0.0);
-        assert!((out - 100.0).abs() < 1e-3, "P only (2*60=120 → clamp 100), got {out}");
+        assert!(
+            (out - 100.0).abs() < 1e-3,
+            "P only (2*60=120 → clamp 100), got {out}"
+        );
     }
 
     #[test]
