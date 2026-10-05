@@ -442,10 +442,7 @@ impl RorProfile {
                 return a.ror_c_per_min + (b.ror_c_per_min - a.ror_c_per_min) * frac;
             }
         }
-        self.points
-            .last()
-            .map(|p| p.ror_c_per_min)
-            .unwrap_or(0.0)
+        self.points.last().map(|p| p.ror_c_per_min).unwrap_or(0.0)
     }
 }
 // BUG-2d-2 (audit 2026-10-04): there is NO per-tick command budget —

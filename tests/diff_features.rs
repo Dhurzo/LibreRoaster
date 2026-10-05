@@ -109,7 +109,6 @@ impl Lcg {
     }
 }
 
-
 use libreroaster::input::parser::parse_artisan_command;
 
 /// Seconds per Sim tick.
@@ -143,9 +142,18 @@ fn wire(s: &mut Sim, line: &str) -> bool {
 
 #[test]
 fn e1_parse_charge_and_drop() {
-    assert_eq!(parse_artisan_command("CHARGE"), Ok(ArtisanCommand::Charge(None)));
-    assert_eq!(parse_artisan_command("CHARGE;250"), Ok(ArtisanCommand::Charge(Some(250))));
-    assert_eq!(parse_artisan_command("charge;0"), Ok(ArtisanCommand::Charge(None)));
+    assert_eq!(
+        parse_artisan_command("CHARGE"),
+        Ok(ArtisanCommand::Charge(None))
+    );
+    assert_eq!(
+        parse_artisan_command("CHARGE;250"),
+        Ok(ArtisanCommand::Charge(Some(250)))
+    );
+    assert_eq!(
+        parse_artisan_command("charge;0"),
+        Ok(ArtisanCommand::Charge(None))
+    );
     assert!(parse_artisan_command("CHARGE;-1").is_err());
     assert!(parse_artisan_command("CHARGE;1;2").is_err());
     assert_eq!(parse_artisan_command("DROP"), Ok(ArtisanCommand::Drop));
@@ -175,8 +183,14 @@ fn e1_markers_accepted_while_latched() {
     let _g = lock();
     let mut s = Sim::new();
     assert!(s.cmd(ArtisanCommand::EmergencyStop));
-    assert!(s.cmd(ArtisanCommand::Charge(None)), "CHARGE is a pure marker: no ERR while latched");
-    assert!(s.cmd(ArtisanCommand::Drop), "DROP is a pure marker: no ERR while latched");
+    assert!(
+        s.cmd(ArtisanCommand::Charge(None)),
+        "CHARGE is a pure marker: no ERR while latched"
+    );
+    assert!(
+        s.cmd(ArtisanCommand::Drop),
+        "DROP is a pure marker: no ERR while latched"
+    );
     s.run(1.0, |_| 180.0, |_| 200.0);
     assert_eq!(s.c.get_status().ssr_output, 0.0);
 }
@@ -216,7 +230,9 @@ fn e1_explicit_charge_anchors_pid_on_budget() {
     s.run(120.0, |t| 199.0 - 49.0 * (t - tc) / 120.0, |_| 215.0);
     let tr = s.secs();
     s.run(2000.0, |t| (150.0 + 0.15 * (t - tr)).min(199.0), |_| 225.0);
-    let f = s.fault_at_s().expect("30-min cap after the explicit CHARGE must latch");
+    let f = s
+        .fault_at_s()
+        .expect("30-min cap after the explicit CHARGE must latch");
     assert!(
         (tc + 1795.0..=tc + 1815.0).contains(&f),
         "latch at {f:.1}, charge at {tc:.1}"
@@ -238,8 +254,15 @@ fn e1_drop_rearms_automatic_charge_detection() {
     s.run(30.0, |_| 199.0, |_| 220.0);
     assert!(!s.c.get_status().charge_detected, "DROP re-arms detection");
     let tc = s.secs();
-    s.run(30.0, |t| 95.0 + 104.0 * libm::expf(-(t - tc) / 12.0), |_| 215.0);
-    assert!(s.c.get_status().charge_detected, "next batch charge auto-detected");
+    s.run(
+        30.0,
+        |t| 95.0 + 104.0 * libm::expf(-(t - tc) / 12.0),
+        |_| 215.0,
+    );
+    assert!(
+        s.c.get_status().charge_detected,
+        "next batch charge auto-detected"
+    );
 }
 
 #[test]
@@ -256,7 +279,10 @@ fn e1_charge_then_pid_on_in_a_later_tick_anchors_the_roast() {
     assert!(!s.c.get_status().charge_detected);
     assert!(s.cmd(ArtisanCommand::PidOn));
     s.run(1.0, |_| 199.0, |_| 220.0);
-    assert!(s.c.get_status().charge_detected, "roast anchored to the earlier CHARGE marker");
+    assert!(
+        s.c.get_status().charge_detected,
+        "roast anchored to the earlier CHARGE marker"
+    );
     assert_eq!(s.c.batch_grams(), Some(300));
 }
 
@@ -272,7 +298,10 @@ fn e1_charge_during_preheat_survives_until_start() {
     assert!(!s.c.get_status().charge_detected);
     assert!(s.cmd(ArtisanCommand::StartRoast));
     s.run(1.0, |_| 178.0, |_| 200.0);
-    assert!(s.c.get_status().charge_detected, "marker kept through Preheating");
+    assert!(
+        s.c.get_status().charge_detected,
+        "marker kept through Preheating"
+    );
 }
 
 #[test]
@@ -283,7 +312,10 @@ fn e1_unused_marker_expires_after_grace() {
     s.run(10.0, |_| 25.0, |_| 25.0);
     assert!(s.cmd(ArtisanCommand::PidOn));
     s.run(1.0, |_| 25.0, |_| 25.0);
-    assert!(!s.c.get_status().charge_detected, "a 10 s old marker must not anchor a new roast");
+    assert!(
+        !s.c.get_status().charge_detected,
+        "a 10 s old marker must not anchor a new roast"
+    );
 }
 
 // ── D3: RoR-follow (E3) ──
@@ -310,7 +342,10 @@ fn e3_parse_ror_profile() {
         Ok(ArtisanCommand::SetRorProfile)
     );
     let _ = libreroaster::input::parser::ror_profile_take();
-    assert_eq!(parse_artisan_command("RORPROFILE;OFF"), Ok(ArtisanCommand::ClearRorProfile));
+    assert_eq!(
+        parse_artisan_command("RORPROFILE;OFF"),
+        Ok(ArtisanCommand::ClearRorProfile)
+    );
     assert!(parse_artisan_command("RORPROFILE;0").is_err());
     assert!(parse_artisan_command("RORPROFILE;x,10").is_err());
 }
@@ -332,7 +367,10 @@ fn e3_ror_follow_tracks_profile_and_stays_near_bt() {
     });
     assert!(s.fault_at_s().is_none(), "fault at {:?}", s.fault_at_s());
     assert!(s.c.ror_follow_active());
-    assert!(max_gap <= 3.0 + 0.5, "setpoint left the ±3 °C band: {max_gap}");
+    assert!(
+        max_gap <= 3.0 + 0.5,
+        "setpoint left the ±3 °C band: {max_gap}"
+    );
     // Measured BT RoR between 200 s and 400 s after the charge vs profile
     // (≈11.7 → ≈8.7 °C/min, average ≈10.2).
     let at = |t: f32| samples.iter().find(|p| p.0 >= t).map(|p| p.1).unwrap();
@@ -350,7 +388,10 @@ fn e3_sv_command_stops_ror_follow() {
     assert!(s.c.ror_follow_active());
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(210.0)));
     plant_run(&mut s, 5.0, &mut bt, |_, _| {});
-    assert!(!s.c.ror_follow_active(), "an explicit SV is an operator override");
+    assert!(
+        !s.c.ror_follow_active(),
+        "an explicit SV is an operator override"
+    );
     assert_eq!(s.c.get_status().target_temp, 210.0);
 }
 
@@ -374,7 +415,10 @@ fn e3_profile_range_and_units() {
     let _g = lock();
     let mut s = Sim::new();
     assert!(!wire(&mut s, "RORPROFILE;0,31"), "31 °C/min > 30 max");
-    assert!(!wire(&mut s, "RORPROFILE;60,10;60,9"), "times must increase");
+    assert!(
+        !wire(&mut s, "RORPROFILE;60,10;60,9"),
+        "times must increase"
+    );
     assert!(wire(&mut s, "RORPROFILE;0,30"));
     assert!(s.cmd(ArtisanCommand::Units(true)));
     assert!(wire(&mut s, "RORPROFILE;0,54"), "54 °F/min = 30 °C/min");
@@ -417,13 +461,19 @@ fn e3_ot1_takeover_suspends_follow_and_pid_on_resumes_it() {
     assert!(s.c.ror_follow_active());
     assert!(s.cmd(ArtisanCommand::SetHeater(50)));
     plant_run(&mut s, 30.0, &mut bt, |_, _| {});
-    assert!(!s.c.ror_follow_active(), "suspended while OT1 controls the heater");
+    assert!(
+        !s.c.ror_follow_active(),
+        "suspended while OT1 controls the heater"
+    );
     assert!((s.c.get_status().ssr_output - 50.0).abs() < 1e-3);
     assert!(s.cmd(ArtisanCommand::PidOn));
     plant_run(&mut s, 10.0, &mut bt, |_, _| {});
     assert!(s.c.ror_follow_active(), "PID;ON resumes RoR-follow");
     let st = s.c.get_status();
-    assert!((st.target_temp - st.bean_temp).abs() <= 3.5, "no setpoint jump after the gap");
+    assert!(
+        (st.target_temp - st.bean_temp).abs() <= 3.5,
+        "no setpoint jump after the gap"
+    );
 }
 
 #[test]
@@ -441,8 +491,14 @@ fn e3_late_charge_button_keeps_a_running_ramp() {
     // Beans in WITHOUT the button: automatic detection arms RoR-follow.
     bt = 95.0;
     plant_run(&mut s, 90.0, &mut bt, |_, _| {});
-    assert!(s.c.get_status().charge_detected, "automatic charge detected");
-    assert!(s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0, "ramping");
+    assert!(
+        s.c.get_status().charge_detected,
+        "automatic charge detected"
+    );
+    assert!(
+        s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0,
+        "ramping"
+    );
     let sv_before = s.c.get_status().target_temp;
     // The operator presses CHARGE 90 s late.
     assert!(s.cmd(ArtisanCommand::Charge(None)));
@@ -459,7 +515,10 @@ fn e3_et_channel_never_follows() {
     assert!(s.cmd(ArtisanCommand::SetPidChannel(1)));
     let _ = ror_roast(&mut s, &mut bt);
     plant_run(&mut s, 60.0, &mut bt, |_, _| {});
-    assert!(!s.c.ror_follow_active(), "RoR profile is a BT rate: refused on ET");
+    assert!(
+        !s.c.ror_follow_active(),
+        "RoR profile is a BT rate: refused on ET"
+    );
     assert_eq!(s.c.ror_target_c_per_min(), 0.0);
 }
 
@@ -474,7 +533,11 @@ fn e2_chan_1200_keeps_extras_off() {
     assert!(s.cmd(ArtisanCommand::Chan(1234)));
     assert!(s.c.read_extra_channels().is_some());
     assert!(s.cmd(ArtisanCommand::Chan(1230)));
-    assert_eq!(s.c.read_extra_channels(), None, "both slots must be requested");
+    assert_eq!(
+        s.c.read_extra_channels(),
+        None,
+        "both slots must be requested"
+    );
 }
 
 #[test]
@@ -517,7 +580,10 @@ fn e2_extras_carry_ror_target_and_scale_to_fahrenheit() {
     assert_eq!(fields[3], format!("{:.1}", target));
     assert!(s.cmd(ArtisanCommand::Units(true)));
     let xf = s.c.read_extra_channels().unwrap();
-    assert!((xf.ch3 - target * 1.8).abs() < 1e-3, "rates scale by 1.8 in °F");
+    assert!(
+        (xf.ch3 - target * 1.8).abs() < 1e-3,
+        "rates scale by 1.8 in °F"
+    );
     // OT1 takeover suspends RoR-follow: channel 3 must be honest and read 0.
     assert!(s.cmd(ArtisanCommand::Units(false)));
     assert!(s.cmd(ArtisanCommand::SetHeater(50)));
@@ -530,7 +596,12 @@ fn e2_extras_carry_ror_target_and_scale_to_fahrenheit() {
 // ── D5: step-test autotune (E4) ──
 
 /// Integrating plant with 8 s dead time: dBT/dt = 0.005 + 0.003·(u(t−8) − 40).
-fn tune_plant_run(s: &mut Sim, secs: f32, bt: &mut f32, hist: &mut std::collections::VecDeque<f32>) -> f32 {
+fn tune_plant_run(
+    s: &mut Sim,
+    secs: f32,
+    bt: &mut f32,
+    hist: &mut std::collections::VecDeque<f32>,
+) -> f32 {
     let delay = (8.0 / DT) as usize;
     let mut max_u = 0.0f32;
     for _ in 0..(secs / DT) as u64 {
@@ -541,7 +612,11 @@ fn tune_plant_run(s: &mut Sim, secs: f32, bt: &mut f32, hist: &mut std::collecti
         let u = s.c.get_status().ssr_output;
         max_u = max_u.max(u);
         hist.push_back(u);
-        let delayed = if hist.len() > delay { hist[hist.len() - 1 - delay] } else { 40.0 };
+        let delayed = if hist.len() > delay {
+            hist[hist.len() - 1 - delay]
+        } else {
+            40.0
+        };
         *bt += (0.005 + 0.003 * (delayed - 40.0)) * DT;
     }
     max_u
@@ -559,10 +634,22 @@ fn manual_at_40(s: &mut Sim) -> (f32, std::collections::VecDeque<f32>) {
 #[test]
 fn e4_parse_tune() {
     use libreroaster::config::TuneCommand;
-    assert_eq!(parse_artisan_command("TUNE;20"), Ok(ArtisanCommand::Tune(TuneCommand::Start(20))));
-    assert_eq!(parse_artisan_command("TUNE;abort"), Ok(ArtisanCommand::Tune(TuneCommand::Abort)));
-    assert_eq!(parse_artisan_command("TUNE;UNLOCK"), Ok(ArtisanCommand::Tune(TuneCommand::Unlock)));
-    assert_eq!(parse_artisan_command("TUNE;STATUS"), Ok(ArtisanCommand::Tune(TuneCommand::Status)));
+    assert_eq!(
+        parse_artisan_command("TUNE;20"),
+        Ok(ArtisanCommand::Tune(TuneCommand::Start(20)))
+    );
+    assert_eq!(
+        parse_artisan_command("TUNE;abort"),
+        Ok(ArtisanCommand::Tune(TuneCommand::Abort))
+    );
+    assert_eq!(
+        parse_artisan_command("TUNE;UNLOCK"),
+        Ok(ArtisanCommand::Tune(TuneCommand::Unlock))
+    );
+    assert_eq!(
+        parse_artisan_command("TUNE;STATUS"),
+        Ok(ArtisanCommand::Tune(TuneCommand::Status))
+    );
     assert!(parse_artisan_command("TUNE").is_err());
     assert!(parse_artisan_command("TUNE;101").is_err());
 }
@@ -576,11 +663,19 @@ fn e4_tune_identifies_plant_and_locks_gains() {
     let max_u = tune_plant_run(&mut s, 420.0, &mut bt, &mut hist);
     assert!(s.fault_at_s().is_none(), "fault at {:?}", s.fault_at_s());
     assert!(!s.c.tune_running());
-    let r = s.c.last_tune_result().expect("tune must finish with a result");
+    let r =
+        s.c.last_tune_result()
+            .expect("tune must finish with a result");
     assert!((r.gain - 0.003).abs() < 0.0006, "gain {}", r.gain);
     assert!(r.kp > 3.0 && r.kp < 40.0, "kp {}", r.kp);
-    assert!(max_u <= 60.0 + 1e-3, "heater never above base + step: {max_u}");
-    assert!((s.c.get_status().ssr_output - 40.0).abs() < 1e-3, "back to the manual duty");
+    assert!(
+        max_u <= 60.0 + 1e-3,
+        "heater never above base + step: {max_u}"
+    );
+    assert!(
+        (s.c.get_status().ssr_output - 40.0).abs() < 1e-3,
+        "back to the manual duty"
+    );
     assert!(s.c.pid_gains_locked());
     // Artisan's PID ON handshake (PID;T) must not overwrite the tuned gains.
     assert!(s.cmd(ArtisanCommand::SetPidGain(1.0, 1.0, 1.0)));

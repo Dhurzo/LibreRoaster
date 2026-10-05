@@ -9,11 +9,11 @@
 use super::policies::{ManualPolicyOutcome, SafetyPolicyOutcome};
 use super::RoasterError;
 use crate::config::*;
+use crate::control::autotune::{StepTest, TuneResult, TuneTick};
 use crate::control::controllers::{
     ActuatorController, CommandDispatchResult, CommandDispatcher, SafetyController,
     SensorController,
 };
-use crate::control::autotune::{StepTest, TuneResult, TuneTick};
 use crate::control::pid::PidFeedback;
 use crate::control::ror_follow::{RorFollower, RorStep};
 use crate::control::traits::{Fan, Heater};
@@ -1540,8 +1540,7 @@ impl RoasterControl {
             return;
         }
         let since = *self.pending_charge_since.get_or_insert(now);
-        let in_grace =
-            now.saturating_duration_since(since).as_secs() < CHARGE_MARKER_GRACE_SECS;
+        let in_grace = now.saturating_duration_since(since).as_secs() < CHARGE_MARKER_GRACE_SECS;
         match self.state {
             RoasterState::Heating | RoasterState::Stable => {
                 self.pending_charge = false;
@@ -1573,8 +1572,7 @@ impl RoasterControl {
                     && heater_energized
                 {
                     let recently_anchored = self.heat_session_start.is_some_and(|s| {
-                        now.saturating_duration_since(s).as_secs()
-                            < HEAT_SESSION_OFF_DEBOUNCE_SECS
+                        now.saturating_duration_since(s).as_secs() < HEAT_SESSION_OFF_DEBOUNCE_SECS
                     });
                     if !recently_anchored {
                         self.heat_session_start = Some(now);

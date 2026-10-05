@@ -146,7 +146,9 @@ impl StepTest {
         if !base.is_finite() || !(TUNE_MIN_BASE_DUTY..=TUNE_MAX_BASE_DUTY).contains(&base) {
             return Err(TuneError::BadBaseDuty);
         }
-        if !step.is_finite() || !(TUNE_MIN_STEP..=TUNE_MAX_STEP).contains(&step) || base + step > 100.0
+        if !step.is_finite()
+            || !(TUNE_MIN_STEP..=TUNE_MAX_STEP).contains(&step)
+            || base + step > 100.0
         {
             return Err(TuneError::BadStep);
         }
@@ -303,7 +305,11 @@ mod tests {
         match run_plant(0.003, 8.0, 0.01, 40.0, 20.0) {
             TuneTick::Done(r) => {
                 assert!((r.gain - 0.003).abs() < 0.0005, "gain {}", r.gain);
-                assert!((r.dead_time_secs - 8.0).abs() < 2.0, "theta {}", r.dead_time_secs);
+                assert!(
+                    (r.dead_time_secs - 8.0).abs() < 2.0,
+                    "theta {}",
+                    r.dead_time_secs
+                );
                 assert!(r.kp > 5.0 && r.kp < 25.0, "kp {}", r.kp);
                 assert!(r.ki > 0.0 && r.kd == 0.0);
             }
@@ -325,7 +331,10 @@ mod tests {
         assert_eq!(StepTest::new(40.0, 50.0, 150.0), Err(TuneError::BadStep));
         assert_eq!(StepTest::new(75.0, 30.0, 150.0), Err(TuneError::BadStep));
         assert_eq!(StepTest::new(40.0, 20.0, 30.0), Err(TuneError::ProbeCold));
-        assert_eq!(StepTest::new(40.0, 20.0, f32::NAN), Err(TuneError::ProbeCold));
+        assert_eq!(
+            StepTest::new(40.0, 20.0, f32::NAN),
+            Err(TuneError::ProbeCold)
+        );
         assert_eq!(
             StepTest::new(40.0, 20.0, OVERTEMP_THRESHOLD - 10.0),
             Err(TuneError::TooHot)

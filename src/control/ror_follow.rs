@@ -153,7 +153,9 @@ mod tests {
         assert!(profile(&[(0, 31.0)]).validate().is_err());
         assert!(profile(&[(0, f32::NAN)]).validate().is_err());
         assert!(profile(&[(60, 10.0), (60, 9.0)]).validate().is_err());
-        assert!(profile(&[(0, 20.0), (300, 10.0), (600, 5.0)]).validate().is_ok());
+        assert!(profile(&[(0, 20.0), (300, 10.0), (600, 5.0)])
+            .validate()
+            .is_ok());
     }
 
     #[test]

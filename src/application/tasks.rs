@@ -311,11 +311,10 @@ async fn drain_commands(tick_state: &mut TickState) {
                         } else if let crate::config::ArtisanCommand::ReadStatus =
                             traced_command.command
                         {
-                            let response =
-                                ArtisanFormatter::format_read_response_with_extras(
-                                    &status_snapshot,
-                                    extras,
-                                );
+                            let response = ArtisanFormatter::format_read_response_with_extras(
+                                &status_snapshot,
+                                extras,
+                            );
 
                             if let Ok(line) =
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())
