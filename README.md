@@ -214,9 +214,10 @@ GitHub Actions runs 7 parallel jobs on every push/PR to `develop` and `main`:
 | Clippy | `cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` |
 | Clippy (ESP32-C3) | `cargo clippy --release --locked --target riscv32imc-unknown-none-elf --features embedded -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic` |
 | Host tests | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` (plus doctests via `--doc`) |
+| Heat-sense tests | `cargo test --target x86_64-unknown-linux-gnu --features test,heat-sense --lib hardware::ssr_logic --no-fail-fast` |
 | Regression tests | `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` |
 | Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
-| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,heat-sense`, `embedded,simulated-sensors`, `embedded,regression` and `embedded,instrumentation` variants, and the HIL examples with `--features embedded,simulated-sensors --examples`) |
 
 ### Embedded build & flash
 

@@ -37,6 +37,14 @@ jobs:
             -W clippy::unwrap_used \
             -W clippy::expect_used \
             -W clippy::panic
+      # N23 (re-audit 2026-10-05): the `test` feature gates real code
+      # (multiplexer, usb_cdc tasks); lint it too.
+      - name: Clippy (host, test feature)
+        run: |
+          cargo clippy --locked --all-targets --features test -- \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic
 
   embedded-clippy:
     name: Clippy (ESP32-C3 / riscv32imc)
@@ -157,5 +165,10 @@ jobs:
       # silently desynchronise.
       - name: Build with instrumentation for ESP32-C3
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,instrumentation
+      # N23 (re-audit 2026-10-05): `--examples` never builds the firmware
+      # binary; the simulated-sensors firmware (first Artisan connection) must
+      # compile too.
+      - name: Build simulated-sensors firmware for ESP32-C3
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,simulated-sensors
       - name: Build HIL examples (ESP32-C3)
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,simulated-sensors --examples

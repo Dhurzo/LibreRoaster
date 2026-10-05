@@ -250,7 +250,7 @@ fn h2_manual_session_cap_fires() {
     // BT 150 ±2 (30 s sin), ET 200, 95 min.
     s.run(
         5700.0,
-        |t| 150.0 + 2.0 * libm::sinf(t * 6.28318 / 30.0),
+        |t| 150.0 + 2.0 * libm::sinf(t * core::f32::consts::TAU / 30.0),
         |_| 200.0,
     );
     let f = s
