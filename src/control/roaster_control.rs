@@ -138,6 +138,8 @@ pub struct RoasterControl {
         { crate::logging::roast_logger::LOG_CAPACITY + 1 },
     >,
     fan_floor_gate: EdgeLogGate,
+    /// Rate-limits the "setpoint capped" warning to one line per episode (F-C8).
+    target_cap_gate: EdgeLogGate,
 }
 
 impl RoasterControl {
@@ -172,6 +174,7 @@ impl RoasterControl {
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
             fan_floor_gate: EdgeLogGate::new(),
+            target_cap_gate: EdgeLogGate::new(),
         })
     }
 
@@ -1739,6 +1742,7 @@ impl RoasterControl {
                 source: Some("target_temp_out_of_range"),
             });
         }
+        let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
         self.enable_pid_control(target_celsius)?;
         info!(
@@ -1878,6 +1882,7 @@ impl RoasterControl {
             });
         }
 
+        let target_celsius = self.cap_pid_target(target_celsius);
         self.preheat_target = Some(target_celsius);
         // Drop the cooldown latch on a deliberate re-energize — same
         // justification as `handle_start_roast`. Otherwise a consecutive batch
@@ -2023,6 +2028,25 @@ impl RoasterControl {
         self.actuator.last_desired_heater_output()
     }
 
+    /// Clamp a PID setpoint to the over-temperature cutoff of the channel the
+    /// PID regulates (minus `TARGET_OVERTEMP_MARGIN_C`). F-C8: a setpoint above
+    /// the cutoff is a guaranteed latch, never a useful target.
+    fn cap_pid_target(&mut self, target: f32) -> f32 {
+        let cap = crate::config::constants::max_pid_target_for_channel(self.status.pid_channel);
+        if target > cap {
+            if self.target_cap_gate.rising(true) {
+                warn!(
+                    "PID setpoint {:.1}°C above channel {} limit — capped to {:.1}°C",
+                    target, self.status.pid_channel, cap
+                );
+            }
+            cap
+        } else {
+            self.target_cap_gate.rising(false);
+            target
+        }
+    }
+
     /// Run one PID update when due per `pid_cycle_time_ms`; returns the SSR duty to apply.
     fn update_pid_control(&mut self, current_time: embassy_time::Instant) -> f32 {
         use crate::config::constants::SsrHardwareStatus;
@@ -2058,6 +2082,14 @@ impl RoasterControl {
                         debug!("Profile target: {:.1}°C at t={}s", new_target, elapsed);
                     }
                 }
+            }
+
+            // F-C8: re-apply the channel cap every PID cycle — covers profile
+            // setpoints and a `PID;CHAN` switch after the SV was accepted.
+            let capped = self.cap_pid_target(self.status.target_temp);
+            if capped != self.status.target_temp {
+                self.status.target_temp = capped;
+                let _ = self.dispatch.set_pid_target(capped);
             }
 
             let output = self.dispatch.get_pid_output(self.status.pv, current_time);

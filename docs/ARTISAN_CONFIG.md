@@ -120,7 +120,7 @@ UNITS;F  → #OK  (all subsequent READ/STATUS/telemetry in °F)
 UNITS;C  → #OK  (back to °C)
 ```
 
-Setpoints sent in °F (`PID;SV;392` = 200°C) are **converted to °C internally** before validation. The valid target range is **50–300°C** (122–572°F).
+Setpoints sent in °F (`PID;SV;392` = 200°C) are **converted to °C internally** before validation. The valid target range is **50–300°C** (122–572°F). The firmware PID additionally caps the target to **250 °C when regulating BT** and **290 °C when regulating ET**.
 
 ---
 

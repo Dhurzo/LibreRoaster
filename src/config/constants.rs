@@ -128,6 +128,21 @@ const _: () = {
     assert!(ET_OVERTEMP_THRESHOLD <= MAX_TEMP);
     assert!(ET_OVERTEMP_THRESHOLD < MAX_VALID_TEMP);
 };
+/// Minimum gap (°C) between the highest PID setpoint and the over-temperature
+/// cutoff of the channel the PID regulates. A setpoint at the cutoff would
+/// latch the emergency on the first overshoot.
+pub const TARGET_OVERTEMP_MARGIN_C: f32 = 10.0;
+
+/// Highest setpoint the firmware PID may chase on `pid_channel`
+/// (1 = ET, anything else = BT, the conservative default).
+pub fn max_pid_target_for_channel(pid_channel: u8) -> f32 {
+    if pid_channel == 1 {
+        ET_OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C
+    } else {
+        OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C
+    }
+}
+const _: () = assert!(DEFAULT_TARGET_TEMP <= OVERTEMP_THRESHOLD - TARGET_OVERTEMP_MARGIN_C);
 /// Maximum age of a temperature sample before the PID treats it as stale
 /// and forces a safety hold. Tolerates 2 fully-missed ticks (H9): the sample
 /// is stamped BEFORE the 210 ms conversion wait, so at the ~310 ms cadence
