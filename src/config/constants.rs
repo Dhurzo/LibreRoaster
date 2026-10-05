@@ -343,6 +343,14 @@ pub enum ArtisanCommand {
     SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
     /// STREAM;ON/OFF — enable or disable the spontaneous `#` telemetry stream.
     SetStreaming(bool), // STREAM;ON / STREAM;OFF
+    /// `CHARGE` / `CHARGE;<grams>` — bean charge marker sent by Artisan's
+    /// CHARGE event button (DIFF E1). Pure marker: never changes heater or
+    /// fan. `None` when no (or a zero) batch weight was given.
+    Charge(Option<u16>),
+    /// `DROP` — bean drop marker sent by Artisan's DROP event button (DIFF E1).
+    /// Pure marker: ends RoR-follow and re-arms charge detection for the next
+    /// batch; never changes heater or fan.
+    Drop,
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;

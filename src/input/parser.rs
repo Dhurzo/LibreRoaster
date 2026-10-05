@@ -310,6 +310,22 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         } else {
             Err(ParseError::InvalidValue)
         }
+    } else if cmd.eq_ignore_ascii_case("CHARGE") {
+        // DIFF E1: `CHARGE` or `CHARGE;<grams>` (Artisan `{WEIGHTin}`
+        // substitution: integer grams, 0 = no weight entered).
+        match parts.len() {
+            1 => Ok(ArtisanCommand::Charge(None)),
+            2 => {
+                let grams = parts[1]
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|_| ParseError::InvalidValue)?;
+                Ok(ArtisanCommand::Charge((grams > 0).then_some(grams)))
+            }
+            _ => Err(ParseError::InvalidValue),
+        }
+    } else if cmd.eq_ignore_ascii_case("DROP") && parts.len() == 1 {
+        Ok(ArtisanCommand::Drop)
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
             let target = parse_float(parts[1])?;

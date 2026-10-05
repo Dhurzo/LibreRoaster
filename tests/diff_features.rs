@@ -139,4 +139,151 @@ fn wire(s: &mut Sim, line: &str) -> bool {
     }
 }
 
+// ── D2: CHARGE / DROP markers (E1) ──
+
+#[test]
+fn e1_parse_charge_and_drop() {
+    assert_eq!(parse_artisan_command("CHARGE"), Ok(ArtisanCommand::Charge(None)));
+    assert_eq!(parse_artisan_command("CHARGE;250"), Ok(ArtisanCommand::Charge(Some(250))));
+    assert_eq!(parse_artisan_command("charge;0"), Ok(ArtisanCommand::Charge(None)));
+    assert!(parse_artisan_command("CHARGE;-1").is_err());
+    assert!(parse_artisan_command("CHARGE;1;2").is_err());
+    assert_eq!(parse_artisan_command("DROP"), Ok(ArtisanCommand::Drop));
+    assert!(parse_artisan_command("DROP;1").is_err());
+}
+
+#[test]
+fn e1_markers_never_touch_actuators() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetHeater(60)));
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    s.run(30.0, |_| 180.0, |_| 200.0);
+    assert!(s.cmd(ArtisanCommand::Charge(Some(250))));
+    s.run(1.0, |_| 180.0, |_| 200.0);
+    assert!(s.cmd(ArtisanCommand::Drop));
+    s.run(1.0, |_| 180.0, |_| 200.0);
+    let st = s.c.get_status();
+    assert_eq!(st.ssr_output, 60.0);
+    assert_eq!(st.fan_output, 40.0);
+    assert!(s.fault_at_s().is_none());
+    assert_eq!(s.c.batch_grams(), Some(250));
+}
+
+#[test]
+fn e1_markers_accepted_while_latched() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::EmergencyStop));
+    assert!(s.cmd(ArtisanCommand::Charge(None)), "CHARGE is a pure marker: no ERR while latched");
+    assert!(s.cmd(ArtisanCommand::Drop), "DROP is a pure marker: no ERR while latched");
+    s.run(1.0, |_| 180.0, |_| 200.0);
+    assert_eq!(s.c.get_status().ssr_output, 0.0);
+}
+
+#[test]
+fn e1_charge_restarts_manual_session_budget() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetHeater(70)));
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    // Hot equilibrium (BT and ET flat) for 5000 s — no automatic charge.
+    s.run(5000.0, |_| 200.0, |_| 220.0);
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    // Without the CHARGE marker the 90-min cap would latch at 5400 s.
+    s.run(600.0, |_| 200.0, |_| 220.0);
+    assert!(s.fault_at_s().is_none(), "fault at {:?}", s.fault_at_s());
+}
+
+#[test]
+fn e1_explicit_charge_anchors_pid_on_budget() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    let now = s.now();
+    s.c.set_profile_start_for_test(now);
+    assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
+    s.run(
+        1500.0,
+        |t| 200.0 - 175.0 * libm::expf(-t / 300.0),
+        |t| 220.0 - 190.0 * libm::expf(-t / 300.0),
+    );
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    let tc = s.secs();
+    // SLOW drop (< 6 °C in 3 s): the automatic detector does NOT fire, so only
+    // the explicit marker can anchor the 30-min budget.
+    s.run(120.0, |t| 199.0 - 49.0 * (t - tc) / 120.0, |_| 215.0);
+    let tr = s.secs();
+    s.run(2000.0, |t| (150.0 + 0.15 * (t - tr)).min(199.0), |_| 225.0);
+    let f = s.fault_at_s().expect("30-min cap after the explicit CHARGE must latch");
+    assert!(
+        (tc + 1795.0..=tc + 1815.0).contains(&f),
+        "latch at {f:.1}, charge at {tc:.1}"
+    );
+}
+
+#[test]
+fn e1_drop_rearms_automatic_charge_detection() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
+    s.run(300.0, |t| 200.0 - 50.0 * libm::expf(-t / 60.0), |_| 220.0);
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    s.run(2.0, |_| 199.0, |_| 220.0);
+    assert!(s.c.get_status().charge_detected);
+    assert!(s.cmd(ArtisanCommand::Drop));
+    s.run(30.0, |_| 199.0, |_| 220.0);
+    assert!(!s.c.get_status().charge_detected, "DROP re-arms detection");
+    let tc = s.secs();
+    s.run(30.0, |t| 95.0 + 104.0 * libm::expf(-(t - tc) / 12.0), |_| 215.0);
+    assert!(s.c.get_status().charge_detected, "next batch charge auto-detected");
+}
+
+#[test]
+fn e1_charge_then_pid_on_in_a_later_tick_anchors_the_roast() {
+    // Artisan pidOnCHARGE: CHARGE marker, then the PID ON sequence. Here they
+    // land in DIFFERENT control ticks (worst case).
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetHeater(70)));
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    s.run(30.0, |_| 200.0, |_| 220.0);
+    assert!(s.cmd(ArtisanCommand::Charge(Some(300))));
+    s.run(1.0, |_| 200.0, |_| 220.0); // marker applied to the manual session, kept pending
+    assert!(!s.c.get_status().charge_detected);
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    s.run(1.0, |_| 199.0, |_| 220.0);
+    assert!(s.c.get_status().charge_detected, "roast anchored to the earlier CHARGE marker");
+    assert_eq!(s.c.batch_grams(), Some(300));
+}
+
+#[test]
+fn e1_charge_during_preheat_survives_until_start() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::SetFan(40)));
+    assert!(s.cmd(ArtisanCommand::Preheat(200.0)));
+    s.run(60.0, |t| 150.0 + 0.5 * t, |_| 200.0);
+    assert!(s.cmd(ArtisanCommand::Charge(None)));
+    s.run(20.0, |_| 180.0, |_| 200.0); // operator pours the beans, 20 s later clicks START
+    assert!(!s.c.get_status().charge_detected);
+    assert!(s.cmd(ArtisanCommand::StartRoast));
+    s.run(1.0, |_| 178.0, |_| 200.0);
+    assert!(s.c.get_status().charge_detected, "marker kept through Preheating");
+}
+
+#[test]
+fn e1_unused_marker_expires_after_grace() {
+    let _g = lock();
+    let mut s = Sim::new();
+    assert!(s.cmd(ArtisanCommand::Charge(None))); // idle, heater off
+    s.run(10.0, |_| 25.0, |_| 25.0);
+    assert!(s.cmd(ArtisanCommand::PidOn));
+    s.run(1.0, |_| 25.0, |_| 25.0);
+    assert!(!s.c.get_status().charge_detected, "a 10 s old marker must not anchor a new roast");
+}
+
 // @@ NEXT TESTS GO HERE (keep this line) @@

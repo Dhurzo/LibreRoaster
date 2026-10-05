@@ -28,6 +28,12 @@ use crate::logging::edge_log_gate::EdgeLogGate;
 /// resetting the MAX_ROAST_TIME budget.
 const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
 
+/// DIFF E1: a `CHARGE` marker that cannot be applied yet (no roast running)
+/// is kept this long, so Artisan's pidOnCHARGE (CHARGE marker and `PID;ON`
+/// sent within milliseconds of each other, in either order) still anchors
+/// the roast to the charge even when the two land in different control ticks.
+const CHARGE_MARKER_GRACE_SECS: u64 = 5;
+
 /// Which safety backstops are armed on this tick. Computed ONCE per tick by
 /// `RoasterControl::guard_arming()` — the single place where "which guard
 /// protects which operating mode" is decided.
@@ -149,6 +155,17 @@ pub struct RoasterControl {
     /// BT samples for the MANUAL-session charge detector (F-C3). Separate
     /// from `bt_charge_history`, which only runs in Heating/Stable.
     manual_charge_history: heapless::Deque<f32, 10>,
+    /// DIFF E1: a `CHARGE` marker arrived; applied on a control tick (tick
+    /// time base) by `apply_pending_charge`.
+    pending_charge: bool,
+    /// DIFF E1: tick time of the first attempt to apply the pending marker
+    /// (start of the `CHARGE_MARKER_GRACE_SECS` window).
+    pending_charge_since: Option<Instant>,
+    /// DIFF E1: an explicit CHARGE already anchored this batch. Cleared by
+    /// DROP, by a new roast handoff and by `stop_streaming`.
+    explicit_charge_seen: bool,
+    /// DIFF E1: batch weight from `CHARGE;<grams>` (Artisan `{WEIGHTin}`).
+    batch_grams: Option<u16>,
 }
 
 impl RoasterControl {
@@ -186,6 +203,10 @@ impl RoasterControl {
             target_cap_gate: EdgeLogGate::new(),
             pid_on_session: false,
             manual_charge_history: heapless::Deque::new(),
+            pending_charge: false,
+            pending_charge_since: None,
+            explicit_charge_seen: false,
+            batch_grams: None,
         })
     }
 
@@ -523,6 +544,9 @@ impl RoasterControl {
         // re-send `FANPROFILE` for the next roast.
         self.profile_start_time = None;
         self.pid_on_session = false;
+        self.pending_charge = false;
+        self.pending_charge_since = None;
+        self.explicit_charge_seen = false;
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
         // against the time budget.
@@ -798,6 +822,8 @@ impl RoasterControl {
         } else {
             self.manual_charge_history.clear();
         }
+        // DIFF E1: explicit CHARGE marker from Artisan (same time base).
+        self.apply_pending_charge(current_time, heater_energized);
 
         // PV for the guard table (`regulating` compares target vs PV).
         // `status.pv` itself is published later, next to the NaN guard.
@@ -1315,7 +1341,10 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::Chan(_)
                 | crate::config::ArtisanCommand::Units(_)
                 | crate::config::ArtisanCommand::Filt(_)
-                | crate::config::ArtisanCommand::SetStreaming(_) => { /* allow */ }
+                | crate::config::ArtisanCommand::SetStreaming(_)
+                // DIFF E1: pure markers, no actuator side effect — never ERR.
+                | crate::config::ArtisanCommand::Charge(_)
+                | crate::config::ArtisanCommand::Drop => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     // BUG-2c-1 (audit 2026-10-04): a refused PROFILE/
@@ -1407,10 +1436,102 @@ impl RoasterControl {
             crate::config::ArtisanCommand::SetStreaming(enabled) => {
                 self.handle_set_streaming(enabled)
             }
+            crate::config::ArtisanCommand::Charge(grams) => self.handle_charge(grams),
+            crate::config::ArtisanCommand::Drop => self.handle_drop(),
         }
     }
 
     // Artisan command handlers (extracted from process_artisan_command)
+
+    /// DIFF E1: `CHARGE` marker. Only records the request; the anchor is set
+    /// on the next control tick by `apply_pending_charge`.
+    fn handle_charge(&mut self, grams: Option<u16>) -> Result<(), RoasterError> {
+        if grams.is_some() {
+            self.batch_grams = grams;
+        }
+        self.pending_charge = true;
+        info!("Artisan+ CHARGE marker received (batch {:?} g)", grams);
+        Ok(())
+    }
+
+    /// DIFF E1: `DROP` marker. Never touches heater or fan.
+    fn handle_drop(&mut self) -> Result<(), RoasterError> {
+        self.pending_charge = false;
+        self.pending_charge_since = None;
+        self.explicit_charge_seen = false;
+        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
+            // Re-arm automatic charge detection for the next batch. The
+            // budget anchor (`charge_time`) is kept until the next charge.
+            self.charge_detected = false;
+            self.status.charge_detected = false;
+            self.bt_charge_history.clear();
+            self.charge_history_tick_div = 0;
+        }
+        info!("Artisan+ DROP marker received");
+        Ok(())
+    }
+
+    /// DIFF E1: apply a pending `CHARGE` in the control tick's time base.
+    /// - roast (Heating/Stable): anchor `charge_time` once per batch, consume;
+    /// - Preheating: keep the marker for the `START`/`PID;ON` that follows;
+    /// - manual heat session (Idle + artisan_control + heater on): restart the
+    ///   90-min session budget (like the automatic F-C3 detector) and keep
+    ///   the marker for `CHARGE_MARKER_GRACE_SECS`, so a `PID;ON` right after
+    ///   it (Artisan's pidOnCHARGE) still anchors the roast to the charge;
+    /// - anything else: keep for the grace period, then drop (logged).
+    fn apply_pending_charge(&mut self, now: Instant, heater_energized: bool) {
+        if !self.pending_charge {
+            return;
+        }
+        let since = *self.pending_charge_since.get_or_insert(now);
+        let in_grace =
+            now.saturating_duration_since(since).as_secs() < CHARGE_MARKER_GRACE_SECS;
+        match self.state {
+            RoasterState::Heating | RoasterState::Stable => {
+                self.pending_charge = false;
+                self.pending_charge_since = None;
+                if self.explicit_charge_seen {
+                    info!("CHARGE ignored - already marked for this batch (send DROP first)");
+                    return;
+                }
+                self.explicit_charge_seen = true;
+                self.charge_detected = true;
+                self.charge_time = Some(now);
+                self.status.charge_detected = true;
+                self.bt_charge_history.clear();
+                self.charge_history_tick_div = 0;
+                info!("CHARGE marker applied - roast budget anchored to the charge");
+            }
+            RoasterState::Preheating => {
+                // Keep the marker: START / PID;ON turns Preheating into Heating.
+            }
+            _ => {
+                if matches!(self.state, RoasterState::Idle)
+                    && self.status.artisan_control
+                    && heater_energized
+                {
+                    let recently_anchored = self.heat_session_start.is_some_and(|s| {
+                        now.saturating_duration_since(s).as_secs()
+                            < HEAT_SESSION_OFF_DEBOUNCE_SECS
+                    });
+                    if !recently_anchored {
+                        self.heat_session_start = Some(now);
+                        info!("CHARGE marker applied - manual heat-session budget restarts");
+                    }
+                }
+                if !in_grace {
+                    self.pending_charge = false;
+                    self.pending_charge_since = None;
+                    info!("CHARGE marker dropped - no roast started within the grace period");
+                }
+            }
+        }
+    }
+
+    /// DIFF E1: batch weight (g) from the last `CHARGE;<grams>`, if any.
+    pub fn batch_grams(&self) -> Option<u16> {
+        self.batch_grams
+    }
 
     fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
         // Gate by *state*: a START during an actually-active roast
@@ -1500,6 +1621,9 @@ impl RoasterControl {
     fn start_roast_handoff(&mut self, via_pid_on: bool) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
         self.pid_on_session = via_pid_on;
+        // DIFF E1: a new roast starts a new batch. `pending_charge` is KEPT:
+        // Artisan's pidOnCHARGE may send CHARGE right before PID;ON.
+        self.explicit_charge_seen = false;
         // Reset the charge-detection state on START so every path into a
         // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
         // a STOP (PREHEAT → START cadence). Clearing here makes START
