@@ -517,3 +517,17 @@ the Artisan RoR convention — not °C/s.
 - `ARTISAN_CONNECTION.md` for official Artisan configuration guidance
 - `INSTRUMENTATION.md` for deep status-field interpretation
 - `tests/artisan_transcript_replay.rs` for the golden-transcript suite that pins the wire format
+
+## Differentiation commands (DIFF-2026-10-05)
+
+| Command | Effect | Reply |
+|---|---|---|
+| `CHARGE` / `CHARGE;<g>` | Charge marker (applied by the control tick; kept through PREHEAT and for 5 s otherwise); records batch weight | none |
+| `DROP` | Drop marker; stops RoR-follow; re-arms charge detection | none |
+| `RORPROFILE;t,ror;...` | Load RoR profile (≤ 16 points, 0–30 °C/min, increasing t) | `ERR handler_failed …:ror_profile_…` if invalid |
+| `RORPROFILE;OFF` | Unload RoR profile, stop RoR-follow | none |
+| `TUNE;<step>` | Start step-test autotune (manual mode only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
+| `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report | `TUNE;STATUS` → `#TUNE …` |
+
+READ channels 3/4 carry RoR target / measured RoR (display units per minute) **only** after
+`CHAN;xx34` (both last digits non-zero); with `CHAN;1200` they stay `0.0,0.0`.

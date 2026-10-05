@@ -5,7 +5,9 @@
 //! normalisation, value range/clamping, and FIFO staging of PROFILE/FANPROFILE
 //! payloads via interrupt-safe statics for the control loop to consume.
 
-use crate::config::{ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile};
+use crate::config::{
+    ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RorPoint, RorProfile, TuneCommand,
+};
 use core::cell::RefCell;
 use critical_section::Mutex;
 
@@ -147,6 +149,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                 }
                 "PROFILE" => Some(parse_profile_args(args.trim())),
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
+                "RORPROFILE" => Some(parse_ror_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
                 "STREAM" => Some(match args.trim().to_ascii_uppercase().as_str() {
                     "ON" => Ok(ArtisanCommand::SetStreaming(true)),
@@ -309,6 +312,38 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
             Ok(ArtisanCommand::Preheat(temp))
         } else {
             Err(ParseError::InvalidValue)
+        }
+    } else if cmd.eq_ignore_ascii_case("CHARGE") {
+        // DIFF E1: `CHARGE` or `CHARGE;<grams>` (Artisan `{WEIGHTin}`
+        // substitution: integer grams, 0 = no weight entered).
+        match parts.len() {
+            1 => Ok(ArtisanCommand::Charge(None)),
+            2 => {
+                let grams = parts[1]
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|_| ParseError::InvalidValue)?;
+                Ok(ArtisanCommand::Charge((grams > 0).then_some(grams)))
+            }
+            _ => Err(ParseError::InvalidValue),
+        }
+    } else if cmd.eq_ignore_ascii_case("DROP") && parts.len() == 1 {
+        Ok(ArtisanCommand::Drop)
+    } else if cmd.eq_ignore_ascii_case("TUNE") {
+        // DIFF E4: `TUNE;<step%>` | `TUNE;ABORT` | `TUNE;UNLOCK` | `TUNE;STATUS`.
+        if parts.len() != 2 {
+            return Err(ParseError::InvalidValue);
+        }
+        let arg = parts[1].trim();
+        if arg.eq_ignore_ascii_case("ABORT") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Abort))
+        } else if arg.eq_ignore_ascii_case("UNLOCK") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Unlock))
+        } else if arg.eq_ignore_ascii_case("STATUS") {
+            Ok(ArtisanCommand::Tune(TuneCommand::Status))
+        } else {
+            let step = parse_percentage(arg)?;
+            Ok(ArtisanCommand::Tune(TuneCommand::Start(step)))
         }
     } else if cmd.eq_ignore_ascii_case("SETTARGET") {
         if parts.len() == 2 {
@@ -602,6 +637,72 @@ fn parse_fan_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
     Ok(ArtisanCommand::SetFanProfile)
 }
 
+/// Parse `RORPROFILE;t,ror;t,ror;...` (DIFF E3) or `RORPROFILE;OFF`.
+///
+/// `t` = seconds since the charge (u32), `ror` = rate of rise in the host's
+/// display units per minute. Range checks happen in the handler after the
+/// °F→°C conversion; only non-finite values are rejected here.
+fn parse_ror_profile_args(args: &str) -> Result<ArtisanCommand, ParseError> {
+    if args.eq_ignore_ascii_case("OFF") {
+        return Ok(ArtisanCommand::ClearRorProfile);
+    }
+    let mut profile = RorProfile::new();
+    for segment in args.split([';', ' ']) {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let mut parts = segment.splitn(2, ',');
+        let time_secs: u32 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        let ror_c_per_min: f32 = parts
+            .next()
+            .ok_or(ParseError::InvalidValue)?
+            .trim()
+            .parse()
+            .map_err(|_| ParseError::InvalidValue)?;
+        if !ror_c_per_min.is_finite() {
+            return Err(ParseError::InvalidValue);
+        }
+        profile
+            .points
+            .push(RorPoint {
+                time_secs,
+                ror_c_per_min,
+            })
+            .map_err(|_| ParseError::OutOfRange)?;
+    }
+    if profile.points.is_empty() {
+        return Err(ParseError::EmptyCommand);
+    }
+    ror_profile_store(profile);
+    Ok(ArtisanCommand::SetRorProfile)
+}
+
+/// FIFO for RORPROFILE payloads (DIFF E3), same discipline as `PARSED_PROFILE`.
+static PARSED_ROR_PROFILE: Mutex<RefCell<heapless::Deque<RorProfile, 4>>> =
+    Mutex::new(RefCell::new(heapless::Deque::new()));
+
+/// Stage a parsed RORPROFILE for the control loop.
+pub fn ror_profile_store(profile: RorProfile) {
+    critical_section::with(|cs| {
+        let mut slot = PARSED_ROR_PROFILE.borrow(cs).borrow_mut();
+        if slot.len() >= 4 {
+            let _ = slot.pop_front();
+        }
+        let _ = slot.push_back(profile);
+    });
+}
+
+/// Remove and return the oldest staged RORPROFILE, if any.
+pub fn ror_profile_take() -> Option<RorProfile> {
+    critical_section::with(|cs| PARSED_ROR_PROFILE.borrow(cs).borrow_mut().pop_front())
+}
+
 /// FIFO queue for FANPROFILE: a burst of two FANPROFILE lines must not
 /// overwrite the first before the control loop drains it (same rationale
 /// as `PARSED_PROFILE`).
@@ -622,7 +723,7 @@ pub fn fan_profile_take() -> Option<FanProfile> {
     critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
 }
 
-/// Drop every staged PROFILE/FANPROFILE payload.
+/// Drop every staged PROFILE/FANPROFILE/RORPROFILE payload.
 ///
 /// BUG-2c-1 (audit 2026-10-04): a refused or dropped PROFILE/FANPROFILE
 /// command must not leave its staged payload behind — the parser stages at
@@ -634,6 +735,7 @@ pub fn clear_staged_profiles() {
     critical_section::with(|cs| {
         PARSED_PROFILE.borrow(cs).borrow_mut().clear();
         PARSED_FAN_PROFILE.borrow(cs).borrow_mut().clear();
+        PARSED_ROR_PROFILE.borrow(cs).borrow_mut().clear();
     });
 }
 

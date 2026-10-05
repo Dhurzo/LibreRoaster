@@ -275,7 +275,9 @@ async fn drain_commands(tick_state: &mut TickState) {
                 }
 
                 let status = roaster.get_status();
-                (result, latency, status)
+                // DIFF E2: READ channels 3/4 (None unless Artisan asked).
+                let extras = roaster.read_extra_channels();
+                (result, latency, status, extras)
             },
         )
         .await;
@@ -284,7 +286,7 @@ async fn drain_commands(tick_state: &mut TickState) {
         let mut status_snapshot = SystemStatus::default();
 
         match command_outcome {
-            Ok((result, latency, status)) => {
+            Ok((result, latency, status, extras)) => {
                 latency_us = latency;
                 status_snapshot = status;
                 match result {
@@ -309,8 +311,10 @@ async fn drain_commands(tick_state: &mut TickState) {
                         } else if let crate::config::ArtisanCommand::ReadStatus =
                             traced_command.command
                         {
-                            let response =
-                                ArtisanFormatter::format_read_response_full(&status_snapshot);
+                            let response = ArtisanFormatter::format_read_response_with_extras(
+                                &status_snapshot,
+                                extras,
+                            );
 
                             if let Ok(line) =
                                 String::<TRACE_EVENT_MAX_LEN>::try_from(response.as_str())

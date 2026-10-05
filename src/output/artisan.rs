@@ -20,6 +20,16 @@ use core::fmt::Write;
 use embassy_time::Instant;
 use heapless::{Deque, String as HeaplessString};
 
+/// DIFF E2: values for the TC4 CHAN3/CHAN4 slots of the READ line, in
+/// display units per minute (°C/min or °F/min).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ExtraChannels {
+    /// Channel 3: RoR target followed by RoR-follow (0.0 when inactive).
+    pub ch3: f32,
+    /// Channel 4: measured RoR of the PID process value (BT by default).
+    pub ch4: f32,
+}
+
 /// Namespace for the shared Artisan wire-formatting helpers used by
 /// `MutableArtisanFormatter` and the READ/STATUS response paths.
 ///
@@ -94,7 +104,19 @@ impl ArtisanFormatter {
     }
 
     /// Format a TC4 READ response: AMB,ET,BT,CHAN3,CHAN4 plus PID fields.
+    /// Channels 3 and 4 are always `0.0` here (byte contract of `CHAN;1200`).
     pub fn format_read_response_full(status: &SystemStatus) -> HeaplessString<REPORT_BUFFER_SIZE> {
+        Self::format_read_response_with_extras(status, None)
+    }
+
+    /// DIFF E2: like `format_read_response_full`, but fills the CHAN3/CHAN4
+    /// slots with `extras` when Artisan asked for them (`CHAN;1234`, i.e. the
+    /// `+ArduinoTC4_34` extra device). `None` produces byte-identical output
+    /// to `format_read_response_full`.
+    pub fn format_read_response_with_extras(
+        status: &SystemStatus,
+        extras: Option<ExtraChannels>,
+    ) -> HeaplessString<REPORT_BUFFER_SIZE> {
         // `ambient_temp` is the cold-junction temperature in °C (not converted to °F).
         // Emit the raw value so AMB stays 0.0 in both scales, matching PROTOCOL §4.
         let amb = Self::normalize_read_value(status.ambient_temp);
@@ -121,18 +143,51 @@ impl ArtisanFormatter {
                     .temperature_settings
                     .convert_to_display(status.target_temp),
             );
-            let _ = core::write!(
-                &mut buf,
-                "{:.1},{:.1},{:.1},0.0,0.0,{:.1},{:.1},{:.1}",
-                amb,
-                et,
-                bt,
-                heater,
-                fan,
-                sv,
-            );
+            match extras {
+                None => {
+                    let _ = core::write!(
+                        &mut buf,
+                        "{:.1},{:.1},{:.1},0.0,0.0,{:.1},{:.1},{:.1}",
+                        amb,
+                        et,
+                        bt,
+                        heater,
+                        fan,
+                        sv,
+                    );
+                }
+                Some(x) => {
+                    let _ = core::write!(
+                        &mut buf,
+                        "{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1}",
+                        amb,
+                        et,
+                        bt,
+                        Self::normalize_read_value(x.ch3),
+                        Self::normalize_read_value(x.ch4),
+                        heater,
+                        fan,
+                        sv,
+                    );
+                }
+            }
         } else {
-            let _ = core::write!(&mut buf, "{:.1},{:.1},{:.1},0.0,0.0", amb, et, bt,);
+            match extras {
+                None => {
+                    let _ = core::write!(&mut buf, "{:.1},{:.1},{:.1},0.0,0.0", amb, et, bt,);
+                }
+                Some(x) => {
+                    let _ = core::write!(
+                        &mut buf,
+                        "{:.1},{:.1},{:.1},{:.1},{:.1}",
+                        amb,
+                        et,
+                        bt,
+                        Self::normalize_read_value(x.ch3),
+                        Self::normalize_read_value(x.ch4),
+                    );
+                }
+            }
         }
         buf
     }

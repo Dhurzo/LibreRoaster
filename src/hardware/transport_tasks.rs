@@ -257,7 +257,9 @@ async fn handle_parsed_command(
     // moves into `traced`.
     let is_profile_cmd = matches!(
         cmd,
-        crate::config::ArtisanCommand::SetProfile | crate::config::ArtisanCommand::SetFanProfile
+        crate::config::ArtisanCommand::SetProfile
+            | crate::config::ArtisanCommand::SetFanProfile
+            | crate::config::ArtisanCommand::SetRorProfile
     );
     let mut should_process = true;
     let mut sent = false;

@@ -359,9 +359,108 @@ pub enum ArtisanCommand {
     SetPidOutputLimits(f32, f32), // PID;LIMIT;0;100 — min/max output %
     /// STREAM;ON/OFF — enable or disable the spontaneous `#` telemetry stream.
     SetStreaming(bool), // STREAM;ON / STREAM;OFF
+    /// `CHARGE` / `CHARGE;<grams>` — bean charge marker sent by Artisan's
+    /// CHARGE event button (DIFF E1). Pure marker: never changes heater or
+    /// fan. `None` when no (or a zero) batch weight was given.
+    Charge(Option<u16>),
+    /// `DROP` — bean drop marker sent by Artisan's DROP event button (DIFF E1).
+    /// Pure marker: ends RoR-follow and re-arms charge detection for the next
+    /// batch; never changes heater or fan.
+    Drop,
+    /// `RORPROFILE;t,ror;...` — load a rate-of-rise profile (DIFF E3). The
+    /// payload is staged in the parser FIFO, like `PROFILE`.
+    SetRorProfile,
+    /// `RORPROFILE;OFF` — unload the RoR profile and stop RoR-follow (DIFF E3).
+    ClearRorProfile,
+    /// `TUNE;...` — step-test PID autotune (DIFF E4).
+    Tune(TuneCommand),
+}
+
+/// Sub-commands of `TUNE` (DIFF E4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuneCommand {
+    /// `TUNE;<step%>` — start a step test `step` % above the current manual
+    /// heater duty.
+    Start(u8),
+    /// `TUNE;ABORT` — stop a running test (heater returns to the manual value).
+    Abort,
+    /// `TUNE;UNLOCK` — accept `PID;T` gains from Artisan again.
+    Unlock,
+    /// `TUNE;STATUS` — report the last result (`#TUNE ...` line).
+    Status,
 }
 
 pub const MAX_PROFILE_SETPOINTS: usize = 16;
+
+/// Highest RoR (°C/min) a profile point may request. Stays well below the
+/// soft RoR safety guard (`MAX_BT_RATE_OF_RISE` = 0.75 °C/s = 45 °C/min).
+pub const ROR_PROFILE_MAX_C_PER_MIN: f32 = 30.0;
+/// One RoR profile point: `ror_c_per_min` at `time_secs` after the charge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RorPoint {
+    pub time_secs: u32,
+    pub ror_c_per_min: f32,
+}
+
+/// Piecewise-linear RoR profile (°C/min against seconds since charge).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RorProfile {
+    pub points: heapless::Vec<RorPoint, MAX_PROFILE_SETPOINTS>,
+}
+
+impl RorProfile {
+    /// Empty profile.
+    pub fn new() -> Self {
+        Self {
+            points: heapless::Vec::new(),
+        }
+    }
+
+    /// Reject empty profiles, non-finite or out-of-range RoR values, and
+    /// times that are not strictly increasing.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.points.is_empty() {
+            return Err("ror_profile_empty");
+        }
+        let mut prev_time: Option<u32> = None;
+        for p in self.points.iter() {
+            if !p.ror_c_per_min.is_finite()
+                || p.ror_c_per_min < 0.0
+                || p.ror_c_per_min > ROR_PROFILE_MAX_C_PER_MIN
+            {
+                return Err("ror_profile_value_out_of_range");
+            }
+            if let Some(t) = prev_time {
+                if p.time_secs <= t {
+                    return Err("ror_profile_time_not_increasing");
+                }
+            }
+            prev_time = Some(p.time_secs);
+        }
+        Ok(())
+    }
+
+    /// RoR (°C/min) at `elapsed_secs`, linearly interpolated. Holds the first
+    /// value before the first point and the last value after the last one.
+    /// Returns 0.0 for an empty profile or a non-finite/negative input.
+    pub fn ror_at(&self, elapsed_secs: f32) -> f32 {
+        let Some(first) = self.points.first() else {
+            return 0.0;
+        };
+        if !elapsed_secs.is_finite() || elapsed_secs <= first.time_secs as f32 {
+            return first.ror_c_per_min;
+        }
+        for pair in self.points.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let (ta, tb) = (a.time_secs as f32, b.time_secs as f32);
+            if elapsed_secs <= tb {
+                let frac = (elapsed_secs - ta) / (tb - ta);
+                return a.ror_c_per_min + (b.ror_c_per_min - a.ror_c_per_min) * frac;
+            }
+        }
+        self.points.last().map(|p| p.ror_c_per_min).unwrap_or(0.0)
+    }
+}
 // BUG-2d-2 (audit 2026-10-04): there is NO per-tick command budget —
 // `drain_commands` (application/tasks.rs) processes the whole
 // `ARTISAN_CMD_CHANNEL_SIZE` channel every tick. The deleted
