@@ -420,7 +420,10 @@ mod tests {
         let _ = pid.compute_output(80.0, 2000); // would read 9 °C/s without the re-seed
         assert_eq!(pid.derivative_value(), 0.0);
         let _ = pid.compute_output(79.0, 3000);
-        assert!((pid.derivative_value() - 1.0).abs() < 1e-4, "real slope resumes one sample later");
+        assert!(
+            (pid.derivative_value() - 1.0).abs() < 1e-4,
+            "real slope resumes one sample later"
+        );
     }
 
     #[test]
@@ -432,7 +435,11 @@ mod tests {
         let _ = pid.compute_output(90.0, 100);
         // 60 s gap (> max(2·CT, 2000) ms); PV moved 20 °C meanwhile.
         let out = pid.compute_output(70.0, 60_100);
-        assert_eq!(pid.derivative_value(), 0.0, "a gap must not produce a 200 °C/s derivative");
+        assert_eq!(
+            pid.derivative_value(),
+            0.0,
+            "a gap must not produce a 200 °C/s derivative"
+        );
         assert_eq!(out, 0.0);
     }
 
@@ -461,9 +468,16 @@ mod tests {
         let i0 = pid.integrator_value();
         assert!(i0 > 0.0);
         pid.set_gains(1.0, 0.1, 0.0);
-        assert_eq!(pid.integrator_value(), i0, "unchanged gains must not touch the integrator");
+        assert_eq!(
+            pid.integrator_value(),
+            i0,
+            "unchanged gains must not touch the integrator"
+        );
         pid.set_gains(1.0, 0.2, 0.0);
-        assert!((pid.integrator_value() - i0 / 2.0).abs() < 1e-5, "I contribution preserved");
+        assert!(
+            (pid.integrator_value() - i0 / 2.0).abs() < 1e-5,
+            "I contribution preserved"
+        );
         pid.set_gains(1.0, 0.0, 0.0);
         assert_eq!(pid.integrator_value(), 0.0, "Ki = 0 zeroes the integrator");
     }

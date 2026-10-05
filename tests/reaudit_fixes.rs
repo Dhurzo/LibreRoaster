@@ -107,7 +107,6 @@ impl Lcg {
     }
 }
 
-
 use libreroaster::config::constants::RoasterState;
 use libreroaster::config::{ProfileSetpoint, RoastProfile};
 
@@ -121,13 +120,20 @@ fn n1_resume_after_flat_manual_finish_starts_a_fresh_detector_window() {
         assert!(s.cmd(ArtisanCommand::SetFan(40)));
         assert!(s.cmd(ArtisanCommand::PidOn));
         assert!(s.cmd(ArtisanCommand::SetTargetTemp(230.0)));
-        s.run(300.0, |t| 150.0 + 68.0 * (t / 300.0), |t| 170.0 + 55.0 * (t / 300.0));
+        s.run(
+            300.0,
+            |t| 150.0 + 68.0 * (t / 300.0),
+            |t| 170.0 + 55.0 * (t / 300.0),
+        );
         assert!(s.cmd(ArtisanCommand::SetHeater(30)));
         s.run(15.0, |_| 218.0, |_| 225.0);
         let t0 = s.secs();
         // Manual slow finish: BT flat for 200 s, ET drifting +7 °C (no equilibrium exemption).
         s.run(200.0, |_| 218.0, |t| 225.0 + 7.0 * ((t - t0) / 200.0));
-        assert!(s.fault_at_s().is_none(), "manual two-stage: no latch before 300 s");
+        assert!(
+            s.fault_at_s().is_none(),
+            "manual two-stage: no latch before 300 s"
+        );
         let t_resume = s.secs();
         if via_pid_on {
             assert!(s.cmd(ArtisanCommand::PidOn));
@@ -163,7 +169,10 @@ fn n1b_pid_on_from_idle_after_flat_manual_starts_a_fresh_detector_window() {
     let t0 = s.secs();
     // Manual hold: BT flat for 200 s, ET drifting +7 °C (no equilibrium exemption).
     s.run(200.0, |_| 218.0, |t| 225.0 + 7.0 * ((t - t0) / 200.0));
-    assert!(s.fault_at_s().is_none(), "manual two-stage: no latch before 300 s");
+    assert!(
+        s.fault_at_s().is_none(),
+        "manual two-stage: no latch before 300 s"
+    );
     let t_on = s.secs();
     assert!(s.cmd(ArtisanCommand::PidOn)); // default SV 225 °C: 7 °C away, so not "regulating"
     s.run(10.0, |_| 218.0, |t| 232.0 + 0.3 * (t - t_on));
@@ -176,7 +185,10 @@ fn n1b_pid_on_from_idle_after_flat_manual_starts_a_fresh_detector_window() {
     let f = s
         .fault_at_s()
         .expect("frozen BT under PID must still latch after the fresh window");
-    assert!((t_on + 115.0..=t_on + 140.0).contains(&f), "latch at {f:.1}, PID;ON at {t_on:.1}");
+    assert!(
+        (t_on + 115.0..=t_on + 140.0).contains(&f),
+        "latch at {f:.1}, PID;ON at {t_on:.1}"
+    );
 }
 
 #[test]
@@ -201,7 +213,10 @@ fn n1c_preheat_after_flat_manual_starts_a_fresh_detector_window() {
     let f = s
         .fault_at_s()
         .expect("frozen BT under the preheat PID must still latch after the fresh window");
-    assert!((t_on + 115.0..=t_on + 140.0).contains(&f), "latch at {f:.1}, PREHEAT at {t_on:.1}");
+    assert!(
+        (t_on + 115.0..=t_on + 140.0).contains(&f),
+        "latch at {f:.1}, PREHEAT at {t_on:.1}"
+    );
 }
 
 // ── N2: roast anchors must not survive STOP + PREHEAT recovery ──
@@ -222,8 +237,15 @@ fn n2_stop_then_preheat_and_ot1_has_no_stale_roast_anchor() {
     );
     let bt_end = 200.0 - 175.0 * libm::expf(-1200.0f32 / 500.0);
     let tc = s.secs();
-    s.run(90.0, |t| 95.0 + (bt_end - 95.0) * libm::expf(-(t - tc) / 12.0), |_| 215.0);
-    assert!(s.c.get_status().charge_detected, "precondition: charge detected");
+    s.run(
+        90.0,
+        |t| 95.0 + (bt_end - 95.0) * libm::expf(-(t - tc) / 12.0),
+        |_| 215.0,
+    );
+    assert!(
+        s.c.get_status().charge_detected,
+        "precondition: charge detected"
+    );
     let tr = s.secs();
     s.run(300.0, |t| 95.0 + 0.18 * (t - tr), |_| 225.0);
     assert!(s.cmd(ArtisanCommand::EmergencyStop)); // wire STOP
@@ -251,12 +273,18 @@ fn n3_pid_t_with_unchanged_gains_keeps_the_integrator() {
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
     s.run(240.0, |_| 198.0, |_| 220.0);
     let before = s.c.last_desired_heater_output();
-    assert!(before > 50.0, "precondition: the integrator carries the load, MV {before}");
+    assert!(
+        before > 50.0,
+        "precondition: the integrator carries the load, MV {before}"
+    );
     // Artisan re-sends PID;T (its dialog gains) on every PID ON press.
     assert!(s.cmd(ArtisanCommand::SetPidGain(2.0, 0.25, 0.05)));
     s.run(0.4, |_| 198.0, |_| 220.0);
     let after = s.c.last_desired_heater_output();
-    assert!(after >= 0.9 * before, "N3: MV dropped {before:.1} -> {after:.1}");
+    assert!(
+        after >= 0.9 * before,
+        "N3: MV dropped {before:.1} -> {after:.1}"
+    );
 }
 
 #[test]
@@ -271,7 +299,10 @@ fn n3_pid_t_with_a_new_ki_keeps_the_i_contribution() {
     assert!(s.cmd(ArtisanCommand::SetPidGain(2.0, 0.5, 0.05))); // Ki doubled
     s.run(0.4, |_| 198.0, |_| 220.0);
     let after = s.c.last_desired_heater_output();
-    assert!((after - before).abs() <= 5.0, "N3: Ki change bumped MV {before:.1} -> {after:.1}");
+    assert!(
+        (after - before).abs() <= 5.0,
+        "N3: Ki change bumped MV {before:.1} -> {after:.1}"
+    );
 }
 
 // ── N4: bounded equilibrium exemption in firmware-PID mode ──
@@ -301,7 +332,11 @@ fn n4_unreachable_sv_plateau_still_runs_for_5_min() {
     assert!(s.cmd(ArtisanCommand::PidOn));
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(240.0)));
     s.run(280.0, |_| 220.0, |_| 250.0);
-    assert!(s.fault_at_s().is_none(), "F-C7 behaviour kept for 5 min, fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "F-C7 behaviour kept for 5 min, fault at {:?}",
+        s.fault_at_s()
+    );
 }
 
 #[test]
@@ -311,7 +346,11 @@ fn n4_manual_equilibrium_stays_unbounded() {
     assert!(s.cmd(ArtisanCommand::SetHeater(70)));
     assert!(s.cmd(ArtisanCommand::SetFan(40)));
     s.run(1500.0, |_| 200.0, |_| 220.0);
-    assert!(s.fault_at_s().is_none(), "R2: manual equilibrium must not latch, fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "R2: manual equilibrium must not latch, fault at {:?}",
+        s.fault_at_s()
+    );
 }
 
 #[test]
@@ -323,7 +362,11 @@ fn n4_low_duty_plateau_under_pid_is_not_bounded() {
     assert!(s.cmd(ArtisanCommand::PidOn));
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
     s.run(900.0, |_| 150.0, |_| 180.0);
-    assert!(s.fault_at_s().is_none(), "the bound needs heater >= 50 %, fault at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "the bound needs heater >= 50 %, fault at {:?}",
+        s.fault_at_s()
+    );
     assert!(s.c.get_status().ssr_output <= 40.0);
 }
 
@@ -335,10 +378,16 @@ fn n11_profile_above_cap_is_capped_at_start() {
     let mut s = Sim::new();
     let mut p = RoastProfile::new();
     p.setpoints
-        .push(ProfileSetpoint { time_secs: 0, temperature: 300.0 })
+        .push(ProfileSetpoint {
+            time_secs: 0,
+            temperature: 300.0,
+        })
         .unwrap();
     p.setpoints
-        .push(ProfileSetpoint { time_secs: 600, temperature: 300.0 })
+        .push(ProfileSetpoint {
+            time_secs: 600,
+            temperature: 300.0,
+        })
         .unwrap();
     libreroaster::input::parser::store_profile(p);
     assert!(s.cmd(ArtisanCommand::SetProfile));
