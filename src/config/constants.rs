@@ -116,6 +116,18 @@ pub const MAX31856_CONVERSION_TIME_MS: u64 = 210;
 /// See `roaster_control::update_control` and
 /// `SensorController::update_temperatures`.
 pub const OVERTEMP_THRESHOLD: f32 = 260.0;
+/// Over-temperature emergency cutoff for the ENVIRONMENT (ET) probe, in °C.
+/// ET reads drum air / exhaust / heater outlet depending on probe placement
+/// and legitimately runs hotter than BT; sharing BT's 260 °C cutoff aborted
+/// normal roasts (F-C1, audit 2026-10-05). PROVISIONAL: measure the real ET
+/// peak of the machine on the bench (preheat + dark roast) and keep at least
+/// 20 °C of margin above it.
+pub const ET_OVERTEMP_THRESHOLD: f32 = 300.0;
+const _: () = {
+    assert!(ET_OVERTEMP_THRESHOLD >= OVERTEMP_THRESHOLD);
+    assert!(ET_OVERTEMP_THRESHOLD <= MAX_TEMP);
+    assert!(ET_OVERTEMP_THRESHOLD < MAX_VALID_TEMP);
+};
 /// Maximum age of a temperature sample before the PID treats it as stale
 /// and forces a safety hold. Tolerates 2 fully-missed ticks (H9): the sample
 /// is stamped BEFORE the 210 ms conversion wait, so at the ~310 ms cadence

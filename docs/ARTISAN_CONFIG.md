@@ -260,7 +260,7 @@ Example: `#123.45,120.3,150.5,12.50,75.0`
 ### 8.2 Safety Backstops (Automatic)
 | Backstop | Trigger | Action |
 |----------|---------|--------|
-| **Over-temp** | BT/ET ≥ 260°C (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
+| **Over-temp** | BT ≥ 260°C, ET ≥ 300°C (provisional) (wire: `Over-temperature detected`) or out-of-range sample (wire: `Temperature exceeds valid range`) | Emergency shutdown |
 | **Probe stuck (PID)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`; hot-equilibrium exempt only in manual, H8) | Emergency shutdown |
 | **Probe stuck (Manual)** | BT flat <1°C for 120s with heater on (`ssr_output > 0.0`), hot BT-near-ET holds exempt (H8) | **Warning** `ERR probe_stuck_warning`; latch at 300s |
 | **Comms idle** | No command 15s @ heater >0 or roast active | Emergency shutdown |

@@ -105,9 +105,9 @@ impl Lcg {
 
 // ── Plan 2026-10-05 ──
 
-use libreroaster::config::constants::{MAX_MANUAL_HEAT_SESSION_SECS, OVERTEMP_THRESHOLD};
-// LOCAL_ET_CONST: T1 replaces this line with an import of constants::ET_OVERTEMP_THRESHOLD.
-const ET_OVERTEMP_THRESHOLD: f32 = 300.0;
+use libreroaster::config::constants::{
+    ET_OVERTEMP_THRESHOLD, MAX_MANUAL_HEAT_SESSION_SECS, OVERTEMP_THRESHOLD,
+};
 
 fn charge_curve(t: f32, t_charge: f32, from: f32, to: f32) -> f32 {
     to + (from - to) * libm::expf(-(t - t_charge) / 12.0)
