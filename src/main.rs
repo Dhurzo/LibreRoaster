@@ -132,7 +132,8 @@ fn run_init_or_panic<T>(result: Result<T, InitError>) -> T {
             // The RWDT is armed in init_hw_watchdog() (called before
             // builder.build()). Feed every iteration so the operator can
             // read the error blink pattern instead of the ~2.2 s watchdog
-            // resetting the chip.
+            // resetting the chip. (Not yet armed if `init_hardware` itself
+            // failed — it is armed after hardware init.)
             // Feed in ≤100 ms chunks: a single ROM `ets_delay_us` spin
             // ≥ ~250 ms never returns on ESP32-C3, which would starve the
             // watchdog and turn this observable halt into a reset loop.

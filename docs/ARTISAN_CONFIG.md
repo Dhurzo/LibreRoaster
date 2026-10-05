@@ -99,6 +99,8 @@ Click **Configure** next to the driver dropdown:
 
 > **Protocol Note:** Responses are `#`-prefixed because Artisan's ArduinoTC4 driver **only accepts empty or `#`-prefixed lines during initialisation**. A plain `OK` would cause "Arduino could not set temperature unit" and infinite re-init loop.
 
+> To plot heater/fan/SV as extra curves, add `+ArduinoTC4_34` **together with** `+ArduinoTC4_56` / `+ArduinoTC4_78`. The READ line uses the 4-channel layout (`amb,ET,BT,0.0,0.0,heater,fan,SV`); without `+ArduinoTC4_34` Artisan reads the fields shifted.
+
 ---
 
 ## 5. Temperature Units (°C / °F)
@@ -300,10 +302,10 @@ Emitted **once per latch event** (not every tick). Reasons: `Over-temperature de
 
 ### 9.5 `ERR channel_full command_dropped`
 - **Cause:** Command burst >16 commands in one tick (Artisan startup burst)
-- **Fix:** Artisan retries automatically; firmware channel size = 16
+- **Fix:** Artisan does not retry; the command is lost; firmware channel size = 16
 
 ### 9.6 Telemetry Corrupted / Garbled Lines
-- **Cause:** `esp_println` logs sharing USB/UART with protocol (Bug #6)
+- **Cause:** `esp_println` logs sharing UART with protocol (Bug #6). Logs go to UART0 only, never to the native USB port.
 - **Workaround:** Flash without `instrumentation` feature (log level = Warn)
 - **Permanent fix:** Requires dedicated UART1 log sink (planned Fase 6)
 
