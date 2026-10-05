@@ -38,7 +38,7 @@ const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
 /// | Comms-idle 15 s | heater>0 or roast/preheat state |
 /// | Time budget | `(heater>0 && !PID-preheating)` or Heating/Stable; 1800 s anchored to START, 5400 s to `heat_session_start` (manual) |
 /// | RoR (0.75 / 1.0 °C/s) | firmware in control (`!artisan_control`) and (Heating/Stable or (Idle + PID + heater>0)) |
-/// | Probe-stuck (mode part) | NOT PID-regulating; call site adds `ssr_output>0 && BT finite`. Manual equilibrium (both probes flat, BT hot) re-anchors the clock instead of disarming |
+/// | Probe-stuck (mode part) | NOT PID-regulating; call site adds `ssr_output>0 && BT finite`. Equilibrium in any mode (both probes flat, BT hot) re-anchors the clock instead of disarming |
 /// | Heat-sense GPIO1 | only with `heat-sense` feature; 1 sample/tick; 1500 ms window |
 /// | Fan floor 20 % | heater actually delivering (`ssr_output>0`) |
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,7 +50,7 @@ pub struct GuardArming {
     /// Mode part of the probe-stuck gate; the call site adds
     /// `ssr_output > 0 && BT finite` with the freshly applied output.
     pub probe_stuck_mode: bool,
-    /// Manual-equilibrium exemption (R2): both probes flat with BT hot.
+    /// Equilibrium exemption (any mode, R2 + F-C7): both probes flat with BT hot.
     /// When set the detector re-anchors its clock instead of counting
     /// towards a latch — a frozen BT with a moving ET still latches.
     pub probe_stuck_equilibrium_exempt: bool,
@@ -665,11 +665,10 @@ impl RoasterControl {
 
         let probe_bt = self.status.bean_temp;
         let et_now = self.status.env_temp;
-        // R2: equilibrium = hot BT + ET flat since the BT anchor was set.
-        // Both flat is equilibrium; a frozen BT with a moving ET is a dead
-        // probe. A cold BT (short signature) never counts as equilibrium.
-        let manual_equilibrium = !self.status.pid_enabled
-            && probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
+        // R2 + F-C7: equilibrium = hot BT + ET flat since the BT anchor was set,
+        // in ANY mode. A dead BT under PID drives the heater up, ET moves out of
+        // the band and the exemption ends; a shorted BT reads cold (< 60 °C).
+        let equilibrium = probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
             && et_now.is_finite()
             && self.probe_stuck_et_anchor.is_some_and(|et0| {
                 (et_now - et0).abs() <= crate::config::constants::PROBE_STUCK_ET_FLAT_C
@@ -684,7 +683,7 @@ impl RoasterControl {
             time_budget,
             ror,
             probe_stuck_mode,
-            probe_stuck_equilibrium_exempt: manual_equilibrium,
+            probe_stuck_equilibrium_exempt: equilibrium,
         }
     }
 
