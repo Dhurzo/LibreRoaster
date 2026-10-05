@@ -641,4 +641,77 @@ fn e4_cold_probe_fails_without_touching_heater() {
     assert!((s.c.get_status().ssr_output - 40.0).abs() < 1e-3);
 }
 
+// ── D6: cross-feature safety fuzz (bug check) ──
+
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+    /// Random sequences of old AND new commands, interleaved with 3 s of
+    /// closed-loop plant time. Invariants after every step:
+    /// - heater duty finite and within 0..=100;
+    /// - latched ⇒ heater 0 %;
+    /// - firmware PID ⇒ setpoint never above the channel cap (F-C8);
+    /// - a running TUNE ⇒ manual mode;
+    /// - RoR-follow active ⇒ firmware PID on the BT channel;
+    /// - RoR-follow active ⇒ setpoint within BT ± 3 °C (+ EMA slack) once it ramps;
+    /// - READ extras always finite.
+    #[test]
+    fn fuzz_new_commands_keep_safety_invariants(ops in prop::collection::vec(0u8..19, 1..60)) {
+        let _g = lock();
+        let mut s = Sim::new();
+        let mut bt = 150.0f32;
+        for op in ops {
+            let _ = match op {
+                0 => s.cmd(ArtisanCommand::SetHeater(60)),
+                1 => s.cmd(ArtisanCommand::SetHeater(0)),
+                2 => s.cmd(ArtisanCommand::PidOn),
+                3 => s.cmd(ArtisanCommand::Stop),
+                4 => {
+                    // Beans hit the probe: BT drops like a real charge.
+                    let ok = s.cmd(ArtisanCommand::Charge(Some(200)));
+                    bt = (bt - 60.0).max(30.0);
+                    ok
+                }
+                5 => s.cmd(ArtisanCommand::Drop),
+                6 => wire(&mut s, "RORPROFILE;0,15;300,8"),
+                7 => wire(&mut s, "TUNE;20"),
+                8 => wire(&mut s, "TUNE;ABORT"),
+                9 => s.cmd(ArtisanCommand::SetTargetTemp(210.0)),
+                10 => s.cmd(ArtisanCommand::EmergencyStop),
+                11 => s.cmd(ArtisanCommand::Chan(1234)),
+                12 => s.cmd(ArtisanCommand::StartRoast),
+                13 => wire(&mut s, "RORPROFILE;OFF"),
+                14 => s.cmd(ArtisanCommand::Units(true)),
+                15 => s.cmd(ArtisanCommand::Units(false)),
+                16 => s.cmd(ArtisanCommand::SetPidChannel(1)),
+                17 => s.cmd(ArtisanCommand::SetPidChannel(2)),
+                _ => s.cmd(ArtisanCommand::SetFan(30)),
+            };
+            plant_run(&mut s, 3.0, &mut bt, |_, _| {});
+            let st = s.c.get_status();
+            prop_assert!(st.ssr_output.is_finite() && (0.0..=100.0).contains(&st.ssr_output));
+            if s.c.safety().is_emergency_active() {
+                prop_assert_eq!(st.ssr_output, 0.0);
+            }
+            if st.pid_enabled {
+                let cap = libreroaster::config::constants::max_pid_target_for_channel(st.pid_channel);
+                prop_assert!(st.target_temp <= cap + 1e-3);
+            }
+            if s.c.tune_running() {
+                prop_assert!(st.artisan_control && !st.pid_enabled);
+            }
+            if s.c.ror_follow_active() {
+                prop_assert!(st.pid_enabled && !st.artisan_control && st.pid_channel != 1);
+            }
+            if s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0 && st.pid_enabled {
+                prop_assert!((st.target_temp - st.bean_temp).abs() <= 3.0 + 5.0);
+            }
+            if let Some(x) = s.c.read_extra_channels() {
+                prop_assert!(x.ch3.is_finite() && x.ch4.is_finite());
+            }
+        }
+    }
+}
+
 // @@ NEXT TESTS GO HERE (keep this line) @@
