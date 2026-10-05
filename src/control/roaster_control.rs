@@ -146,6 +146,9 @@ pub struct RoasterControl {
     /// instead of the PID;ON instant (F-C2). Set by every handoff, cleared by
     /// `stop_streaming`.
     pid_on_session: bool,
+    /// BT samples for the MANUAL-session charge detector (F-C3). Separate
+    /// from `bt_charge_history`, which only runs in Heating/Stable.
+    manual_charge_history: heapless::Deque<f32, 10>,
 }
 
 impl RoasterControl {
@@ -182,6 +185,7 @@ impl RoasterControl {
             fan_floor_gate: EdgeLogGate::new(),
             target_cap_gate: EdgeLogGate::new(),
             pid_on_session: false,
+            manual_charge_history: heapless::Deque::new(),
         })
     }
 
@@ -614,6 +618,43 @@ impl RoasterControl {
         self.actuator.emergency_shutdown(reason, &mut self.status)
     }
 
+    /// Manual-session charge detector (F-C3). A real bean charge drops BT
+    /// sharply; when it does during a manual heat session, restart the 90-min
+    /// session budget so back-to-back batches are not cut by preheat time.
+    /// Only ever moves the anchor LATER. Re-detections within
+    /// `HEAT_SESSION_OFF_DEBOUNCE_SECS` of the last anchor are ignored (a real
+    /// charge keeps dropping for 30-60 s).
+    fn track_manual_charge(&mut self, now: Instant) {
+        let bt = self.status.bean_temp;
+        if !bt.is_finite() || bt <= 50.0 {
+            self.manual_charge_history.clear();
+            return;
+        }
+        if self.manual_charge_history.len() >= 10 {
+            let _ = self.manual_charge_history.pop_front();
+        }
+        let _ = self.manual_charge_history.push_back(bt);
+        if self.manual_charge_history.len() < 5 {
+            return;
+        }
+        let first = self.manual_charge_history.front().copied().unwrap_or(bt);
+        let drop = first - bt;
+        if drop <= CHARGE_DROP_THRESHOLD_C {
+            return;
+        }
+        let recently_anchored = self.heat_session_start.is_some_and(|s| {
+            now.saturating_duration_since(s).as_secs() < HEAT_SESSION_OFF_DEBOUNCE_SECS
+        });
+        if !recently_anchored {
+            info!(
+                "Manual session: charge detected (BT -{:.1}°C) — heat-session budget restarts",
+                drop
+            );
+            self.heat_session_start = Some(now);
+        }
+        self.manual_charge_history.clear();
+    }
+
     /// Roast-time budget for a session anchored at `start` (START / PID;ON).
     /// START keeps 30 min from START. A PID;ON session (F-C2) gets
     /// `MAX_PID_UNCHARGED_SESSION_SECS` until the charge is detected, then
@@ -746,6 +787,16 @@ impl RoasterControl {
         } else if self.heat_session_start.is_some() {
             // Heater off mid-session — start the debounce window.
             self.heat_session_off_since = Some(current_time);
+        }
+
+        // F-C3: manual-session charge re-anchor (only loosens the 90-min cap).
+        if matches!(self.state, RoasterState::Idle)
+            && self.status.artisan_control
+            && heater_energized
+        {
+            self.track_manual_charge(current_time);
+        } else {
+            self.manual_charge_history.clear();
         }
 
         // PV for the guard table (`regulating` compares target vs PV).
