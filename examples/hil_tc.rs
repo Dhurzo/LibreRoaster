@@ -13,6 +13,13 @@ use core::cell::RefCell;
 use critical_section;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+
+/// esp-backtrace `custom-pre-backtrace` hook: cut the heater before printing.
+#[cfg(target_arch = "riscv32")]
+#[no_mangle]
+pub fn custom_pre_backtrace() {
+    libreroaster::safety::panic_guard::cut_heater_on_panic();
+}
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 #[cfg(target_arch = "riscv32")]
@@ -46,6 +53,10 @@ use libreroaster::hardware::shared_spi::SpiDeviceWithCs;
 fn main() -> ! {
     let config = esp_hal::Config::default();
     let peripherals = esp_hal::init(config);
+
+    // embassy-time driver (library code uses Instant): same bring-up as main.rs.
+    let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     esp_alloc::heap_allocator!(size: 32 * 1024);
     esp_println::logger::init_logger(log::LevelFilter::Info);

@@ -157,3 +157,5 @@ jobs:
       # silently desynchronise.
       - name: Build with instrumentation for ESP32-C3
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,instrumentation
+      - name: Build HIL examples (ESP32-C3)
+        run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,simulated-sensors --examples

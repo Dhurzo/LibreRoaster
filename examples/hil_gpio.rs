@@ -14,6 +14,19 @@
 
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+
+/// esp-backtrace `custom-pre-backtrace` hook: drive the SSR pin (GPIO10) LOW.
+#[cfg(target_arch = "riscv32")]
+#[no_mangle]
+pub fn custom_pre_backtrace() {
+    // SAFETY: panic path; GPIO10 is re-muxed as a plain output at LOW.
+    let p = unsafe { esp_hal::peripherals::Peripherals::steal() };
+    let _ssr = esp_hal::gpio::Output::new(
+        p.GPIO10,
+        esp_hal::gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
+}
 #[cfg(target_arch = "riscv32")]
 use esp_hal::gpio::{Input, InputConfig, Pull};
 

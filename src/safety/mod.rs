@@ -8,3 +8,5 @@
 pub mod regression;
 /// Dual-layer watchdog (software + hardware RTC WDT).
 pub mod watchdog;
+/// Panic-path heater cut-off (GPIO10 LOW before the backtrace).
+pub mod panic_guard;
