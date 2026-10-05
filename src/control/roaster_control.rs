@@ -1594,6 +1594,8 @@ impl RoasterControl {
                 .as_ref()
                 .and_then(|p| p.target_at(elapsed))
             {
+                // N11: cap before the first PID cycle, not one cycle later.
+                let target = self.cap_pid_target(target);
                 self.status.target_temp = target;
                 self.enable_pid_control(target)?;
             }
@@ -1613,6 +1615,8 @@ impl RoasterControl {
                 DEFAULT_TARGET_TEMP
             };
             self.profile_start_time = Some(embassy_time::Instant::now());
+            // N11: cap before the first PID cycle, not one cycle later.
+            let target = self.cap_pid_target(target);
             self.enable_pid_control(target)?;
             info!("Artisan+ roast started with default target {:.1}°C", target);
         }
@@ -2078,6 +2082,8 @@ impl RoasterControl {
 
     fn handle_set_pid_channel(&mut self, ch: u8) -> Result<(), RoasterError> {
         self.status.pid_channel = ch;
+        // N9: the PV jumps BT↔ET; do not derive across the switch.
+        self.dispatch.reset_pid_derivative();
         info!(
             "PID input channel set to {} ({})",
             ch,

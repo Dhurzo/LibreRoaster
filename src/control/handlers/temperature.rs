@@ -88,6 +88,11 @@ impl TemperatureCommandHandler {
         self.pid_controller.enable();
     }
 
+    /// N9: skip one derivative sample (PV channel switch), see `CoffeeRoasterPid::reset_derivative_history`.
+    pub fn reset_pid_derivative(&mut self) {
+        self.pid_controller.reset_derivative_history();
+    }
+
     /// Bumpless manual→PID transfer, see `CoffeeRoasterPid::preload_integrator`.
     pub fn preload_pid_integrator(&mut self, applied: f32, error: f32) {
         self.pid_controller.preload_integrator(applied, error);

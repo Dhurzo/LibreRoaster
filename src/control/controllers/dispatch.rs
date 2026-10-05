@@ -116,6 +116,11 @@ impl CommandDispatcher {
         self.temp_handler.disable_pid();
     }
 
+    /// N9: skip one derivative sample after a PV channel switch.
+    pub fn reset_pid_derivative(&mut self) {
+        self.temp_handler.reset_pid_derivative();
+    }
+
     /// Bumpless manual→PID transfer. Call right AFTER `enable_pid`.
     pub fn preload_pid_integrator(&mut self, applied: f32, error: f32) {
         self.temp_handler.preload_pid_integrator(applied, error);

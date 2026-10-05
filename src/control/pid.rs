@@ -192,9 +192,21 @@ impl CoffeeRoasterPid {
         self.last_feedback = Some(feedback);
     }
 
-    /// Set the PID cycle time in milliseconds (minimum 10).
+    /// Set the PID cycle time in milliseconds (minimum 10). N9: the next
+    /// derivative sample is skipped — the fallback `dt` changes with the
+    /// cycle time and must not be applied to the old `last_pv`.
     pub fn set_cycle_time(&mut self, ms: u32) {
         self.cycle_time_ms = ms.max(10);
+        self.reset_derivative_history();
+    }
+
+    /// N9 (re-audit 2026-10-05): forget the previous PV sample so the next
+    /// `compute_output` emits derivative 0 instead of a slope computed
+    /// against a stale or foreign sample (PV channel switch, long gap, cycle
+    /// time change). The integrator is untouched.
+    pub fn reset_derivative_history(&mut self) {
+        self.last_error_initialized = false;
+        self.derivative_rate = 0.0;
     }
 
     /// Set the output clamp range; values are clamped to `[0, 100]` and swapped if inverted.
@@ -245,7 +257,12 @@ impl CoffeeRoasterPid {
             return 0.0;
         }
 
-        let dt = self.delta_seconds(timestamp_ms);
+        let (dt, gap) = self.delta_seconds(timestamp_ms);
+        if gap {
+            // N9: a long gap (stale hold, latch, SSR unavailable) must not
+            // turn the stale `last_pv` into a one-tick derivative spike.
+            self.last_error_initialized = false;
+        }
         let error = self.target - current_temp;
 
         // Anti-windup also covers the PID's *own* output clamp, not just the
@@ -313,7 +330,9 @@ impl CoffeeRoasterPid {
     /// unavailable, stale-data hold — H1) restart the timing instead of
     /// integrating: a 60 s latch with 10 °C of error must not add
     /// 600 °C·s to the integrator in a single post-recovery tick.
-    fn delta_seconds(&self, timestamp_ms: u32) -> f32 {
+    /// Returns `(dt, gap)`: `gap` is true when the fallback was taken because
+    /// the last update is older than `max(2·cycle, 2 s)` (N9).
+    fn delta_seconds(&self, timestamp_ms: u32) -> (f32, bool) {
         let default_seconds = self.cycle_time_ms as f32 / 1000.0;
         // saturating: a huge configured cycle time (PID;CT u32::MAX, S3)
         // must not overflow this computation.
@@ -321,14 +340,17 @@ impl CoffeeRoasterPid {
 
         if let Some(last_ms) = self.last_update_ms {
             let delta = timestamp_ms.saturating_sub(last_ms);
-            if delta == 0 || delta > max_gap_ms {
-                return default_seconds;
+            if delta > max_gap_ms {
+                return (default_seconds, true);
+            }
+            if delta == 0 {
+                return (default_seconds, false);
             }
 
-            return (delta as f32) / 1000.0;
+            return ((delta as f32) / 1000.0, false);
         }
 
-        default_seconds
+        (default_seconds, false)
     }
 
     /// Anti-windup gate: integrate only while actuator feedback is not saturated.
@@ -385,6 +407,48 @@ impl CoffeeRoasterPid {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn cycle_time_change_reseeds_derivative() {
+        let mut pid = CoffeeRoasterPid::with_gains(0.0, 0.0, 1.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, 0);
+        let _ = pid.compute_output(89.0, 1000);
+        assert!((pid.derivative_value() - 1.0).abs() < 1e-4);
+        pid.set_cycle_time(5000);
+        let _ = pid.compute_output(80.0, 2000); // would read 9 °C/s without the re-seed
+        assert_eq!(pid.derivative_value(), 0.0);
+        let _ = pid.compute_output(79.0, 3000);
+        assert!((pid.derivative_value() - 1.0).abs() < 1e-4, "real slope resumes one sample later");
+    }
+
+    #[test]
+    fn long_gap_reseeds_derivative() {
+        let mut pid = CoffeeRoasterPid::with_gains(0.0, 0.0, 1.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, 0);
+        let _ = pid.compute_output(90.0, 100);
+        // 60 s gap (> max(2·CT, 2000) ms); PV moved 20 °C meanwhile.
+        let out = pid.compute_output(70.0, 60_100);
+        assert_eq!(pid.derivative_value(), 0.0, "a gap must not produce a 200 °C/s derivative");
+        assert_eq!(out, 0.0);
+    }
+
+    #[test]
+    fn reset_derivative_history_skips_exactly_one_sample() {
+        let mut pid = CoffeeRoasterPid::with_gains(0.0, 0.0, 1.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, 0);
+        let _ = pid.compute_output(89.0, 1000);
+        pid.reset_derivative_history();
+        let _ = pid.compute_output(40.0, 2000); // PV channel switched (ET → BT)
+        assert_eq!(pid.derivative_value(), 0.0);
+        let _ = pid.compute_output(39.0, 3000);
+        assert!((pid.derivative_value() - 1.0).abs() < 1e-4);
+    }
 
     #[test]
     fn set_gains_unchanged_is_a_no_op_and_ki_change_keeps_i_contribution() {
