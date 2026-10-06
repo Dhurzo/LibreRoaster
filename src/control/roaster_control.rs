@@ -2372,7 +2372,13 @@ impl RoasterControl {
             // F-C6: SV during a manual takeover mid-roast → bumpless resume.
             self.resume_pid_bumpless(target_celsius)?;
         } else {
+            let was_enabled = self.status.pid_enabled;
             self.enable_pid_control(target_celsius)?;
+            if !was_enabled {
+                // M-4 (audit 2026-10-06): manual → PID via PID;SV outside a
+                // roast. Same rule as N1: no inherited manual detector clock.
+                self.reset_probe_stuck_detector();
+            }
         }
         info!(
             "Target temperature set to {:.1}°C (raw input: {:.1})",
