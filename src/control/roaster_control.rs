@@ -2341,8 +2341,13 @@ impl RoasterControl {
                 source: Some("target_temp_out_of_range"),
             });
         }
-        // DIFF E3: an explicit setpoint is an operator override of RoR-follow.
-        self.stop_ror_follow();
+        // DIFF E3: an explicit setpoint is an operator override of RoR-follow
+        // once it ramps. P-17 (audit 2026-10-06): before the turning point the
+        // follower does not own the setpoint yet, and Artisan's first PID ON
+        // sends PID;SV right after PID;ON (pidOnCHARGE) — keep the follower.
+        if self.ror_follower.is_some_and(|f| f.ramping()) {
+            self.stop_ror_follow();
+        }
         let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
