@@ -395,6 +395,16 @@ pub const MAX_PROFILE_SETPOINTS: usize = 16;
 /// Highest RoR (°C/min) a profile point may request. Stays well below the
 /// soft RoR safety guard (`MAX_BT_RATE_OF_RISE` = 0.75 °C/s = 45 °C/min).
 pub const ROR_PROFILE_MAX_C_PER_MIN: f32 = 30.0;
+/// Lowest RoR (°C/min) a profile point may request (X1, audit 2026-10-06).
+/// While RoR-follow ramps, the probe-stuck detector is armed and expects BT
+/// to move more than `PROBE_STUCK_VARIATION_C` (1 °C) within
+/// `PROBE_STUCK_TIMEOUT_SECS` (120 s); 1 °C/min gives 2 °C in that window.
+/// A flatter "ramp" is a stalled roast, not a profile.
+pub const ROR_PROFILE_MIN_C_PER_MIN: f32 = 1.0;
+const _: () = assert!(
+    ROR_PROFILE_MIN_C_PER_MIN * (PROBE_STUCK_TIMEOUT_SECS as f32) / 60.0
+        >= 2.0 * PROBE_STUCK_VARIATION_C
+);
 /// One RoR profile point: `ror_c_per_min` at `time_secs` after the charge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RorPoint {
@@ -425,7 +435,7 @@ impl RorProfile {
         let mut prev_time: Option<u32> = None;
         for p in self.points.iter() {
             if !p.ror_c_per_min.is_finite()
-                || p.ror_c_per_min < 0.0
+                || p.ror_c_per_min < ROR_PROFILE_MIN_C_PER_MIN
                 || p.ror_c_per_min > ROR_PROFILE_MAX_C_PER_MIN
             {
                 return Err("ror_profile_value_out_of_range");

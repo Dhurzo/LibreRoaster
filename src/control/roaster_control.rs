@@ -785,7 +785,15 @@ impl RoasterControl {
             && self.probe_stuck_et_anchor.is_some_and(|et0| {
                 (et_now - et0).abs() <= crate::config::constants::PROBE_STUCK_ET_FLAT_C
             });
+        // X1 (audit 2026-10-06): while RoR-follow is ramping, the setpoint is
+        // GENERATED from BT itself (clamped to BT ± ROR_FOLLOW_MAX_LEAD_C), so
+        // "PV near SV" is true by construction and says nothing about the
+        // probe. Never treat that as "regulating", or a frozen BT probe
+        // disarms the detector for the whole roast.
+        let ror_ramping =
+            self.ror_follow_active() && self.ror_follower.is_some_and(|f| f.ramping());
         let regulating = self.status.pid_enabled
+            && !ror_ramping
             && ((self.status.target_temp - current_pv).abs() <= PROBE_STUCK_TARGET_MARGIN_C
                 || self.status.pid_channel == 1);
         let probe_stuck_mode = !regulating;
