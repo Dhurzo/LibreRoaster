@@ -99,7 +99,14 @@ fn test_send_handler_error_produces_err_message() {
     let error = RoasterError::InvalidState {
         source: Some("test_error_source"),
     };
-    let output_channel = ServiceContainer::get_output_channel();
+    // P-18 (audit 2026-10-06): a private channel — the global output channel
+    // is written and drained by tests in other modules running in parallel.
+    let output_channel: embassy_sync::channel::Channel<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        heapless::String<{ crate::logging::traceability::TRACE_EVENT_MAX_LEN }>,
+        { crate::application::service_container::ARTISAN_OUTPUT_CHANNEL_SIZE },
+    > = embassy_sync::channel::Channel::new();
+    let output_channel = &output_channel;
     send_handler_error(output_channel, &error);
     let messages: Vec<_> = (0..10)
         .filter_map(|_| output_channel.try_receive().ok())
