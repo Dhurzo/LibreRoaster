@@ -1460,7 +1460,10 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::SetStreaming(_)
                 // DIFF E1: pure markers, no actuator side effect — never ERR.
                 | crate::config::ArtisanCommand::Charge(_)
-                | crate::config::ArtisanCommand::Drop => { /* allow */ }
+                | crate::config::ArtisanCommand::Drop
+                // P-9 (audit 2026-10-06): report / unload only, no actuator effect.
+                | crate::config::ArtisanCommand::Tune(crate::config::TuneCommand::Status)
+                | crate::config::ArtisanCommand::ClearRorProfile => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     // BUG-2c-1 (audit 2026-10-04): a refused PROFILE/
@@ -1731,6 +1734,13 @@ impl RoasterControl {
                 if !self.status.artisan_control || self.status.pid_enabled {
                     return Err(RoasterError::InvalidState {
                         source: Some("tune_needs_manual_mode"),
+                    });
+                }
+                if self.status.pid_channel == 1 {
+                    // M-6 (audit 2026-10-06): the step test identifies the BT
+                    // plant; its gains must not drive an ET (PID;CHAN;1) loop.
+                    return Err(RoasterError::InvalidState {
+                        source: Some("tune_needs_bt_channel"),
                     });
                 }
                 if self.cooling_active {

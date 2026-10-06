@@ -319,10 +319,18 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         match parts.len() {
             1 => Ok(ArtisanCommand::Charge(None)),
             2 => {
+                // P-2 (audit 2026-10-06): accept a decimal weight ("250.0"),
+                // rounded to whole grams; negative, non-numeric or > 65535 g
+                // is still an error.
                 let grams = parts[1]
                     .trim()
-                    .parse::<u16>()
+                    .parse::<f32>()
                     .map_err(|_| ParseError::InvalidValue)?;
+                if !grams.is_finite() || grams < 0.0 || grams > u16::MAX as f32 {
+                    return Err(ParseError::InvalidValue);
+                }
+                let grams = (grams + 0.5) as u32;
+                let grams = u16::try_from(grams).map_err(|_| ParseError::InvalidValue)?;
                 Ok(ArtisanCommand::Charge((grams > 0).then_some(grams)))
             }
             _ => Err(ParseError::InvalidValue),
