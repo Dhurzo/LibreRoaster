@@ -1657,6 +1657,20 @@ impl RoasterControl {
     /// PID is in control of a roast on the BT channel. No-op otherwise
     /// (manual mode and `PID;CHAN;1` included: the profile is a BT rate).
     fn maybe_start_ror_follow(&mut self) {
+        self.arm_ror_follow(RorFollower::new());
+    }
+
+    /// M-7 (audit 2026-10-06): `PID;ON` after an OT1 takeover that spanned
+    /// the charge. The drop may be over, so use `RorFollower::resumed()`.
+    fn maybe_resume_ror_follow(&mut self) {
+        if self.charge_time.is_some() {
+            self.arm_ror_follow(RorFollower::resumed());
+        }
+    }
+
+    /// Shared arming conditions for RoR-follow (profile loaded, firmware PID
+    /// in control of a roast on the BT channel, no follower yet).
+    fn arm_ror_follow(&mut self, follower: RorFollower) {
         if self.ror_follower.is_none()
             && self.ror_profile.is_some()
             && self.status.pid_enabled
@@ -1664,7 +1678,7 @@ impl RoasterControl {
             && self.status.pid_channel != 1
             && matches!(self.state, RoasterState::Heating | RoasterState::Stable)
         {
-            self.ror_follower = Some(RorFollower::new());
+            self.ror_follower = Some(follower);
             info!("RoR-follow armed - waiting for the turning point");
         }
     }
@@ -1974,6 +1988,8 @@ impl RoasterControl {
                     };
                 let target = self.cap_pid_target(target);
                 self.resume_pid_bumpless(target)?;
+                // M-7: a charge that happened during the takeover re-arms RoR-follow.
+                self.maybe_resume_ror_follow();
                 info!(
                     "Artisan+ PID;ON - PID resumed at {:.1}°C (bumpless)",
                     target
