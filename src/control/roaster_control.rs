@@ -2701,6 +2701,30 @@ impl RoasterControl {
         // Defensive floor of 10 ms guards against absurd inputs (PID;CT;0
         // would freeze the throttle at "due" and burn CPU).
         let cycle_ms = self.status.pid_cycle_time_ms.max(10) as u64;
+
+        // DIFF E3 + M-2 (audit 2026-10-06): RoR-follow advances on EVERY
+        // control tick (≈0.32 s), not only on PID cycles. `RorFollower::step`
+        // refuses gaps > ROR_FOLLOW_MAX_STEP_SECS (2 s), so with PID;CT ≥ 2 s
+        // the setpoint used to freeze. The temperature profile below is
+        // suspended while RoR-follow runs; the F-C8 cap is applied right here
+        // and again inside the PID cycle.
+        if let (Some(follower), Some(profile), Some(charge)) = (
+            self.ror_follower.as_mut(),
+            self.ror_profile.as_ref(),
+            self.charge_time,
+        ) {
+            let elapsed = current_time.saturating_duration_since(charge).as_micros() as f32 * 1e-6;
+            match follower.step(profile, elapsed, self.status.bean_temp) {
+                RorStep::WaitingTurningPoint => self.ror_target_c_per_min = 0.0,
+                RorStep::Setpoint { sv, target_ror } => {
+                    self.ror_target_c_per_min = target_ror;
+                    let sv = self.cap_pid_target(sv);
+                    self.status.target_temp = sv;
+                    let _ = self.dispatch.set_pid_target(sv);
+                }
+            }
+        }
+
         let should_update = if let Some(last_update) = self.last_pid_update {
             current_time.saturating_duration_since(last_update)
                 >= embassy_time::Duration::from_millis(cycle_ms)
@@ -2727,26 +2751,6 @@ impl RoasterControl {
                         self.status.target_temp = new_target;
                         let _ = self.dispatch.set_pid_target(new_target);
                         debug!("Profile target: {:.1}°C at t={}s", new_target, elapsed);
-                    }
-                }
-            }
-
-            // DIFF E3: RoR-follow turns the RoR profile into the PID setpoint
-            // after the turning point. Runs after the temperature profile (so
-            // it wins) and before the F-C8 cap (so the cap still applies).
-            if let (Some(follower), Some(profile), Some(charge)) = (
-                self.ror_follower.as_mut(),
-                self.ror_profile.as_ref(),
-                self.charge_time,
-            ) {
-                let elapsed =
-                    current_time.saturating_duration_since(charge).as_micros() as f32 * 1e-6;
-                match follower.step(profile, elapsed, self.status.bean_temp) {
-                    RorStep::WaitingTurningPoint => self.ror_target_c_per_min = 0.0,
-                    RorStep::Setpoint { sv, target_ror } => {
-                        self.ror_target_c_per_min = target_ror;
-                        self.status.target_temp = sv;
-                        let _ = self.dispatch.set_pid_target(sv);
                     }
                 }
             }
