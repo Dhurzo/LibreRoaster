@@ -139,7 +139,6 @@ fn wire(s: &mut Sim, line: &str) -> bool {
     }
 }
 
-
 /// PID;ON, SV 200, RoR profile 15→10→6 °C/min, 600 s plant preheat, CHARGE
 /// (BT jumps to 95). Returns the charge time (s).
 fn ror_roast(s: &mut Sim, bt: &mut f32) -> f32 {
@@ -169,7 +168,11 @@ fn a1_frozen_bt_during_ror_follow_latches_like_plain_pid() {
         if s.n.is_multiple_of(6) {
             s.cmd(ArtisanCommand::ReadStatus);
         }
-        let shown = if s.secs() - tc >= 120.0 { *frozen.get_or_insert(bt) } else { bt };
+        let shown = if s.secs() - tc >= 120.0 {
+            *frozen.get_or_insert(bt)
+        } else {
+            bt
+        };
         s.tick(shown, et);
         if s.fault_at_s().is_some() {
             break;
@@ -178,8 +181,14 @@ fn a1_frozen_bt_during_ror_follow_latches_like_plain_pid() {
         bt += (0.004 * u - 0.001 * (bt - 25.0)) * DT;
         et = bt + 20.0 + 0.3 * u; // ET follows the heater
     }
-    let f = s.fault_at_s().expect("A1: frozen BT under RoR-follow must latch");
-    assert!(f - tc <= 300.0, "A1: latched {:.0} s after the charge (want ≤ 300)", f - tc);
+    let f = s
+        .fault_at_s()
+        .expect("A1: frozen BT under RoR-follow must latch");
+    assert!(
+        f - tc <= 300.0,
+        "A1: latched {:.0} s after the charge (want ≤ 300)",
+        f - tc
+    );
 }
 
 // ── A2 (M-2): RoR-follow must advance with a long PID cycle time ──
@@ -209,11 +218,17 @@ fn a3_sv_before_turning_point_keeps_ror_follow() {
     let mut bt = 150.0f32;
     let _tc = ror_roast(&mut s, &mut bt);
     plant_run(&mut s, 0.7, &mut bt, |_, _| {}); // marker applied, follower armed
-    // Artisan's first PID ON of a session sends PID;SV right after PID;ON.
+                                                // Artisan's first PID ON of a session sends PID;SV right after PID;ON.
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
     plant_run(&mut s, 120.0, &mut bt, |_, _| {});
-    assert!(s.c.ror_follow_active(), "A3: SV before the turning point ended RoR-follow");
-    assert!(s.c.ror_target_c_per_min() > 0.0, "A3: RoR-follow never ramped");
+    assert!(
+        s.c.ror_follow_active(),
+        "A3: SV before the turning point ended RoR-follow"
+    );
+    assert!(
+        s.c.ror_target_c_per_min() > 0.0,
+        "A3: RoR-follow never ramped"
+    );
 }
 
 #[test]
@@ -226,7 +241,10 @@ fn a3b_sv_after_turning_point_still_ends_ror_follow() {
     assert!(s.c.ror_target_c_per_min() > 0.0, "precondition: ramping");
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(210.0)));
     plant_run(&mut s, 5.0, &mut bt, |_, _| {});
-    assert!(!s.c.ror_follow_active(), "operator override after the turning point");
+    assert!(
+        !s.c.ror_follow_active(),
+        "operator override after the turning point"
+    );
 }
 
 // ── A4 (M-1): a door-dip false #CHARGE must not ramp an empty drum ──
@@ -255,7 +273,10 @@ fn a4_false_auto_charge_in_empty_drum_never_ramps() {
         let u = s.c.get_status().ssr_output;
         bt += (0.004 * u - 0.001 * (bt - 25.0)) * DT;
     }
-    assert!(s.c.get_status().charge_detected, "precondition: the dip trips #CHARGE");
+    assert!(
+        s.c.get_status().charge_detected,
+        "precondition: the dip trips #CHARGE"
+    );
     plant_run(&mut s, 900.0, &mut bt, |_, _| {});
     assert!(
         s.c.ror_target_c_per_min() == 0.0 && s.c.get_status().target_temp <= 205.0,
@@ -305,7 +326,11 @@ fn a6_sv_from_idle_after_flat_manual_starts_fresh_window() {
     let t_sv = s.secs();
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
     s.run(30.0, |_| 150.0, |t| 170.0 + 0.3 * (t - t_sv));
-    assert!(s.fault_at_s().is_none(), "A6: PID;SV from Idle latched at {:?}", s.fault_at_s());
+    assert!(
+        s.fault_at_s().is_none(),
+        "A6: PID;SV from Idle latched at {:?}",
+        s.fault_at_s()
+    );
 }
 
 // ── A7 (M-3): PREHEAT drops a CHARGE marker that predates it ──
@@ -335,9 +360,18 @@ fn a7_preheat_drops_a_stale_charge_marker() {
 
 #[test]
 fn a8_charge_weight_decimal_is_accepted() {
-    assert_eq!(parse_artisan_command("CHARGE;250.0"), Ok(ArtisanCommand::Charge(Some(250))));
-    assert_eq!(parse_artisan_command("CHARGE;249.6"), Ok(ArtisanCommand::Charge(Some(250))));
-    assert_eq!(parse_artisan_command("CHARGE;0.0"), Ok(ArtisanCommand::Charge(None)));
+    assert_eq!(
+        parse_artisan_command("CHARGE;250.0"),
+        Ok(ArtisanCommand::Charge(Some(250)))
+    );
+    assert_eq!(
+        parse_artisan_command("CHARGE;249.6"),
+        Ok(ArtisanCommand::Charge(Some(250)))
+    );
+    assert_eq!(
+        parse_artisan_command("CHARGE;0.0"),
+        Ok(ArtisanCommand::Charge(None))
+    );
     assert!(parse_artisan_command("CHARGE;-1").is_err());
     assert!(parse_artisan_command("CHARGE;70000").is_err());
     assert!(parse_artisan_command("CHARGE;abc").is_err());
@@ -350,9 +384,18 @@ fn a9_tune_status_and_ror_off_accepted_while_latched() {
     let _g = lock();
     let mut s = Sim::new();
     assert!(s.cmd(ArtisanCommand::EmergencyStop));
-    assert!(wire(&mut s, "TUNE;STATUS"), "A9: TUNE;STATUS refused while latched");
-    assert!(wire(&mut s, "RORPROFILE;OFF"), "A9: RORPROFILE;OFF refused while latched");
-    assert!(!wire(&mut s, "TUNE;20"), "TUNE start must stay refused while latched");
+    assert!(
+        wire(&mut s, "TUNE;STATUS"),
+        "A9: TUNE;STATUS refused while latched"
+    );
+    assert!(
+        wire(&mut s, "RORPROFILE;OFF"),
+        "A9: RORPROFILE;OFF refused while latched"
+    );
+    assert!(
+        !wire(&mut s, "TUNE;20"),
+        "TUNE start must stay refused while latched"
+    );
 }
 
 // ── A10 (M-6): TUNE is refused when the PID regulates ET ──
@@ -364,7 +407,9 @@ fn a10_tune_refused_on_et_channel() {
     assert!(s.cmd(ArtisanCommand::SetPidChannel(1)));
     assert!(s.cmd(ArtisanCommand::SetHeater(40)));
     s.run(5.0, |_| 150.0, |_| 170.0);
-    assert!(!wire(&mut s, "TUNE;20"), "A10: TUNE identifies BT; refuse it on PID;CHAN;1");
+    assert!(
+        !wire(&mut s, "TUNE;20"),
+        "A10: TUNE identifies BT; refuse it on PID;CHAN;1"
+    );
     assert!(!s.c.tune_running());
 }
-

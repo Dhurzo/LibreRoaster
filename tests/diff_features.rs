@@ -829,7 +829,10 @@ fn e1_n2_charge_marker_while_latched_anchors_post_recovery_roast() {
     s.run(1.0, |_| 199.0, |_| 220.0);
     assert!(s.cmd(ArtisanCommand::StartRoast));
     s.run(1.0, |_| 198.0, |_| 220.0);
-    assert!(s.c.get_status().charge_detected, "pending marker anchors the post-recovery roast");
+    assert!(
+        s.c.get_status().charge_detected,
+        "pending marker anchors the post-recovery roast"
+    );
     assert_eq!(s.c.batch_grams(), Some(300));
 }
 
@@ -850,10 +853,16 @@ fn e1_n2_recovery_drops_old_anchor_and_accepts_fresh_marker() {
     s.run(1.0, |_| 199.0, |_| 220.0);
     assert!(s.cmd(ArtisanCommand::StartRoast));
     s.run(1.0, |_| 198.0, |_| 220.0);
-    assert!(!s.c.get_status().charge_detected, "N2: recovery dropped the old anchor");
+    assert!(
+        !s.c.get_status().charge_detected,
+        "N2: recovery dropped the old anchor"
+    );
     assert!(s.cmd(ArtisanCommand::Charge(None)));
     s.run(1.0, |_| 197.0, |_| 220.0);
-    assert!(s.c.get_status().charge_detected, "handoff cleared explicit_charge_seen: fresh marker anchors");
+    assert!(
+        s.c.get_status().charge_detected,
+        "handoff cleared explicit_charge_seen: fresh marker anchors"
+    );
 }
 
 #[test]
@@ -863,10 +872,16 @@ fn e3_n9_chan_switch_mid_ramp_stops_follow() {
     let mut bt = 150.0f32;
     let _ = ror_roast(&mut s, &mut bt);
     plant_run(&mut s, 300.0, &mut bt, |_, _| {});
-    assert!(s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0, "ramping");
+    assert!(
+        s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0,
+        "ramping"
+    );
     assert!(s.cmd(ArtisanCommand::SetPidChannel(1)));
     s.run(1.0, |_| bt, |_| bt + 20.0);
-    assert!(!s.c.ror_follow_active(), "CHAN;1 mid-roast stops follow (E3) next to N9 derivative reset");
+    assert!(
+        !s.c.ror_follow_active(),
+        "CHAN;1 mid-roast stops follow (E3) next to N9 derivative reset"
+    );
     assert_eq!(s.c.ror_target_c_per_min(), 0.0);
     assert!(s.c.get_status().pid_enabled);
 }
