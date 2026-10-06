@@ -2686,9 +2686,6 @@ impl RoasterControl {
         self.actuator.last_desired_heater_output()
     }
 
-    /// Hand control back to the firmware PID mid-roast after a manual (OT1)
-    /// takeover, without a power bump (F-C5/F-C6). Keeps the roast clock,
-    /// `pid_on_session` and charge state untouched.
     /// N1 (re-audit 2026-10-05): forget the current probe-stuck episode. The
     /// manual two-stage clock (latch at 300 s) must not be inherited by the
     /// firmware-PID single-stage latch (120 s) when control is handed back.
@@ -2701,6 +2698,9 @@ impl RoasterControl {
         self.pid_plateau_warning_sent = false;
     }
 
+    /// Hand control back to the firmware PID mid-roast after a manual (OT1)
+    /// takeover, without a power bump (F-C5/F-C6). Keeps the roast clock,
+    /// `pid_on_session` and charge state untouched.
     fn resume_pid_bumpless(&mut self, target: f32) -> Result<(), RoasterError> {
         let was_enabled = self.status.pid_enabled;
         let applied = self.status.ssr_output;
