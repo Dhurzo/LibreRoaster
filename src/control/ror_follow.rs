@@ -23,10 +23,11 @@ pub const ROR_FOLLOW_MAX_LEAD_C: f32 = 3.0;
 /// turning point.
 pub const ROR_FOLLOW_TP_RISE_C: f32 = 0.5;
 /// The post-charge minimum must sit at least this far below the BT seen at
-/// the charge before a turning point is accepted. Beans reach the probe a
-/// few seconds after the CHARGE button; without this rule, probe noise in
-/// that gap could fake a turning point at the pre-charge temperature.
-pub const ROR_FOLLOW_MIN_DROP_C: f32 = 5.0;
+/// the charge before a turning point is accepted — also on the timeout path.
+/// Beans reach the probe a few seconds after the CHARGE button; a real charge
+/// drops BT 40–100 °C. M-1 (audit 2026-10-06): 20 °C rejects a door/tryer
+/// dip that tripped the automatic #CHARGE detector in an empty drum.
+pub const ROR_FOLLOW_MIN_DROP_C: f32 = 20.0;
 /// Fallback: start ramping this long after the charge even if no turning
 /// point was seen (slow probe, tiny batch).
 pub const ROR_FOLLOW_TP_TIMEOUT_SECS: f32 = 180.0;
@@ -48,6 +49,9 @@ pub enum RorStep {
 pub struct RorFollower {
     /// BT at the first step after the charge.
     charge_bt: Option<f32>,
+    /// False for a follower created after the charge already happened
+    /// (`resumed()`): the drop may be over, so only the rise is required.
+    require_drop: bool,
     min_bt: f32,
     sv: Option<f32>,
     last_elapsed: Option<f32>,
@@ -64,9 +68,21 @@ impl RorFollower {
     pub fn new() -> Self {
         Self {
             charge_bt: None,
+            require_drop: true,
             min_bt: f32::INFINITY,
             sv: None,
             last_elapsed: None,
+        }
+    }
+
+    /// Follower armed AFTER the charge (e.g. `PID;ON` after an OT1 takeover
+    /// that spanned the charge, F5): the post-charge drop may already be over,
+    /// so the turning point only needs BT to rise `ROR_FOLLOW_TP_RISE_C` above
+    /// its minimum (or the timeout).
+    pub fn resumed() -> Self {
+        Self {
+            require_drop: false,
+            ..Self::new()
         }
     }
 
@@ -96,9 +112,12 @@ impl RorFollower {
                 if bt < self.min_bt {
                     self.min_bt = bt;
                 }
-                let dropped = self.min_bt <= charge_bt - ROR_FOLLOW_MIN_DROP_C;
-                let turned = (dropped && bt >= self.min_bt + ROR_FOLLOW_TP_RISE_C)
-                    || elapsed_secs >= ROR_FOLLOW_TP_TIMEOUT_SECS;
+                let dropped =
+                    !self.require_drop || self.min_bt <= charge_bt - ROR_FOLLOW_MIN_DROP_C;
+                // M-1: the timeout path also needs the drop — no drop, no beans.
+                let turned = dropped
+                    && (bt >= self.min_bt + ROR_FOLLOW_TP_RISE_C
+                        || elapsed_secs >= ROR_FOLLOW_TP_TIMEOUT_SECS);
                 if !turned {
                     return RorStep::WaitingTurningPoint;
                 }
@@ -211,6 +230,8 @@ mod tests {
     fn turning_point_timeout_starts_ramp() {
         let p = profile(&[(0, 10.0)]);
         let mut f = RorFollower::new();
+        // Charge at 200 °C, BT dropped well below (real beans), never rises.
+        assert_eq!(f.step(&p, 1.0, 200.0), RorStep::WaitingTurningPoint);
         assert_eq!(f.step(&p, 10.0, 90.0), RorStep::WaitingTurningPoint);
         assert!(matches!(
             f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS, 89.0),
@@ -219,9 +240,33 @@ mod tests {
     }
 
     #[test]
+    fn no_drop_never_ramps_even_after_timeout() {
+        // M-1: a door dip trips #CHARGE in an empty drum; BT never drops 20 °C.
+        let p = profile(&[(0, 10.0)]);
+        let mut f = RorFollower::new();
+        assert_eq!(f.step(&p, 1.0, 190.0), RorStep::WaitingTurningPoint);
+        // A 12 °C door dip (passes a 5 °C rule, not the 20 °C one), then BT recovers.
+        assert_eq!(f.step(&p, 5.0, 178.0), RorStep::WaitingTurningPoint);
+        assert_eq!(
+            f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS + 60.0, 200.0),
+            RorStep::WaitingTurningPoint
+        );
+        assert!(!f.ramping());
+    }
+
+    #[test]
+    fn resumed_follower_needs_only_the_rise() {
+        let p = profile(&[(0, 10.0)]);
+        let mut f = RorFollower::resumed();
+        assert_eq!(f.step(&p, 30.0, 96.0), RorStep::WaitingTurningPoint);
+        assert_eq!(f.step(&p, 31.0, 95.0), RorStep::WaitingTurningPoint);
+        assert!(matches!(f.step(&p, 32.0, 95.6), RorStep::Setpoint { .. }));
+    }
+
+    #[test]
     fn long_gap_is_not_integrated() {
         let p = profile(&[(0, 30.0)]);
-        let mut f = RorFollower::new();
+        let mut f = RorFollower::resumed();
         let _ = f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS, 150.0);
         // 60 s gap: no 30 °C jump; setpoint stays where it was.
         match f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS + 60.0, 150.0) {
