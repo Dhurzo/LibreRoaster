@@ -99,7 +99,7 @@ Click **Configure** next to the driver dropdown:
 
 > **Protocol Note:** Responses are `#`-prefixed because Artisan's ArduinoTC4 driver **only accepts empty or `#`-prefixed lines during initialisation**. A plain `OK` would cause "Arduino could not set temperature unit" and infinite re-init loop.
 
-> To plot heater/fan/SV as extra curves, add `+ArduinoTC4_34` **together with** `+ArduinoTC4_56` / `+ArduinoTC4_78`. The READ line uses the 4-channel layout (`amb,ET,BT,0.0,0.0,heater,fan,SV`); without `+ArduinoTC4_34` Artisan reads the fields shifted.
+> To plot heater/fan/SV as extra curves, add `+ArduinoTC4_34` **together with** `+ArduinoTC4_56` / `+ArduinoTC4_78`. The READ line uses the 4-channel layout (`amb,ET,BT,CH3,CH4,heater,fan,SV`); without `+ArduinoTC4_34` Artisan reads the fields shifted. With `+ArduinoTC4_34` Artisan sends `CHAN;1234` and CH3/CH4 carry the RoR target and the measured RoR (°/min) instead of `0.0,0.0` — see `docs/ARTISAN_ADVANCED.md`.
 
 ---
 

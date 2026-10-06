@@ -19,13 +19,16 @@ In Artisan's Events configuration, set the action of the default event buttons:
 Both commands are pure markers: they never change heater or fan, and they are accepted while
 the safety latch is armed. A marker pressed before the roast starts (during PREHEAT, or around
 Artisan's own *pidOnCHARGE* `PID;ON`, in either order) is kept and applied when the roast starts;
-a marker with no roast within 5 s is dropped. Pressing CHARGE a little late is fine: the budget
-re-anchors and a RoR ramp that is already running is kept.
+a marker with no roast within 5 s is dropped, and a new PREHEAT discards a marker sent before it.
+Press CHARGE when the beans go in: the RoR ramp needs to see BT drop at least 20 °C below its
+value at the CHARGE (a door or tryer dip never does, so a false automatic charge cannot start a
+ramp in an empty drum). A late press re-anchors the budget and keeps a ramp that is already running.
 
 ## 2. RoR-follow (firmware PID follows a rate-of-rise profile)
 Preconditions (all three):
 - Artisan's PID dialog: **source = 2** (BT with the default `CHAN;1200`, where ET = channel 1
-  and BT = channel 2). The firmware refuses RoR-follow on the ET channel.
+  and BT = channel 2). On the ET channel RoR-follow never arms (the profile still loads, with no
+  ERR), and `TUNE` is refused (`ERR handler_failed …:tune_needs_bt_channel`).
 - Artisan's **ramp/soak and background-follow must be OFF**: both send `PID;SV` repeatedly, and
   every `PID;SV` is treated as an operator override that ends RoR-follow.
 - The CHARGE marker of §1 (automatic detection also works, but the marker is exact).
@@ -33,13 +36,17 @@ Preconditions (all three):
 Steps:
 1. Add a custom event button with action *Serial Command*, e.g.
    `RORPROFILE;0,15;300,10;600,6` (seconds since CHARGE, °C/min — °F/min if Artisan is in °F).
-   Limits: up to 16 points, 0–30 °C/min, strictly increasing times.
+   Limits: up to 16 points, 1–30 °C/min, strictly increasing times. The loaded profile stays
+   loaded across roasts, STOP and latches until `RORPROFILE;OFF` or a reboot.
 2. Start the roast with *PID ON* as usual.
 3. Press CHARGE. RoR-follow arms; after the turning point (BT has dropped ≥ 5 °C and turned
    up again) the PID setpoint ramps at the profile RoR, never more than 3 °C away from BT.
 4. Moving the `OT1` slider suspends RoR-follow (you are in manual); *PID ON* resumes it.
    Moving the SV slider (`PID;SV`), DROP, PID OFF or `RORPROFILE;OFF` end it.
-RoR-follow never acts in manual mode.
+RoR-follow never acts in manual mode. A `PID;SV` before the turning point (Artisan sends one right
+after its first *PID ON*) does not end it; after the turning point it does. If the charge happens
+during an `OT1` takeover, *PID ON* re-arms RoR-follow. While it ramps, the probe-stuck detector
+stays armed (a frozen BT latches like in plain PID mode).
 
 ## 3. RoR target and measured RoR as Artisan curves
 Add the extra device `+ArduinoTC4_34` (Devices → Extra devices). Artisan then sends `CHAN;1234`
@@ -62,6 +69,7 @@ Without the extra device nothing changes on the wire.
    stops a running test. Results are RAM-only: copy them into Artisan's PID dialog to keep them
    across reboots.
 A test that ends without gains prints `ERR tune_<reason>` (`bad_base_duty`, `bad_step`,
-`probe_cold`, `no_response`, `implausible`, `too_hot`, `aborted`). A refused `TUNE;<n>` prints
+`probe_cold`, `no_response`, `implausible`, `too_hot`, `aborted`, `apply_failed`). These lines and
+`#TUNE …` are spontaneous (they ignore `STREAM`) and can cost Artisan one READ sample. A refused `TUNE;<n>` prints
 `ERR handler_failed <token>:tune_needs_manual_mode` (or `:tune_cooling_active`,
 `:fault_condition_active` while latched).

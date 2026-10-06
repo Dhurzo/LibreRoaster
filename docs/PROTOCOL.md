@@ -421,7 +421,7 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   `<reason>` text is a human-readable diagnostic (may contain spaces), not
   a stable contract. The line is emitted once per latch event; the STOP
   command path (operator-initiated) does not emit it.
-- `ERR probe_stuck_warning` — manual/software-PID mode only: BT has been
+- `ERR probe_stuck_warning` — manual/software-PID mode, and firmware-PID hot plateaus (see below): BT has been
   flat (< 1 °C variation) for 120 s with the heater on. Purely
   informational (a legitimately slow finish can hold BT flat at low duty);
   the latch lands at 300 s via `ERR safety_fault Probe stuck`. Emitted once
@@ -430,7 +430,7 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   it emits this warning at 300 s and latches at 600 s (N4).
 
 > RoR-guard tiering (A-TC4-D, 2026-08-12): the `rate_of_rise_exceeded` trap
-> is two-tier. Rates in the soft band (0.5–1.0 °C/s) latch only after ~3.7 s
+> is two-tier. Rates in the soft band (0.75–1.0 °C/s) latch only after ~3.7 s
 > of sustained exceedance (12 consecutive control ticks); rates above
 > 1.0 °C/s keep the fast 3-tick latch. A healthy light-roast turnaround
 > spike (~3 s at 0.6 °C/s) therefore does not trip, while a genuine runaway
@@ -524,10 +524,12 @@ the Artisan RoR convention — not °C/s.
 |---|---|---|
 | `CHARGE` / `CHARGE;<g>` | Charge marker (applied by the control tick; kept through PREHEAT and for 5 s otherwise); records batch weight | none |
 | `DROP` | Drop marker; stops RoR-follow; re-arms charge detection | none |
-| `RORPROFILE;t,ror;...` | Load RoR profile (≤ 16 points, 0–30 °C/min, increasing t) | `ERR handler_failed …:ror_profile_…` if invalid |
-| `RORPROFILE;OFF` | Unload RoR profile, stop RoR-follow | none |
+| `RORPROFILE;t,ror;...` | Load RoR profile (≤ 16 points, 1–30 °C/min, increasing t) | `ERR handler_failed …:ror_profile_…` if invalid |
+| `RORPROFILE;OFF` | Unload RoR profile, stop RoR-follow (also accepted while latched) | none |
 | `TUNE;<step>` | Start step-test autotune (manual mode only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
-| `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report | `TUNE;STATUS` → `#TUNE …` |
+| `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report (`TUNE;STATUS` also while latched) | `TUNE;STATUS` → `#TUNE …` |
+
+Spontaneous lines of these features: `#TUNE …` and `ERR tune_<reason>` when a test ends, `ERR tune_aborted` when any non-monitoring command arrives during a test (sliders included), and `ERR probe_stuck_warning` from the firmware-PID plateau bound. `CHARGE;<g>` accepts decimals (rounded).
 
 READ channels 3/4 carry RoR target / measured RoR (display units per minute) **only** after
 `CHAN;xx34` (both last digits non-zero); with `CHAN;1200` they stay `0.0,0.0`.
