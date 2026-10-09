@@ -152,7 +152,6 @@ fn ror_roast(s: &mut Sim, bt: &mut f32) -> f32 {
     s.secs()
 }
 
-
 /// Integrating plant with 8 s dead time (copied from tests/diff_features.rs).
 fn tune_plant_run(
     s: &mut Sim,
@@ -401,10 +400,16 @@ fn b8_channel_switch_unlocks_tuned_gains() {
     tune_plant_run(&mut s, 20.0, &mut bt, &mut hist);
     assert!(wire(&mut s, "TUNE;20"));
     tune_plant_run(&mut s, 420.0, &mut bt, &mut hist);
-    assert!(s.c.pid_gains_locked(), "precondition: TUNE locked the gains");
+    assert!(
+        s.c.pid_gains_locked(),
+        "precondition: TUNE locked the gains"
+    );
     // Re-sending the SAME channel (Artisan does it on connect) keeps the lock.
     assert!(s.cmd(ArtisanCommand::SetPidChannel(2)));
-    assert!(s.c.pid_gains_locked(), "B8: PID;CHAN;2 re-sent must keep the lock");
+    assert!(
+        s.c.pid_gains_locked(),
+        "B8: PID;CHAN;2 re-sent must keep the lock"
+    );
     assert!(s.cmd(ArtisanCommand::SetPidChannel(1)));
     assert!(
         !s.c.pid_gains_locked(),

@@ -604,11 +604,10 @@ mod tests {
             .expect("cross-check must not fail inside the window");
             assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
         }
-        let result = base.cross_check_heat_detection(
-            DUTY_OBSERVABLE,
-            t0.wrapping_add(5 * TICK_MS),
-            || Ok::<bool, ()>(false),
-        );
+        let result =
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, t0.wrapping_add(5 * TICK_MS), || {
+                Ok::<bool, ()>(false)
+            });
         assert!(matches!(
             result,
             Err(SsrError::HeatSourceNotDetected {
