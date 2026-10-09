@@ -2431,7 +2431,9 @@ impl RoasterControl {
         // once it ramps. P-17 (audit 2026-10-06): before the turning point the
         // follower does not own the setpoint yet, and Artisan's first PID ON
         // sends PID;SV right after PID;ON (pidOnCHARGE) — keep the follower.
-        if self.ror_follower.is_some_and(|f| f.ramping()) {
+        // R-4 (audit 2026-10-09): ...except in the first ramp steps, where it
+        // is the tail of Artisan's PID ON burst (`in_sv_grace`).
+        if self.ror_follower.is_some_and(|f| f.ramping() && !f.in_sv_grace()) {
             self.stop_ror_follow();
         }
         // R-1: an explicit SV is the operator's setpoint; a CHARGE marker sent

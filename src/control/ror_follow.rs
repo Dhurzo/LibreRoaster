@@ -35,6 +35,10 @@ pub const ROR_FOLLOW_TP_TIMEOUT_SECS: f32 = 180.0;
 /// Largest time step (s) integrated at once. Longer gaps restart the
 /// integration from the current setpoint instead of jumping.
 pub const ROR_FOLLOW_MAX_STEP_SECS: f32 = 2.0;
+/// R-4 (audit 2026-10-09): during this many ramp steps (one per control
+/// tick, ≈ 3.2 s) a `PID;SV` does not end RoR-follow — it is the tail of
+/// Artisan's *PID ON* burst, not the operator moving the SV slider.
+pub const ROR_FOLLOW_SV_GRACE_STEPS: u16 = 10;
 
 /// Result of one `RorFollower::step`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,6 +61,8 @@ pub struct RorFollower {
     min_bt: f32,
     sv: Option<f32>,
     last_elapsed: Option<f32>,
+    /// Ramp steps taken since the turning point (saturating).
+    ramp_steps: u16,
 }
 
 impl Default for RorFollower {
@@ -74,6 +80,7 @@ impl RorFollower {
             min_bt: f32::INFINITY,
             sv: None,
             last_elapsed: None,
+            ramp_steps: 0,
         }
     }
 
@@ -108,6 +115,11 @@ impl RorFollower {
     /// True once the turning point was accepted and the setpoint is ramping.
     pub fn ramping(&self) -> bool {
         self.sv.is_some()
+    }
+
+    /// R-4: true during the first `ROR_FOLLOW_SV_GRACE_STEPS` ramp steps.
+    pub fn in_sv_grace(&self) -> bool {
+        self.sv.is_some() && self.ramp_steps < ROR_FOLLOW_SV_GRACE_STEPS
     }
 
     /// Advance the generator. `elapsed_secs` = seconds since the charge,
@@ -145,6 +157,7 @@ impl RorFollower {
                 RorStep::Setpoint { sv: bt, target_ror }
             }
             Some(sv) => {
+                self.ramp_steps = self.ramp_steps.saturating_add(1);
                 let mut next = sv;
                 if let Some(last) = self.last_elapsed {
                     let dt = elapsed_secs - last;
@@ -256,6 +269,20 @@ mod tests {
             f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS, 89.0),
             RorStep::Setpoint { .. }
         ));
+    }
+
+    #[test]
+    fn sv_grace_covers_only_the_first_ramp_steps() {
+        let p = profile(&[(0, 10.0)]);
+        let mut f = RorFollower::resumed();
+        assert!(!f.in_sv_grace(), "no grace before the ramp");
+        assert!(matches!(f.step(&p, 200.0, 100.0), RorStep::Setpoint { .. }));
+        for i in 0..ROR_FOLLOW_SV_GRACE_STEPS {
+            assert!(f.in_sv_grace(), "grace at ramp step {i}");
+            let _ = f.step(&p, 200.3 + i as f32 * 0.3, 100.0);
+        }
+        assert!(!f.in_sv_grace(), "grace over after the window");
+        assert!(f.ramping());
     }
 
     #[test]
