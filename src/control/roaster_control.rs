@@ -10,14 +10,14 @@ use super::policies::{ManualPolicyOutcome, SafetyPolicyOutcome};
 use super::RoasterError;
 use crate::config::*;
 use crate::control::autotune::{StepTest, TuneResult, TuneTick};
-use crate::control::batch::BatchState;
+use crate::control::batch::{BatchState, MarkerOutcome};
 use crate::control::controllers::{
     ActuatorController, CommandDispatchResult, CommandDispatcher, SafetyController,
     SensorController,
 };
 use crate::control::mode::{ControlMode, ModeFlags};
 use crate::control::pid::PidFeedback;
-use crate::control::ror_follow::{RorFollower, RorStep};
+use crate::control::ror_follow::RorStep;
 use crate::control::traits::{Fan, Heater};
 use alloc::boxed::Box;
 use embassy_time::{Duration, Instant};
@@ -31,12 +31,6 @@ use crate::logging::edge_log_gate::EdgeLogGate;
 /// heater has been OFF for this long. Prevents a momentary `OT1 0` from
 /// resetting the MAX_ROAST_TIME budget.
 const HEAT_SESSION_OFF_DEBOUNCE_SECS: u64 = 60;
-
-/// DIFF E1: a `CHARGE` marker that cannot be applied yet (no roast running)
-/// is kept this long, so Artisan's pidOnCHARGE (CHARGE marker and `PID;ON`
-/// sent within milliseconds of each other, in either order) still anchors
-/// the roast to the charge even when the two land in different control ticks.
-const CHARGE_MARKER_GRACE_SECS: u64 = 5;
 
 /// Which safety backstops are armed on this tick. Computed ONCE per tick by
 /// `RoasterControl::guard_arming()` — the single place where "which guard
@@ -552,12 +546,11 @@ impl RoasterControl {
         // un-latch an armed emergency as a side effect, and nothing would
         // prevent immediate re-energizing.
 
-        // Reset charge detection state so the next roast can detect bean drop.
-        self.batch.charge_detected = false;
-        self.batch.charge_time = None;
+        // Reset charge detection state so the next roast can detect bean drop
+        // (`BatchState::on_stop`: detection, pending marker, explicit/dropped
+        // flags and RoR-follow).
+        self.batch.on_stop();
         self.status.charge_detected = false;
-        self.batch.bt_charge_history.clear();
-        self.batch.charge_history_tick_div = 0;
         // Drop any in-flight `#DUMP` rows on stop so a dump requested
         // mid-roast does not bleed into the next roast's telemetry.
         self.dump_pending.clear();
@@ -568,11 +561,6 @@ impl RoasterControl {
         // re-send `FANPROFILE` for the next roast.
         self.profile_start_time = None;
         self.pid_on_session = false;
-        self.batch.pending_charge = false;
-        self.batch.pending_charge_since = None;
-        self.batch.explicit_charge_seen = false;
-        self.batch.batch_dropped = false;
-        self.stop_ror_follow();
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
         // against the time budget.
@@ -647,16 +635,11 @@ impl RoasterControl {
         // `charge_time`/`pid_on_session` from the aborted roast and the
         // 30-min budget fires in the middle of an empty-drum preheat.
         self.profile_start_time = None;
-        self.batch.charge_time = None;
-        self.batch.charge_detected = false;
+        self.batch.on_recovery();
         self.status.charge_detected = false;
-        self.batch.bt_charge_history.clear();
-        self.batch.charge_history_tick_div = 0;
         self.pid_on_session = false;
         self.heat_session_start = None;
         self.heat_session_off_since = None;
-        self.batch.batch_dropped = false;
-        self.stop_ror_follow();
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
 
@@ -940,63 +923,36 @@ impl RoasterControl {
             self.cooling_active = false;
         }
 
-        // Charge detection: detect bean drop via sharp BT decline. Throttle
-        // the history sampling to once every `CHARGE_SAMPLE_TICK_DIV` ticks
-        // so the 10-sample deque covers the full 3 s
-        // `CHARGE_DETECTION_WINDOW_S`.
-        // Activate sampling in BOTH roast-active states until charge is detected.
-        if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
-            && !self.batch.charge_detected
-        {
-            self.batch.charge_history_tick_div =
-                self.batch.charge_history_tick_div.saturating_add(1);
-            if self.batch.charge_history_tick_div >= CHARGE_SAMPLE_TICK_DIV {
-                self.batch.charge_history_tick_div = 0;
-                let bt = self.status.bean_temp;
-                if bt > 50.0 {
-                    if self.batch.bt_charge_history.len() >= 10 {
-                        let _ = self.batch.bt_charge_history.pop_front();
-                    }
-                    let _ = self.batch.bt_charge_history.push_back(bt);
-                    if self.batch.bt_charge_history.len() >= 5 {
-                        let (front, _back) = self.batch.bt_charge_history.as_slices();
-                        let first = front.first().copied().unwrap_or(bt);
-                        let drop = first - bt;
-                        if drop > CHARGE_DROP_THRESHOLD_C {
-                            self.batch.charge_detected = true;
-                            self.batch.charge_time = Some(current_time);
-                            self.status.charge_detected = true;
-                            info!("#CHARGE detected — BT dropped {:.1}°C", drop);
-                            // DIFF E3: an automatic charge also arms RoR-follow,
-                            // except after a DROP (R-2): then only a CHARGE marker does.
-                            if !self.batch.batch_dropped {
-                                // R-3: `first` = BT at the start of the 3 s
-                                // window, i.e. before the drop began.
-                                self.maybe_start_ror_follow(first);
-                            }
-                            // H5: the `#CHARGE` wire line is only useful to a
-                            // host that opted into spontaneous `#` traffic —
-                            // an unsolicited line in Artisan's 0.5 s READ
-                            // window costs a `-1` sample. Detection itself
-                            // always runs; only the wire copy is gated.
-                            if self.dispatch.is_streaming(&self.status) {
-                                let output_channel =
-                                    crate::application::service_container::ServiceContainer::get_output_channel();
-                                let mut charge_msg = heapless::String::<
-                                    { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
-                                >::new();
-                                let _ = core::fmt::Write::write_fmt(
-                                    &mut charge_msg,
-                                    core::format_args!("#CHARGE dt={:.1}", drop),
-                                );
-                                crate::hardware::error_counters::try_send_output(
-                                    output_channel,
-                                    charge_msg,
-                                );
-                            }
-                        }
-                    }
-                }
+        // Charge detection: detect bean drop via sharp BT decline
+        // (`BatchState::sample_auto_charge`: throttled sampling across the 3 s
+        // `CHARGE_DETECTION_WINDOW_S`, in both roast-active states, until a
+        // charge is detected). An automatic charge also arms RoR-follow,
+        // except after a DROP (R-2), seeded with the BT before the drop (R-3).
+        let roast_active = matches!(self.state, RoasterState::Heating | RoasterState::Stable);
+        let can_arm = self.ror_can_arm();
+        if let Some(drop) = self.batch.sample_auto_charge(
+            current_time,
+            self.status.bean_temp,
+            roast_active,
+            can_arm,
+        ) {
+            self.status.charge_detected = true;
+            info!("#CHARGE detected — BT dropped {:.1}°C", drop);
+            // H5: the `#CHARGE` wire line is only useful to a host that opted
+            // into spontaneous `#` traffic — an unsolicited line in Artisan's
+            // 0.5 s READ window costs a `-1` sample. Detection itself always
+            // runs; only the wire copy is gated.
+            if self.dispatch.is_streaming(&self.status) {
+                let output_channel =
+                    crate::application::service_container::ServiceContainer::get_output_channel();
+                let mut charge_msg = heapless::String::<
+                    { crate::logging::traceability::TRACE_EVENT_MAX_LEN },
+                >::new();
+                let _ = core::fmt::Write::write_fmt(
+                    &mut charge_msg,
+                    core::format_args!("#CHARGE dt={:.1}", drop),
+                );
+                crate::hardware::error_counters::try_send_output(output_channel, charge_msg);
             }
         }
 
@@ -1580,97 +1536,38 @@ impl RoasterControl {
     /// DIFF E1: `CHARGE` marker. Only records the request; the anchor is set
     /// on the next control tick by `apply_pending_charge`.
     fn handle_charge(&mut self, grams: Option<u16>) -> Result<(), RoasterError> {
-        if grams.is_some() {
-            self.batch.batch_grams = grams;
-        }
-        // R-3: remember the BT at the moment the beans go in (a value, not a
-        // time stamp, so the command clock rule is respected). A stale value
-        // from an earlier, already consumed or dropped marker is discarded.
-        if !self.batch.pending_charge {
-            self.batch.pending_charge_bt = None;
-        }
-        let bt = self.status.bean_temp;
-        if bt.is_finite() {
-            self.batch.pending_charge_bt =
-                Some(self.batch.pending_charge_bt.map_or(bt, |b| b.max(bt)));
-        }
-        self.batch.pending_charge = true;
+        self.batch.on_charge_command(grams, self.status.bean_temp);
         info!("Artisan+ CHARGE marker received (batch {:?} g)", grams);
         Ok(())
     }
 
     /// DIFF E1: `DROP` marker. Never touches heater or fan.
     fn handle_drop(&mut self) -> Result<(), RoasterError> {
-        self.stop_ror_follow();
-        self.batch.pending_charge = false;
-        self.batch.pending_charge_since = None;
-        self.batch.explicit_charge_seen = false;
-        // R-2: no RoR-follow for this drum until a CHARGE marker says there
-        // are beans in it again.
-        self.batch.batch_dropped = true;
-        if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
-            // Re-arm automatic charge detection for the next batch. The
-            // budget anchor (`charge_time`) is kept until the next charge.
-            self.batch.charge_detected = false;
+        let roast_active = matches!(self.state, RoasterState::Heating | RoasterState::Stable);
+        self.batch.on_drop(roast_active);
+        if roast_active {
             self.status.charge_detected = false;
-            self.batch.bt_charge_history.clear();
-            self.batch.charge_history_tick_div = 0;
         }
         info!("Artisan+ DROP marker received");
         Ok(())
     }
 
-    /// DIFF E1: apply a pending `CHARGE` in the control tick's time base.
-    /// - roast (Heating/Stable): anchor `charge_time` once per batch, consume;
-    /// - Preheating: keep the marker for the `START`/`PID;ON` that follows;
-    /// - manual heat session (Idle + artisan_control + heater on): restart the
-    ///   90-min session budget (like the automatic F-C3 detector) and keep
-    ///   the marker for `CHARGE_MARKER_GRACE_SECS`, so a `PID;ON` right after
-    ///   it (Artisan's pidOnCHARGE) still anchors the roast to the charge;
-    /// - anything else: keep for the grace period, then drop (logged).
+    /// DIFF E1: apply a pending `CHARGE` in the control tick's time base
+    /// (`BatchState::apply_pending_charge` has the rules). Outside a roast, a
+    /// marker during a manual heat session (Idle + artisan_control + heater
+    /// on) also restarts the 90-min session budget, like the automatic F-C3
+    /// detector.
     fn apply_pending_charge(&mut self, now: Instant, heater_energized: bool) {
-        if !self.batch.pending_charge {
-            return;
-        }
-        let since = *self.batch.pending_charge_since.get_or_insert(now);
-        let in_grace = now.saturating_duration_since(since).as_secs() < CHARGE_MARKER_GRACE_SECS;
-        match self.state {
-            RoasterState::Heating | RoasterState::Stable => {
-                self.batch.pending_charge = false;
-                self.batch.pending_charge_since = None;
-                // R-3: drop reference = the higher of the BT when CHARGE
-                // arrived and the BT now (f32::max ignores a NaN operand).
-                let charge_ref_bt = self
-                    .batch
-                    .pending_charge_bt
-                    .take()
-                    .map_or(self.status.bean_temp, |b| b.max(self.status.bean_temp));
-                if self.batch.explicit_charge_seen {
-                    info!("CHARGE ignored - already marked for this batch (send DROP first)");
-                    return;
-                }
-                self.batch.explicit_charge_seen = true;
-                self.batch.batch_dropped = false;
-                self.batch.charge_detected = true;
-                self.batch.charge_time = Some(now);
-                self.status.charge_detected = true;
-                self.batch.bt_charge_history.clear();
-                self.batch.charge_history_tick_div = 0;
-                info!("CHARGE marker applied - roast budget anchored to the charge");
-                // DIFF E3: arm RoR-follow from the real charge. A follower that
-                // is already ramping (late button press) is kept as it is.
-                if !self.batch.ror_follower.is_some_and(|f| f.ramping()) {
-                    self.batch.ror_follower = None;
-                    self.maybe_start_ror_follow(charge_ref_bt);
-                    // R-1: in manual mode nothing armed; remember the marker
-                    // so the next PID;ON re-arms RoR-follow for THIS batch.
-                    self.batch.ror_resume_pending = self.batch.ror_follower.is_none();
-                }
-            }
-            RoasterState::Preheating => {
-                // Keep the marker: START / PID;ON turns Preheating into Heating.
-            }
-            _ => {
+        let roast_active = matches!(self.state, RoasterState::Heating | RoasterState::Stable);
+        let preheating = matches!(self.state, RoasterState::Preheating);
+        let can_arm = self.ror_can_arm();
+        let bean_temp = self.status.bean_temp;
+        match self
+            .batch
+            .apply_pending_charge(now, roast_active, preheating, bean_temp, can_arm)
+        {
+            MarkerOutcome::Anchored => self.status.charge_detected = true,
+            MarkerOutcome::OutsideRoast => {
                 if matches!(self.state, RoasterState::Idle)
                     && self.status.artisan_control
                     && heater_energized
@@ -1683,60 +1580,32 @@ impl RoasterControl {
                         info!("CHARGE marker applied - manual heat-session budget restarts");
                     }
                 }
-                if !in_grace {
-                    self.batch.pending_charge = false;
-                    self.batch.pending_charge_since = None;
-                    info!("CHARGE marker dropped - no roast started within the grace period");
-                }
             }
+            // Nothing for the core to do: no marker, a duplicate, or kept for the roast.
+            MarkerOutcome::NonePending | MarkerOutcome::Duplicate => {}
+            MarkerOutcome::KeptForRoast => {}
         }
     }
 
-    /// DIFF E3: arm RoR-follow when a profile is loaded and the firmware
-    /// PID is in control of a roast on the BT channel. No-op otherwise
-    /// (manual mode and `PID;CHAN;1` included: the profile is a BT rate).
-    /// `charge_bt` = BT just before the charge (R-3): the drop rule of the
-    /// turning point is measured from it.
-    fn maybe_start_ror_follow(&mut self, charge_bt: f32) {
-        self.arm_ror_follow(RorFollower::with_charge_bt(charge_bt));
-    }
-
-    /// M-7 (audit 2026-10-06): `PID;ON` after an OT1 takeover that spanned
-    /// the charge. The drop may be over, so use `RorFollower::resumed()`.
-    /// R-1 (audit 2026-10-09): only for a CHARGE *marker* applied during the
-    /// takeover (`ror_resume_pending`). An old `charge_time` (kept after DROP
-    /// as the budget anchor) or an automatic `#CHARGE` (a door dip can trip
-    /// it) never re-arms RoR-follow: `resumed()` skips the drop rule.
-    fn maybe_resume_ror_follow(&mut self) {
-        if self.batch.ror_resume_pending {
-            self.batch.ror_resume_pending = false;
-            self.arm_ror_follow(RorFollower::resumed());
-        }
-    }
-
-    /// Shared arming conditions for RoR-follow (profile loaded, firmware PID
-    /// in control of a roast on the BT channel, no follower yet).
-    fn arm_ror_follow(&mut self, follower: RorFollower) {
-        if self.batch.ror_follower.is_none()
-            && self.ror_profile.is_some()
+    /// DIFF E3 / CORE-5: RoR-follow may arm when a profile is loaded and the
+    /// firmware PID is in control of a roast on the BT channel (manual mode
+    /// and `PID;CHAN;1` excluded: the profile is a BT rate).
+    fn ror_can_arm(&self) -> bool {
+        self.ror_profile.is_some()
             && self.control_mode().firmware_pid()
             && self.status.pid_channel != 1
             && matches!(self.state, RoasterState::Heating | RoasterState::Stable)
-        {
-            self.batch.ror_follower = Some(follower);
-            info!("RoR-follow armed - waiting for the turning point");
-        }
+    }
+
+    /// M-7 / R-1: `PID;ON` after an OT1 takeover (`BatchState::resume_follower`).
+    fn maybe_resume_ror_follow(&mut self) {
+        let can_arm = self.ror_can_arm();
+        self.batch.resume_follower(can_arm);
     }
 
     /// DIFF E3: stop RoR-follow (the PID keeps its current setpoint).
     fn stop_ror_follow(&mut self) {
-        if self.batch.ror_follower.is_some() {
-            info!("RoR-follow stopped");
-        }
-        self.batch.ror_follower = None;
-        self.batch.ror_target_c_per_min = 0.0;
-        // R-1: whatever ended RoR-follow also cancels a pending re-arm.
-        self.batch.ror_resume_pending = false;
+        self.batch.stop_follower();
     }
 
     /// DIFF E3: `RORPROFILE;...` — convert °F/min to °C/min, validate, store.
@@ -2071,25 +1940,13 @@ impl RoasterControl {
     fn start_roast_handoff(&mut self, via_pid_on: bool, now: Instant) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
         self.pid_on_session = via_pid_on;
-        // DIFF E1: a new roast starts a new batch. `pending_charge` is KEPT:
-        // Artisan's pidOnCHARGE may send CHARGE right before PID;ON.
-        self.batch.explicit_charge_seen = false;
-        self.batch.batch_dropped = false;
-        self.stop_ror_follow();
-        // Reset the charge-detection state on START so every path into a
-        // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
-        // a STOP (PREHEAT → START cadence). Clearing here makes START
-        // idempotent for every path into a new roast.
-        // Clear the history deque and its sampling divider too — otherwise
-        // the deque would still hold the previous batch's pre-charge BT
-        // and the first samples of the new batch would compare fresh BT
-        // against the old batch's values and fire a FALSE `#CHARGE`,
-        // also disabling the real detection for the rest of the batch.
-        self.batch.charge_detected = false;
-        self.batch.charge_time = None;
+        // DIFF E1: a new roast starts a new batch (`BatchState::on_new_roast`:
+        // detection reset so every path into a new roast re-arms `#CHARGE` —
+        // also a batch that ends WITHOUT a STOP, PREHEAT → START cadence; the
+        // pending CHARGE marker is KEPT, Artisan's pidOnCHARGE may send it
+        // right before PID;ON).
+        self.batch.on_new_roast();
         self.status.charge_detected = false;
-        self.batch.bt_charge_history.clear();
-        self.batch.charge_history_tick_div = 0;
         // Reset the manual heat-session clock on START. The 30-minute
         // MAX_ROAST_TIME budget then anchors to `profile_start_time` (set
         // below) — preheat time (which can legitimately exceed half an
@@ -2425,16 +2282,7 @@ impl RoasterControl {
         // sends PID;SV right after PID;ON (pidOnCHARGE) — keep the follower.
         // R-4 (audit 2026-10-09): ...except in the first ramp steps, where it
         // is the tail of Artisan's PID ON burst (`in_sv_grace`).
-        if self
-            .batch
-            .ror_follower
-            .is_some_and(|f| f.ramping() && !f.in_sv_grace())
-        {
-            self.stop_ror_follow();
-        }
-        // R-1: an explicit SV is the operator's setpoint; a CHARGE marker sent
-        // during an OT1 takeover must not re-arm RoR-follow on a later PID;ON.
-        self.batch.ror_resume_pending = false;
+        self.batch.on_setpoint_override();
         let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
@@ -2594,10 +2442,8 @@ impl RoasterControl {
         // still kept for the following START / PID;ON. R-5 (audit
         // 2026-10-09): a PREHEAT re-sent DURING Preheating (new target) is the
         // same session — keep its marker.
-        if !matches!(self.state, RoasterState::Preheating) {
-            self.batch.pending_charge = false;
-            self.batch.pending_charge_since = None;
-        }
+        let already_preheating = matches!(self.state, RoasterState::Preheating);
+        self.batch.on_preheat(already_preheating);
         self.preheat_target = Some(target_celsius);
         // Drop the cooldown latch on a deliberate re-energize — same
         // justification as `handle_start_roast`. Otherwise a consecutive batch
@@ -2843,21 +2689,16 @@ impl RoasterControl {
         // the setpoint used to freeze. The temperature profile below is
         // suspended while RoR-follow runs; the F-C8 cap is applied right here
         // and again inside the PID cycle.
-        if let (Some(follower), Some(profile), Some(charge)) = (
-            self.batch.ror_follower.as_mut(),
-            self.ror_profile.as_ref(),
-            self.batch.charge_time,
-        ) {
-            let elapsed = current_time.saturating_duration_since(charge).as_micros() as f32 * 1e-6;
-            match follower.step(profile, elapsed, self.status.bean_temp) {
-                RorStep::WaitingTurningPoint => self.batch.ror_target_c_per_min = 0.0,
-                RorStep::Setpoint { sv, target_ror } => {
-                    self.batch.ror_target_c_per_min = target_ror;
-                    let sv = self.cap_pid_target(sv);
-                    self.status.target_temp = sv;
-                    let _ = self.dispatch.set_pid_target(sv);
-                }
-            }
+        let step = match self.ror_profile.as_ref() {
+            Some(profile) => self
+                .batch
+                .follow_step(profile, current_time, self.status.bean_temp),
+            None => None,
+        };
+        if let Some(RorStep::Setpoint { sv, .. }) = step {
+            let sv = self.cap_pid_target(sv);
+            self.status.target_temp = sv;
+            let _ = self.dispatch.set_pid_target(sv);
         }
 
         let should_update = if let Some(last_update) = self.last_pid_update {
