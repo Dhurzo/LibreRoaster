@@ -168,6 +168,11 @@ pub struct RoasterControl {
     /// DIFF E1: tick time of the first attempt to apply the pending marker
     /// (start of the `CHARGE_MARKER_GRACE_SECS` window).
     pending_charge_since: Option<Instant>,
+    /// R-3 (audit 2026-10-09): highest BT seen when CHARGE commands of the
+    /// pending marker arrived — the reference for the RoR-follow drop rule.
+    /// Reset by `handle_charge` whenever no marker is pending; consumed when
+    /// the marker is applied in a roast.
+    pending_charge_bt: Option<f32>,
     /// DIFF E1: an explicit CHARGE already anchored this batch. Cleared by
     /// DROP, by a new roast handoff and by `stop_streaming`.
     explicit_charge_seen: bool,
@@ -241,6 +246,7 @@ impl RoasterControl {
             manual_charge_history: heapless::Deque::new(),
             pending_charge: false,
             pending_charge_since: None,
+            pending_charge_bt: None,
             explicit_charge_seen: false,
             ror_resume_pending: false,
             batch_dropped: false,
@@ -992,7 +998,9 @@ impl RoasterControl {
                             // DIFF E3: an automatic charge also arms RoR-follow,
                             // except after a DROP (R-2): then only a CHARGE marker does.
                             if !self.batch_dropped {
-                                self.maybe_start_ror_follow();
+                                // R-3: `first` = BT at the start of the 3 s
+                                // window, i.e. before the drop began.
+                                self.maybe_start_ror_follow(first);
                             }
                             // H5: the `#CHARGE` wire line is only useful to a
                             // host that opted into spontaneous `#` traffic —
@@ -1591,6 +1599,16 @@ impl RoasterControl {
         if grams.is_some() {
             self.batch_grams = grams;
         }
+        // R-3: remember the BT at the moment the beans go in (a value, not a
+        // time stamp, so the command clock rule is respected). A stale value
+        // from an earlier, already consumed or dropped marker is discarded.
+        if !self.pending_charge {
+            self.pending_charge_bt = None;
+        }
+        let bt = self.status.bean_temp;
+        if bt.is_finite() {
+            self.pending_charge_bt = Some(self.pending_charge_bt.map_or(bt, |b| b.max(bt)));
+        }
         self.pending_charge = true;
         info!("Artisan+ CHARGE marker received (batch {:?} g)", grams);
         Ok(())
@@ -1635,6 +1653,12 @@ impl RoasterControl {
             RoasterState::Heating | RoasterState::Stable => {
                 self.pending_charge = false;
                 self.pending_charge_since = None;
+                // R-3: drop reference = the higher of the BT when CHARGE
+                // arrived and the BT now (f32::max ignores a NaN operand).
+                let charge_ref_bt = self
+                    .pending_charge_bt
+                    .take()
+                    .map_or(self.status.bean_temp, |b| b.max(self.status.bean_temp));
                 if self.explicit_charge_seen {
                     info!("CHARGE ignored - already marked for this batch (send DROP first)");
                     return;
@@ -1651,7 +1675,7 @@ impl RoasterControl {
                 // is already ramping (late button press) is kept as it is.
                 if !self.ror_follower.is_some_and(|f| f.ramping()) {
                     self.ror_follower = None;
-                    self.maybe_start_ror_follow();
+                    self.maybe_start_ror_follow(charge_ref_bt);
                     // R-1: in manual mode nothing armed; remember the marker
                     // so the next PID;ON re-arms RoR-follow for THIS batch.
                     self.ror_resume_pending = self.ror_follower.is_none();
@@ -1685,8 +1709,10 @@ impl RoasterControl {
     /// DIFF E3: arm RoR-follow when a profile is loaded and the firmware
     /// PID is in control of a roast on the BT channel. No-op otherwise
     /// (manual mode and `PID;CHAN;1` included: the profile is a BT rate).
-    fn maybe_start_ror_follow(&mut self) {
-        self.arm_ror_follow(RorFollower::new());
+    /// `charge_bt` = BT just before the charge (R-3): the drop rule of the
+    /// turning point is measured from it.
+    fn maybe_start_ror_follow(&mut self, charge_bt: f32) {
+        self.arm_ror_follow(RorFollower::with_charge_bt(charge_bt));
     }
 
     /// M-7 (audit 2026-10-06): `PID;ON` after an OT1 takeover that spanned

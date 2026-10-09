@@ -28,8 +28,9 @@ pub const ROR_FOLLOW_TP_RISE_C: f32 = 0.5;
 /// drops BT 40–100 °C. M-1 (audit 2026-10-06): 20 °C rejects a door/tryer
 /// dip that tripped the automatic #CHARGE detector in an empty drum.
 pub const ROR_FOLLOW_MIN_DROP_C: f32 = 20.0;
-/// Fallback: start ramping this long after the charge even if no turning
-/// point was seen (slow probe, tiny batch).
+/// Fallback: once the charge drop was seen, start ramping this long after
+/// the charge even if BT never rose `ROR_FOLLOW_TP_RISE_C` (slow probe).
+/// Without the drop there is no ramp at all (M-1).
 pub const ROR_FOLLOW_TP_TIMEOUT_SECS: f32 = 180.0;
 /// Largest time step (s) integrated at once. Longer gaps restart the
 /// integration from the current setpoint instead of jumping.
@@ -47,7 +48,8 @@ pub enum RorStep {
 /// Setpoint generator state for one roast.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RorFollower {
-    /// BT at the first step after the charge.
+    /// BT at the charge: seeded by `with_charge_bt` (BT just before the
+    /// charge), otherwise the BT at the first step.
     charge_bt: Option<f32>,
     /// False for a follower created after the charge already happened
     /// (`resumed()`): the drop may be over, so only the rise is required.
@@ -82,6 +84,23 @@ impl RorFollower {
     pub fn resumed() -> Self {
         Self {
             require_drop: false,
+            ..Self::new()
+        }
+    }
+
+    /// Fresh follower whose drop is measured from `charge_bt` (BT just BEFORE
+    /// the charge) instead of the BT at its first step. R-3 (audit
+    /// 2026-10-09): a follower created after the drop began (marker held
+    /// through Preheating, automatic detection 6 °C into the drop) would
+    /// otherwise miss most of the drop and never ramp. A non-finite value
+    /// falls back to `new()`.
+    pub fn with_charge_bt(charge_bt: f32) -> Self {
+        Self {
+            charge_bt: if charge_bt.is_finite() {
+                Some(charge_bt)
+            } else {
+                None
+            },
             ..Self::new()
         }
     }
@@ -237,6 +256,23 @@ mod tests {
             f.step(&p, ROR_FOLLOW_TP_TIMEOUT_SECS, 89.0),
             RorStep::Setpoint { .. }
         ));
+    }
+
+    #[test]
+    fn seeded_follower_counts_the_drop_before_it_was_created() {
+        // R-3: created at the bottom of the drop (BT 105) after a charge at
+        // BT 200. A plain `new()` would take 105 as the charge BT.
+        let p = profile(&[(0, 10.0)]);
+        let mut f = RorFollower::with_charge_bt(200.0);
+        assert_eq!(f.step(&p, 50.0, 105.0), RorStep::WaitingTurningPoint);
+        assert_eq!(f.step(&p, 51.0, 104.0), RorStep::WaitingTurningPoint);
+        assert!(matches!(f.step(&p, 52.0, 105.0), RorStep::Setpoint { .. }));
+        let mut plain = RorFollower::new();
+        assert_eq!(plain.step(&p, 50.0, 105.0), RorStep::WaitingTurningPoint);
+        assert_eq!(plain.step(&p, 51.0, 104.0), RorStep::WaitingTurningPoint);
+        assert_eq!(plain.step(&p, 52.0, 105.0), RorStep::WaitingTurningPoint);
+        // Non-finite seed behaves like `new()`.
+        assert_eq!(RorFollower::with_charge_bt(f32::NAN), RorFollower::new());
     }
 
     #[test]
