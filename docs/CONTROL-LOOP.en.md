@@ -249,7 +249,7 @@ ServiceContainer::with_roaster_async(|roaster| {
 `src/control/roaster_control.rs:1101`
 
 ```rust
-// WHITELIST when fault_condition active: READ, STATUS, STOP, EMERGENCY_STOP, START, PREHEAT, CHAN, UNITS, FILT, STREAM
+// WHITELIST when fault_condition active: READ, STATUS, STOP, EMERGENCY_STOP, START, PREHEAT, CHAN, UNITS, FILT, STREAM, CHARGE, DROP, TUNE;STATUS, RORPROFILE;OFF
 // Others → ERR fault_condition_active
 
 match command {

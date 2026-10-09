@@ -31,22 +31,25 @@ Preconditions (all three):
   ERR), and `TUNE` is refused (`ERR handler_failed …:tune_needs_bt_channel`).
 - Artisan's **ramp/soak and background-follow must be OFF**: both send `PID;SV` repeatedly, and
   every `PID;SV` is treated as an operator override that ends RoR-follow.
-- The CHARGE marker of §1 (automatic detection also works, but the marker is exact).
+- The CHARGE marker of §1 (automatic detection also works, but the marker is exact; after a
+  DROP only the marker arms RoR-follow — the BT fall of the drop looks like a charge).
 
 Steps:
 1. Add a custom event button with action *Serial Command*, e.g.
    `RORPROFILE;0,15;300,10;600,6` (seconds since CHARGE, °C/min — °F/min if Artisan is in °F).
-   Limits: up to 16 points, 1–30 °C/min, strictly increasing times. The loaded profile stays
+   Limits: up to 16 points, 1–30 °C/min (1.8–54 °F/min in °F), strictly increasing times. The loaded profile stays
    loaded across roasts, STOP and latches until `RORPROFILE;OFF` or a reboot.
 2. Start the roast with *PID ON* as usual.
-3. Press CHARGE. RoR-follow arms; after the turning point (BT has dropped ≥ 5 °C and turned
-   up again) the PID setpoint ramps at the profile RoR, never more than 3 °C away from BT.
+3. Press CHARGE. RoR-follow arms; after the turning point (BT has dropped ≥ 20 °C below its
+   value when CHARGE was pressed and turned up again — no drop, no ramp, also after the 180 s
+   timeout) the PID setpoint ramps at the profile RoR, never more than 3 °C away from BT.
 4. Moving the `OT1` slider suspends RoR-follow (you are in manual); *PID ON* resumes it.
    Moving the SV slider (`PID;SV`), DROP, PID OFF or `RORPROFILE;OFF` end it.
-RoR-follow never acts in manual mode. A `PID;SV` before the turning point (Artisan sends one right
-after its first *PID ON*) does not end it; after the turning point it does. If the charge happens
-during an `OT1` takeover, *PID ON* re-arms RoR-follow. While it ramps, the probe-stuck detector
-stays armed (a frozen BT latches like in plain PID mode).
+RoR-follow never acts in manual mode. A `PID;SV` before the turning point or in the first ≈ 3 s
+of the ramp (Artisan sends one right after *PID ON*) does not end it; later it does. If the CHARGE
+marker is pressed during an `OT1` takeover, the next *PID ON* re-arms RoR-follow; nothing else
+re-arms it (not an automatic `#CHARGE`, not a DROP, not a `PID;SV` override). While it ramps, the
+probe-stuck detector stays armed (a frozen BT latches like in plain PID mode).
 
 ## 3. RoR target and measured RoR as Artisan curves
 Add the extra device `+ArduinoTC4_34` (Devices → Extra devices). Artisan then sends `CHAN;1234`
@@ -71,5 +74,6 @@ Without the extra device nothing changes on the wire.
 A test that ends without gains prints `ERR tune_<reason>` (`bad_base_duty`, `bad_step`,
 `probe_cold`, `no_response`, `implausible`, `too_hot`, `aborted`, `apply_failed`). These lines and
 `#TUNE …` are spontaneous (they ignore `STREAM`) and can cost Artisan one READ sample. A refused `TUNE;<n>` prints
-`ERR handler_failed <token>:tune_needs_manual_mode` (or `:tune_cooling_active`,
-`:fault_condition_active` while latched).
+`ERR handler_failed <token>:tune_needs_manual_mode` (or `:tune_needs_bt_channel` on `PID;CHAN;1`,
+`:tune_cooling_active`, `:fault_condition_active` while latched). Changing the PID channel
+(`PID;CHAN;1` ↔ `PID;CHAN;2`) unlocks tuned gains; re-sending the same channel does not.

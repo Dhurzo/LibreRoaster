@@ -277,9 +277,9 @@ Increment or decrement heater output in 5% steps.
 Emergency stop path. Heater is cut and fan is forced to 100%.
 
 `STOP` arms the safety latch: while latched, only `READ`, `STATUS`, `STOP`,
-`EmergencyStop`, `START`, `PREHEAT`, `STREAM` and the handshake commands `CHAN`/`UNITS`/`FILT` are
-accepted (other commands return
-`ERR handler_failed:fault_condition_active`). `CHAN`/`UNITS`/`FILT` are
+`EmergencyStop`, `START`, `PREHEAT`, `STREAM`, the handshake commands `CHAN`/`UNITS`/`FILT`, the
+markers `CHARGE`/`DROP`, `TUNE;STATUS` and `RORPROFILE;OFF` are accepted (other commands return
+`ERR handler_failed invalid_state:fault_condition_active`). `CHAN`/`UNITS`/`FILT` are
 admitted deliberately: they have no actuator side effects, and rejecting
 them would break Artisan reconnects (its ArduinoTC4 handshake fails on any
 non-`#` line and re-initialises forever). Recovery:
@@ -421,8 +421,8 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   `<reason>` text is a human-readable diagnostic (may contain spaces), not
   a stable contract. The line is emitted once per latch event; the STOP
   command path (operator-initiated) does not emit it.
-- `ERR probe_stuck_warning` — manual/software-PID mode, and firmware-PID hot plateaus (see below): BT has been
-  flat (< 1 °C variation) for 120 s with the heater on. Purely
+- `ERR probe_stuck_warning` — BT has been flat (< 1 °C variation) with the heater on: after 120 s
+  in manual/software-PID mode, after 300 s of a firmware-PID hot plateau (see below). Purely
   informational (a legitimately slow finish can hold BT flat at low duty);
   the latch lands at 300 s via `ERR safety_fault Probe stuck`. Emitted once
   per stuck episode. Firmware-PID mode latches directly at 120 s, except
@@ -526,7 +526,7 @@ the Artisan RoR convention — not °C/s.
 | `DROP` | Drop marker; stops RoR-follow; re-arms charge detection | none |
 | `RORPROFILE;t,ror;...` | Load RoR profile (≤ 16 points, 1–30 °C/min, increasing t) | `ERR handler_failed …:ror_profile_…` if invalid |
 | `RORPROFILE;OFF` | Unload RoR profile, stop RoR-follow (also accepted while latched) | none |
-| `TUNE;<step>` | Start step-test autotune (manual mode only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
+| `TUNE;<step>` | Start step-test autotune (manual mode, BT channel only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
 | `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report (`TUNE;STATUS` also while latched) | `TUNE;STATUS` → `#TUNE …` |
 
 Spontaneous lines of these features: `#TUNE …` and `ERR tune_<reason>` when a test ends, `ERR tune_aborted` when any non-monitoring command arrives during a test (sliders included), and `ERR probe_stuck_warning` from the firmware-PID plateau bound. `CHARGE;<g>` accepts decimals (rounded).

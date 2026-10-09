@@ -300,7 +300,7 @@ reconnect to a latched device instead of looping on "Arduino could not set
 channels/units/filters"; every re-energizing command stays rejected.
 
 The rate-of-rise guard is two-tier since the A-TC4-D audit (2026-08-12):
-soft-band exceedances (0.5–1.0 °C/s) require ~3.7 s of sustained rate
+soft-band exceedances (0.75–1.0 °C/s) require ~3.7 s of sustained rate
 before latching, so a brief light-roast turnaround spike no longer
 false-trips, while the hard band (> 1.0 °C/s) keeps the fast 3-tick latch.
 In manual/software-PID mode the probe-stuck detector is two-stage
