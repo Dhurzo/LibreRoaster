@@ -119,6 +119,12 @@ pub(crate) enum MarkerOutcome {
 /// | `on_drop(roast)` (DROP) | reset except `charge_time`, only in a roast | cleared | cleared | SET | stopped |
 /// | `on_preheat(already)` (PREHEAT) | — | cleared unless already preheating | — | — | — |
 /// | `on_setpoint_override` (`PID;SV`) | — | — | — | — | stopped if ramping past the grace window; re-arm cancelled |
+///
+/// EmergencyStop has NO method by design: the latch keeps the pending CHARGE
+/// marker and the batch state so a CHARGE sent while latched (N2) still
+/// anchors the recovered roast. Every recovery/new-roast path
+/// (`on_recovery`, `on_new_roast`) stops a stale follower on the way back,
+/// so no orphaned follower can drive the heater.
 impl BatchState {
     /// Forget the charge-detection state of the previous batch.
     fn reset_detection(&mut self) {
@@ -133,6 +139,9 @@ impl BatchState {
         self.reset_detection();
         self.pending_charge = false;
         self.pending_charge_since = None;
+        // Q3 (core audit 2026-10-09): the R-3 drop reference must not outlive
+        // the marker — with no marker pending no path may read it.
+        self.pending_charge_bt = None;
         self.explicit_charge_seen = false;
         self.batch_dropped = false;
         self.stop_follower();
@@ -161,6 +170,8 @@ impl BatchState {
         self.stop_follower();
         self.pending_charge = false;
         self.pending_charge_since = None;
+        // Q3: the stale R-3 reference dies with the marker.
+        self.pending_charge_bt = None;
         self.explicit_charge_seen = false;
         // R-2: no RoR-follow for this drum until a CHARGE marker says there
         // are beans in it again.
@@ -178,6 +189,8 @@ impl BatchState {
         if !already_preheating {
             self.pending_charge = false;
             self.pending_charge_since = None;
+            // Q3: a fresh PREHEAT ends the earlier session with the marker.
+            self.pending_charge_bt = None;
         }
     }
 
@@ -419,6 +432,30 @@ mod tests {
             b.batch_grams,
             Some(250),
             "the weight is reported, never cleared"
+        );
+    }
+
+    #[test]
+    fn q3_batch_end_forgets_the_stale_charge_reference() {
+        // The R-3 drop reference must not outlive the marker: with no marker
+        // pending, no path may read a stale BT as the next roast's reference.
+        let mut stopped = busy();
+        stopped.on_stop();
+        assert!(
+            stopped.pending_charge_bt.is_none(),
+            "Q3: on_stop must forget the stale charge reference"
+        );
+        let mut dropped = busy();
+        dropped.on_drop(true);
+        assert!(
+            dropped.pending_charge_bt.is_none(),
+            "Q3: on_drop must forget the stale charge reference"
+        );
+        let mut preheated = busy();
+        preheated.on_preheat(false);
+        assert!(
+            preheated.pending_charge_bt.is_none(),
+            "Q3: a fresh PREHEAT must forget the stale charge reference"
         );
     }
 
