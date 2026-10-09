@@ -317,13 +317,18 @@ fn s2_profile_fan_and_ror_across_full_roast() {
     let t0 = Instant::now();
 
     // Load PROFILE + FANPROFILE exactly as Artisan does, then START.
+    // CI (core audit 2026-10-09): stamp the commands on the SYNTHETIC clock
+    // (`tick_time(t0, 0)`) so `profile_start_time == t0` exactly. Stamping
+    // with the real clock left an ε ∈ (0, 1 s] anchor offset that shifted
+    // the elapsed-second floor under parallel-binary load and flaked the
+    // exact fan-interpolation asserts below.
     libreroaster::input::parser::store_profile(medium_profile());
-    ctrl.process_artisan_command(ArtisanCommand::SetProfile)
+    ctrl.process_artisan_command_at(ArtisanCommand::SetProfile, tick_time(t0, 0))
         .expect("profile");
     libreroaster::input::parser::fan_profile_store(medium_fan_profile());
-    ctrl.process_artisan_command(ArtisanCommand::SetFanProfile)
+    ctrl.process_artisan_command_at(ArtisanCommand::SetFanProfile, tick_time(t0, 0))
         .expect("fan profile");
-    ctrl.process_artisan_command(ArtisanCommand::StartRoast)
+    ctrl.process_artisan_command_at(ArtisanCommand::StartRoast, tick_time(t0, 0))
         .expect("start");
     assert_eq!(ctrl.get_state(), RoasterState::Heating);
 
@@ -373,22 +378,20 @@ fn s2_profile_fan_and_ror_across_full_roast() {
 
     // ── Fan follows FANPROFILE (30 → 50 → 70) ───────────────────────────
     // FANPROFILE is LINEARLY INTERPOLATED between setpoints with
-    // (interp + 0.5) as u8 rounding (constants.rs:367-370). The elapsed
-    // floor is `(t - real_profile_start) / 1000`; the real anchor sits
-    // ε ∈ (0, 1 s] after t0, so elapsed at n is one second SHORT of
-    // 310·n/1000:
-    //   n=100 → 30 s   → between (0,30)/(300,50): 30 + 20·30/300 = 32
-    //   n=1100 → 340 s → between (300,50)/(480,70): 50 + 20·40/180 ≈ 54.44 → 54
-    //   n=1600 → 495 s → past 480 s: 70 (last setpoint)
+    // (interp + 0.5) as u8 rounding (constants.rs:367-370). The START above
+    // is stamped at exactly t0, so elapsed at tick n is precisely 310·n ms:
+    //   n=100 → 31 s   → between (0,30)/(300,50): 30 + 20·31/300 ≈ 32.07 → 32
+    //   n=1100 → 341 s → between (300,50)/(480,70): 50 + 20·41/180 ≈ 54.56 → 55
+    //   n=1600 → 496 s → past 480 s: 70 (last setpoint)
     assert_eq!(
         fan_seen_at_100,
         Some(32.0),
-        "fan at ~31 s must interpolate to 32 %"
+        "fan at 31 s must interpolate to 32 %"
     );
     assert_eq!(
         fan_seen_at_1100,
-        Some(54.0),
-        "fan at ~341 s must interpolate to 54 %"
+        Some(55.0),
+        "fan at 341 s must interpolate to 55 %"
     );
     assert_eq!(
         fan_seen_at_1600,
