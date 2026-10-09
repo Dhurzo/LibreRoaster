@@ -14,6 +14,7 @@ use crate::control::controllers::{
     ActuatorController, CommandDispatchResult, CommandDispatcher, SafetyController,
     SensorController,
 };
+use crate::control::mode::{ControlMode, ModeFlags};
 use crate::control::pid::PidFeedback;
 use crate::control::ror_follow::{RorFollower, RorStep};
 use crate::control::traits::{Fan, Heater};
@@ -799,9 +800,8 @@ impl RoasterControl {
         );
         let comms_idle = heater_energized || roast_active;
 
-        let pid_preheating = matches!(self.state, RoasterState::Preheating)
-            && self.status.pid_enabled
-            && !self.status.artisan_control;
+        let mode = self.control_mode();
+        let pid_preheating = matches!(self.state, RoasterState::Preheating) && mode.firmware_pid();
         let max_roast_time_armed = (heater_energized && !pid_preheating)
             || matches!(self.state, RoasterState::Heating | RoasterState::Stable);
         let time_budget = if max_roast_time_armed {
@@ -816,7 +816,7 @@ impl RoasterControl {
             None
         };
 
-        let firmware_in_control = !self.status.artisan_control;
+        let firmware_in_control = mode.firmware_in_control();
         let ror = firmware_in_control
             && (matches!(self.state, RoasterState::Heating | RoasterState::Stable)
                 || (matches!(self.state, RoasterState::Idle)
@@ -1771,8 +1771,7 @@ impl RoasterControl {
     fn arm_ror_follow(&mut self, follower: RorFollower) {
         if self.ror_follower.is_none()
             && self.ror_profile.is_some()
-            && self.status.pid_enabled
-            && !self.status.artisan_control
+            && self.control_mode().firmware_pid()
             && self.status.pid_channel != 1
             && matches!(self.state, RoasterState::Heating | RoasterState::Stable)
         {
@@ -1828,7 +1827,7 @@ impl RoasterControl {
         use crate::config::TuneCommand;
         match cmd {
             TuneCommand::Start(step) => {
-                if !self.status.artisan_control || self.status.pid_enabled {
+                if !self.control_mode().operator_manual() {
                     return Err(RoasterError::InvalidState {
                         source: Some("tune_needs_manual_mode"),
                     });
@@ -1879,10 +1878,7 @@ impl RoasterControl {
     /// the test is driving, or `None` when no test is running. Never runs
     /// while latched or outside manual mode.
     fn advance_tune(&mut self, now: Instant) -> Option<f32> {
-        if self.safety.is_emergency_active()
-            || !self.status.artisan_control
-            || self.status.pid_enabled
-        {
+        if self.safety.is_emergency_active() || !self.control_mode().operator_manual() {
             self.abort_tune();
             return None;
         }
@@ -2013,7 +2009,17 @@ impl RoasterControl {
     /// suspended (nothing moves the setpoint); `PID;ON` resumes it, `PID;SV`
     /// ends it.
     pub fn ror_follow_active(&self) -> bool {
-        self.ror_follower.is_some() && self.status.pid_enabled && !self.status.artisan_control
+        self.control_mode() == ControlMode::RorFollow
+    }
+
+    /// CORE-2: who drives the heater, derived from the stored flags.
+    pub fn control_mode(&self) -> ControlMode {
+        ControlMode::derive(ModeFlags {
+            pid_enabled: self.status.pid_enabled,
+            artisan_control: self.status.artisan_control,
+            tune_active: self.tune_running(),
+            follower_present: self.ror_follower.is_some(),
+        })
     }
 
     /// DIFF E3: profile RoR being followed (°C/min; 0.0 before the turning

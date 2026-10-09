@@ -12,6 +12,8 @@ pub mod autotune;
 pub mod controllers;
 /// Artisan/TC4 command handlers producing policy outcomes.
 pub mod handlers;
+/// Who drives the heater, derived from the stored flags (CORE-2, pure logic).
+pub mod mode;
 /// Bean-temperature PID controller with anti-windup protection.
 pub mod pid;
 /// Policy outcome types and the manual/safety policy traits.
