@@ -171,6 +171,12 @@ pub struct RoasterControl {
     /// DIFF E1: an explicit CHARGE already anchored this batch. Cleared by
     /// DROP, by a new roast handoff and by `stop_streaming`.
     explicit_charge_seen: bool,
+    /// R-1 (audit 2026-10-09): a CHARGE marker was applied while the PID was
+    /// not in control (OT1 takeover), so RoR-follow could not arm. The next
+    /// bumpless `PID;ON` arms it (`maybe_resume_ror_follow`) and clears this.
+    /// Cleared by `stop_ror_follow` (DROP, STOP, latch, recovery, new roast,
+    /// `RORPROFILE;OFF`, `PID;CHAN;1`) and by any `PID;SV`.
+    ror_resume_pending: bool,
     /// DIFF E1: batch weight from `CHARGE;<grams>` (Artisan `{WEIGHTin}`).
     batch_grams: Option<u16>,
     /// DIFF E3: loaded RoR profile (°C/min against seconds since charge).
@@ -230,6 +236,7 @@ impl RoasterControl {
             pending_charge: false,
             pending_charge_since: None,
             explicit_charge_seen: false,
+            ror_resume_pending: false,
             batch_grams: None,
             ror_profile: None,
             ror_follower: None,
@@ -1629,6 +1636,9 @@ impl RoasterControl {
                 if !self.ror_follower.is_some_and(|f| f.ramping()) {
                     self.ror_follower = None;
                     self.maybe_start_ror_follow();
+                    // R-1: in manual mode nothing armed; remember the marker
+                    // so the next PID;ON re-arms RoR-follow for THIS batch.
+                    self.ror_resume_pending = self.ror_follower.is_none();
                 }
             }
             RoasterState::Preheating => {
@@ -1665,8 +1675,13 @@ impl RoasterControl {
 
     /// M-7 (audit 2026-10-06): `PID;ON` after an OT1 takeover that spanned
     /// the charge. The drop may be over, so use `RorFollower::resumed()`.
+    /// R-1 (audit 2026-10-09): only for a CHARGE *marker* applied during the
+    /// takeover (`ror_resume_pending`). An old `charge_time` (kept after DROP
+    /// as the budget anchor) or an automatic `#CHARGE` (a door dip can trip
+    /// it) never re-arms RoR-follow: `resumed()` skips the drop rule.
     fn maybe_resume_ror_follow(&mut self) {
-        if self.charge_time.is_some() {
+        if self.ror_resume_pending {
+            self.ror_resume_pending = false;
             self.arm_ror_follow(RorFollower::resumed());
         }
     }
@@ -1693,6 +1708,8 @@ impl RoasterControl {
         }
         self.ror_follower = None;
         self.ror_target_c_per_min = 0.0;
+        // R-1: whatever ended RoR-follow also cancels a pending re-arm.
+        self.ror_resume_pending = false;
     }
 
     /// DIFF E3: `RORPROFILE;...` — convert °F/min to °C/min, validate, store.
@@ -2374,6 +2391,9 @@ impl RoasterControl {
         if self.ror_follower.is_some_and(|f| f.ramping()) {
             self.stop_ror_follow();
         }
+        // R-1: an explicit SV is the operator's setpoint; a CHARGE marker sent
+        // during an OT1 takeover must not re-arm RoR-follow on a later PID;ON.
+        self.ror_resume_pending = false;
         let target_celsius = self.cap_pid_target(target_celsius);
         self.status.target_temp = target_celsius;
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable)
