@@ -110,8 +110,21 @@ fn handle_complete_usb_command(command: &[u8]) {
     match parse_result {
         Ok(cmd) => {
             let traced = TracedCommand::new(cmd, CommChannel::Usb);
+            // BUG-2c-1 discipline (audit 2026-10-04, extended to the legacy
+            // path by the 2026-10-09 core audit): the parser stages a
+            // PROFILE/FANPROFILE/RORPROFILE payload at parse time, so a
+            // command dropped below (channel full) must drop its staged
+            // payload too — otherwise the orphaned FIFO entry is silently
+            // applied by the NEXT roast. Capture the kind before `cmd` moves.
+            let is_profile_cmd = matches!(
+                cmd,
+                crate::config::ArtisanCommand::SetProfile
+                    | crate::config::ArtisanCommand::SetFanProfile
+                    | crate::config::ArtisanCommand::SetRorProfile
+            );
             let mut should_process = true;
             let mut sent = false;
+            let mut channel_full = false;
 
             critical_section::with(|cs| {
                 let multiplexer = ServiceContainer::get_multiplexer();
@@ -129,10 +142,15 @@ fn handle_complete_usb_command(command: &[u8]) {
                         }
                         Err(_) => {
                             debug!("USB artisan channel full, command dropped");
+                            channel_full = true;
                         }
                     }
                 }
             });
+
+            if channel_full && is_profile_cmd {
+                crate::input::parser::clear_staged_profiles();
+            }
 
             if sent {
                 crate::application::queue_metrics::record_queue_depth(
