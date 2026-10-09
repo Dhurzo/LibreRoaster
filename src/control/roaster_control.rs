@@ -2595,9 +2595,13 @@ impl RoasterControl {
         let target_celsius = self.cap_pid_target(target_celsius);
         // M-3 (audit 2026-10-06): a CHARGE marker that predates this PREHEAT
         // belongs to an earlier session; markers sent during Preheating are
-        // still kept for the following START / PID;ON.
-        self.pending_charge = false;
-        self.pending_charge_since = None;
+        // still kept for the following START / PID;ON. R-5 (audit
+        // 2026-10-09): a PREHEAT re-sent DURING Preheating (new target) is the
+        // same session — keep its marker.
+        if !matches!(self.state, RoasterState::Preheating) {
+            self.pending_charge = false;
+            self.pending_charge_since = None;
+        }
         self.preheat_target = Some(target_celsius);
         // Drop the cooldown latch on a deliberate re-energize — same
         // justification as `handle_start_roast`. Otherwise a consecutive batch
