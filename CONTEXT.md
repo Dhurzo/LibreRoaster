@@ -57,14 +57,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
  - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-  - ✅ All host tests pass (**884 as of 2026-10-09**, `--lib --tests` serial, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+  - ✅ All host tests pass (**906 as of 2026-10-09, after the CORE refactor**, `--lib --tests` serial, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 884 host tests pass, ESP32 build warning-free
+- All 906 host tests pass, ESP32 build warning-free; control-core rules in `docs/CONTROL_CORE.md`
 
 **Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
 - H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)

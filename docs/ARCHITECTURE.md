@@ -163,6 +163,8 @@ The v5.4 refactoring split responsibilities into four controller submodules
 
 But the architectural truth remains the same: `RoasterControl` is the single object where protocol intent becomes hardware behavior.
 
+Since the CORE refactor (2026-10-09) three concerns live in small pure modules next to it — `mode.rs` (`ControlMode`), `batch.rs` (`BatchState`) and `probe_stuck.rs` (`ProbeStuckDetector`) — and a golden-trace test (`tests/core_golden.rs`) freezes the behaviour of the whole core. Read [`CONTROL_CORE.md`](CONTROL_CORE.md) before changing anything in `src/control/`.
+
 ### State model
 
 The high-level firmware states are (`src/config/constants.rs:240-251`):
