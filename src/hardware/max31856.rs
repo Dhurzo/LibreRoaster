@@ -420,6 +420,11 @@ where
     /// Async temperature read with retry logic.
     /// Attempts up to max_retries + 1 times (so max_retries=2 means 3 total attempts).
     /// Waits fixed 10ms between retries using embassy-time Timer.
+    ///
+    /// Q6 (core audit 2026-10-09): each attempt costs a full ~210 ms
+    /// conversion wait — do NOT call this in the control-loop tick (it blows
+    /// the ~310 ms tick toward the 1000 ms software-watchdog trip). No
+    /// in-loop callers today.
     pub async fn read_with_retry(&mut self, max_retries: u8) -> Result<f32, Max31856Error> {
         let mut last_error = Max31856Error::CommunicationError {
             source: "retry_limit_reached",

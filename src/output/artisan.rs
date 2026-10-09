@@ -118,7 +118,7 @@ impl ArtisanFormatter {
         extras: Option<ExtraChannels>,
     ) -> HeaplessString<REPORT_BUFFER_SIZE> {
         // `ambient_temp` is the cold-junction temperature in °C (not converted to °F).
-        // Emit the raw value so AMB stays 0.0 in both scales, matching PROTOCOL §4.
+        // Emit the raw CJ mean so AMB tracks ambient in both scales (H13).
         let amb = Self::normalize_read_value(status.ambient_temp);
         let et = Self::normalize_read_value(
             status

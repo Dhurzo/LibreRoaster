@@ -339,7 +339,9 @@ impl CoffeeRoasterPid {
         let max_gap_ms = self.cycle_time_ms.saturating_mul(2).max(2_000);
 
         if let Some(last_ms) = self.last_update_ms {
-            let delta = timestamp_ms.saturating_sub(last_ms);
+            // Q2 (core audit 2026-10-09): modular subtraction across the u32
+            // millis wrap (~49.7 days) — the delta is real elapsed time.
+            let delta = timestamp_ms.wrapping_sub(last_ms);
             if delta > max_gap_ms {
                 return (default_seconds, true);
             }
@@ -875,6 +877,24 @@ mod tests {
         assert!(
             min_integrator >= -1000.0,
             "B6: integrator must be anti-windup bounded (negative rail), min={min_integrator}"
+        );
+    }
+
+    #[test]
+    fn q2_ms_wrap_measures_the_wrapped_delta() {
+        // u32 millis wrap (~49.7 days): the delta across the wrap is real
+        // elapsed time, not zero.
+        let mut pid = CoffeeRoasterPid::with_gains(0.0, 0.1, 0.0);
+        pid.enable();
+        pid.set_target(100.0).unwrap();
+        let _ = pid.compute_output(90.0, u32::MAX - 500);
+        let i0 = pid.integrator_value();
+        let _ = pid.compute_output(90.0, 200);
+        let want = 10.0 * (200u32.wrapping_sub(u32::MAX - 500) as f32 / 1000.0);
+        assert!(
+            (pid.integrator_value() - i0 - want).abs() < 1e-4,
+            "Q2: wrapped delta must be 701 ms, integrator={}",
+            pid.integrator_value()
         );
     }
 }

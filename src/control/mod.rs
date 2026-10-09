@@ -8,14 +8,20 @@
 pub mod abstractions;
 /// Step-test PID autotune (pure logic, DIFF E4).
 pub mod autotune;
+/// State of one batch of beans: charge detection, markers, RoR-follow (CORE-4).
+pub mod batch;
 /// Focused controllers: sensor, actuator (heater+fan), safety and command dispatch.
 pub mod controllers;
 /// Artisan/TC4 command handlers producing policy outcomes.
 pub mod handlers;
+/// Who drives the heater, derived from the stored flags (CORE-2, pure logic).
+pub mod mode;
 /// Bean-temperature PID controller with anti-windup protection.
 pub mod pid;
 /// Policy outcome types and the manual/safety policy traits.
 pub mod policies;
+/// Probe-stuck detector: rules and episode state (CORE-6, pure logic).
+pub mod probe_stuck;
 /// Central `RoasterControl` facade: state machine, safety latches, single hardware writer.
 pub mod roaster_control;
 /// RoR-follow setpoint generator (pure logic, DIFF E3).

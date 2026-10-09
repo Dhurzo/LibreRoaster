@@ -31,7 +31,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 | Firmware compiles for ESP32-C3 target | ✅ Tested on target ESP32 |
 | Firmware flashes to ESP32-C3 | ✅ Tested on target ESP32 |
 | Boot without panics, runs on target ESP32 | ✅ Tested on target ESP32 |
-| 884 host-side unit + integration tests (`--lib --tests`, serial run) | ✅ Tested on target ESP32 (Synthetic Integration Test)|
+| 906 host-side unit + integration tests (`--lib --tests`, serial run) | ✅ Tested on target ESP32 (Synthetic Integration Test)|
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Tested |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested |
 | PID control, profiles, safety interlocks | ✅ Tested |
@@ -198,7 +198,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **884 unit + integration tests** run on x86_64 (`--lib --tests`; advanced Artisan features: [`docs/ARTISAN_ADVANCED.md`](docs/ARTISAN_ADVANCED.md); hazards and evidence: [`docs/SAFETY_CASE.md`](docs/SAFETY_CASE.md)):
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **906 unit + integration tests** run on x86_64 (`--lib --tests`; advanced Artisan features: [`docs/ARTISAN_ADVANCED.md`](docs/ARTISAN_ADVANCED.md); hazards and evidence: [`docs/SAFETY_CASE.md`](docs/SAFETY_CASE.md)):
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test

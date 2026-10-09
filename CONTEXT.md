@@ -28,7 +28,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:212-229`) plus the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via `executor.run` in `src/main.rs:261-263`):
+The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:205-224`) plus the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via `executor.run` in `src/main.rs:261-263`):
 
 1. **USB reader** — gathers bytes from native USB CDC and parses commands
 2. **UART reader** — gathers bytes from UART0 and parses commands
@@ -57,14 +57,14 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
  - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-  - ✅ All host tests pass (**884 as of 2026-10-09**, `--lib --tests` serial, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+  - ✅ All host tests pass (**906 as of 2026-10-09, after the CORE refactor**, `--lib --tests` serial, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
 - ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
 - 24 clippy warnings fixed, 17 files quality-improved
-- All 884 host tests pass, ESP32 build warning-free
+- All 906 host tests pass, ESP32 build warning-free; control-core rules in `docs/CONTROL_CORE.md`
 
 **Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
 - H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)
@@ -110,7 +110,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - Handshake commands `CHAN`/`UNITS`/`FILT` are accepted while the safety latch is armed (zero actuator side effects) — Artisan can reconnect to a latched device instead of looping on "Arduino could not set channels/units/filters". All re-energizing commands remain rejected while latched.
 - Golden-transcript replay suite (`tests/artisan_transcript_replay.rs` + `tests/fixtures/artisan_transcripts/*.txt`) pins the wire contract against real Artisan session bytes; `tests/pipeline_soak.rs` stress-tests the full pipeline; T-B4 covers byte-level interleave across two transports; degenerate PROFILE/FANPROFILE shapes tested at the control layer.
 - CI coverage job now instruments `regression` + `simulated-sensors` (previously the conversion math and L3 pipeline showed as uncovered).
-- **Light-roast verification (A-TC4-D, 2026-08-12):** the RoR guard is two-tier. Soft band (`0.5..=1.0 °C/s`, `MAX_BT_RATE_OF_RISE`..`MAX_BT_RATE_OF_RISE_HARD`) requires `ROR_SOFT_DEBOUNCE_LIMIT` (12) consecutive exceedances (~3.7 s) before latching — a ~3 s light-roast turnaround spike (0.6 °C/s) no longer false-trips. Hard band (> `1.0 °C/s`) keeps the original fast 3-tick latch. Both `check_bt_rate` and `check_rate_of_rise` use the same tiering (`tiered_ror_trip` in `src/control/controllers/sensor.rs`); constants are provisional pending HIL calibration. Manual/software-PID mode remains RoR-guard-disarmed by design (comms-idle + MAX_ROAST_TIME cover it).
+- **Light-roast verification (A-TC4-D, 2026-08-12):** the RoR guard is two-tier. Soft band (`0.75..=1.0 °C/s`, `MAX_BT_RATE_OF_RISE`..`MAX_BT_RATE_OF_RISE_HARD`) requires `ROR_SOFT_DEBOUNCE_LIMIT` (12) consecutive exceedances (~3.7 s) before latching — a ~3 s light-roast turnaround spike (0.6 °C/s) no longer false-trips. Hard band (> `1.0 °C/s`) keeps the original fast 3-tick latch. Both `check_bt_rate` and `check_rate_of_rise` use the same tiering (`tiered_ror_trip` in `src/control/controllers/sensor.rs`); constants are provisional pending HIL calibration. Manual/software-PID mode remains RoR-guard-disarmed by design (comms-idle + MAX_ROAST_TIME cover it).
 
 ## Known Constraints
 

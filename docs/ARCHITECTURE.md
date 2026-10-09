@@ -78,7 +78,7 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 ## 4. Task graph
 
 The embedded system is built around a fixed task graph: 5 long-lived worker
-tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:212-229`) plus
+tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:205-224`) plus
 the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via
 `executor.run` in `src/main.rs:261-263`)
 (6 Embassy tasks total; docs count the 5 workers).
@@ -163,9 +163,11 @@ The v5.4 refactoring split responsibilities into four controller submodules
 
 But the architectural truth remains the same: `RoasterControl` is the single object where protocol intent becomes hardware behavior.
 
+Since the CORE refactor (2026-10-09) three concerns live in small pure modules next to it — `mode.rs` (`ControlMode`), `batch.rs` (`BatchState`) and `probe_stuck.rs` (`ProbeStuckDetector`) — and a golden-trace test (`tests/core_golden.rs`) freezes the behaviour of the whole core. Read [`CONTROL_CORE.md`](CONTROL_CORE.md) before changing anything in `src/control/`.
+
 ### State model
 
-The high-level firmware states are (`src/config/constants.rs:240-251`):
+The high-level firmware states are (`src/config/constants.rs:290-301`):
 
 - `Idle`
 - `Preheating`

@@ -15,7 +15,7 @@ Run these commands before touching hardware.
 # 1. Embedded build must compile clean (zero warnings)
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
-# 2. Host test suite (expect all pass — 884 tests, 0 failures)
+# 2. Host test suite (expect all pass — 906 tests, 0 failures)
 cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1
 
 # 3. Format + clippy gate
@@ -23,7 +23,7 @@ cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::
 ```
 
 - [ ] Embedded build: **zero errors, zero warnings**
-- [ ] Host tests: **884 passed, 0 failed** (any failure = regression)
+- [ ] Host tests: **906 passed, 0 failed** (any failure = regression)
 - [ ] Clippy: clean
 
 ---
@@ -132,7 +132,7 @@ Expected: AMB,ET,BT,0.0,0.0   (PID off — 5 fields)
 Example:  0.0,23.5,24.1,0.0,0.0
 ```
 
-- [ ] `READ` returns 5 comma-separated values (AMB is a structural placeholder, always `0.0` in production)
+- [ ] `READ` returns 5 comma-separated values (AMB carries the MAX31856 cold-junction mean, ≈ ambient — not a placeholder)
 - [ ] ET and BT are reasonable ambient temps (18°C – 30°C)
 - [ ] Heater = 0.0, Fan = 0.0 (both off)
 
