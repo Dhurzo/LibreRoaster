@@ -64,6 +64,32 @@ pub struct GuardArming {
     pub probe_stuck_equilibrium_exempt: bool,
 }
 
+/// CORE-1 (plan CORE-2026-10-09): test-only view of the private core state,
+/// hashed by the golden trace and checked by the invariants in
+/// `tests/core_golden.rs`. Adding a field changes every golden hash: don't.
+#[cfg(feature = "test")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoreSnapshot {
+    pub state: RoasterState,
+    pub emergency: bool,
+    pub cooling_active: bool,
+    pub pid_on_session: bool,
+    pub profile_started: bool,
+    pub heat_session: bool,
+    pub charge_detected: bool,
+    pub charge_anchored: bool,
+    pub pending_charge: bool,
+    pub explicit_charge_seen: bool,
+    pub batch_dropped: bool,
+    pub ror_resume_pending: bool,
+    pub ror_profile_loaded: bool,
+    /// `Some(ramping)` while a RoR follower exists.
+    pub follower: Option<bool>,
+    pub ror_target_c_per_min: f32,
+    pub tune_running: bool,
+    pub gains_locked: bool,
+}
+
 /// Central control object: roast state machine, safety latches and the
 /// single writer that applies sensor/actuator/safety/dispatch decisions.
 pub struct RoasterControl {
@@ -2942,6 +2968,30 @@ impl RoasterControl {
             output
         } else {
             self.status.ssr_output
+        }
+    }
+
+    /// CORE-1: test-only snapshot of the private core state (see `CoreSnapshot`).
+    #[cfg(feature = "test")]
+    pub fn core_snapshot(&self) -> CoreSnapshot {
+        CoreSnapshot {
+            state: self.state,
+            emergency: self.safety.is_emergency_active(),
+            cooling_active: self.cooling_active,
+            pid_on_session: self.pid_on_session,
+            profile_started: self.profile_start_time.is_some(),
+            heat_session: self.heat_session_start.is_some(),
+            charge_detected: self.charge_detected,
+            charge_anchored: self.charge_time.is_some(),
+            pending_charge: self.pending_charge,
+            explicit_charge_seen: self.explicit_charge_seen,
+            batch_dropped: self.batch_dropped,
+            ror_resume_pending: self.ror_resume_pending,
+            ror_profile_loaded: self.ror_profile.is_some(),
+            follower: self.ror_follower.map(|f| f.ramping()),
+            ror_target_c_per_min: self.ror_target_c_per_min,
+            tune_running: self.tune_running(),
+            gains_locked: self.pid_gains_locked,
         }
     }
 
