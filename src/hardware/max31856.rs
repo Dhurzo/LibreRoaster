@@ -126,6 +126,22 @@ where
         // Fault Mask (0x82): all faults enabled (0 = fault pin active on any fault)
         ok &= max31856.write_register(0x82, 0x00).is_ok();
 
+        // H-1 (audit 2026-10-09): 0x03 is also CR1's power-on default, so the
+        // read-back below cannot tell whether writes reach the chip. After a
+        // warm MCU reset a chip with a dead MOSI line still holds its last
+        // configuration and conversion and would pass. Prove the write path
+        // with a non-default value first (AVGSEL = 2 samples, Type K = 0x13),
+        // then restore 0x03.
+        ok &= max31856.write_register(0x81, 0x13).is_ok();
+        let probe = max31856.read_register(0x01).unwrap_or(0xFF);
+        if probe != 0x13 {
+            log::error!(
+                "MAX31856: CR1 write probe read back 0x{:02X} != 0x13 — writes do not reach the chip (check MOSI)",
+                probe
+            );
+            ok = false;
+        }
+        ok &= max31856.write_register(0x81, 0x03).is_ok();
         // Verify config register was written by reading it back
         let cr1 = max31856.read_register(0x01).unwrap_or(0xFF);
         log::info!("MAX31856 init: wrote CR1=0x03, read back CR1=0x{:02X}", cr1);
@@ -612,6 +628,16 @@ mod tests {
         // Still usable: a subsequent register read returns the floating 0xFF
         // (the runtime fault path, not the boot path, decides what to do).
         assert_eq!(dev.spi.registers[0x01], 0xFF);
+    }
+
+    #[test]
+    fn new_tolerant_degrades_when_writes_do_not_stick() {
+        // H-1: warm reset with a dead MOSI line — the chip still holds a
+        // healthy configuration and conversion, but no write lands.
+        let mut spi = ScriptedSpi::healthy();
+        spi.no_store = true;
+        let (_dev, verified) = Max31856::new_tolerant(spi);
+        assert!(!verified, "a chip that ignores writes must NOT verify");
     }
 
     #[test]
