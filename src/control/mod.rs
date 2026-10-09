@@ -8,6 +8,8 @@
 pub mod abstractions;
 /// Step-test PID autotune (pure logic, DIFF E4).
 pub mod autotune;
+/// State of one batch of beans: charge detection, markers, RoR-follow (CORE-4).
+pub mod batch;
 /// Focused controllers: sensor, actuator (heater+fan), safety and command dispatch.
 pub mod controllers;
 /// Artisan/TC4 command handlers producing policy outcomes.

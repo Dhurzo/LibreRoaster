@@ -2069,15 +2069,17 @@ fn start_clears_charge_state() {
     // (idempotent with the `stop_streaming` reset on STOP/OFF).
     let mut ctrl = make_control();
     // Simulate a previous roast in which charge was detected.
-    ctrl.charge_detected = true;
-    ctrl.charge_time = Some(Instant::from_millis(100));
+    ctrl.batch.charge_detected = true;
+    ctrl.batch.charge_time = Some(Instant::from_millis(100));
     ctrl.status_mut().charge_detected = true;
 
     let r = ctrl.process_artisan_command(ArtisanCommand::StartRoast);
     assert!(r.is_ok());
     assert_eq!(ctrl.get_state(), RoasterState::Heating);
     assert!(
-        !ctrl.charge_detected && ctrl.charge_time.is_none() && !ctrl.get_status().charge_detected,
+        !ctrl.batch.charge_detected
+            && ctrl.batch.charge_time.is_none()
+            && !ctrl.get_status().charge_detected,
         "P11: START must clear the charge-detection state for the next batch"
     );
 }
