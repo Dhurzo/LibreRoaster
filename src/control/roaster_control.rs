@@ -17,6 +17,7 @@ use crate::control::controllers::{
 };
 use crate::control::mode::{ControlMode, ModeFlags};
 use crate::control::pid::PidFeedback;
+use crate::control::probe_stuck::{ProbeStuckDetector, ProbeStuckInput};
 use crate::control::ror_follow::RorStep;
 use crate::control::traits::{Fan, Heater};
 use alloc::boxed::Box;
@@ -116,32 +117,11 @@ pub struct RoasterControl {
     /// CHARGE/DROP markers and the RoR-follow generator (`batch.rs`).
     batch: BatchState,
     preheat_target: Option<f32>,
-    /// Probe-stuck detector state. A hard thermocouple short reads a flat
-    /// ~0 °C, which is a VALID temperature — no MAX31856 fault bit, so the
-    /// fault/NaN paths never fire and the PID would drive the heater blind.
-    /// While the heater runs, BT must move by more than
-    /// `PROBE_STUCK_VARIATION_C` within the timeout window; otherwise the
-    /// probe is shorted/broken. Firmware-PID mode latches via
-    /// `emergency_shutdown("Probe stuck")` at `PROBE_STUCK_TIMEOUT_SECS`;
-    /// manual / Artisan software-PID mode is two-stage — see `update_control`.
-    probe_stuck_last_bt: Option<f32>,
-    probe_stuck_last_change: Option<Instant>,
-    /// ET anchor for the manual-equilibrium discriminator (R2). Set where
-    /// `probe_stuck_last_bt` is set, cleared where it is cleared. While BT
-    /// stays flat, ET must stay within `PROBE_STUCK_ET_FLAT_C` of this anchor
-    /// to count as equilibrium; a moving ET with a frozen BT is a dead probe.
-    probe_stuck_et_anchor: Option<f32>,
-    /// Manual-mode two-stage probe-stuck flag. Set once the
-    /// `ERR probe_stuck_warning` wire line has been emitted for the current
-    /// stuck episode; cleared on BT movement > `PROBE_STUCK_VARIATION_C`, on
-    /// disarm (heater 0 / non-finite BT), and when a new episode begins.
-    /// Guarantees exactly one warning line per episode.
-    probe_stuck_warning_sent: bool,
-    /// N4: first tick at which the PID-mode equilibrium exemption applied with
-    /// the heater at or above `PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT`.
-    pid_plateau_since: Option<Instant>,
-    /// N4: `ERR probe_stuck_warning` already sent for this plateau.
-    pid_plateau_warning_sent: bool,
+    /// CORE-6: probe-stuck detector (`probe_stuck.rs`). A hard thermocouple
+    /// short reads a flat, VALID ~0 °C. Firmware PID latches at
+    /// `PROBE_STUCK_TIMEOUT_SECS`; manual / Artisan software PID is
+    /// two-stage; the N4 hot-plateau bound applies in PID mode.
+    probe_stuck: ProbeStuckDetector,
     // Latched cooling fan after a plain STOP. `stop_streaming` sets the fan
     // to 100% but does NOT arm the safety emergency latch (only
     // `emergency_shutdown` does). Without this flag, the next `update_control`
@@ -213,12 +193,7 @@ impl RoasterControl {
             fan_profile: None,
             batch: BatchState::default(),
             preheat_target: None,
-            probe_stuck_last_bt: None,
-            probe_stuck_last_change: None,
-            probe_stuck_et_anchor: None,
-            probe_stuck_warning_sent: false,
-            pid_plateau_since: None,
-            pid_plateau_warning_sent: false,
+            probe_stuck: ProbeStuckDetector::default(),
             cooling_active: false,
             dump_pending: heapless::Deque::new(),
             fan_floor_gate: EdgeLogGate::new(),
@@ -758,7 +733,7 @@ impl RoasterControl {
         // the band and the exemption ends; a shorted BT reads cold (< 60 °C).
         let equilibrium = probe_bt > crate::config::constants::PROBE_STUCK_EQUILIBRIUM_MIN_BT_C
             && et_now.is_finite()
-            && self.probe_stuck_et_anchor.is_some_and(|et0| {
+            && self.probe_stuck.et_anchor().is_some_and(|et0| {
                 (et_now - et0).abs() <= crate::config::constants::PROBE_STUCK_ET_FLAT_C
             });
         // X1 (audit 2026-10-06): while RoR-follow is ramping, the setpoint is
@@ -1213,108 +1188,31 @@ impl RoasterControl {
         // with a nearby ET is thermal equilibrium (preheat hold, between
         // batches) — not a dead probe (see `guard_arming` for the mode gate).
         let probe_bt = self.status.bean_temp;
-        if self.status.ssr_output > 0.0 && probe_bt.is_finite() && arming.probe_stuck_mode {
-            match self.probe_stuck_last_bt {
-                None => {
-                    self.probe_stuck_last_bt = Some(probe_bt);
-                    self.probe_stuck_last_change = Some(current_time);
-                    self.probe_stuck_et_anchor = Some(self.status.env_temp);
-                    self.probe_stuck_warning_sent = false;
-                    self.pid_plateau_since = None;
-                    self.pid_plateau_warning_sent = false;
-                }
-                Some(prev) => {
-                    if (probe_bt - prev).abs() > PROBE_STUCK_VARIATION_C {
-                        self.probe_stuck_last_bt = Some(probe_bt);
-                        self.probe_stuck_last_change = Some(current_time);
-                        self.probe_stuck_et_anchor = Some(self.status.env_temp);
-                        self.probe_stuck_warning_sent = false;
-                        self.pid_plateau_since = None;
-                        self.pid_plateau_warning_sent = false;
-                    } else if arming.probe_stuck_equilibrium_exempt {
-                        // Both probes flat with BT hot: equilibrium. Re-anchor the clock so that
-                        // when ET starts moving BT gets the full window to respond.
-                        self.probe_stuck_last_change = Some(current_time);
-                        self.probe_stuck_warning_sent = false;
-                        // N4 (re-audit 2026-10-05): in firmware-PID mode the
-                        // exemption is bounded. With both probes frozen hot
-                        // nothing else ends the roast before the time budget,
-                        // so warn at PROBE_STUCK_PID_PLATEAU_WARN_SECS and
-                        // latch at PROBE_STUCK_PID_PLATEAU_LATCH_SECS while the
-                        // heater is at or above the observable duty.
-                        if self.status.pid_enabled
-                            && self.status.ssr_output >= PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
-                        {
-                            let since = *self.pid_plateau_since.get_or_insert(current_time);
-                            let plateau_secs =
-                                current_time.saturating_duration_since(since).as_secs();
-                            if plateau_secs >= PROBE_STUCK_PID_PLATEAU_WARN_SECS
-                                && !self.pid_plateau_warning_sent
-                            {
-                                self.pid_plateau_warning_sent = true;
-                                self.send_text_response("ERR probe_stuck_warning");
-                                warn!(
-                                    "SAFETY PROBE-STUCK: PID plateau (BT {:.1}°C flat, ET flat) for ≥{}s at ≥{:.0}% heater — warning",
-                                    probe_bt, PROBE_STUCK_PID_PLATEAU_WARN_SECS, PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
-                                );
-                            }
-                            if plateau_secs >= PROBE_STUCK_PID_PLATEAU_LATCH_SECS {
-                                warn!(
-                                    "SAFETY PROBE-STUCK: PID plateau for ≥{}s at ≥{:.0}% heater — emergency",
-                                    PROBE_STUCK_PID_PLATEAU_LATCH_SECS, PROBE_STUCK_PID_PLATEAU_MIN_DUTY_PCT
-                                );
-                                self.emergency_shutdown("Probe stuck")?;
-                            }
-                        } else {
-                            self.pid_plateau_since = None;
-                            self.pid_plateau_warning_sent = false;
-                        }
-                    } else if let Some(last_change) = self.probe_stuck_last_change {
-                        // Exemption ended (ET moved): the plateau bound is moot.
-                        self.pid_plateau_since = None;
-                        self.pid_plateau_warning_sent = false;
-                        let flat_secs = current_time
-                            .saturating_duration_since(last_change)
-                            .as_secs();
-                        if flat_secs >= PROBE_STUCK_TIMEOUT_SECS {
-                            if self.status.pid_enabled {
-                                // Firmware-PID mode: single-stage latch — a
-                                // flat PV far from the setpoint is a control
-                                // hazard.
-                                warn!(
-                                    "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — emergency",
-                                    probe_bt, PROBE_STUCK_TIMEOUT_SECS
-                                );
-                                self.emergency_shutdown("Probe stuck")?;
-                            } else {
-                                // Manual / Artisan software-PID mode:
-                                // two-stage. Stage 1 at
-                                // PROBE_STUCK_TIMEOUT_SECS: one wire warning
-                                // per stuck episode, no latch. Stage 2 at
-                                // PROBE_STUCK_MANUAL_LATCH_SECS: real latch.
-                                if !self.probe_stuck_warning_sent {
-                                    self.probe_stuck_warning_sent = true;
-                                    self.send_text_response("ERR probe_stuck_warning");
-                                    warn!(
-                                        "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s with heater on — manual-mode warning",
-                                        probe_bt, PROBE_STUCK_TIMEOUT_SECS
-                                    );
-                                }
-                                if flat_secs >= PROBE_STUCK_MANUAL_LATCH_SECS {
-                                    warn!(
-                                        "SAFETY PROBE-STUCK: BT flat ({:.1}°C) for ≥{}s in manual mode — emergency",
-                                        probe_bt, PROBE_STUCK_MANUAL_LATCH_SECS
-                                    );
-                                    self.emergency_shutdown("Probe stuck")?;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Heater off, BT faulted, or PID regulating — disarm.
-            self.reset_probe_stuck_detector();
+        // CORE-6: the detector itself is pure (`probe_stuck.rs`, rules table
+        // in its module docs); this block only executes its verdict, warning
+        // line first, then the latch.
+        let verdict = self.probe_stuck.tick(ProbeStuckInput {
+            now: current_time,
+            duty: self.status.ssr_output,
+            bean_temp: probe_bt,
+            env_temp: self.status.env_temp,
+            armed: arming.probe_stuck_mode,
+            equilibrium_exempt: arming.probe_stuck_equilibrium_exempt,
+            pid_enabled: self.status.pid_enabled,
+        });
+        if let Some(rule) = verdict.warning {
+            self.send_text_response("ERR probe_stuck_warning");
+            warn!(
+                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) with heater on — {:?} rule warning",
+                probe_bt, rule
+            );
+        }
+        if let Some(rule) = verdict.latch {
+            warn!(
+                "SAFETY PROBE-STUCK: BT flat ({:.1}°C) with heater on — {:?} rule emergency",
+                probe_bt, rule
+            );
+            self.emergency_shutdown("Probe stuck")?;
         }
 
         self.status.state = self.state;
@@ -2629,12 +2527,7 @@ impl RoasterControl {
     /// manual two-stage clock (latch at 300 s) must not be inherited by the
     /// firmware-PID single-stage latch (120 s) when control is handed back.
     fn reset_probe_stuck_detector(&mut self) {
-        self.probe_stuck_last_bt = None;
-        self.probe_stuck_last_change = None;
-        self.probe_stuck_et_anchor = None;
-        self.probe_stuck_warning_sent = false;
-        self.pid_plateau_since = None;
-        self.pid_plateau_warning_sent = false;
+        self.probe_stuck.reset();
     }
 
     /// Hand control back to the firmware PID mid-roast after a manual (OT1)

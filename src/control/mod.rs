@@ -20,6 +20,8 @@ pub mod mode;
 pub mod pid;
 /// Policy outcome types and the manual/safety policy traits.
 pub mod policies;
+/// Probe-stuck detector: rules and episode state (CORE-6, pure logic).
+pub mod probe_stuck;
 /// Central `RoasterControl` facade: state machine, safety latches, single hardware writer.
 pub mod roaster_control;
 /// RoR-follow setpoint generator (pure logic, DIFF E3).
