@@ -1430,12 +1430,24 @@ impl RoasterControl {
     }
 
     /// Process one parsed Artisan command; rejects re-energizing commands while latched.
+    /// Production entry point: stamps the command with the real clock.
     pub fn process_artisan_command(
         &mut self,
         command: crate::config::ArtisanCommand,
     ) -> Result<(), RoasterError> {
+        self.process_artisan_command_at(command, embassy_time::Instant::now())
+    }
+
+    /// CORE-0: `process_artisan_command` with the command-clock instant passed
+    /// in. Every time stamp a command handler takes comes from `now`, so a
+    /// host test running on synthetic time is fully deterministic.
+    pub fn process_artisan_command_at(
+        &mut self,
+        command: crate::config::ArtisanCommand,
+        now: Instant,
+    ) -> Result<(), RoasterError> {
         // Record wall-clock (millis-since-boot) of last command for idle timeout.
-        self.status.last_command_received_at_ms = embassy_time::Instant::now().as_millis();
+        self.status.last_command_received_at_ms = now.as_millis();
 
         // DIFF E4: any operator command except monitoring/handshake (and
         // TUNE;STATUS) aborts a running step test — the operator took over.
@@ -1514,14 +1526,14 @@ impl RoasterControl {
             }
         }
 
-        let current_time = embassy_time::Instant::now();
+        let current_time = now;
 
         match command {
-            crate::config::ArtisanCommand::StartRoast => self.handle_start_roast(),
+            crate::config::ArtisanCommand::StartRoast => self.handle_start_roast(current_time),
             // H11: `PID;ON` enables firmware PID but is NOT in the latch
             // whitelist above — while `fault_condition` holds it is rejected
             // with `fault_condition_active` instead of clearing the latch.
-            crate::config::ArtisanCommand::PidOn => self.handle_pid_on(),
+            crate::config::ArtisanCommand::PidOn => self.handle_pid_on(current_time),
             crate::config::ArtisanCommand::SetHeater(value) => {
                 self.handle_set_heater(value, current_time)
             }
@@ -1989,7 +2001,7 @@ impl RoasterControl {
         self.batch_grams
     }
 
-    fn handle_start_roast(&mut self) -> Result<(), RoasterError> {
+    fn handle_start_roast(&mut self, now: Instant) -> Result<(), RoasterError> {
         // Gate by *state*: a START during an actually-active roast
         // (Heating/Stable) is "ignored"; every other state (Idle-with-PID,
         // Idle-manual, Preheating, Error recovery) takes the full handoff.
@@ -2021,7 +2033,7 @@ impl RoasterControl {
             if self.status.fault_condition || self.safety.is_emergency_active() {
                 self.clear_emergency_explicit();
             }
-            self.start_roast_handoff(false)?
+            self.start_roast_handoff(false, now)?
         }
         Ok(())
     }
@@ -2033,7 +2045,7 @@ impl RoasterControl {
     /// latch whitelist in `process_artisan_command` already rejects `PidOn`
     /// while `fault_condition` holds; the guard below is defense-in-depth
     /// for any path that reaches the handler with the latch armed.
-    fn handle_pid_on(&mut self) -> Result<(), RoasterError> {
+    fn handle_pid_on(&mut self, now: Instant) -> Result<(), RoasterError> {
         if self.status.fault_condition || self.safety.is_emergency_active() {
             warn!("PID;ON rejected: fault condition active (use START/PREHEAT/PID;OFF to recover)");
             return Err(RoasterError::InvalidState {
@@ -2066,7 +2078,7 @@ impl RoasterControl {
             }
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         } else {
-            self.start_roast_handoff(true)?
+            self.start_roast_handoff(true, now)?
         }
         Ok(())
     }
@@ -2076,7 +2088,7 @@ impl RoasterControl {
     /// target) PID arm, and transition to `Heating`. Latch clearing is NOT
     /// part of the handoff — `handle_start_roast` clears explicitly before
     /// calling, `handle_pid_on` never clears (H11).
-    fn start_roast_handoff(&mut self, via_pid_on: bool) -> Result<(), RoasterError> {
+    fn start_roast_handoff(&mut self, via_pid_on: bool, now: Instant) -> Result<(), RoasterError> {
         use crate::config::constants::DEFAULT_TARGET_TEMP;
         self.pid_on_session = via_pid_on;
         // DIFF E1: a new roast starts a new batch. `pending_charge` is KEPT:
@@ -2113,7 +2125,7 @@ impl RoasterControl {
         self.status.artisan_control = true;
         // Use loaded profile if available, otherwise fall back to default target
         if self.active_profile.is_some() {
-            self.profile_start_time = Some(embassy_time::Instant::now());
+            self.profile_start_time = Some(now);
             // Set initial target from profile
             let elapsed = 0u32;
             if let Some(target) = self
@@ -2141,13 +2153,13 @@ impl RoasterControl {
             } else {
                 DEFAULT_TARGET_TEMP
             };
-            self.profile_start_time = Some(embassy_time::Instant::now());
+            self.profile_start_time = Some(now);
             // N11: cap before the first PID cycle, not one cycle later.
             let target = self.cap_pid_target(target);
             self.enable_pid_control(target)?;
             info!("Artisan+ roast started with default target {:.1}°C", target);
         }
-        crate::logging::roast_logger::start_roast(embassy_time::Instant::now());
+        crate::logging::roast_logger::start_roast(now);
         self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         self.state = crate::config::constants::RoasterState::Heating;
         self.status.state = self.state;
