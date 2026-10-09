@@ -1,8 +1,5 @@
 //! Regression tests for the 2026-10-06 audit (A1..A10). Harness copied
-//! from tests/diff_features.rs. Formerly: Differentiation features (plan DIFF-2026-10-05): CHARGE/DROP markers,
-//! RoR-follow, READ extra channels, step-test autotune, and the
-//! cross-feature safety fuzz test. Every task appends its tests above the
-//! marker line at the end of this file.
+//! from tests/diff_features.rs.
 #![cfg(all(test, feature = "test", not(target_arch = "riscv32")))]
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 // Harness helpers are shared by every task; some are unused until later tasks.
@@ -217,8 +214,10 @@ fn a3_sv_before_turning_point_keeps_ror_follow() {
     let mut s = Sim::new();
     let mut bt = 150.0f32;
     let _tc = ror_roast(&mut s, &mut bt);
-    plant_run(&mut s, 0.7, &mut bt, |_, _| {}); // marker applied, follower armed
-                                                // Artisan's first PID ON of a session sends PID;SV right after PID;ON.
+    // The CHARGE marker is applied and the follower armed on the next tick.
+    plant_run(&mut s, 0.7, &mut bt, |_, _| {});
+    // Artisan's first PID ON of a session sends PID;SV right after PID;ON;
+    // here it lands before the turning point.
     assert!(s.cmd(ArtisanCommand::SetTargetTemp(200.0)));
     plant_run(&mut s, 120.0, &mut bt, |_, _| {});
     assert!(
@@ -412,4 +411,18 @@ fn a10_tune_refused_on_et_channel() {
         "A10: TUNE identifies BT; refuse it on PID;CHAN;1"
     );
     assert!(!s.c.tune_running());
+    // The refusal must be the channel rule, not some other gate.
+    let r = s.c.process_artisan_command(ArtisanCommand::Tune(
+        libreroaster::config::TuneCommand::Start(20),
+    ));
+    assert!(
+        matches!(
+            r,
+            Err(libreroaster::control::RoasterError::InvalidState {
+                source: Some("tune_needs_bt_channel")
+            })
+        ),
+        "A10: wrong refusal {:?}",
+        r
+    );
 }

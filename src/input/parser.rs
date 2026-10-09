@@ -315,7 +315,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
         }
     } else if cmd.eq_ignore_ascii_case("CHARGE") {
         // DIFF E1: `CHARGE` or `CHARGE;<grams>` (Artisan `{WEIGHTin}`
-        // substitution: integer grams, 0 = no weight entered).
+        // substitution: grams, decimals rounded (P-2), 0 = no weight entered).
         match parts.len() {
             1 => Ok(ArtisanCommand::Charge(None)),
             2 => {
