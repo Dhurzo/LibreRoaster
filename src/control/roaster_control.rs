@@ -482,9 +482,7 @@ impl RoasterControl {
                         heater
                     );
                     self.dispatch.commit_manual_heater(heater);
-                    self.dispatch.disable_pid();
-                    self.status.pid_enabled = false;
-                    self.status.artisan_control = true;
+                    self.enter_operator_manual();
                     return Ok(());
                 }
                 Err(e) => return Err(e),
@@ -497,9 +495,7 @@ impl RoasterControl {
             // silently ignoring the operator's value (worst case: an `OT1 0`
             // cut that never lands).
             self.dispatch.commit_manual_heater(heater);
-            self.dispatch.disable_pid();
-            self.status.pid_enabled = false;
-            self.status.artisan_control = true;
+            self.enter_operator_manual();
             self.status.ssr_hardware_status = self.actuator.get_ssr_hardware_status();
         }
 
@@ -574,8 +570,7 @@ impl RoasterControl {
         }
 
         if outcome.disable_pid {
-            self.dispatch.disable_pid();
-            self.status.pid_enabled = false;
+            self.leave_firmware_pid();
         }
 
         Ok(())
@@ -691,8 +686,7 @@ impl RoasterControl {
         // the integrator and timing), so the first post-recovery tick cannot
         // integrate error × latch-duration in a single step.
         if self.status.pid_enabled {
-            self.dispatch.disable_pid();
-            self.status.pid_enabled = false;
+            self.leave_firmware_pid();
         }
         // Explicit recovery also drops the cooldown latch — the operator is
         // taking over, so airflow returns to operator control.
@@ -2797,6 +2791,27 @@ impl RoasterControl {
     /// Enable PID control toward `target_temp` via the dispatch handler.
     pub fn enable_pid_control(&mut self, target_temp: f32) -> Result<(), RoasterError> {
         self.dispatch.enable_pid(target_temp, &mut self.status)
+    }
+
+    /// CORE-3: the operator takes the heater (an accepted `OT1`/`UP`/`DOWN`).
+    ///
+    /// Writers of the two mode flags (keep this list current):
+    /// - here: `enter_operator_manual` (manual), `leave_firmware_pid` (latch,
+    ///   recovery), `start_roast_handoff` (`artisan_control = true` just
+    ///   before `enable_pid_control`);
+    /// - `CommandDispatcher::enable_pid` (PID on), `CommandDispatcher::stop_streaming`
+    ///   (both off), `policies.rs` / `handlers/temperature.rs` (policy outcomes).
+    fn enter_operator_manual(&mut self) {
+        self.dispatch.disable_pid();
+        self.status.pid_enabled = false;
+        self.status.artisan_control = true;
+    }
+
+    /// CORE-3: the firmware PID stops driving (latch outcome, recovery).
+    /// `artisan_control` is left as it is.
+    fn leave_firmware_pid(&mut self) {
+        self.dispatch.disable_pid();
+        self.status.pid_enabled = false;
     }
 
     /// Current fan output percentage from status (0-100).
