@@ -78,7 +78,7 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 ## 4. Task graph
 
 The embedded system is built around a fixed task graph: 5 long-lived worker
-tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:212-229`) plus
+tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:205-224`) plus
 the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via
 `executor.run` in `src/main.rs:261-263`)
 (6 Embassy tasks total; docs count the 5 workers).
@@ -167,7 +167,7 @@ Since the CORE refactor (2026-10-09) three concerns live in small pure modules n
 
 ### State model
 
-The high-level firmware states are (`src/config/constants.rs:240-251`):
+The high-level firmware states are (`src/config/constants.rs:290-301`):
 
 - `Idle`
 - `Preheating`

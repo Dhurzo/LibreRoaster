@@ -132,7 +132,7 @@ Expected: AMB,ET,BT,0.0,0.0   (PID off — 5 fields)
 Example:  0.0,23.5,24.1,0.0,0.0
 ```
 
-- [ ] `READ` returns 5 comma-separated values (AMB is a structural placeholder, always `0.0` in production)
+- [ ] `READ` returns 5 comma-separated values (AMB carries the MAX31856 cold-junction mean, ≈ ambient — not a placeholder)
 - [ ] ET and BT are reasonable ambient temps (18°C – 30°C)
 - [ ] Heater = 0.0, Fan = 0.0 (both off)
 

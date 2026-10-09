@@ -1,6 +1,6 @@
 # Control core — structure and rules (CORE-2026-10-09)
 
-`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Since the CORE refactor, three parts of it live in small pure modules, with unit tests, instead of being spread through the 3000-line file.
+`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Since the CORE refactor, three parts of it live in small pure modules, with unit tests, instead of being spread through the 3000-line file — alongside the older pure helpers (`ror_follow.rs`, `autotune.rs`).
 
 ## Module map
 
@@ -30,11 +30,11 @@ src/control/roaster_control.rs   RoasterControl — tick loop, command handlers,
 
 These are the only places that write the two flags:
 - `RoasterControl::enter_operator_manual` and `leave_firmware_pid`;
-- `start_roast_handoff`;
-- `CommandDispatcher::enable_pid` and `stop_streaming`;
-- the policy outcomes in `policies.rs` and `handlers/temperature.rs`.
+- `start_roast_handoff` (`artisan_control = true` before `enable_pid_control`);
+- `CommandDispatcher::enable_pid` and `CommandDispatcher::stop_streaming`;
+- policy application in `policies.rs` and the temperature handler (`handlers/temperature.rs`).
 
-The emergency latch is not a mode. It overrides every mode (`SafetyController`).
+EmergencyStop keeps the batch state (pending CHARGE marker included) by design: a CHARGE sent while latched still anchors the recovered roast (N2). The emergency latch itself is not a mode. It overrides every mode (`SafetyController`).
 
 ## Lifecycle of a batch: `BatchState`
 

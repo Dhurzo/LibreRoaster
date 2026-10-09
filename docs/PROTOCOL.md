@@ -128,7 +128,7 @@ Response shape:
 ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale,FaultFlag
 ```
 
-> The order above is normative and matches `src/output/artisan.rs:201-224`. Per-field semantics live in `INSTRUMENTATION.md`.
+> The order above is normative and matches `src/output/artisan.rs:200-281`. Per-field semantics live in `INSTRUMENTATION.md`.
 
 Field map:
 
@@ -496,7 +496,7 @@ respectively). The wire transcript is:
 PID;ON
 PID;SV;210
 READ
-0.0,185.3,201.4,0.0,0.0,75.0,45.0,210.0
+25.0,185.3,201.4,0.0,0.0,75.0,45.0,210.0
 ```
 
 ### Deep diagnostics
