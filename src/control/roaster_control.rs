@@ -177,6 +177,12 @@ pub struct RoasterControl {
     /// Cleared by `stop_ror_follow` (DROP, STOP, latch, recovery, new roast,
     /// `RORPROFILE;OFF`, `PID;CHAN;1`) and by any `PID;SV`.
     ror_resume_pending: bool,
+    /// R-2 (audit 2026-10-09): a DROP ended the batch. Until a CHARGE marker
+    /// anchors the next one, the automatic `#CHARGE` detector does not arm
+    /// RoR-follow (the BT fall of the drop itself looks like a charge). Set
+    /// by `handle_drop`; cleared by a CHARGE marker, a new roast handoff,
+    /// `stop_streaming` and `clear_emergency_explicit`.
+    batch_dropped: bool,
     /// DIFF E1: batch weight from `CHARGE;<grams>` (Artisan `{WEIGHTin}`).
     batch_grams: Option<u16>,
     /// DIFF E3: loaded RoR profile (°C/min against seconds since charge).
@@ -237,6 +243,7 @@ impl RoasterControl {
             pending_charge_since: None,
             explicit_charge_seen: false,
             ror_resume_pending: false,
+            batch_dropped: false,
             batch_grams: None,
             ror_profile: None,
             ror_follower: None,
@@ -585,6 +592,7 @@ impl RoasterControl {
         self.pending_charge = false;
         self.pending_charge_since = None;
         self.explicit_charge_seen = false;
+        self.batch_dropped = false;
         self.stop_ror_follow();
         // A STOP closes the heat session too — drop `heat_session_start` so
         // the next tick does not consider a manual session still in progress
@@ -669,6 +677,7 @@ impl RoasterControl {
         self.pid_on_session = false;
         self.heat_session_start = None;
         self.heat_session_off_since = None;
+        self.batch_dropped = false;
         self.stop_ror_follow();
         self.actuator.rearm_heater_hardware_status(&mut self.status);
     }
@@ -980,8 +989,11 @@ impl RoasterControl {
                             self.charge_time = Some(current_time);
                             self.status.charge_detected = true;
                             info!("#CHARGE detected — BT dropped {:.1}°C", drop);
-                            // DIFF E3: an automatic charge also arms RoR-follow.
-                            self.maybe_start_ror_follow();
+                            // DIFF E3: an automatic charge also arms RoR-follow,
+                            // except after a DROP (R-2): then only a CHARGE marker does.
+                            if !self.batch_dropped {
+                                self.maybe_start_ror_follow();
+                            }
                             // H5: the `#CHARGE` wire line is only useful to a
                             // host that opted into spontaneous `#` traffic —
                             // an unsolicited line in Artisan's 0.5 s READ
@@ -1590,6 +1602,9 @@ impl RoasterControl {
         self.pending_charge = false;
         self.pending_charge_since = None;
         self.explicit_charge_seen = false;
+        // R-2: no RoR-follow for this drum until a CHARGE marker says there
+        // are beans in it again.
+        self.batch_dropped = true;
         if matches!(self.state, RoasterState::Heating | RoasterState::Stable) {
             // Re-arm automatic charge detection for the next batch. The
             // budget anchor (`charge_time`) is kept until the next charge.
@@ -1625,6 +1640,7 @@ impl RoasterControl {
                     return;
                 }
                 self.explicit_charge_seen = true;
+                self.batch_dropped = false;
                 self.charge_detected = true;
                 self.charge_time = Some(now);
                 self.status.charge_detected = true;
@@ -2040,6 +2056,7 @@ impl RoasterControl {
         // DIFF E1: a new roast starts a new batch. `pending_charge` is KEPT:
         // Artisan's pidOnCHARGE may send CHARGE right before PID;ON.
         self.explicit_charge_seen = false;
+        self.batch_dropped = false;
         self.stop_ror_follow();
         // Reset the charge-detection state on START so every path into a
         // new roast re-arms `#CHARGE`, including a batch that ends WITHOUT
