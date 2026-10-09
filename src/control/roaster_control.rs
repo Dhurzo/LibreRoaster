@@ -2639,6 +2639,13 @@ impl RoasterControl {
     }
 
     fn handle_set_pid_channel(&mut self, ch: u8) -> Result<(), RoasterError> {
+        // R-6 (audit 2026-10-09): TUNE gains were identified on the previous
+        // channel's plant. A real channel change hands gains back to the host
+        // (its next PID;T applies); re-sending the same channel keeps them.
+        if ch != self.status.pid_channel && self.pid_gains_locked {
+            self.pid_gains_locked = false;
+            info!("PID channel changed - tuned gains unlocked (host PID;T applies again)");
+        }
         self.status.pid_channel = ch;
         // N9: the PV jumps BT↔ET; do not derive across the switch.
         self.dispatch.reset_pid_derivative();
