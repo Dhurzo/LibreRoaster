@@ -91,14 +91,20 @@ async fn enter_safe_shutdown(error: InitError) -> ! {
         // Feed the RWDT (already armed by init_hw_watchdog) so the
         // safe-shutdown blink pattern stays observable instead of the
         // ~2.2 s watchdog resetting the chip.
-        libreroaster::safety::watchdog::feed_hw_watchdog();
+        // H-2 (audit 2026-10-09): one blink cycle is 2.2 s, as long as the
+        // RWDT timeout itself — feed before EVERY wait, never once per cycle.
         for _ in 0..3 {
+            libreroaster::safety::watchdog::feed_hw_watchdog();
             led.set_low();
             embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+            libreroaster::safety::watchdog::feed_hw_watchdog();
             led.set_high();
             embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
         }
-        embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
+        for _ in 0..10 {
+            libreroaster::safety::watchdog::feed_hw_watchdog();
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
+        }
     }
 }
 

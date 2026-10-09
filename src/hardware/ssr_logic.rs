@@ -335,7 +335,10 @@ impl SsrControlBase {
                         // last trustworthy LOW. The first observable-absent
                         // sample anchors the baseline instead of tripping.
                         let last_seen = *self.last_heat_seen_ms.get_or_insert(now_ms);
-                        let since_ms = now_ms.saturating_sub(last_seen);
+                        // H-4 (audit 2026-10-09): `now_ms` is a u32 that
+                        // wraps after 49.7 days; `saturating_sub` would pin
+                        // the window at 0 forever after the wrap.
+                        let since_ms = now_ms.wrapping_sub(last_seen);
                         warn!(
                             "Heat detection mismatch: heater ON (duty {}) but no heat detected (mismatch count: {}, {} ms since heat seen)",
                             current_duty, self.heat_mismatch_count, since_ms
@@ -587,6 +590,31 @@ mod tests {
             })
         ));
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn mismatch_window_survives_millisecond_wrap() {
+        // H-4: the u32 millisecond clock wraps inside the window.
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        let t0 = u32::MAX - 2 * TICK_MS;
+        for i in 0..5 {
+            base.cross_check_heat_detection(DUTY_OBSERVABLE, t0.wrapping_add(i * TICK_MS), || {
+                Ok::<bool, ()>(false)
+            })
+            .expect("cross-check must not fail inside the window");
+            assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+        }
+        let result = base.cross_check_heat_detection(
+            DUTY_OBSERVABLE,
+            t0.wrapping_add(5 * TICK_MS),
+            || Ok::<bool, ()>(false),
+        );
+        assert!(matches!(
+            result,
+            Err(SsrError::HeatSourceNotDetected {
+                source: "heat_mismatch_window"
+            })
+        ));
     }
 
     #[test]
