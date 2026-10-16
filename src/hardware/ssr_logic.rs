@@ -139,7 +139,10 @@ pub struct SsrControlBase {
     heat_mismatch_count: u8,
     /// Timestamp (ms) of the last heat-detected (LOW) cross-check sample.
     /// `None` until the first observable sample; the time-debounce window
-    /// (`HEAT_MISMATCH_WINDOW_MS`) is measured from here. Reset by `rearm()`.
+    /// (`HEAT_MISMATCH_WINDOW_MS`) is measured from here. Reset by `rearm()`
+    /// and cleared across duty-unobservable gaps (BUG-2b-1, audit 2026-10-16),
+    /// so the first observable-absent sample after a gap re-anchors instead
+    /// of tripping on a pre-gap timestamp.
     ///
     /// Only interpreted with the `heat-sense` feature; otherwise written by
     /// `new`/`rearm` but never read.
@@ -295,7 +298,9 @@ impl SsrControlBase {
     /// Latch rule is time-based: `Error` only when no heat (LOW) has been
     /// seen for `HEAT_MISMATCH_WINDOW_MS` with duty observable (≥ 50 %).
     /// A single LOW is trustworthy evidence of current flow and resets the
-    /// window immediately.
+    /// window immediately. Duty-unobservable samples (HIGH below 50 %) clear
+    /// the baseline, so the window always measures from inside the current
+    /// heating episode and never from a pre-gap timestamp (BUG-2b-1).
     pub fn cross_check_heat_detection<F, E>(
         &mut self,
         current_duty: u16,
@@ -333,7 +338,10 @@ impl SsrControlBase {
                         self.heat_mismatch_count = self.heat_mismatch_count.saturating_add(1);
                         // Time debounce (H4): the window is measured from the
                         // last trustworthy LOW. The first observable-absent
-                        // sample anchors the baseline instead of tripping.
+                        // sample after a duty-unobservable gap anchors the
+                        // baseline instead of tripping — the gap branch below
+                        // clears the baseline (BUG-2b-1), so `get_or_insert`
+                        // re-anchors here instead of reusing a stale value.
                         let last_seen = *self.last_heat_seen_ms.get_or_insert(now_ms);
                         // H-4 (audit 2026-10-09): `now_ms` is a u32 that
                         // wraps after 49.7 days; `saturating_sub` would pin
@@ -356,6 +364,11 @@ impl SsrControlBase {
                         // hot. Require HEAT_PRESENT_MISMATCH_MAX consecutive
                         // samples before declaring the SSR physically stuck on.
                         self.heat_present_count = self.heat_present_count.saturating_add(1);
+                        // A LOW sample is still evidence of current flow:
+                        // refresh the mismatch baseline so a later return to
+                        // observable duty cannot trip on a pre-gap timestamp
+                        // (BUG-2b-1, audit 2026-10-16).
+                        self.last_heat_seen_ms = Some(now_ms);
                         warn!(
                             "Heat present with heater off (count: {}/{}) — possible SSR stuck-on",
                             self.heat_present_count, HEAT_PRESENT_MISMATCH_MAX
@@ -377,6 +390,15 @@ impl SsrControlBase {
                         // the last proof of conduction.
                         if heat_detected {
                             self.last_heat_seen_ms = Some(now_ms);
+                        } else {
+                            // Duty unobservable (< 50 %) with a HIGH sample:
+                            // the sample carries no information, so the
+                            // baseline must not survive the gap. Clearing it
+                            // makes the next observable-absent sample anchor
+                            // through `get_or_insert` at the new `now_ms`
+                            // instead of tripping on a pre-gap timestamp
+                            // (BUG-2b-1, audit 2026-10-16).
+                            self.last_heat_seen_ms = None;
                         }
                         self.heat_mismatch_count = 0;
                         self.heat_present_count = 0;
@@ -649,6 +671,58 @@ mod tests {
         let result =
             base.cross_check_heat_detection(DUTY_OBSERVABLE, 9 * TICK_MS, || Ok::<bool, ()>(false));
         assert!(result.is_err());
+        assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
+    }
+
+    #[test]
+    fn stale_baseline_across_duty_zero_gap_must_not_trip_on_resume() {
+        // BUG-2b-1 (audit 2026-10-16): a LOW at observable duty anchors the
+        // window; a duty-unobservable stretch LONGER than the window (OT1 0 /
+        // idle drum) must clear the baseline, so the first HIGH sample after
+        // re-energizing re-anchors instead of tripping on the stale timestamp
+        // — and the detector still trips only after a full fresh window.
+        let mut base = base_with_duty(DUTY_OBSERVABLE);
+        base.cross_check_heat_detection(DUTY_OBSERVABLE, 0, || Ok::<bool, ()>(true))
+            .expect("LOW anchors the baseline");
+        assert_eq!(base.last_heat_seen_ms, Some(0));
+
+        // Duty 0, pin HIGH for more than HEAT_MISMATCH_WINDOW_MS: these
+        // samples are uninformative and must not trip.
+        for i in 1..=6u32 {
+            base.cross_check_heat_detection(0, i * TICK_MS, || Ok::<bool, ()>(false))
+                .expect("unobservable HIGH samples must not trip");
+            assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+        }
+        assert_eq!(
+            base.last_heat_seen_ms, None,
+            "the duty-unobservable gap must clear the baseline"
+        );
+
+        // Re-energize: the first observable HIGH must anchor a FRESH window.
+        let resume = 7 * TICK_MS;
+        base.cross_check_heat_detection(DUTY_OBSERVABLE, resume, || Ok::<bool, ()>(false))
+            .expect("the first HIGH after the gap must anchor, not trip");
+        assert_eq!(base.hardware_status, SsrHardwareStatus::Available);
+
+        // ...and the detector still trips once the fresh window elapses.
+        let mut tripped_at = None;
+        for n in 8..30u32 {
+            if base
+                .cross_check_heat_detection(DUTY_OBSERVABLE, n * TICK_MS, || Ok::<bool, ()>(false))
+                .is_err()
+            {
+                tripped_at = Some(n * TICK_MS);
+                break;
+            }
+        }
+        let t = tripped_at.expect("uninformative HIGHs at observable duty must still trip");
+        assert!(
+            (resume + HEAT_MISMATCH_WINDOW_MS..=resume + HEAT_MISMATCH_WINDOW_MS + TICK_MS)
+                .contains(&t),
+            "trip at {} ms, expected just after the fresh window from {} ms",
+            t,
+            resume
+        );
         assert_eq!(base.hardware_status, SsrHardwareStatus::Error);
     }
 

@@ -129,18 +129,6 @@ fn handle_command_data_internal(data: &[u8]) {
     match parse_result {
         Ok(cmd) => {
             let traced = TracedCommand::new(cmd, CommChannel::Uart);
-            // BUG-2c-1 discipline (audit 2026-10-04, extended to the legacy
-            // path by the 2026-10-09 core audit): the parser stages a
-            // PROFILE/FANPROFILE/RORPROFILE payload at parse time, so a
-            // command dropped below (channel full) must drop its staged
-            // payload too — otherwise the orphaned FIFO entry is silently
-            // applied by the NEXT roast. Capture the kind before `cmd` moves.
-            let is_profile_cmd = matches!(
-                cmd,
-                crate::config::ArtisanCommand::SetProfile
-                    | crate::config::ArtisanCommand::SetFanProfile
-                    | crate::config::ArtisanCommand::SetRorProfile
-            );
             let mut should_process = true;
             let mut sent = false;
             let mut channel_full = false;
@@ -167,8 +155,11 @@ fn handle_command_data_internal(data: &[u8]) {
                 }
             });
 
-            if channel_full && is_profile_cmd {
-                crate::input::parser::clear_staged_profiles();
+            // BUG-2c-1/BUG-2c-2 (audits 2026-10-04, 2026-10-16): a dropped
+            // PROFILE/FANPROFILE/RORPROFILE must drop exactly its own staged
+            // payload (newest of the matching FIFO), nothing else.
+            if channel_full {
+                crate::input::parser::discard_newest_staged_profile(&cmd);
             }
 
             if sent {

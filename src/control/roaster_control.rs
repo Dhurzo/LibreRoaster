@@ -1331,20 +1331,14 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::ClearRorProfile => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
-                    // BUG-2c-1 (audit 2026-10-04): a refused PROFILE/
-                    // FANPROFILE must take its staged payload with it — the
-                    // parser stages the payload at parse time, so rejecting
-                    // without draining would leave an orphaned FIFO entry
-                    // that the NEXT roast silently applies (one-generation
-                    // profile echo).
-                    if matches!(
-                        command,
-                        crate::config::ArtisanCommand::SetProfile
-                            | crate::config::ArtisanCommand::SetFanProfile
-                            | crate::config::ArtisanCommand::SetRorProfile
-                    ) {
-                        crate::input::parser::clear_staged_profiles();
-                    }
+                    // BUG-2c-1/BUG-2c-2 (audits 2026-10-04, 2026-10-16): a
+                    // refused PROFILE/FANPROFILE/RORPROFILE must take its
+                    // staged payload with it (parse-time staging), but ONLY
+                    // its own — the matching FIFO's OLDEST entry, since
+                    // commands are processed in order. A wipe-all would also
+                    // erase an earlier accepted command's payload the control
+                    // loop has not consumed yet.
+                    crate::input::parser::discard_oldest_staged_profile(&command);
                     return Err(RoasterError::InvalidState {
                         source: Some("fault_condition_active"),
                     });
@@ -2082,8 +2076,20 @@ impl RoasterControl {
         // regression ran.
         #[cfg(all(target_arch = "riscv32", feature = "regression"))]
         {
-            self.send_text_response("OK regression_started");
-            info!("Artisan regression command received");
+            // BUG-2d-1 (audit 2026-10-16): signal the runner HERE, under the
+            // roaster mutex (the latch gate above has already rejected the
+            // command while armed — H14), and acknowledge only when the
+            // capacity-1 trigger accepted the request. Two `REG` lines
+            // drained in the same tick: the first enqueues (`OK`), the second
+            // gets `ERR regression_busy` instead of a second `OK` ack for a
+            // run that never started.
+            if crate::safety::regression::request_regression() {
+                self.send_text_response("OK regression_started");
+                info!("Artisan regression command received");
+            } else {
+                self.send_text_response("ERR regression_busy");
+                warn!("Artisan regression command ignored: a run is already pending");
+            }
         }
         #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
         {

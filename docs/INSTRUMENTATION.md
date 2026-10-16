@@ -172,7 +172,9 @@ Indicates whether an over‑temperature regression test sequence is currently ac
 **Implementation:** The `REG` command triggers `request_regression()` which sets
 `overtemp_regression_active` to `true`. The regression runner
 (`run_overtemp_regression`) then forces 100% output and immediately calls
-`emergency_shutdown("Over-temp regression")`.
+`emergency_shutdown("Over-temp regression")`. A `REG` while the capacity-1
+trigger still holds a pending request is not acknowledged as started — the
+handler answers `ERR regression_busy` (BUG-2d-1, audit 2026-10-16).
 
 **Code Reference:** `src/safety/regression.rs` (request_regression, run_overtemp_regression)
 

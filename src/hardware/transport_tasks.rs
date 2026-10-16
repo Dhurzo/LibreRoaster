@@ -251,16 +251,6 @@ async fn handle_parsed_command(
     config: &TransportConfig,
 ) {
     let traced = TracedCommand::new(cmd, channel);
-    // BUG-2c-1 (audit 2026-10-04): PROFILE/FANPROFILE payloads are staged
-    // at parse time, so if the command is dropped below (channel full) its
-    // staged payload must be dropped too. Capture the kind before `cmd`
-    // moves into `traced`.
-    let is_profile_cmd = matches!(
-        cmd,
-        crate::config::ArtisanCommand::SetProfile
-            | crate::config::ArtisanCommand::SetFanProfile
-            | crate::config::ArtisanCommand::SetRorProfile
-    );
     let mut should_process = true;
     let mut sent = false;
     let mut channel_full = false;
@@ -299,11 +289,14 @@ async fn handle_parsed_command(
         send_channel_full_error(channel, config).await;
     }
 
-    // BUG-2c-1 (audit 2026-10-04): a PROFILE/FANPROFILE dropped by a full
-    // command channel must also drop its staged payload — otherwise the
-    // orphaned FIFO entry is silently applied by the NEXT roast.
-    if channel_full && is_profile_cmd {
-        crate::input::parser::clear_staged_profiles();
+    // BUG-2c-1/BUG-2c-2 (audits 2026-10-04, 2026-10-16): a
+    // PROFILE/FANPROFILE/RORPROFILE dropped by a full command channel must
+    // take exactly its own staged payload with it — the NEWEST entry of the
+    // matching FIFO (the command was just parsed) — not every staged
+    // profile: an earlier accepted command's payload may still be awaiting
+    // the control loop.
+    if channel_full {
+        crate::input::parser::discard_newest_staged_profile(&cmd);
     }
 
     // A command on the INACTIVE transport is refused with an explicit ERR
@@ -395,10 +388,14 @@ pub(crate) async fn process_event_queue(
             // carries the overflow flag and must still produce the
             // buffer_overflow error for THIS extraction turn rather than the
             // next command.
+            //
+            // BUG-2c-1 (audit 2026-10-16): keep draining after the ERR — a
+            // complete clean line already queued in the same read chunk
+            // behind the overflow terminator must execute now, not wait for
+            // the next received byte (the early `return` left it parked).
             if overflow.triggered {
                 overflow.triggered = false;
                 send_parse_error(ParseError::BufferOverflow, channel, config).await;
-                return;
             }
             continue;
         };
@@ -407,11 +404,12 @@ pub(crate) async fn process_event_queue(
         // the current line is the trailing fragment of a command whose
         // leading bytes were dropped. Emit an explicit buffer_overflow error
         // so the host knows its command was discarded, rather than chasing
-        // the (truncated) remaining bytes through the parser.
+        // the (truncated) remaining bytes through the parser. Skip only the
+        // fragment — keep draining the rest of the queue (BUG-2c-1).
         if overflow.triggered {
             overflow.triggered = false;
             send_parse_error(ParseError::BufferOverflow, channel, config).await;
-            return;
+            continue;
         }
 
         // If the command buffer is at capacity (256 bytes), the command
@@ -790,6 +788,76 @@ mod tests {
                 .try_receive()
                 .is_err(),
             "the post-overflow fragment must never execute"
+        );
+    }
+
+    /// BUG-2c-1 (audit 2026-10-16): a complete clean command queued in the
+    /// SAME read chunk behind the overflow terminator must execute in this
+    /// drain turn — the overflow `return` used to leave it parked until the
+    /// host sent another byte (blocking `read_bytes().await`).
+    #[test]
+    fn post_overflow_clean_command_in_same_chunk_executes() {
+        init_container();
+
+        let state = TransportRxState::new();
+        state.init();
+        let config = test_config();
+        let mut overflow = EventQueueOverflow::default();
+
+        // Activate the UART session with a valid command first so the ERR
+        // and the response route through the output channel.
+        push_to_event_queue(&state.event_queue, b"READ\r", &mut overflow);
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+        while ServiceContainer::get_artisan_channel()
+            .try_receive()
+            .is_ok()
+        {}
+        let output = ServiceContainer::get_output_channel();
+        while output.try_receive().is_ok() {}
+
+        // ONE chunk: a >EVENT_QUEUE_SIZE unterminated flood, then its
+        // terminator, then a complete ReadStatus command — exactly the byte
+        // burst the reader can legally deliver from a single `read_bytes`
+        // sequence.
+        let mut chunk = alloc::vec![b'X'; EVENT_QUEUE_SIZE + 44];
+        chunk.push(b'\r');
+        chunk.extend_from_slice(b"READ\r");
+        push_to_event_queue(&state.event_queue, &chunk, &mut overflow);
+        assert!(overflow.triggered, "overflow must be latched");
+
+        block_on(process_event_queue(
+            &state.event_queue,
+            CommChannel::Uart,
+            &config,
+            &mut overflow,
+        ));
+
+        // The overflow surfaced as an ERR...
+        let mut lines = alloc::vec::Vec::new();
+        while let Ok(line) = output.try_receive() {
+            lines.push(line.as_str().to_string());
+        }
+        assert!(
+            lines.iter().any(|l| l.starts_with("ERR buffer_overflow")),
+            "overflow must surface as ERR buffer_overflow, got {:?}",
+            lines
+        );
+
+        // ...AND the clean command queued behind it in the same chunk
+        // executed in this same drain turn.
+        let mut cmds = alloc::vec::Vec::new();
+        while let Ok(traced) = ServiceContainer::get_artisan_channel().try_receive() {
+            cmds.push(traced.command);
+        }
+        assert_eq!(
+            cmds,
+            alloc::vec![ArtisanCommand::ReadStatus],
+            "the post-overflow clean command from the same chunk must execute"
         );
     }
 

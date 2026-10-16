@@ -731,19 +731,56 @@ pub fn fan_profile_take() -> Option<FanProfile> {
     critical_section::with(|cs| PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front())
 }
 
-/// Drop every staged PROFILE/FANPROFILE/RORPROFILE payload.
+/// Drop the NEWEST staged payload of the matching kind, if `command` is a
+/// staged-payload command (PROFILE / FANPROFILE / RORPROFILE).
 ///
-/// BUG-2c-1 (audit 2026-10-04): a refused or dropped PROFILE/FANPROFILE
-/// command must not leave its staged payload behind — the parser stages at
-/// parse time, so rejecting the command without draining would leave an
-/// orphaned FIFO entry that the NEXT session's roast silently applies.
-/// Called from the latch rejection gate (`process_artisan_command`) and
-/// from the transport channel-full drop path.
-pub fn clear_staged_profiles() {
-    critical_section::with(|cs| {
-        PARSED_PROFILE.borrow(cs).borrow_mut().clear();
-        PARSED_FAN_PROFILE.borrow(cs).borrow_mut().clear();
-        PARSED_ROR_PROFILE.borrow(cs).borrow_mut().clear();
+/// BUG-2c-1 (audit 2026-10-04): a dropped PROFILE/FANPROFILE/RORPROFILE
+/// must take its staged payload with it — the parser stages at parse time,
+/// so dropping the command without draining would leave an orphaned FIFO
+/// entry that the NEXT session's roast silently applies. The dropped
+/// command is the one just parsed, so its payload is the newest entry of
+/// the matching FIFO; `pop_back` removes exactly it.
+///
+/// BUG-2c-2 (audit 2026-10-16): draining only the newest entry is what
+/// keeps an EARLIER accepted command's payload intact — a wipe-all would
+/// silently discard a profile the host already saw accepted and the control
+/// loop has not consumed yet. Called from the transport channel-full drop
+/// paths.
+pub fn discard_newest_staged_profile(command: &ArtisanCommand) {
+    critical_section::with(|cs| match command {
+        ArtisanCommand::SetProfile => {
+            let _ = PARSED_PROFILE.borrow(cs).borrow_mut().pop_back();
+        }
+        ArtisanCommand::SetFanProfile => {
+            let _ = PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_back();
+        }
+        ArtisanCommand::SetRorProfile => {
+            let _ = PARSED_ROR_PROFILE.borrow(cs).borrow_mut().pop_back();
+        }
+        _ => {}
+    });
+}
+
+/// Drop the OLDEST staged payload of the matching kind, if `command` is a
+/// staged-payload command (PROFILE / FANPROFILE / RORPROFILE).
+///
+/// BUG-2c-2 (audit 2026-10-16): a REFUSED profile command (e.g. the safety
+/// latch gate in `process_artisan_command`) must drain only its own payload.
+/// Commands are processed in order, so the front entry of the matching FIFO
+/// belongs to the command being refused; a wipe-all would also erase an
+/// earlier accepted command's payload (one-generation profile echo).
+pub fn discard_oldest_staged_profile(command: &ArtisanCommand) {
+    critical_section::with(|cs| match command {
+        ArtisanCommand::SetProfile => {
+            let _ = PARSED_PROFILE.borrow(cs).borrow_mut().pop_front();
+        }
+        ArtisanCommand::SetFanProfile => {
+            let _ = PARSED_FAN_PROFILE.borrow(cs).borrow_mut().pop_front();
+        }
+        ArtisanCommand::SetRorProfile => {
+            let _ = PARSED_ROR_PROFILE.borrow(cs).borrow_mut().pop_front();
+        }
+        _ => {}
     });
 }
 

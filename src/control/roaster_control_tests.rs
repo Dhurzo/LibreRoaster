@@ -2015,8 +2015,10 @@ fn start_without_profile_or_preheat_uses_default_target() {
 
 #[test]
 fn run_regression_rejected_while_latched() {
-    // The drain path (`tasks.rs`) checks the latch before signaling the
-    // runner; the command path itself must also reject while armed.
+    // BUG-2d-1 (audit 2026-10-16): the trigger is signaled inside
+    // `handle_run_regression` (under the roaster mutex), so the command-path
+    // latch gate is the ONLY thing that keeps `REG` from reaching the runner
+    // while armed — it must reject before the handler body runs.
     let mut ctrl = make_control();
     let _ = ctrl.process_artisan_command(ArtisanCommand::EmergencyStop);
     assert!(ctrl.safety().is_emergency_active());

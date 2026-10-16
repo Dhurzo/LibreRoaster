@@ -22,7 +22,6 @@ use crate::logging::traceability::{
 };
 use crate::output::artisan::ArtisanFormatter;
 use crate::output::artisan::MutableArtisanFormatter;
-use crate::safety::regression;
 use crate::safety::watchdog::WatchdogError;
 use core::fmt::Write;
 use embassy_executor::task;
@@ -235,31 +234,13 @@ async fn drain_commands(tick_state: &mut TickState) {
     // When the artisan channel is full, `try_send` returns Err, surfaced to
     // the host as `ERR channel_full command_dropped` so Artisan can retry.
     // Real backpressure is the channel capacity itself.
+    // NB: the `REG` (RunRegression) side-channel trigger used to live here.
+    // BUG-2d-1 (audit 2026-10-16) moved it into `handle_run_regression`,
+    // under the roaster mutex: the command-path latch gate rejects `REG`
+    // while armed (H14) before the trigger is consulted, and the handler
+    // acknowledges `OK regression_started` only when the capacity-1 trigger
+    // actually accepted the request.
     while let Ok(traced_command) = cmd_channel.try_receive() {
-        if let crate::config::ArtisanCommand::RunRegression = traced_command.command {
-            // H14: `REG` must not bypass the safety latch. The runner is
-            // signaled through a side channel, so check the latch BEFORE
-            // requesting: while armed the command still flows through the
-            // normal handler path below, which rejects it with
-            // `fault_condition_active`. Fail closed (treat as latched) when
-            // the container is not initialized.
-            let latched = ServiceContainer::with_roaster_async(
-                |roaster: &mut crate::control::roaster_control::RoasterControl| {
-                    roaster.safety().is_emergency_active() || roaster.get_status().fault_condition
-                },
-            )
-            .await
-            .unwrap_or(true);
-            if !latched {
-                // `request_regression()` starts the runner (embedded +
-                // `regression` feature) or is a no-op stub (host); the command
-                // then flows through the normal handler path so
-                // `handle_run_regression` emits `OK regression_started` or
-                // `ERR regression_disabled` via the output channel.
-                regression::request_regression();
-            }
-        }
-
         tick_state.tick_trace_id = Some(traced_command.trace_id);
         let output_channel = ServiceContainer::get_output_channel();
 

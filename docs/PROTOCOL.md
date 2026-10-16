@@ -378,7 +378,9 @@ Triggers the over-temperature regression workflow. This is a firmware diagnostic
 
 Response:
 
-- on builds with the `regression` feature: `OK regression_started`
+- on builds with the `regression` feature, trigger accepted: `OK regression_started`
+- on builds with the `regression` feature, a run is already pending
+  (capacity-1 trigger still holds an unconsumed request): `ERR regression_busy`
 - otherwise: `ERR regression_disabled`
 
 ### `#DUMP`
@@ -412,6 +414,7 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 - `ERR command_ignored_inactive_channel` — command arrived on a channel the firmware is not currently serving
 - `ERR buffer_overflow buffer_overflow` — the transport byte buffer overflowed (parse errors are `ERR <code> <message>`)
 - `ERR regression_disabled` — `REG` sent on a build without the `regression` feature
+- `ERR regression_busy` — `REG` sent while a previous request is still pending (regression builds only)
 - `ERR OT2_CLAMPED fan=<n> heater_unchanged` — `OT2` value was clamped (see §6)
 - `SAFETY WATCHDOG <reason>` — the software watchdog feed failed (emitted when the reason changes)
 - `SAFETY LEDC-GUARD timeout` — an LEDC guard acquisition timed out (once per new timeout)

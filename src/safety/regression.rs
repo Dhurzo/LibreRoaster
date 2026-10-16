@@ -113,8 +113,14 @@ mod target_impl {
     static REGRESSION_TRIGGER: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 
     /// Signal the regression task to run an over-temperature self-test.
-    pub fn request_regression() {
-        let _ = REGRESSION_TRIGGER.sender().try_send(());
+    ///
+    /// Returns `true` when the trigger was enqueued; `false` when the
+    /// capacity-1 channel still holds a pending trigger (a run was requested
+    /// but the runner task has not started it yet — BUG-2d-1, audit
+    /// 2026-10-16). The caller must not acknowledge the duplicate as a
+    /// started run.
+    pub fn request_regression() -> bool {
+        REGRESSION_TRIGGER.sender().try_send(()).is_ok()
     }
 
     #[task]
@@ -411,8 +417,12 @@ mod target_impl {
 pub use target_impl::{regression_task, request_regression};
 
 #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
-/// No-op regression request on non-regression builds.
-pub fn request_regression() {}
+/// No-op regression request on non-regression builds. Always reports "not
+/// enqueued"; this configuration's ack path emits `ERR regression_disabled`
+/// without consulting the outcome.
+pub fn request_regression() -> bool {
+    false
+}
 
 #[cfg(not(all(target_arch = "riscv32", feature = "regression")))]
 #[embassy_executor::task]
