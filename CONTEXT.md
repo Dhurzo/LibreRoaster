@@ -28,7 +28,7 @@ ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://arti
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:205-224`) plus the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via `executor.run` in `src/main.rs:261-263`):
+The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:205-224`) plus the `async_main_task` supervisor (`src/main.rs:111-129`, spawned via `executor.run` in `src/main.rs:284-304`):
 
 1. **USB reader** — gathers bytes from native USB CDC and parses commands
 2. **UART reader** — gathers bytes from UART0 and parses commands
@@ -106,7 +106,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 
 **Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
 - `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New opt-in `heat-sense` cargo feature for builds with a validated GPIO1 current-sense circuit (default build does not interpret GPIO1; time-window debounce + one sample per tick in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
-- `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), "SSR cycle busy", and LEDC-GUARD timeouts now warn once per activation episode. The dedicated UART1 log sink remains deferred (needs bench validation).
+- `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), the PID "setpoint capped" warning, and "SSR cycle busy" warn once per activation episode. LEDC-GUARD timeouts are counter-only (exposed as the STATUS `ledc_guard_timeouts` field) with a per-occurrence `debug!`; they are not edge-log-gated. The dedicated UART1 log sink remains deferred (needs bench validation).
 - Status LED is a real indicator — pure pattern logic in `src/hardware/status_led.rs` (host-tested), single owner stored in `ServiceContainer`, driven once per tick by the control loop. `enter_safe_shutdown` keeps `Peripherals::steal()` as documented fallback (app tasks are dead by then).
 - `Max31856::new_tolerant()` returns `(device, verified)`; `init_spi_sensors` degrades a single dead channel (BT-only / ET-only configs boot) and aborts only when BOTH channels are dead (`boot_policy` helper). `new()` keeps the hard-fail contract for HIL examples. Scripted SPI mock + 9 host tests.
 - Continuous `#` telemetry is **opt-in via `STREAM;ON`** (`ArtisanCommand::SetStreaming`, `#OK` ack, allowed while latched) and OFF by default — START/OT1/OT2/PID;SV no longer enable it. The `#DUMP` ring-buffer feed is decoupled from the stream flag (driven by `roast_logger::is_logging_active()`). Golden transcripts and pipeline soak stay green (soak sends STREAM;ON to keep the `#`-line validation exercised). Docs updated: PROTOCOL/HARDWARE/ARTISAN_CONNECTION/README.
@@ -125,7 +125,7 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - Clippy config denies: `unwrap_used`, `expect_used`, `panic` in production code
 - GPIO9 is a strapping pin — external fan must not force invalid boot state
 - SPI MISO routed through GPIO5 (not GPIO2) to avoid FSPIQ strap conflict
-- Command queue intentionally small and rate-limited
+- Command queue intentionally small (capacity 16, `try_send`-only backpressure; no per-tick command budget)
 - Sensor timing pressure: MAX31856 conversion (210 ms) is slow relative to the 100 ms loop timer — the real tick is ≈ 310–330 ms
 
 ## Documentation Map
@@ -207,4 +207,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-10-16. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-10-17. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

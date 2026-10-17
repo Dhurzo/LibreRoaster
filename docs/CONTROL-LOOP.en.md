@@ -23,7 +23,7 @@ The firmware runs on a **single‑thread cooperative model** (Embassy executor o
          │               │               │
          ▼               ▼               ▼
     output_channel  SystemStatus    Actuators (SSR/Fan)
-    (MPSC cap=32)   (snapshot)      (LEDC HW)
+    (MPSC cap=16)   (snapshot)      (LEDC HW)
          │
          ▼
    dual_output_task (5ms) → USB/UART → Artisan PC
@@ -64,19 +64,16 @@ pub async fn control_loop_task() {
 | 4 | **LEDC Guard** | `log_ledc_stage()` | ~0 ms | Logs zero‑cross guard timeouts |
 | 5 | **Watchdog Feed** | `feed_watchdog_stage()` | ~0 ms | Feeds RTC WDT + BT heartbeat; 2 consecutive failures = emergency |
 | 6 | **Telemetry** | `emit_telemetry_stage()` | ~1 ms | Continuous `#` stream @1 Hz + `#DUMP` ring‑buffer drain (4 rows/tick) |
-| 7 | **Status LED** | `update_status_led_stage()` | ~0 ms | Pattern based on `RoasterState` + `fault_condition` |
+| 7 | **Status LED** | `update_status_led_stage()` | ~0 ms | Pattern based on `RoasterState` + `fault_condition` (riscv32 only) |
+| 8 | **Finalize Tick** | `finalize_tick()` | ~0 ms | Clears the stage tracker; logs tick elapsed / guard / watchdog summary (debug) |
 
 ### 3.1 Drain Commands
 
 ```rust
-// src/application/tasks.rs:222
+// src/application/tasks.rs:221
 async fn drain_commands(tick_state: &mut TickState) {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     while let Ok(traced_command) = cmd_channel.try_receive() {
-        // RunRegression triggers regression_task before normal handler
-        if matches!(traced_command.command, ArtisanCommand::RunRegression) {
-            regression::request_regression();
-        }
         let outcome = ServiceContainer::with_roaster_async(|roaster| {
             roaster.process_artisan_command(traced_command.command)
         }).await;
@@ -131,7 +128,7 @@ async fn emit_telemetry_stage(...) {
 
 ## 4. Control Logic: `RoasterControl::update_control()`
 
-`src/control/roaster_control.rs:554` — **sync function** called from stage 3.
+`src/control/roaster_control.rs:762` — **sync function** called from stage 3.
 
 ### 4.1 Safety Gates (evaluated in order; any triggers emergency)
 
@@ -148,10 +145,11 @@ if (heater_energized || roast_active) &&
    now - last_command_received_at_ms > COMMS_IDLE_TIMEOUT_MS (15000)
     → emergency_shutdown("Comms idle timeout")
 
-// 4. MAX_ROAST_TIME (H2: two budgets)
+// 4. MAX_ROAST_TIME (H2 + F-C2: three budgets)
 //    START/PROFILE-anchored roast: 1800 s (MAX_ROAST_TIME_SECS)
+//    PID;ON session before the charge: 3600 s (MAX_PID_UNCHARGED_SESSION_SECS)
 //    Manual OT1 session without START: 5400 s (MAX_MANUAL_HEAT_SESSION_SECS)
-//    EXCLUDES Preheating
+//    Preheating EXCLUDED only while the firmware PID is the thing heating
 if elapsed > limit_for(start)
     → emergency_shutdown("Maximum roast time exceeded")
 
@@ -166,11 +164,13 @@ if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (60.0) && BT finite > 0
 // 7. RoR Guards (TIERED — A‑TC4‑D, recalibrated H6b)
 //    HARD (> MAX_BT_RATE_OF_RISE_HARD = 1.0 °C/s): ROR_EXCEEDED_CONSECUTIVE_LIMIT = 3 ticks
 //    SOFT (MAX_BT_RATE_OF_RISE = 0.75 .. 1.0 °C/s): ROR_SOFT_DEBOUNCE_LIMIT = 12 ticks (~3.7 s)
-//    Armed only when the FIRMWARE PID is in control (H6: artisan_control disarms)
+//    Armed only when the FIRMWARE PID is in control (H6: artisan_control disarms) and
+//    (Heating|Stable, or Idle with PID enabled and the heater energized)
 //    BT‑only guard INDEPENDENT of PID channel (check_bt_rate vs check_rate_of_rise)
 
 // 8. Probe stuck
 //    PID mode: flat BT > PROBE_STUCK_TIMEOUT_SECS (120 s) → emergency
+//    PID hot equilibrium at ≥ 50 % duty: warning 300 s / latch 600 s (N4)
 //    Manual: warning at 120 s (ERR probe_stuck_warning), emergency at 300 s (PROBE_STUCK_MANUAL_LATCH_SECS)
 ```
 
@@ -190,11 +190,12 @@ let desired_output = if safety.is_emergency_active() {
 
 ### 4.3 PID Control (`update_pid_control`)
 
-`src/control/roaster_control.rs:1828`
+`src/control/roaster_control.rs:2575`
 
 - **Throttle:** `pid_cycle_time_ms` (default 100 ms, configurable via `PID;CT`, floor 10 ms)
+- **RoR‑follow:** the follower's setpoint is stepped on every control tick; the temperature profile interpolation is suspended while RoR‑follow runs
 - **Profile following:** interpolates `active_profile.target_at(elapsed_secs)`
-- **Stale hold:** if sensor data > 500 ms old → hold last *applied* output (not PID intent)
+- **Stale hold (in the output selector, before `update_pid_control` is called):** if sensor data > 500 ms old → hold last *applied* output (not PID intent)
 - **Anti‑windup:** `PidFeedback { desired, applied, guard_busy }` → `dispatch.set_pid_feedback()`
 
 ### 4.4 SSR Write (Zero‑Cross Guarded)
@@ -246,7 +247,7 @@ ServiceContainer::with_roaster_async(|roaster| {
 
 ### 5.2 Command Dispatch (`process_artisan_command`)
 
-`src/control/roaster_control.rs:1101`
+`src/control/roaster_control.rs:1260`
 
 ```rust
 // WHITELIST when fault_condition active: READ, STATUS, STOP, EMERGENCY_STOP, START, PREHEAT, CHAN, UNITS, FILT, STREAM, CHARGE, DROP, TUNE;STATUS, RORPROFILE;OFF
@@ -270,7 +271,7 @@ match command {
 
 ### 5.3 Internal Command Flow (`process_command`)
 
-`src/control/roaster_control.rs:243`
+`src/control/roaster_control.rs:310`
 
 ```rust
 fn process_command(command: RoasterCommand, now: Instant) {
@@ -307,7 +308,7 @@ fn process_command(command: RoasterCommand, now: Instant) {
 ```
 control_loop_task / command handlers
     │
-    ▼ output_channel.try_send(formatted_string)  [MPSC bounded cap=32]
+    ▼ output_channel.try_send(formatted_string)  [MPSC bounded cap=16]
     │
     ▼ dual_output_task (Timer 5 ms, drains ≤4 msg/tick)
 multiplexer.get_active_channel() → USB or UART
@@ -321,11 +322,11 @@ Artisan PC
 
 | Command | Function | Format |
 |---------|----------|--------|
-| `READ` | `format_read_response_full()` | `BT,ET,heater%,fan%,target,MV,SP,PID` (8 fields PID on) / 5 fields PID off |
-| `STATUS` | `format_status_response()` | Human‑readable multi‑line |
-| `CHAN` | `format_chan_ack(rate)` | `# CHAN <rate>` |
-| `UNITS`/`FILT`/`STREAM` | `format_handshake_ack()` | `# Changed ...` |
-| Continuous `#` | `MutableArtisanFormatter::format()` | `# time,BT,ET,heater,fan,target,RoR` @ 1 Hz |
+| `READ` | `format_read_response_full()` | `AMB,ET,BT,CHAN3,CHAN4[,heater%,fan%,SV]` (8 fields PID on) / 5 fields PID off |
+| `STATUS` | `format_status_response()` | Single‑line CSV, 20 fields |
+| `CHAN` | `format_chan_ack(rate)` | `#<rate>` (e.g. `#1200`) |
+| `UNITS`/`FILT`/`STREAM` | `format_handshake_ack()` | `#OK` |
+| Continuous `#` | `MutableArtisanFormatter::format()` | `#<time>,ET,BT,ROR,Gas` @ 1 Hz |
 | `#DUMP` | `roast_logger::dump()` | Ring buffer 256 rows, drained 4/tick |
 
 ---
@@ -338,16 +339,16 @@ Artisan PC
 Idle ──PREHEAT──► Preheating ──START──► Heating ──converged (±2 °C)──► Stable
   ▲                    │                    │                    │
   │                    │                    ▼                    ▼
-  │                    └────STOP──────────► Idle ◄──────────────┘ (hysteresis ±3 °C)
+  │                    └───PID;OFF────────► Idle ◄──────────────┘ (hysteresis ±3 °C)
   │                         │
   └────EMERGENCY/FAULT──────► Error (latched)
                                 │
                                 ▼
-                         StopRoast (PID;OFF) → clear_emergency_explicit() → Idle
+                         PID;OFF / START / PREHEAT → clear_emergency_explicit() → Idle
 ```
 
-- **Emergency latch** (`safety.is_emergency_active()` + `status.fault_condition`): set by safety traps, cleared **ONLY** by `StopRoast` → `clear_emergency_explicit()`.
-- **Cooldown latch** (`cooling_active`): set by `STOP`, cleared by BT < 50 °C, new roast, or explicit recovery.
+- **Emergency latch** (`safety.is_emergency_active()` + `status.fault_condition`): set by safety traps; cleared only by explicit operator recovery — `PID;OFF` (`ArtisanCommand::Stop`), `START`, `PREHEAT`, or the internal `StopRoast` — all routing through `clear_emergency_explicit()`. `PID;ON` never clears the latch (H11).
+- **Cooldown latch** (`cooling_active`): set by STOP, cleared by BT < 60 °C (a real reading > 0), a new roast, explicit recovery, or a re-energizing `OT1>0`/`UP` (H3).
 
 ---
 
@@ -369,11 +370,11 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 
 | Resource | Protection | Access Pattern |
 |----------|------------|----------------|
-| `RoasterControl` | `Mutex<RefCell<Option<...>>>` in `ServiceContainer` | `with_roaster_async(|r| { ... }).await` (brief lock) |
+| `RoasterControl` | `EmbassyMutex<CriticalSectionRawMutex, Option<...>>` in `ServiceContainer` | `with_roaster_async(|r| { ... }).await` (brief lock) |
 | `artisan_channel` | `Channel<CriticalSectionRawMutex, 16>` | `try_send` (readers), `try_receive` (control_loop) |
-| `output_channel` | `Channel<CriticalSectionRawMutex, 32>` | `try_send` (control/handlers), `try_receive` (dual_output) |
-| `multiplexer` | `Mutex<RefCell<Option<CommMultiplexer>>>` | `critical_section::with` (dual_output) |
-| Watchdog | `WatchdogFeeder` in `ServiceContainer` | `with_watchdog(|w| w.feed_async(bt)).await` |
+| `output_channel` | `Channel<CriticalSectionRawMutex, 16>` | `try_send` (control/handlers), `try_receive` (dual_output) |
+| `multiplexer` | `Mutex<RefCell<Option<CommandMultiplexer>>>` | `critical_section::with` (dual_output) |
+| Watchdog | `WatchdogFeeder` in `ServiceContainer` | `with_watchdog(|w| w.feed_async(bt))` (sync, called from the control loop) |
 
 **No shared mutable state without sync primitives.** All cross‑task communication via channels.
 
@@ -385,7 +386,7 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 |----------|-------|-----|
 | `CONTROL_LOOP_PERIOD_MS` | 100 | Nominal timer (real ~310‑330 ms) |
 | `MAX31856_CONVERSION_TIME_MS` | 210 | One‑shot conversion wait |
-| `TEMP_VALIDITY_TIMEOUT_MS` | 1000 | Staleness guard (tolerates ~2 missed ticks, H9) |
+| `TEMP_VALIDITY_TIMEOUT_MS` | 1000 | Staleness guard (tolerates ~2 missed ticks) |
 | `COMMS_IDLE_TIMEOUT_MS` | 15000 | Comms idle emergency |
 | `MAX_ROAST_TIME_SECS` | 1800 | 30 min roast budget (START/PROFILE anchor) |
 | `MAX_MANUAL_HEAT_SESSION_SECS` | 5400 | 90 min manual OT1 session cap (H2) |
@@ -454,4 +455,4 @@ cargo test --target x86_64-unknown-linux-gnu --features test,regression \
 
 ---
 
-*Last updated: 2026‑09‑11. Synced with `develop` branch.*
+*Last updated: 2026‑10‑17. Synced with `develop` branch.*

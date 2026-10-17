@@ -1,6 +1,6 @@
 # Feature → File Map
 
-*Updated 2026-09-09. Single source of truth for "where is X implemented?"*
+*Updated 2026-10-17. Single source of truth for "where is X implemented?"*
 
 ---
 
@@ -28,8 +28,8 @@
 | **Command multiplexer** (USB+UART) | `src/input/multiplexer.rs` | `CommandMultiplexer` |
 | **Command channel** | `src/application/service_container.rs` | `ARTISAN_CMD_CHANNEL` (`ARTISAN_CMD_CHANNEL_SIZE = 16`) |
 | **Artisan command handlers** | `src/control/handlers/artisan.rs` | `ArtisanCommandHandler::commit_manual_heater()` / `commit_manual_fan()` |
-| **Temperature commands** (`SETTARGET`, `PREHEAT`) | `src/control/handlers/temperature.rs` | `TemperatureCommandHandler::set_pid_target()` / `get_pid_output()` |
-| **System commands** (`START`, `STOP`, `READ`, `STATUS`) | `src/control/handlers/system.rs` | `SystemCommandHandler` (`handle_command()` / `can_handle()`) |
+| **Temperature commands** (`SETTARGET`, `PREHEAT`) | `src/control/roaster_control.rs` | `handle_set_target_temp()` / `handle_preheat()` (PID target layer: `handlers/temperature.rs`) |
+| **System commands** (`START`, `STOP`, `READ`, `STATUS`) | `src/control/roaster_control.rs` | `handle_start_roast()` / `handle_emergency_stop()` / `handle_read_status()` / `handle_status_report()` |
 | **Safety commands** | `src/control/handlers/safety.rs` | `SafetyCommandHandler::activate_emergency()` / `clear_emergency()` |
 | **Display units (C/F)** | `src/config/constants.rs` | `TemperatureScale::convert_*` |
 
@@ -43,8 +43,8 @@
 | **Output channel** | `src/application/service_container.rs` | `ARTISAN_OUTPUT_CHANNEL` (`ARTISAN_OUTPUT_CHANNEL_SIZE = 16`) |
 | **Dual output task** | `src/application/tasks.rs` | `dual_output_task()` |
 | **Continuous telemetry** | `src/control/abstractions.rs` | `OutputController` |
-| **READ response** | `src/output/artisan.rs:97` | `format_read_response_full()` |
-| **STATUS response** | `src/output/artisan.rs:145` | `format_status_response()` (20 fields) |
+| **READ response** | `src/output/artisan.rs:108` | `format_read_response_full()` |
+| **STATUS response** | `src/output/artisan.rs:200` | `format_status_response()` (20 fields) |
 | **CSV/RoR/Time formatters** | `src/output/artisan.rs` | `ArtisanFormatter` helpers (`format_artisan_line`, RoR, time) |
 
 ---
@@ -55,15 +55,15 @@
 |---------|----------------|---------------------|
 | **MAX31856 driver** | `src/hardware/max31856.rs` | `Max31856::read_temperature()` |
 | **Sensor conversion hub** | `src/hardware/sensors/conversion.rs` | `SensorConversionHub` + `SensorController::update_temperatures` |
-| **Shared SPI bus** | `src/hardware/shared_spi.rs` | `SharedSpiBus` |
+| **Shared SPI bus** | `src/hardware/shared_spi.rs` | `SharedSpiDevice` / `SpiDeviceWithCs` |
 | **SSR (heater)** | `src/hardware/ssr.rs` + `ssr_logic.rs` | `set_duty_raw()` / `SsrControlBase` |
 | **Fan (LEDC PWM)** | `src/hardware/fan.rs` | `FanController::set_speed()` |
 | **LEDC bus/guard** | `src/hardware/ledc_bus.rs`, `ledc_guard.rs` | `LedcBus`, `LedcGuard` |
-| **USB CDC driver** | `src/hardware/usb_cdc/driver.rs` | `UsbCdcDriver` |
+| **USB CDC driver** | `src/hardware/usb_cdc/driver.rs` | `UsbCdcTxDriver` / `UsbCdcRxDriver` (host stub: `UsbCdcDriver`) |
 | **USB CDC tasks** | `src/hardware/usb_cdc/tasks.rs` | `usb_reader_task()` |
-| **UART driver** | `src/hardware/uart/driver.rs` | `UartDriver` |
+| **UART driver** | `src/hardware/uart/driver.rs` (host stub: `uart/driver_host.rs`) | `UartTxDriver` / `UartRxDriver` |
 | **UART tasks** | `src/hardware/uart/tasks.rs` | `uart_reader_task()` |
-| **Heat presence detection** | `src/hardware/heat_presence.rs` | `HeatPresenceDetector` |
+| **Heat presence detection** | `src/hardware/heat_presence.rs` | `debounce_heat_absent()` / `HeatPresenceOutcome` |
 
 ---
 
@@ -72,12 +72,12 @@
 | Feature | Primary File(s) | Key Types/Functions |
 |---------|----------------|---------------------|
 | **RTC watchdog** | `src/safety/watchdog.rs` | `WatchdogFeeder::feed_async()` |
-| **Over-temp cutoff** | `src/control/controllers/sensor.rs` + `safety.rs` | `check_overtemp` / safety policy |
+| **Over-temp cutoff** | `src/control/controllers/sensor.rs` + `safety.rs` | inline in `SensorController::update_temperatures()` (`overtemp_detected`) + `SafetyController::evaluate()` |
 | **Stale temperature guard** | `src/control/controllers/sensor.rs` | stale check (`TEMP_VALIDITY_TIMEOUT_MS`) |
-| **Heat source detection** | `src/hardware/heat_presence.rs` + `ssr_logic.rs` | heat-source state machine |
+| **Heat source detection** | `src/hardware/heat_presence.rs` + `ssr_logic.rs` | `SsrControlBase` (`detect_heat_source()` / `cross_check_heat_detection()`) |
 | **Emergency stop** | `src/control/roaster_control.rs` | `handle_emergency_stop()` (+ handlers/safety.rs) |
 | **Regression task** | `src/safety/regression.rs` | `regression_task()` |
-| **Safe shutdown (init failure)** | `src/main.rs:70-95` | `enter_safe_shutdown()` (GPIO8 3×200 ms) |
+| **Safe shutdown (init failure)** | `src/main.rs:77-109` | `enter_safe_shutdown()` (GPIO8 3×200 ms) |
 
 ---
 

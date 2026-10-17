@@ -15,7 +15,7 @@ Run these commands before touching hardware.
 # 1. Embedded build must compile clean (zero warnings)
 cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
-# 2. Host test suite (expect all pass — 906 tests, 0 failures)
+# 2. Host test suite (expect all pass — 913 tests, 0 failures)
 cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1
 
 # 3. Format + clippy gate
@@ -23,7 +23,7 @@ cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::
 ```
 
 - [ ] Embedded build: **zero errors, zero warnings**
-- [ ] Host tests: **906 passed, 0 failed** (any failure = regression)
+- [ ] Host tests: **913 passed, 0 failed** (579 lib + 334 integration, 2026-10-17; any failure = regression)
 - [ ] Clippy: clean
 
 ---

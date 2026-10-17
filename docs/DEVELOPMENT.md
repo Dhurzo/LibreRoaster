@@ -1,6 +1,6 @@
 # LibreRoaster Development Guide
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-10-17
 
 This guide explains how to build, flash, test, and verify LibreRoaster without losing sight of the project’s two-runtime architecture: a real embedded firmware target and a host-side verification target.
 
@@ -54,9 +54,17 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 
 | Variant | Command |
 |---------|---------|
-| Race check | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --test-threads=1 --no-fail-fast` |
-| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` |
-| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,regression` and `embedded,instrumentation` variants) |
+| Race check | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1` |
+| Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` (CI; `scripts/run-coverage.sh` still uses only `--features test`, so the conversion math and the L3 simulated pipeline show uncovered there) |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,heat-sense`, `embedded,regression`, `embedded,instrumentation`, `embedded,simulated-sensors` and `--examples`, mirroring the six CI build steps) |
+
+CI runs 7 jobs (fmt, clippy, embedded-clippy, test, regression, coverage, embedded-build) with these batteries:
+
+- host tests: `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast` — **913 passed / 1 ignored** (579 lib + 334 integration, 2026-10-17)
+- heat-sense state machine: `cargo test --target x86_64-unknown-linux-gnu --features test,heat-sense --lib hardware::ssr_logic --no-fail-fast` (20 tests; lib total 597)
+- doctests: `cargo test --target x86_64-unknown-linux-gnu --features test --doc` — 6 passed / 1 ignored
+- regression: `cargo test --features "test,regression" --target x86_64-unknown-linux-gnu --no-fail-fast` — 981 with `--lib --tests` (608 lib + 373 integration); the CI form also runs doctests (987 passed / 2 ignored)
+- clippy: default host `--all-targets` **and** a `--features test` pass (the `test` feature gates real code: multiplexer, `usb_cdc` tasks)
 
 ### Why `test` matters
 
@@ -122,7 +130,7 @@ This is useful for quick inner-loop development, but it does not cover the full 
 cargo test --target x86_64-unknown-linux-gnu --features test
 ```
 
-This is the correct default verification command when documentation or behavior changes touch protocol, control, or task orchestration.
+This is the correct default verification command when documentation or behavior changes touch protocol, control, or task orchestration. At 2026-10-17 this battery is **913 passed / 1 ignored** (579 library + 334 integration).
 
 ### Regression numeric suite
 

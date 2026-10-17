@@ -129,7 +129,7 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 > ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
-- 25 kHz PWM waveforms (25/50/75 %), IRLZ44N vs IRF520, flyback 1N4007, 1 kΩ gate stopper, 100 kΩ weak, 10 kΩ boot pull-up
+- 25 kHz PWM waveforms (25/50/75 %), IRLZ44N vs IRF520, Schottky flyback (SS34 / 1N5819 — a 1N4007 is too slow at 25 kHz), 1 kΩ gate stopper, 100 kΩ weak, 10 kΩ boot pull-up
 - Waveform scope points, fade threshold 12 ticks, `FAN_MIN_SAFETY_PCT 20%`, hil_fan sweep verification
 
 ### 8. SSR & Heat Detection — AC + GPIO1 State Machine
@@ -137,8 +137,8 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 > ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
 - DC 3.3 V → SSR-25DA DC+ (5 Hz 14-bit), AC mains L→fuse→SSR→klixon→heater, PE chassis, heatsink 1 W/A
-- Two sense options (CT vs opto) → GPIO1 Pull::Up LOW=heat, debounce 5× @≥50% → NotDetected, 10× @0% → Error, rearm via OFF/START
-- Min duty 820 ticks (10 ms) for zero-cross reliability, scope DMM checks
+- Two sense options (CT vs opto) → GPIO1 Pull::Up LOW=heat, debounce 5× @≥50% → NotDetected, 10× LOW at duty 0 → Error (stuck-on), rearm via PID;OFF / START / PREHEAT
+- Min duty 819 ticks (10 ms) for zero-cross reliability, scope DMM checks
 
 ### 9. Power Rails & Star Ground — Decoupling & Back-Powering
 
@@ -151,8 +151,8 @@ Very detailed breakdowns — one per functional block, with resistor calculation
 
 > ⏳ Detailed schematic + Fritzing diagrams pending — not yet in the repo.
 
-- GPIO8 → 330 Ω → LED → GND, push-pull, active-high, resistor calc (Vf 2.0 V → 3.9 mA), 1 Hz/4 Hz patterns, phase-locked `led_on(elapsed_ms)`, `Peripherals::steal()` 3×200 ms blink on init failure
+- GPIO8 → 330 Ω → LED → GND, push-pull, active-high, resistor calc (Vf 2.0 V → 3.9 mA), 1 Hz/4 Hz patterns, phase-locked `led_on(elapsed_ms)`, `Peripherals::steal()` 3 × (200 ms low / 200 ms high) + ~1 s pause on init failure
 
 ---
 
-*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=5`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-09-07. The 6 per-section detailed diagrams (resistors, SPI, fan ultra, SSR/heat, power/star-GND, LED) are pending.*
+*Diagrams verified against `src/config/constants.rs` (`SSR_CONTROL_CYCLE_HZ=5`, `FAN_PWM_FREQUENCY_HZ=25000`) and `src/hardware/init.rs`. Last updated 2026-10-17. The 6 per-section detailed diagrams (resistors, SPI, fan ultra, SSR/heat, power/star-GND, LED) are pending.*

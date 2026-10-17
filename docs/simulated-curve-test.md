@@ -1,6 +1,6 @@
 # Simulated Sensor Curves
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-10-17
 
 ## Overview
 
@@ -65,7 +65,7 @@ pub struct CurvePoint {
 }
 ```
 
-The generator **linearly interpolates** between consecutive waypoints to produce smooth temperature trajectories at the control-loop cadence (~3 Hz: real tick ≈ 310–330 ms because every tick waits on the MAX31856 conversion). Before the first waypoint, temperatures hold at that waypoint's values. After the last waypoint, they hold at the final values.
+The generator **linearly interpolates** between consecutive waypoints to produce smooth temperature trajectories at the control-loop cadence — ≈10 Hz with the 100 ms loop timer, since the simulated path has no MAX31856 conversion wait (real-hardware builds tick at ≈310–330 ms because of that wait). Before the first waypoint, temperatures hold at that waypoint's values. After the last waypoint, they hold at the final values.
 
 Maximum curve length: **32 waypoints** (heapless, no heap allocation).
 
@@ -122,7 +122,7 @@ The simulated sensor source produces valid, fault-free readings at every tick. T
 - **Over-temperature cutoff** (260 °C) will only trigger if the curve includes values at or above that threshold. The default medium roast curve stays below 260 °C.
 - **Consecutive-fallback guard** (5 failures) will never trigger — there are no read failures in simulated mode.
 - **PID and heater control** work normally because temperatures are finite and valid.
-- **Heat-source detection** (GPIO1) still reads the real pin. If nothing is connected, the pin reads high (pull-up) and SSR status reports `NotDetected`, which forces heater output to 0%. To test heater output, GPIO1 must be pulled low externally (or the SSR mock can be extended).
+- **Heat-source detection** (GPIO1) is a no-op here: the pin-interpretation path is gated `heat-sense` **without** `simulated-sensors` (`src/hardware/ssr_logic.rs`), so a simulated build never reports `NotDetected` and never forces heater output to 0%. (On real hardware, only the opt-in `heat-sense` build interprets GPIO1, and only above ≈50% duty.)
 
 ## What is and isn't tested
 
@@ -161,10 +161,10 @@ The simulated sensor source produces valid, fault-free readings at every tick. T
 
 ## Host-side tests
 
-The simulated curve module includes 18 unit tests covering edge cases (empty curves, single-point curves, interpolation, boundary conditions, overflow, noise). These run on the host target:
+The simulated curve module includes 21 tests (19 unit + 2 proptest properties) covering edge cases (empty/single-point/zero-range curves, interpolation boundaries, the 32-waypoint cap, the BUG-2b-1 exact-segment-end case, and hostile-input properties). The module only compiles with `simulated-sensors`, so the feature is required on the host:
 
 ```bash
-cargo test --target x86_64-unknown-linux-gnu --features test simulated
+cargo test --target x86_64-unknown-linux-gnu --features test,simulated-sensors --lib hardware::sensors::simulated
 ```
 
 ## Hardware validation scripts (no sensors needed)

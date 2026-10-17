@@ -31,7 +31,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 | Firmware compiles for ESP32-C3 target | ✅ Tested on target ESP32 |
 | Firmware flashes to ESP32-C3 | ✅ Tested on target ESP32 |
 | Boot without panics, runs on target ESP32 | ✅ Tested on target ESP32 |
-| 906 host-side unit + integration tests (`--lib --tests`, serial run) | ✅ Tested on target ESP32 (Synthetic Integration Test)|
+| 913 host-side unit + integration tests (`--features test --lib --tests`, 579 unit + 334 integration) | ✅ Tested on target ESP32 (Synthetic Integration Test)|
 | Serial command protocol (TC4-compatible, 20+ commands) | ✅ Tested |
 | Synthetic roast curves (simulated sensors, no hardware) | ✅ Tested |
 | PID control, profiles, safety interlocks | ✅ Tested |
@@ -49,10 +49,10 @@ The project is aimed at builders who want an inspectable roasting controller rat
 
 - **Target MCU:** ESP32-C3 (`riscv32imc-unknown-none-elf`)
 - **Runtime model:** `no_std` embedded firmware on Embassy + esp-rtos
-- **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-compatible command set (20+ commands). UART via GPIO20/21 is also supported.
+- **Primary integration:** official Artisan app over **USB CDC** (native USB port) using a TC4-compatible command set (30+ command tokens). UART via GPIO20/21 is also supported.
 - **Sensors:** two MAX31856 thermocouple channels (Type K), mapped to ET and BT, shared SPI bus at 1 MHz. EMA-filtered readings with boot self-test.
 - **Actuators:** SSR-controlled heater (5 Hz zero-cross LEDC, GPIO10) + PWM fan (25 kHz LEDC PWM, GPIO9) with slew-rate limiting and heat-source cross-check
-- **Safety layers:** 8 independent layers — dual watchdog (software + hardware RWDT), over-temperature cutoff (BT 260 °C, ET 300 °C), rate-of-rise protection (45 °C/min soft / 60 °C/min hard, firmware-PID mode), stale-temperature guard (1 s), heat-source detection (GPIO1, opt-in `heat-sense` feature), SSR stuck-on detection, max roast time (30 min roast; 60 min uncharged `PID;ON` session; 90 min manual session), fault-command rejection
+- **Safety layers:** dual watchdog (software + hardware RWDT), over-temperature cutoff (BT 260 °C, ET 300 °C), rate-of-rise protection (45 °C/min soft / 60 °C/min hard, firmware-PID mode), stale-temperature guard (1 s), probe-stuck detection, comms-idle cutoff (15 s), heat-source + SSR stuck-on detection (GPIO1, opt-in `heat-sense` feature), time budgets (30 min roast; 60 min uncharged `PID;ON` session; 90 min manual session), mapped fault-command rejection
 - **Control:** full PID with anti-windup, configurable channel (ET/BT), profile interpolation, preheat behavior
 - **Simulated sensors:** synthetic roast curves for hardware-free testing on real ESP32-C3 hardware
 - **Opt-in telemetry stream:** spontaneous `#` telemetry is OFF by default; enable with `STREAM;ON` (custom clients only — Artisan polls `READ`)
@@ -60,7 +60,7 @@ The project is aimed at builders who want an inspectable roasting controller rat
 - **`heat-sense` feature (opt-in):** GPIO1 current-sense interpretation is OFF by default; enable with `--features heat-sense` only with a validated stretched-pulse circuit (see `docs/HARDWARE.md` §8)
 - **In-memory telemetry:** 256-sample roast ring buffer plus live `READ` and `STATUS` responses
 - **Focused controllers:** SensorController, ActuatorController (heater + fan together), SafetyController, CommandDispatcher (v5.4)
-- **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job (no fixed % gate in CI)
+- **Code coverage:** measured via `cargo-llvm-cov` in the CI coverage job; `codecov.yml` declares project 75 % / patch 70 % targets, but the upload is non-failing (`fail_ci_if_error: false`)
 
 ---
 
@@ -117,7 +117,7 @@ This is the central coordination point for the firmware. If you need to understa
 
 The control loop runs on a 100 ms timer, but the real tick is ~310–330 ms because every tick waits on a MAX31856 one-shot conversion (210 ms). It is internally instrumented in stages:
 
-1. **command drain** with rate limiting,
+1. **command drain** from the shared channel (capacity 16; no per-tick budget — a full channel drops the incoming command with `ERR channel_full command_dropped`),
 2. **sensor read** (MAX31856 one-shot conversion, EMA filter),
 3. **control update** (PID computation, profile interpolation, safety checks),
 4. **LEDC write / actuation** (slew-rate-limited SSR, fan speed),
@@ -137,9 +137,10 @@ LibreRoaster implements a TC4-compatible serial interface with 20+ commands span
 - **Polling:** `READ`, `STATUS`, `STAT`
 - **Manual actuation:** `OT1` (incl. `up`/`down`), `OT2`, `IO3`, `DCFAN`, `UP`, `DOWN`, `START`, `STOP`
 - **PID and roast control:** `SETTARGET`, `PIDGAIN`, `PID;ON`, `PID;OFF`, `PID;SV`, `PID;T`, `PID;CHAN`, `PID;CT`, `PID;LIMIT`
-- **Profiles:** `PROFILE`, `FANPROFILE`, `PREHEAT`
+- **Profiles:** `PROFILE`, `FANPROFILE`, `RORPROFILE` (+ `RORPROFILE;OFF`), `PREHEAT`, `CHARGE`, `DROP`
 - **Handshake / setup:** `CHAN`, `UNITS`, `FILT`
-- **Diagnostics:** `REG`, `#DUMP`, `STREAM`
+- **Autotune:** `TUNE` (step test / `ABORT` / `UNLOCK` / `STATUS`)
+- **Diagnostics:** `REG`, `#DUMP`, `STREAM;ON` / `STREAM;OFF`
 
 ### Core response shapes
 
@@ -171,7 +172,7 @@ Two constraints matter operationally:
 1. **GPIO9 is a strapping pin** — it determines boot mode at reset. **Official ESP32-C3 dev boards** (DevKitC-02, DevKitM-1, RUST-1) include the pull-up already — no extra resistor needed. **Custom boards** (like LibreRoaster) need a **10kΩ pull-up to 3.3V**. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) for the full breakdown.
 2. **SPI MISO is routed through GPIO5 instead of GPIO2** to avoid the ESP32-C3 strap conflict on FSPIQ.
 
-For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against `src/hardware/init.rs:86-111` asserts).
+For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin map verified against the `src/hardware/init.rs:86-111` boot asserts).
 
 ---
 
@@ -180,8 +181,8 @@ For electrical and timing notes see [`docs/HARDWARE.md`](docs/HARDWARE.md) (pin 
 These are not marketing notes. They are the design boundaries readers should understand before modifying the system.
 
 - **No persistence layer:** roast state, telemetry buffer, and profiles are RAM-only
-- **Host/embedded split:** the real application exists only under the `embedded` feature; host builds are primarily for tests (under `test` feature)
-- **Command queue limits:** the main command channel is intentionally small and rate-limited
+- **Host/embedded split:** the device code is selected by `target_arch = "riscv32"` (the `embedded` feature enables the firmware binary target); host builds are primarily for tests (under the `test` feature)
+- **Command queue limits:** the main command channel is intentionally small (capacity 16); `try_send` backpressure is the only limit — there is no per-tick command budget
 - **Sensor timing pressure:** MAX31856 conversion wait (210 ms) dominates the control loop cadence (real tick ≈ 310–330 ms); stale-data protection is critical
 
 ---
@@ -198,7 +199,7 @@ These are not marketing notes. They are the design boundaries readers should und
 
 ### Host verification
 
-Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **906 unit + integration tests** run on x86_64 (`--lib --tests`; advanced Artisan features: [`docs/ARTISAN_ADVANCED.md`](docs/ARTISAN_ADVANCED.md); hazards and evidence: [`docs/SAFETY_CASE.md`](docs/SAFETY_CASE.md)):
+Integration-style host tests depend on the `test` feature (enables the host-side Embassy time driver). **913 unit + integration tests** run on x86_64 (`--lib --tests`: 579 unit + 334 integration; advanced Artisan features: [`docs/ARTISAN_ADVANCED.md`](docs/ARTISAN_ADVANCED.md); hazards and evidence: [`docs/SAFETY_CASE.md`](docs/SAFETY_CASE.md)):
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test

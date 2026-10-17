@@ -2,7 +2,7 @@
 
 **Objetivo:** validar que Artisan se conecta, dibuja ET/BT y que los sliders llegan al firmware. Se hace con la placa sola: sin termopares, sin resistencia y sin ventilador. La temperatura es una curva simulada.
 
-**Estado:** análisis basado en código, actualizado a `develop` @ `3584c0a` (2026-10-02). Aún no se ha probado en hardware.
+**Estado:** análisis basado en código, actualizado a `develop` @ `b344f08` (2026-10-17). Aún no se ha probado en hardware.
 
 > Cambios respecto a la versión anterior de esta guía: la feature `no-heat-sense` **ya no existe** (el heat-sense es ahora opt-in con `heat-sense`, así que la build por defecto no bloquea el calentador), los logs **ya no salen por el USB** (van por UART0), `STOP` sigue siendo parada con latch, y `PID;ON` ya no quita el latch.
 

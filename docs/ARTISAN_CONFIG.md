@@ -111,7 +111,8 @@ LibreRoaster supports **both scales**. The conversion is applied to **all temper
 |-------|------------|
 | ET, BT, AMB | ✅ Yes |
 | SV (setpoint) | ✅ Yes |
-| PV, MV, Integrator | ❌ No (percent, not temperature) |
+| PV | ✅ Yes (it is the PID's active temperature) |
+| MV, Integrator | ❌ No (percent / unitless) |
 | Heater, Fan | ❌ No (percent) |
 | ROR (rate of rise) | ✅ Yes — °C/min or °F/min |
 
@@ -205,12 +206,12 @@ STATUS → 20 CSV fields
 | 4 | Fan | % | 0-100 |
 | 5 | Watchdog OK | 0/1 | Software watchdog |
 | 6 | Watchdog Failures | count | Consecutive |
-| 7 | Last Watchdog Reason | token | `timeout`, `watchdog_unavailable`, etc. |
+| 7 | Last Watchdog Reason | token | `watchdog_timeout`, `watchdog_unavailable`, etc. |
 | 8 | LEDC Guard Timeouts | count | SSR cycle guard |
 | 9 | Regression Active | 0/1 | Overtemp regression run |
 | 10 | PV | °C/°F | PID process variable |
 | 11 | MV | % | PID manipulated variable |
-| 12 | Integrator | % | PID I-term |
+| 12 | Integrator | — | PID I-term (unitless) |
 | 13 | Derivative | °C/min or °F/min | **Display scale / min** |
 | 14 | Saturation | 0/1 | PID output at limit |
 | 15 | Integrator Clamp | 0/1 | Anti-windup active |
@@ -232,7 +233,7 @@ STREAM;OFF → #OK  (disables)
 ```
 Example: `#123.45,120.3,150.5,12.50,75.0`
 
-- `time_s`: Seconds since `START` (or boot if no roast)
+- `time_s`: Seconds since `STREAM;ON` (reset when a new roast starts)
 - `ROR`: °C/min or °F/min (display scale)
 - `Gas`: Heater output %
 
@@ -257,7 +258,7 @@ Example: `#123.45,120.3,150.5,12.50,75.0`
 | `STOP` | Emergency stop, heater 0%, fan 100% sticky, **arms safety latch** (`ArtisanCommand::EmergencyStop` → `handle_emergency_stop`) | `PID;OFF` (unconditional un-latch to `Idle`), or `START`/`PREHEAT` (deliberate re-energize, clears latch) |
 | `PID;OFF` (also `PID,OFF`) | Stop path, **clears latch if armed** (`ArtisanCommand::Stop` → `clear_emergency_explicit` + `handle_stop`), heater 0% | — |
 
-> **Key distinction:** `STOP` arms the safety latch. Recovery is `PID;OFF` (or `START`/`PREHEAT` as deliberate re-energize). Bare `OFF`, `ESTOP` and `StopRoast` are **not** wire commands: bare `OFF` parses as `ERR unknown_command`, there is no `ESTOP` verb in `src/input/parser.rs:227-364`, and `StopRoast` is an internal `RoasterCommand` only (`src/config/constants.rs:785`). This prevents accidental re-energizing after a safety event.
+> **Key distinction:** `STOP` arms the safety latch. Recovery is `PID;OFF` (or `START`/`PREHEAT` as deliberate re-energize). Bare `OFF`, `ESTOP` and `StopRoast` are **not** wire commands: bare `OFF` parses as `ERR unknown_command`, there is no `ESTOP` verb in `src/input/parser.rs:227-364`, and `StopRoast` is an internal `RoasterCommand` only (`src/config/constants.rs:940`). This prevents accidental re-energizing after a safety event.
 
 ### 8.2 Safety Backstops (Automatic)
 | Backstop | Trigger | Action |
@@ -277,7 +278,7 @@ Since v0.1 (Audit A-TC4), internal safety traps emit on the wire:
 ```
 ERR safety_fault <reason>
 ```
-Emitted **once per latch event** (not every tick). Reasons: `Over-temperature detected`, `Temperature exceeds valid range`, `Probe stuck`, `Bean temperature rate-of-rise exceeded`, `Comms idle timeout`, `Maximum roast time exceeded`, `Temperature sensor timeout`, `Sensor fault (NaN/infinite temperature)`, `Watchdog failure`, `Consecutive sensor errors`, `Heater control failure`, `Fan control failure`.
+Emitted **once per latch event** (not every tick). Reasons: `Over-temperature detected`, `Temperature exceeds valid range`, `Probe stuck`, `Bean temperature rate-of-rise exceeded`, `Comms idle timeout`, `Maximum roast time exceeded`, `Temperature sensor timeout`, `Sensor fault (NaN/infinite temperature)`, `Watchdog failure`, `Consecutive sensor errors`, `Comms read error threshold exceeded`, `Heater control failure`, `Fan control failure`, `Over-temp regression`.
 
 ---
 
@@ -294,7 +295,7 @@ Emitted **once per latch event** (not every tick). Reasons: `Over-temperature de
 ### 9.3 Heater Won't Go Above 0%
 - **Cause:** Safety latch armed (`fault_condition = true`)
 - **Check:** `STATUS` field 20 = 1 → send `PID;OFF` (or `START`/`PREHEAT` to re-energize) to clear
-- **Also check:** `SSR hardware status` (field in STATUS) = `NotDetected` or `Error` → check GPIO1 current-sense circuit (only interpreted in `heat-sense` builds; default builds never latch this)
+- **Also check:** the internal SSR hardware status (**not** a `STATUS` wire field; it surfaces in debug logs and drives the `Heater control failure` trap) = `NotDetected` or `Error` → check GPIO1 current-sense circuit (only interpreted in `heat-sense` builds; default builds never latch this)
 
 ### 9.4 Fan Stays at 0% in PID Mode
 - **Cause:** No `FANPROFILE` sent, `OT2` not set
@@ -339,14 +340,17 @@ STATUS            → Deep diagnostics
 - **Encoding:** ASCII / UTF-8
 
 ### 10.3 Delimiter Flexibility
-All commands accept **space**, `;`, `,`, or `=` as parameter delimiter:
+The manual actuator commands (`OT1`/`OT2`/`IO3`/`DCFAN`) accept **space**,
+`;`, `,`, or `=` as parameter delimiter:
 ```
 OT1 75
 OT1;75
 OT1,75
 OT1=75
 ```
-All equivalent.
+All equivalent. Everywhere else only `;` (plus `,` for the legacy
+`PID,ON`/`PID,OFF`/`PID,SV` forms) is a delimiter — e.g. `PID;SV=200` is
+**not** accepted.
 
 ---
 

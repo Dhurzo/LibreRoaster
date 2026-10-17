@@ -1,10 +1,10 @@
 # Auditoría de Calidad de Código Rust — LibreRoaster
 
-**Fecha:** 2026-08-11 (snapshot; actualizado 2026-09-09 — ver nota)
+**Fecha:** 2026-08-11 (snapshot; actualizado 2026-10-17 — ver nota)
 **Alcance:** `src/` completo (94 archivos, ~24.068 líneas), `tests/`, `Cargo.toml`, configuración clippy
 **Método:** Auditoría paralela multi-agente (8 dimensiones) + verificación manual de hallazgos clave + gates objetivo
 
-> Nota 2026-09-09: snapshot histórico. Conteos actuales: **735 tests** (`502 lib + 233 integración`, era 631); `roaster_control.rs` ≈ 2098 líneas (era 3229, tras v5.4 split en `controllers/` + `ssr_logic.rs`); `OutputController` ya es flag funcional (`abstractions.rs:161-190`, M-A5 remediado); dump 66 KB parcialmente remediado (filas ~33-40 B). Ver `CONTEXT.md` (Quality Gates) para el gate canónico.
+> Nota 2026-10-17: **snapshot histórico** — los hallazgos y el plan de remediación se conservan tal cual; la fuente canónica del estado actual es `CONTEXT.md` (Quality Gates). Suite actual: **913 tests** (`579 lib + 334 integración`) con `--features test` (era 735 el 2026-09-09 y 631 el 2026-08-11); `roaster_control.rs` sigue dividido (v5.4: `controllers/` + `ssr_logic.rs`). De los hallazgos de este informe ya están remediados: M-A5 (`OutputController` es flag funcional; el stub no-op desapareció), M-X2/H-4 (`ERR rate_limited` sin emisores y `MAX_COMMANDS_PER_TICK` eliminado — no existe límite de comandos por tick), M-A7 (variantes muertas `Cooling`/`Fault`/`EmergencyStop` de `RoasterState` eliminadas); H-5/M-R2 quedó parcialmente mitigado (filas del dump `String<256>` → `String<128>`, buffer agregado `DUMP_BUFFER_SIZE = 8192` con streaming ≤4 filas/tick — la cola de staging dimensionada al ring, ~33 KB, sigue existiendo). El gate canónico está en `CONTEXT.md` (Quality Gates), no aquí.
 
 ---
 

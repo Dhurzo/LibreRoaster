@@ -19,7 +19,11 @@ The following table summarizes the performance of the LibreRoaster firmware agai
 
 ## Evidence
 
-Validation run data captured from firmware serial telemetry.
+Validation run data captured from firmware serial telemetry, stored by
+`validation_runner.py` under `tests/hardware/runs/<SCENARIO>/<TIMESTAMP>/telemetry.csv`
+(plus `read_telemetry.csv` and `telemetry.csv.json` metadata in hardware mode).
+Reports are written to the `--reports-dir` passed to `analysis.py` (default
+`tests/hardware/reports`, created on demand).
 
 ## Scenario Metadata
 

@@ -1,6 +1,6 @@
 # Control core — structure and rules (CORE-2026-10-09)
 
-`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Since the CORE refactor, three parts of it live in small pure modules, with unit tests, instead of being spread through the 3000-line file — alongside the older pure helpers (`ror_follow.rs`, `autotune.rs`).
+`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Since the CORE refactor, three parts of it live in small pure modules, with unit tests, instead of being spread through the 2,700-line file — alongside the older pure helpers (`ror_follow.rs`, `autotune.rs`).
 
 ## Module map
 

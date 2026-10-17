@@ -1,6 +1,6 @@
 # Entry Points — "I want to do X, where do I start?"
 
-*Updated 2026-09-09. Task-oriented entry points for common modifications.*
+*Updated 2026-10-17. Task-oriented entry points for common modifications.*
 
 ---
 
@@ -12,7 +12,7 @@
 | 2. Parse it | `src/input/parser.rs` | Add branch in `parse_artisan_command()` |
 | 3. Route it | `src/control/controllers/dispatch.rs` | Add match arm in `CommandDispatcher::process_command()` |
 | 4. Handle it | `src/control/handlers/*.rs` | Create handler fn (see `artisan.rs`, `temperature.rs`, `system.rs`) |
-| 5. Add test | `tests/artisan_integration_test.rs` | Add test case in `command_*` modules |
+| 5. Add test | `tests/artisan_integration_test.rs` | Add a `#[test]` case (e.g. `test_read_command_flow`) |
 
 > **Pattern**: Commands are parsed → enter `ARTISAN_CMD_CHANNEL` → control loop drains → `CommandDispatcher` routes → handler mutates `RoasterControl` → optional immediate response via `OUTPUT_CHANNEL`.
 
@@ -46,8 +46,8 @@
 |--------|------|-------|
 | Zero-cross timing (5 Hz) | `src/config/constants.rs` | `SSR_CONTROL_CYCLE_HZ = 5` (fixed; `src/hardware/init.rs:122-183` Timer0/14-bit/Ch1) |
 | Duty cycle → hardware | `src/hardware/ssr.rs` + `ssr_logic.rs` | `set_duty_raw()` / `SsrControlBase` state machine |
-| Slew-rate limiting | `src/control/controllers/actuator.rs` | `ActuatorController::update_heater()` |
-| Cycle guard (100 ms) | `src/control/controllers/actuator.rs` | `heater_cycle_guard` logic |
+| Slew-rate limiting | `src/control/controllers/actuator.rs` | `ActuatorController::apply_guarded_heater()` |
+| Cycle guard (100 ms) | `src/control/ssr_scheduler.rs` (+ `controllers/actuator.rs`) | `SsrCycleGuard` / `ssr_guard_next_cycle_allowed()` |
 
 ---
 
@@ -56,8 +56,8 @@
 | Target | File | Notes |
 |--------|------|-------|
 | PWM frequency/duty | `src/hardware/fan.rs` | `FanController::set_speed()` / `emergency_set_speed()` |
-| Fan profile / curve | `src/control/controllers/actuator.rs` | `ActuatorController::update_fan()` |
-| Fan config | `src/config/constants.rs` | `FanConfig` |
+| Fan profile / curve | `src/control/roaster_control.rs` | fan selector in `update_control()` / `handle_set_fan_profile()` |
+| Fan config | `src/config/constants.rs` | `FanProfile` / `FanSetpoint` |
 
 ---
 
@@ -78,8 +78,8 @@
 | Target | File | Notes |
 |--------|------|-------|
 | All pin constants | `src/config/constants.rs:19-40` | Plain `pub const` pins (no `PinConfig` struct) |
-| Hardware init (peripherals) | `src/hardware/init.rs` | `init_hardware()` + boot `assert_eq!` (`:86-112`) |
-| SPI bus pins | `src/hardware/shared_spi.rs` | `SharedSpiBus::new()` |
+| Hardware init (peripherals) | `src/hardware/init.rs` | `init_hardware()` + boot `assert_eq!` (`:84-112`) |
+| SPI bus pins | `src/hardware/shared_spi.rs` | `SharedSpiDevice::new()` / `SpiDeviceWithCs::new()` |
 | LEDC channels | `src/hardware/ledc_bus.rs` | `LedcBus::new()` |
 | **⚠ Strapping pins** | `docs/HARDWARE.md` | GPIO9 (fan) is strapping — check before changing |
 
@@ -89,9 +89,9 @@
 
 | Target | File | Notes |
 |--------|------|-------|
-| READ response | `src/output/artisan.rs:97` | `format_read_response_full()` |
-| STATUS response | `src/output/artisan.rs:145` | `format_status_response()` (20 fields) |
-| Continuous telemetry | `src/output/artisan.rs:38` | `format_artisan_line()` (`#<time>,ET,BT,ROR,Gas`) |
+| READ response | `src/output/artisan.rs:108` | `format_read_response_full()` |
+| STATUS response | `src/output/artisan.rs:200` | `format_status_response()` (20 fields) |
+| Continuous telemetry | `src/output/artisan.rs:48` | `format_artisan_line()` (`#<time>,ET,BT,ROR,Gas`) |
 | Display units (C/F) | `src/config/constants.rs` | `TemperatureSettings` impl |
 | Add new telemetry field | `src/control/roaster_control.rs` | Extend `SystemStatus` + formatter |
 
@@ -114,7 +114,7 @@
 |----------|------|-----------|
 | Hardware driver stubs | `src/hardware/*` host paths, `src/hardware/test_mocks.rs` | `#[cfg(feature = "test")]` / host cfgs |
 | Simulated sensors | `src/hardware/sensors/simulated.rs` | `#[cfg(feature = "simulated-sensors")]` (not plain `#[cfg(test)]`) |
-| Host time driver | `src/host_time_driver.rs` | `#[cfg(feature = "test")]` |
+| Host time driver | `src/host_time_driver.rs` | `#[cfg(all(not(target_arch = "riscv32"), any(test, feature = "test")))]` |
 | Regression task stub | `src/safety/regression.rs` | `#[cfg(not(all(target_arch = "riscv32", feature = "regression")))]` |
 | USB/UART reader tasks | `src/hardware/usb_cdc/tasks.rs`, `src/hardware/uart/tasks.rs` (+ `src/hardware/transport_tasks.rs` event queue) | Not feature-gated out; readers own parsing (F5.3) |
 
@@ -124,11 +124,11 @@
 
 | Need | File | What to Add |
 |------|------|-------------|
-| TRACE event | `src/logging/traceability.rs` | `trace_event!()` macro |
-| Roast log entry | `src/logging/roast_logger.rs` | `RoastLogger::push()` |
-| Queue depth metric | `src/application/queue_metrics.rs` | `QueueMetrics::record()` |
-| Stage timing | `src/application/stage_instrumentation.rs` | `StageTimer::start/stop()` |
-| Error counter (HW) | `src/hardware/error_counters.rs` | `ErrorCounters::inc()` |
+| TRACE event | `src/logging/traceability.rs` | Emit via `trace_command_enqueue()` / `trace_actuation()` / `trace_telemetry()` |
+| Roast log entry | `src/logging/roast_logger.rs` | Emit via free fns `start_roast()` / `log_sample()` / `dump()` |
+| Queue depth metric | `src/application/queue_metrics.rs` | Read via `queue_metrics_snapshot()`; update via `record_queue_depth()` |
+| Stage timing | `src/application/stage_instrumentation.rs` | Emit via `StageReporter::report()` |
+| Error counter (HW) | `src/hardware/error_counters.rs` | Emit via `increment_uart_error_count()` / `increment_usb_error_count()` |
 
 ---
 
@@ -137,13 +137,13 @@
 | Question | Answer |
 |----------|--------|
 | Main entry point? | `src/main.rs` → `init_hardware()` → `AppBuilder::build()` → `async_main_task` → `start_tasks()` |
-| Control loop tick rate? | `src/config/constants.rs:333` — `CONTROL_LOOP_PERIOD_MS = 100` (real tick `CONTROL_LOOP_TICK_MS` ≈ 310–330 ms with MAX31856); timer used in `src/application/tasks.rs:1051-1055` |
+| Control loop tick rate? | `src/config/constants.rs:500` — `CONTROL_LOOP_PERIOD_MS = 100` (real tick `CONTROL_LOOP_TICK_MS` ≈ 310–330 ms with MAX31856); timer used in `src/application/tasks.rs:1050-1053` |
 | Command channel capacity? | `src/application/service_container.rs:55` — `ARTISAN_CMD_CHANNEL_SIZE = 16` |
 | Output channel capacity? | `src/application/service_container.rs:57` — `ARTISAN_OUTPUT_CHANNEL_SIZE = 16` |
-| Watchdog timeout? | `src/safety/watchdog.rs:55` — software `WATCHDOG_TIMEOUT_MS = 1000`; HW nominal `HW_WATCHDOG_TIMEOUT_MS` ≈ 2206 ms (`constants.rs:225`) |
-| Heap size? | `src/main.rs:143` — `heap_allocator!(size: 72 * 1024)` |
-| Max profile points? | `src/config/constants.rs:318` — `MAX_PROFILE_SETPOINTS = 16` (32 is `MAX_CURVE_POINTS` for simulated curves) |
-| USB write timeout? | `src/hardware/usb_cdc/driver.rs:92-113` — 50 ms write (+10 ms best-effort terminator) + 20 ms flush; UART `uart/driver.rs:79-84` 50 ms + 50 ms |
+| Watchdog timeout? | `src/safety/watchdog.rs:55` — software `WATCHDOG_TIMEOUT_MS = 1000`; HW nominal `HW_WATCHDOG_TIMEOUT_MS` ≈ 2206 ms (`constants.rs:275`) |
+| Heap size? | `src/main.rs:162` — `heap_allocator!(size: 72 * 1024)` |
+| Max profile points? | `src/config/constants.rs:393` — `MAX_PROFILE_SETPOINTS = 16` (32 is `MAX_CURVE_POINTS` for simulated curves) |
+| USB write timeout? | `src/hardware/usb_cdc/driver.rs:84-109` — 50 ms write (+10 ms best-effort terminator) + 20 ms flush; UART `uart/driver.rs:69-84` 50 ms write (+10 ms best-effort terminator) + 50 ms flush |
 
 ---
 

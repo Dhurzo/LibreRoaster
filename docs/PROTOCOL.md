@@ -176,7 +176,7 @@ from synchronous responses:
 #<time>,ET,BT,ROR,Gas
 ```
 
-- `time`: elapsed seconds since the roast start (or boot outside a session)
+- `time`: elapsed seconds since `STREAM;ON` (the formatter resets at the stream-enable edge and again at the next roast start)
 - `ET`, `BT`: environment and bean temperatures (display scale)
 - `ROR`: rate of rise, in °C/min of the active display scale
 - `Gas`: current heater output percentage
@@ -491,9 +491,9 @@ READ
 ### PID-driven session
 
 Note that `PID;ON` and `PID;SV;...` are acknowledged **silently** — the
-firmware does not emit an acknowledgement for them (only `UNITS`, `FILT`
-and `REG` produce acknowledgement lines: `#OK`, `#OK`, `OK regression_started`
-respectively). The wire transcript is:
+firmware does not emit an acknowledgement for them. The commands that do
+produce acknowledgement lines are `CHAN` (`#<rate>`), `UNITS`/`FILT`/`STREAM`
+(`#OK`) and `REG` (`OK regression_started`). The wire transcript is:
 
 ```text
 PID;ON
@@ -532,7 +532,7 @@ the Artisan RoR convention — not °C/s.
 | `TUNE;<step>` | Start step-test autotune (manual mode, BT channel only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
 | `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report (`TUNE;STATUS` also while latched) | `TUNE;STATUS` → `#TUNE …` |
 
-Spontaneous lines of these features: `#TUNE …` and `ERR tune_<reason>` when a test ends, `ERR tune_aborted` when any non-monitoring command arrives during a test (sliders included), and `ERR probe_stuck_warning` from the firmware-PID plateau bound. `CHARGE;<g>` accepts decimals (rounded).
+Spontaneous lines of these features: `#TUNE …` and `ERR tune_<reason>` when a test ends, `ERR tune_aborted` when any non-monitoring command arrives during a test (sliders included), and `ERR probe_stuck_warning` from the two-stage manual detector or the firmware-PID plateau bound. `CHARGE;<g>` accepts decimals (rounded).
 
 READ channels 3/4 carry RoR target / measured RoR (display units per minute) **only** after
 `CHAN;xx34` (both last digits non-zero); with `CHAN;1200` they stay `0.0,0.0`.

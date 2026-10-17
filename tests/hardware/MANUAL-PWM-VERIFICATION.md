@@ -41,7 +41,7 @@ Capture the waveform and measure the period (T):
 | Measurement | Expected Value | Acceptable Range |
 |--------------|----------------|------------------|
 | **Frequency** | 5 Hz | 4.75 - 5.25 Hz (±5%) |
-| **Period (T)** | 1000 ms | 950 - 1050 ms |
+| **Period (T)** | 200 ms | 190 - 210 ms |
 
 #### Step 3: Measure Duty Cycle
 
@@ -50,8 +50,8 @@ Measure the high time (T_high) vs period:
 | Measurement | Expected Value | Acceptable Range |
 |--------------|----------------|------------------|
 | **Duty Cycle** | 50% | 48% - 52% (±2%) |
-| **T_high** | 500 ms | 475 - 525 ms |
-| **T_low** | 500 ms | 475 - 525 ms |
+| **T_high** | 100 ms | 95 - 105 ms |
+| **T_low** | 100 ms | 95 - 105 ms |
 
 #### Step 4: Repeat for Other Duty Cycles
 

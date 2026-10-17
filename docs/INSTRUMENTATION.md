@@ -48,7 +48,7 @@ ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeout
 | 19 | TempScale | 0/1 | Temperature scale: 0=Celsius, 1=Fahrenheit |
 | 20 | FaultFlag | bool (0/1) | Emergency fault condition active |
 
-> Positions above are normative and match `PROTOCOL.md` (§STATUS) and `src/output/artisan.rs:201-224`; this table is the semantic reference.
+> Positions above are normative and match `PROTOCOL.md` (§STATUS) and `src/output/artisan.rs:200-281`; this table is the semantic reference.
 
 ---
 
@@ -155,9 +155,11 @@ Over‑temperature regression testing is a safety validation feature. On builds
 with the `regression` feature, `REG` drives the heater and fan to 100% and then
 performs an immediate `emergency_shutdown` — it does **not** wait for or monitor
 temperatures up to 260 °C (the 260 °C over-temperature guard is a separate,
-always-on safety layer in the sensor path). The fixture catalogue is currently
-empty, so a real regression run replays zero fixtures and emits
-`SAFETY OT-REGRESSION-EMPTY no_fixtures`. On builds without the feature the
+always-on safety layer in the sensor path). The runner then replays the 3
+HIL-validated fixtures (`warm_normal`, `cold_negative`, `bean_open_fault`) — feeding the watchdog
+between emissions — then emits `SAFETY OT-REGRESSION` and un-latches explicitly
+(the run aborts with `SAFETY OT-REGRESSION-ABORTED <reason>` if a foreign latch
+was already armed at entry or the shutdown write fails). On builds without the feature the
 regression task is a no-op stub and `REG` answers `ERR regression_disabled`.
 
 **Fields:**

@@ -1,6 +1,6 @@
 # LibreRoaster Architecture Guide
 
-**Last updated:** 2026-09-09
+**Last updated:** 2026-10-17
 
 This document describes the current firmware architecture of LibreRoaster from the implementation outward. It is written for engineers who need to reason about runtime behavior, ownership boundaries, timing, and the points where protocol handling meets real hardware.
 
@@ -10,7 +10,7 @@ LibreRoaster is an ESP32-C3 firmware application with a host-testable Rust libra
 
 The design splits into two worlds:
 
-- **embedded runtime**: the actual device, built with `--features embedded` for `riscv32imc-unknown-none-elf`
+- **embedded runtime**: the actual device, built for `riscv32imc-unknown-none-elf` (the `embedded` feature enables the firmware binary target; the device code itself is selected by `target_arch = "riscv32"`)
 - **host runtime**: x86_64 builds used for parser, control, concurrency, and integration tests
 
 The embedded binary is `no_std`. That shapes almost every design choice: fixed-capacity strings, heapless buffers, explicit channels, and careful control over blocking behavior in the hot path.
@@ -29,7 +29,7 @@ On the embedded target, startup proceeds in this order:
 8. start `esp-rtos`,
 9. start the Embassy executor and spawn the firmware task graph.
 
-The binary also contains a safe-shutdown path for initialization failures. That path formats an Artisan-style error, emits traceability data, steals peripherals to gain LED access, and then blinks GPIO8 indefinitely.
+The binary also contains a safe-shutdown path for initialization failures. That path formats an Artisan-style error, emits traceability data, steals peripherals to gain LED access, and then loops forever blinking GPIO8 (3 × 200 ms low / 200 ms high, then a ~1 s pause) while feeding the RTC watchdog so the chip stays in the visible failure state instead of resetting.
 
 ## 3. Application composition
 
@@ -61,7 +61,7 @@ also means the `ServiceContainer` becomes the central ownership hub.
 `ServiceContainer` is the process-wide service locator. It owns three
 fields on host (`roaster`: async-mutex guarded control state,
 `artisan_input`, `watchdog_feeder`), plus a fourth embedded-only field
-`status_led` on `riscv32` (`service_container.rs:35-52`):
+`status_led` on `riscv32` (`service_container.rs:33-47`):
 
 The command channel (`ARTISAN_CMD_CHANNEL`), the output channel, and the
 command multiplexer are module-level `static`s that the container accesses
@@ -79,8 +79,8 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 
 The embedded system is built around a fixed task graph: 5 long-lived worker
 tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:205-224`) plus
-the `async_main_task` supervisor (`src/main.rs:99-116`, spawned via
-`executor.run` in `src/main.rs:261-263`)
+the `async_main_task` supervisor (`src/main.rs:111-129`, spawned via
+`executor.run` in `src/main.rs:284-304`)
 (6 Embassy tasks total; docs count the 5 workers).
 
 ### Input side
@@ -113,7 +113,7 @@ This keeps formatting and transport output decoupled from the control loop itsel
 
 ### Auxiliary runtime
 
-- **regression task**: handles over-temperature regression execution when built for the embedded target **with the `regression` feature**. Without that feature (and on host), the task is a no-op stub that sleeps forever; the fixture catalogue is currently empty, so even a regression build replays zero fixtures and emits `SAFETY OT-REGRESSION-EMPTY no_fixtures`.
+- **regression task**: handles over-temperature regression execution when built for the embedded target **with the `regression` feature**. Without that feature (and on host), the task is a no-op stub that sleeps forever. A regression build walks heater/fan to an over-temperature self-test, forces an emergency shutdown, replays the 3 HIL-validated fixtures (`warm_normal`, `cold_negative`, `bean_open_fault`), feeds the watchdog, and emits the recovery marker. A `REG` request is only acknowledged (`OK regression_started`) when the capacity-1 trigger accepts it; a second request while one is pending gets `ERR regression_busy`.
 
 ## 5. Command and telemetry data flow
 
@@ -282,8 +282,9 @@ LibreRoaster’s safety story is layered, not singular.
 
 - software watchdog reporting
 - hardware RTC watchdog reset
-- LEDC timeout guard
-- command-rate limiting
+- LEDC timeout guard (counter-only; exposed as the STATUS `ledc_guard_timeouts` field)
+- command-channel backpressure (capacity 16; a full channel drops the newest command with `ERR channel_full command_dropped`)
+- panic guard that re-muxes GPIO10 low before the backtrace
 
 ### Diagnostic visibility
 
@@ -296,7 +297,7 @@ about the latch immediately instead of discovering it through the next
 rejected command. The operator-initiated `STOP` path does not emit it.
 While the latch is armed, the handshake commands `CHAN`/`UNITS`/`FILT`
 plus `SetStreaming` (`STREAM;ON`/`STREAM;OFF`, allowed under latch per
-`src/control/roaster_control.rs:1137`) remain accepted (they carry no
+the whitelist in `src/control/roaster_control.rs:1314-1347`) remain accepted (they carry no
 actuator side effects), so Artisan can
 reconnect to a latched device instead of looping on "Arduino could not set
 channels/units/filters"; every re-energizing command stays rejected.

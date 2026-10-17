@@ -86,13 +86,13 @@ This section covers hardware component tests (TC-, SSR-, FAN-, GPIO-) which diff
 | Attribute | Hardware Scenarios (TC-, SSR-, FAN-, GPIO-) | Fault Injection (WD-, GD-, CM-) |
 |-----------|-----------------------------------------------|------------------------------|
 | **Purpose** | Validate physical hardware components | Test fault handling and recovery |
-| **Safety** | All safe (no heater activation) | May trigger fault conditions |
+| **Safety** | Tier 1 safe (no heater activation); Tier 2 `hil_c1` drives GPIO10 non-zero | May trigger fault conditions |
 | **Firmware** | Main firmware (Tier 1) or test firmware (Tier 2) | Main firmware only |
 | **Read/Write** | Mix of read-only (TC) and safe writes (SSR/FAN/GPIO) | Primarily fault injection commands |
 | **Golden Output** | `tests/hardware/goldens/<ID>.csv` | `tests/hardware/goldens/<ID>.csv` |
 | **Runner** | `validation_runner.py --hardware-mode` or `hardware_test_runner.py` | `validation_runner.py` |
 
-Hardware scenarios exercise real peripherals: thermocouples (SPI), SSR (LEDC PWM), fan (LEDC PWM), and GPIO (heat detection pin). All SSR tests use 0% duty cycle only — the heater is never activated.
+Hardware scenarios exercise real peripherals: thermocouples (SPI), SSR (LEDC PWM), fan (LEDC PWM), and GPIO (heat detection pin). Tier 1 SSR scenarios and `hil_ssr` use 0% duty cycle only — the heater is never activated. The Tier 2 `hil_c1` example is the exception: it drives GPIO10 with non-zero duty, so disconnect SSR/load power before running it.
 
 ### Running Hardware Scenarios via validation_runner
 
@@ -153,13 +153,14 @@ Before running any hardware test, verify:
 
 - [ ] ESP32-C3 is connected via USB and visible (`cargo espflash list`)
 - [ ] Firmware is flashed (main for Tier 1, test firmware for Tier 2)
-- [ ] Heater power is disconnected (recommended for SSR tests)
+- [ ] Heater power is disconnected (recommended for SSR tests; **required for `hil_c1`**)
 - [ ] Thermocouples are connected (for TC tests)
 - [ ] No metal objects near GPIO pins (prevent shorts)
 - [ ] You have proper electrical knowledge if modifying hardware
 
 **Key safety facts:**
-- All SSR tests use 0% duty cycle — heater NEVER activates
+- Tier 1 SSR tests and `hil_ssr` use 0% duty cycle — heater NEVER activates
+- `hil_c1` drives GPIO10 with **non-zero duty** by design — disconnect SSR/load power first (it leaves the channel at 0% on completion)
 - Fan tests are safe (no heating element involved)
 - Thermocouple tests are read-only
 - GPIO tests only read the heat detection pin state

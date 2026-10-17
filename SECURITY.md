@@ -46,11 +46,11 @@ Out of scope:
 
 This firmware controls high-temperature hardware. The following components have safety implications:
 
-- Over-temperature cutoff (260°C threshold)
-- Rate-of-rise protection (30°C/min max)
+- Over-temperature cutoff (BT ≥ 260 °C, ET ≥ 300 °C)
+- Rate-of-rise protection (tiered: 45 °C/min soft / 60 °C/min hard, firmware-PID mode)
 - Dual watchdog (software + hardware RWDT)
-- Heat-source detection
+- Heat-source detection (GPIO1 interpretation is opt-in via the `heat-sense` feature)
 - SSR output validation
-- Max roast time (30 min hard limit)
+- Time budgets (30 min roast; 60 min uncharged `PID;ON`; 90 min manual session)
 
 Vulnerabilities in these components are treated as HIGH priority.

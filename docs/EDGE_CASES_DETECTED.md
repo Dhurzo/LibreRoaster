@@ -1,8 +1,8 @@
 # LibreRoaster — Casos Borde Detectados (Auditoría E2E)
 
-**Fecha:** 2026-08-04 (snapshot; conteos y líneas actualizados el 2026-09-09)
+**Fecha:** 2026-08-04 (snapshot; nota de estado actualizada el 2026-10-17)
 **Método:** Auditoría E2E de verificación estricta (3 perspectivas: flujo de datos, cumplimiento de contratos, casos borde/fallos).
-**Resultado global:** ✅ Sin bloqueadores de ejecución. 735/735 tests host pasan (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests`, 502 lib + 233 integración; era 646/646 el 2026-08-04), clippy estricto limpio, build embedded `riscv32imc-unknown-none-elf` OK.
+**Resultado global:** ✅ Sin bloqueadores de ejecución. Estado actual (2026-10-17): **913/913 tests host pasan** (`cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests`, 579 lib + 334 integración; era 735/735 el 2026-09-09 y 646/646 el 2026-08-04), clippy estricto limpio, build embedded `riscv32imc-unknown-none-elf` OK. **`CONTEXT.md` es la fuente canónica del estado actual**; este documento es un snapshot histórico y su narrativa se conserva intacta. Desde esta auditoría quedaron cerrados, entre otros, EC-A6 (`ERR rate_limited` ya no existe: sin emisores y sin `MAX_COMMANDS_PER_TICK`), EC-34 (sin presupuesto de comandos por tick) y el dump ahora usa un buffer agregado `DUMP_BUFFER_SIZE = 8192` con streaming ≤4 filas/tick (filas `String<128>`).
 **Estado:** Los hallazgos marcados como (RESUELTO) están cerrados en el working tree; los marcados como (ABIERTO) son mejoras defensivas pendientes. Referencias `transport_tasks.rs` son pre-F5.3 (lectores actuales: `usb_cdc/tasks.rs`, `uart/tasks.rs`); `roaster_control.rs` se dividió en v5.4 (`controllers/sensor|actuator|safety|dispatch.rs` + `ssr_logic.rs`).
 
 ---

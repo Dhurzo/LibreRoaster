@@ -1,6 +1,6 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-09-09 — pin map triple-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
+**Last updated:** 2026-10-17 — pin map, PWM topology and line references re-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
 
 This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
 
@@ -72,12 +72,12 @@ Because GPIO9 is a strapping pin, the external fan stage must be designed so it 
 
 ## 6. PWM and timer topology
 
-The hardware init code (`src/hardware/init.rs:122-183`) configures two low-speed LEDC timers:
+The hardware init code (`src/hardware/init.rs:122-182`) configures two low-speed LEDC timers:
 
-- Timer0 for the SSR at **5 Hz** (zero-cross compatible, `SSR_PWM_RESOLUTION = 14` bit, `SSR_LEDC_CHANNEL = 1`), and
-- Timer1 for the fan at **25 kHz** (`FAN_PWM_RESOLUTION = 8` bit, `FAN_LEDC_CHANNEL = 0`).
+- Timer0 for the SSR at **5 Hz** (zero-cross compatible, `SSR_PWM_RESOLUTION = 14` bit), bound to LEDC channel 1, and
+- Timer1 for the fan at **25 kHz** (`FAN_PWM_RESOLUTION = 8` bit), bound to LEDC channel 0.
 
-Channel/timer numbers are fixed by `src/config/constants.rs:42-56`.
+The `SSR_LEDC_CHANNEL`/`SSR_LEDC_TIMER`/`FAN_LEDC_CHANNEL`/`FAN_LEDC_TIMER` constants in `src/config/constants.rs:49-52` mirror this mapping, but the init path hard-codes `Timer0`/`Timer1` and `Channel0`/`Channel1`; the constants are not referenced by the code.
 
 ## 7. Timing values that matter physically
 
@@ -133,11 +133,11 @@ choice — the only contract is the polarity above.
 GPIO8 is **not** a strapping pin for normal flash boot (see `docs/pinout.md`); it is safe as a
 push-pull status indicator. Single owner: the service container, pattern logic in
 `src/hardware/status_led.rs:26-48`, GPIO write driven once per tick by the control loop
-(`update_status_led_stage` in `src/application/tasks.rs:1005-1024`, riscv32-only).
+(`update_status_led_stage` in `src/application/tasks.rs:920-939`, riscv32-only; called from `control_loop_tick` at `tasks.rs:1026`).
 
 Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in `Heating`/`Stable`, 4 Hz blink on
 `Error` or any fault. The safe-shutdown path (init failure) takes GPIO8 via `Peripherals::steal()`
-and blinks it 3×200 ms + 1 s pause (`src/main.rs:89-94`) — by then all application tasks are dead, so the steal is the final owner.
+and blinks it 3 × (200 ms low, 200 ms high) + ~1 s pause (`src/main.rs:96-107`) — by then all application tasks are dead, so the steal is the final owner.
 Use a 330 Ω series resistor; never open-drain.
 
 ### Strapping pins
@@ -145,7 +145,7 @@ Use a 330 Ω series resistor; never open-drain.
 The project documentation must always keep these points visible:
 
 - avoid GPIO2 for SPI MISO in this design (VDD_SPI strap; see `docs/pinout.md` ⚠️ GPIO2),
-- treat GPIO9 carefully because it is a strap pin used for fan PWM — internal 45 kΩ weak pull-up boots correctly when floating; external 10 kΩ → 3.3 V is mandatory on custom boards/bare modules and with any external driver that could pull low at reset (see `docs/CONNECTION_TYPES.md:102-166`),
+- treat GPIO9 carefully because it is a strap pin used for fan PWM — the datasheet 45 kΩ internal weak pull-up boots correctly when floating (firmware neither configures nor verifies it); external 10 kΩ → 3.3 V is mandatory on custom boards/bare modules and with any external driver that could pull low at reset (see `docs/CONNECTION_TYPES.md:102-166`),
 - GPIO8 is ignored for normal SPI-boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW matters),
 - avoid external circuitry that forces invalid boot levels on any strap.
 

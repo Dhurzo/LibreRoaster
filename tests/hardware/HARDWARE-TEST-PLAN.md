@@ -9,7 +9,7 @@ LibreRoaster uses a three-tier testing approach to validate hardware components 
 | Tier | Approach | Firmware | Safety |
 |------|----------|---------|--------|
 | **Tier 1** | Serial integration tests via main firmware | Main (default) | All safe (no heater activation) |
-| **Tier 2** | Dedicated test firmware via `examples/` | Test-specific | SAFE ONLY (no heater) |
+| **Tier 2** | Dedicated test firmware via `examples/` | Test-specific | SAFE ONLY (no heater) — except `hil_c1`, which drives GPIO10 at non-zero duty |
 | **Tier 3** | Manual procedures with measurement equipment | Main | Depends on test |
 
 Tier 1 exercises hardware through the production firmware using Artisan protocol commands. Tier 2 flashes purpose-built test firmware that directly validates peripherals at the driver level. Tier 3 requires oscilloscopes or logic analyzers for signal quality verification.
@@ -225,9 +225,9 @@ Validates the heat detection input pin configuration.
 
 ### SSR Safe Mode
 
-All hardware tests are designed to be safe:
-- **Heater is NEVER activated** in any test scenario
-- SSR tests only verify LEDC initialization and zero-duty state
+All hardware tests are designed to be safe **except `hil_c1`**:
+- **Heater is NEVER activated** in any test scenario except `hil_c1`, which writes non-zero duty to GPIO10 by design (DUTY_R latency measurement) — **disconnect SSR/load power before running it**; the channel is left at 0% on completion
+- Tier 1 SSR tests and `hil_ssr` only verify LEDC initialization and zero-duty state
 - The `OT1` command in Tier 1 tests is always called with `0` (0% duty)
 
 ### Fan Tests
@@ -246,7 +246,7 @@ TC tests are read-only:
 
 ### General Precaution
 
-Always disconnect heater power before running tests if you are unsure about the firmware state. While all tests are designed to be safe, disconnecting the heater power eliminates any risk of unintended activation.
+Always disconnect heater power before running tests if you are unsure about the firmware state. While all tests except `hil_c1` are designed to be safe, disconnecting the heater power eliminates any risk of unintended activation.
 
 ## Troubleshooting
 

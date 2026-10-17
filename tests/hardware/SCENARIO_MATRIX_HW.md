@@ -27,6 +27,7 @@ These scenarios use dedicated test firmware from `examples/` and run via `hardwa
 |------------------|-----------|-------|--------|-----------|-------------|
 | `hil_tc` | Thermocouple | 6 tests (SPI bus, raw voltage, registers, conversion) | Read-only | ESP32-C3, thermocouples | Yes |
 | `hil_ssr` | SSR | 4 tests (LEDC init, zero-duty readback) | SAFE ONLY | ESP32-C3 | Yes |
+| `hil_c1` | SSR | 5 tests (DUTY_R latency, config-DUTY sync, ramp verify) | **NON-ZERO duty on GPIO10 — disconnect SSR/load power** | ESP32-C3 | Yes |
 | `hil_fan` | Fan | 7 tests (LEDC init, duty sweep 0-100%, frequency) | Safe | ESP32-C3 | Yes |
 | `hil_gpio` | GPIO | 3 tests (pull-up, readback, consistency) | Safe | ESP32-C3 | Yes |
 
@@ -35,7 +36,8 @@ These scenarios use dedicated test firmware from `examples/` and run via `hardwa
 | Category | Safety Level | Heater Activated? | Notes |
 |-----------|---------------|-------------------|-------|
 | **Thermocouple** | Read-only | No | Only temperature readings requested |
-| **SSR** | SAFE | Never | All tests use 0% duty cycle only |
+| **SSR** | SAFE (Tier 1 / `hil_ssr`) | Never | All Tier 1 SSR tests and `hil_ssr` use 0% duty cycle only |
+| **SSR (`hil_c1`)** | **UNSAFE unless load is disconnected** | **Yes — GPIO10 carries non-zero duty** | DUTY_R latency measurement; disconnect SSR/load power before running, channel is left at 0% on completion |
 | **Fan** | Safe | No | No heating element involved |
 | **GPIO** | Safe | No | Input pin testing only |
 
@@ -70,6 +72,12 @@ python tests/hardware/hardware_test_runner.py \
   --port /dev/ttyACM0 \
   --example hil_ssr
 
+# Run DUTY_R latency firmware (⚠️ GPIO10 carries NON-ZERO duty —
+# disconnect SSR/load power before running)
+python tests/hardware/hardware_test_runner.py \
+  --port /dev/ttyACM0 \
+  --example hil_c1
+
 # Run fan test firmware
 python tests/hardware/hardware_test_runner.py \
   --port /dev/ttyACM0 \
@@ -90,7 +98,7 @@ These scenarios are defined in `tests/hardware/scenario_manifest.json` with the 
 - `tier`: Test tier (1 = serial integration, 2 = test firmware)
 - `description`: Plain-text description of the test
 - `command_sequence`: Semicolon-separated commands the automation executes
-- `requires_unsafe`: Always `false` for hardware scenarios (all are safe)
+- `requires_unsafe`: Always `false` for the manifest's Tier 1 hardware scenarios (all are safe). The Tier 2 `hil_c1` example is not in the manifest and does drive GPIO10 at non-zero duty — disconnect SSR/load power first.
 - `expected_columns`: STATUS/READ columns validated during the test
 - `golden_output`: Path to approved golden CSV for the scenario
 - `metadata`: Retention, owner, and scenario-specific expectations
@@ -101,7 +109,7 @@ These scenarios are defined in `tests/hardware/scenario_manifest.json` with the 
 |-----------|-----------------------------------------------|------------------------------------------|
 | **Purpose** | Validate hardware components | Test fault handling and recovery |
 | **Tier** | Tier 1 (serial) + Tier 2 (firmware) | Tier 1 (serial) |
-| **Safety** | All safe (no heater activation) | May trigger fault conditions |
+| **Safety** | Tier 1 safe (no heater activation); Tier 2 `hil_c1` drives GPIO10 non-zero | May trigger fault conditions |
 | **Firmware** | Main firmware (Tier 1) or test firmware (Tier 2) | Main firmware only |
 | **Golden Output** | `tests/hardware/goldens/<ID>.csv` | `tests/hardware/goldens/<ID>.csv` |
 | **Runner** | `validation_runner.py --hardware-mode` or `hardware_test_runner.py` | `validation_runner.py` |

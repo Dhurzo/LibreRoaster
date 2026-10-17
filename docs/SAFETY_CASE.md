@@ -10,7 +10,7 @@ Each row: hazard → guard in firmware → automated evidence (test) → bench e
 | 4 | Host lost while heating | 15 s comms-idle → latch | `comms_idle_timeout_triggers_emergency_during_roast`, `comms_idle_protects_manual_mode_when_heater_energized` | Close Artisan mid-roast |
 | 5 | Forgotten roast | 30-min roast / 60-min uncharged PID;ON / 90-min manual budgets | `max_roast_time_triggers_emergency_shutdown`, `h2_manual_session_cap_fires`, `t3_*`, `e1_*` | — |
 | 6 | Runaway heating | RoR guard 45/60 °C·min⁻¹ (firmware PID) | `ror_guard_armed_in_pure_firmware_pid` | — |
-| 7 | Heater/fan write failure | 3 retries → latch, fan 100 % | `heater_write_failure_mid_roast_escalates_to_latched_emergency`, `fan_write_failure_mid_roast_escalates_to_latched_emergency` | — |
+| 7 | Heater/fan write failure | write failure mid-tick → latch; emergency cut retried ×3; fan 100 % | `heater_write_failure_mid_roast_escalates_to_latched_emergency`, `fan_write_failure_mid_roast_escalates_to_latched_emergency` | — |
 | 8 | Firmware hang | RWDT fed only by the control tick, ~2.2 s system reset | `safety_thresholds_are_sane` (margin assert) | Scope GPIO10 on forced hang |
 | 9 | Panic with heater on | `custom_pre_backtrace` drives GPIO10 LOW | build of all binaries | Scope GPIO10 on forced panic |
 | 10 | Boot glitch energises SSR | mandatory 10 kΩ pull-down on GPIO10 | — | Scope GPIO10 at power-up |

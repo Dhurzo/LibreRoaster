@@ -20,9 +20,9 @@
 <rect x="300" y="100" width="80" height="60" rx="6" fill="#fff" stroke="#dc2626" stroke-width="1.5"/><text x="340" y="122" text-anchor="middle" class="p">SSR-25DA</text><text x="340" y="138" text-anchor="middle" class="n">DC+ 3–32V</text><text x="340" y="152" text-anchor="middle" class="n">5Hz PWM</text>
 <text x="220" y="180" class="n">GPIO10 → DC+ (safe, no strapping)</text>
 <text x="220" y="200" class="n">GND → DC−</text>
-<text x="220" y="220" class="n">LEDC 14-bit 16383 steps · min duty 820 ticks (10ms = ½ mains cycle)</text>
+<text x="220" y="220" class="n">LEDC 14-bit 16383 steps · min duty 819 ticks (10ms = ½ mains cycle)</text>
 <rect x="60" y="230" width="320" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
-<text x="70" y="248" class="n">Duty 0 &lt;820 ticks → snapped to 0 (SSR_MIN_DUTY_TICKS)</text>
+<text x="70" y="248" class="n">Duty 0 &lt;819 ticks → snapped to 0 (SSR_MIN_DUTY_TICKS)</text>
 <text x="70" y="266" class="n">Prevents 25% misfire on zero-cross SSR with 2.4ms pulse</text>
 
 <!-- Right: AC mains danger -->
@@ -98,7 +98,7 @@
 <rect x="40" y="680" width="1120" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
 <text x="60" y="702" class="t" font-size="12">Test &amp; Commissioning Order</text>
 <text x="60" y="722" class="n">1. DC side alone (SSR disconnected): GPIO10 5Hz on scope, GPIO1 HIGH. 2. Connect SSR DC, no AC: same. 3. AC last: clamp meter confirms current only when GPIO10 HIGH + GPIO1 LOW.</text>
-<text x="60" y="740" class="n">Verify heater power = mains × duty (5Hz time-proportioning). Minimum 820 ticks ensures ≥10ms ON → at least one half-cycle per 200ms period for zero-cross SSR.</text>
+<text x="60" y="740" class="n">Verify heater power = mains × duty (5Hz time-proportioning). Minimum 819 ticks ensures ≥10ms ON → at least one half-cycle per 200ms period for zero-cross SSR.</text>
 
 <text x="600" y="940" text-anchor="middle" class="n" font-size="10">LibreRoaster · SSR &amp; Heat Detect Detail · CC BY-SA · printable 1200×950 · v0.1</text>
 </svg>
