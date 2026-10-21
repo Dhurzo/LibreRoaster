@@ -6,39 +6,25 @@ steps:
   - wait-serial: 'Loaded app from partition'
   - delay: 6000ms
 
-  # write-serial bytes are ASCII plus CRLF: CHAN;0
+  # CHAN;0, UNITS;C, READ
   - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
   - delay: 200ms
-  # UNITS;C
   - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
   - delay: 200ms
-  # READ
   - write-serial: [82, 69, 65, 68, 13, 10]
   - delay: 500ms
 
-  # PREHEAT 200
+  # PREHEAT 200; two 8 s reads cross the 15 s comms-idle window.
   - write-serial: [80, 82, 69, 72, 69, 65, 84, 32, 50, 48, 48, 13, 10]
-  # READ every 4 s keeps the 15 s comms-idle guard from latching.
-  - delay: 4000ms
+  - delay: 8000ms
   - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
+  - delay: 8000ms
   - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
+  - delay: 200ms
 
-  # PID;OFF, then START (green LED must be solid in Heating).
+  # PID;OFF, then START (green LED solid in Heating).
   - write-serial: [80, 73, 68, 59, 79, 70, 70, 13, 10]
   - delay: 1000ms
-
   - write-serial: [83, 84, 65, 82, 84, 13, 10]
   - delay: 2500ms
   - expect-pin:
@@ -46,23 +32,11 @@ steps:
       name: 8
       value: 1
 
+  # Keep the roast alive, then stop.
   - write-serial: [82, 69, 65, 68, 13, 10]
   - delay: 4000ms
   - write-serial: [82, 69, 65, 68, 13, 10]
   - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-  - write-serial: [82, 69, 65, 68, 13, 10]
-  - delay: 4000ms
-
   - write-serial: [80, 73, 68, 59, 79, 70, 70, 13, 10]
   - delay: 1000ms
   - expect-pin:

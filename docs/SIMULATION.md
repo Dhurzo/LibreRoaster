@@ -251,13 +251,14 @@ FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
 
 `sim/wokwi/scenarios/f3-roast.yaml` waits for the bootloader's
 `Loaded app from partition` line, gives the application 6 s to initialize,
-then sends `PREHEAT 200` and `READ` every 4 s for 32 s; it then sends
-`PID;OFF` and `START`, keeps polling `READ` every 4 s for another 32 s, and
-finishes with `PID;OFF`. It asserts that GPIO8 (the
-green status LED) is high in `Heating` and low after the final `PID;OFF`. The
-runner fails on `safety_fault`, `Emergency shutdown`, `BT RoR`, or
-`Control update error`. The scenario path is relative to `sim/wokwi`; the
-default is `scenarios/f3-roast.yaml`.
+then sends `PREHEAT 200` and two `READ`s 8 s apart (16 s total, crossing the
+15 s comms-idle window); it then sends `PID;OFF` and `START`, polls `READ`
+twice 4 s apart to keep the roast alive, and finishes with `PID;OFF`. It
+asserts that GPIO8 (the green status LED) is high in `Heating` and low after
+the final `PID;OFF`. The runner fails on `safety_fault`, `Emergency shutdown`,
+`BT RoR`, or `Control update error`. The scenario is sized to finish inside
+Wokwi's 5-minute free API session. The scenario path is relative to
+`sim/wokwi`; the default is `scenarios/f3-roast.yaml`.
 
 This is the executable version of the 15 s comms-idle rule: every `READ`
 refreshes `last_command_received_at_ms`, so the scenario must finish without a
