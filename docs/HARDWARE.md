@@ -34,6 +34,8 @@ The constants and hardware init code define this effective mapping (single sourc
 | UART TX | 21 | output, 3.3 V only, 115200 baud |
 
 > USB D+/D− is internal to ESP32-C3 (native USB CDC) — no external GPIO.
+>
+> For a no-hardware pinout check that exercises these signals, see `SIMULATION.md` (Wokwi F1/F2). It does not replace HIL validation.
 
 ## 3. Why the SPI pins look unusual
 
@@ -193,4 +195,5 @@ The hardware layer is stable enough to run, but these are the main points engine
 
 - `ARCHITECTURE.md` for how hardware feeds the runtime model
 - `PROTOCOL.md` for how hardware state appears over serial
+- `SIMULATION.md` for the Wokwi pinout simulation and its limits
 - `ARTISAN_CONNECTION.md` for the host-side connection workflow

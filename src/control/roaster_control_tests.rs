@@ -956,6 +956,18 @@ fn start_during_active_roast_is_ignored() {
 // ── Temporal backstops protect manual mode too ──────────
 
 #[test]
+fn read_command_refreshes_comms_idle_timer() {
+    let mut ctrl = make_control();
+    ctrl.status_mut().last_command_received_at_ms = 1_000;
+
+    let now = Instant::from_millis(20_000);
+    ctrl.process_artisan_command_at(ArtisanCommand::ReadStatus, now)
+        .expect("READ must be accepted");
+
+    assert_eq!(ctrl.get_status().last_command_received_at_ms, 20_000);
+}
+
+#[test]
 fn comms_idle_protects_manual_mode_when_heater_energized() {
     // In pure Artisan-manual mode (OT1 from a slider, no START) the state
     // stays Idle. The physical gate (heater_energized || roast_active) must

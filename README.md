@@ -256,9 +256,15 @@ cargo build --release --target riscv32imc-unknown-none-elf \
 
 cargo espflash flash --release --target riscv32imc-unknown-none-elf \
   --features "embedded,simulated-sensors" --port /dev/ttyACM0
+
+# Guard-safe typical roast (START/Heating without the RoR latch)
+cargo build --release --target riscv32imc-unknown-none-elf \
+  --features "embedded,simulated-typical-roast"
 ```
 
 See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
+
+For a visual, no-hardware pinout check in Wokwi (real SPI sensor path, LEDs, PWM, and the GPIO1 heat-sense switch), see [`docs/SIMULATION.md`](docs/SIMULATION.md). F3 (`simulated-typical-roast`) is the guard-safe synthetic curve for testing `START`/`Heating` without tripping the rate-of-rise guard. The default roast-temperature preset and switch runbook are in [`docs/WOKWI_ROAST_PRESET.md`](docs/WOKWI_ROAST_PRESET.md). For a scripted `PREHEAT`/`START` keepalive check with `wokwi-cli`, see `docs/SIMULATION.md` §3.4.
 
 ### Additional quality checks
 
@@ -285,6 +291,7 @@ The main technical documents are:
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
 - **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
+- **`docs/WOKWI_ROAST_PRESET.md`** — typical thermocouple preset and heat-sense switch runbook for the Wokwi simulation
 - **`docs/pinout.md`** — pin mapping reference
 - **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy
 - **`.github/dependabot.yml`** — automated dependency updates (Cargo weekly, Actions monthly)

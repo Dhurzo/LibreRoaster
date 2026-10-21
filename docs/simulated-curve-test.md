@@ -85,6 +85,47 @@ The built-in default curve (`RoastCurve::default_medium_roast()`) models a typic
 
 The curve stays below the over-temperature threshold (260 °C) to avoid triggering the safety shutdown during normal simulation.
 
+> **Rate-of-rise interaction:** this is a time-based roast profile, not a
+> closed-loop plant, and its early ramp (~1.5–1.8 °C/s) is steeper than the
+> RoR guard (0.75 °C/s soft / 1.0 °C/s hard). Sending `START` against this
+> default curve enters Heating, arms the guard, and correctly latches
+> `Bean temperature rate-of-rise exceeded`. Use `PREHEAT` and `OT1` for
+> LED/actuator checks, use the guard-safe curve below, or define a custom
+> curve with a slope below 0.75 °C/s for a START/Heating test.
+
+### Guard-safe typical roast
+
+`RoastCurve::typical_roast()` models a charge-dip roast whose positive BT
+slopes stay below the soft RoR limit (at most ~0.33 °C/s). It is selected by
+the `simulated-typical-roast` feature, which implies `simulated-sensors`:
+
+```bash
+cargo build --release --target riscv32imc-unknown-none-elf \
+  --features "embedded,simulated-typical-roast"
+```
+
+For Wokwi F3:
+
+```bash
+FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
+```
+
+| Phase | Time (s) | BT (°C) | ET (°C) |
+|---|---:|---:|---:|
+| Charge | 0 | 200 | 220 |
+| Turning point | 60 | 100 | 205 |
+| Drying | 120–300 | 110–168 | 210–225 |
+| Maillard / first crack | 360–420 | 184–196 | 230–234 |
+| Development | 480–600 | 204–214 | 238–243 |
+
+The initial negative slope (charge to turning point) cannot trip the RoR
+guard, and the subsequent positive slopes stay below 0.75 °C/s, so `START`
+remains in `Heating` with the solid green LED instead of latching
+`Bean temperature rate-of-rise exceeded`. The curve is time-based from source
+construction, so the first `READ` after a multi-second boot may already show
+a few seconds of the charge dip. See [`SIMULATION.md`](SIMULATION.md) §3.3
+for the Wokwi checklist.
+
 ### Noise
 
 By default, the simulated signal is perfectly clean (no jitter). You can add deterministic triangle-wave noise to simulate realistic sensor behaviour:
@@ -188,10 +229,13 @@ python3 scripts/hw_soak.py --port /dev/ttyUSB0 --duration 660
 Two things the scripts encode that are easy to get wrong by hand:
 
 - **Session keepalive.** The firmware drops the active transport after
-  60 s without commands (`CommandMultiplexer::IDLE_TIMEOUT_SECS`
+  60 s without commands in Idle (`CommandMultiplexer::IDLE_TIMEOUT_SECS`
   anti-hijack failover), which silently stops telemetry routing even
-  with `STREAM;ON`. Like Artisan (which polls `READ` continuously),
-  `hw_soak.py` sends `STATUS` every 25 s to hold the session.
+  with `STREAM;ON`. When the heater is energized or a roast is active, the
+  safety `COMMS_IDLE_TIMEOUT_MS` (15 s) latches first, so send `READ` or
+  `STATUS` every 5-10 s. Like Artisan (which polls `READ` continuously),
+  `hw_soak.py` sends `STATUS` every 25 s because it only observes the curve
+  in Idle.
 - **Single UART cable.** See `docs/DEVELOPMENT.md` §9: with the native-USB
   cable plugged, `esp-println`'s `auto` printer may route lines to the
   unread USB side once the host enumerates it. Capture HIL output on

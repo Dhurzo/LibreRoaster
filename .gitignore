@@ -42,6 +42,9 @@ config.json
 *.bin
 *.elf
 *.out
+*.wasm
+*.vcd
+sim/wokwi/chips/wokwi-api.h
 
 # IDE files
 .vscode/

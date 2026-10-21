@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "author": "LibreRoaster",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-c3-devkitm-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "chip-max31856",
+      "id": "bt",
+      "top": 40,
+      "left": 180,
+      "attrs": {
+        "temperature": "200",
+        "coldJunction": "35",
+        "fault": "0"
+      }
+    },
+    {
+      "type": "chip-max31856",
+      "id": "et",
+      "top": 150,
+      "left": 180,
+      "attrs": {
+        "temperature": "220",
+        "coldJunction": "35",
+        "fault": "0"
+      }
+    },
+    {
+      "type": "wokwi-logic-analyzer",
+      "id": "la",
+      "top": 0,
+      "left": 520,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_status",
+      "top": 270,
+      "left": 0,
+      "attrs": {
+        "value": "330"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_status",
+      "top": 270,
+      "left": 60,
+      "attrs": {
+        "color": "green"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_ssr",
+      "top": 310,
+      "left": 0,
+      "attrs": {
+        "value": "220"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_ssr",
+      "top": 310,
+      "left": 60,
+      "attrs": {
+        "color": "red"
+      }
+    },
+    {
+      "type": "wokwi-slide-switch",
+      "id": "sw",
+      "top": 350,
+      "left": 0,
+      "attrs": {
+        "value": "1",
+        "bounce": "0"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "label_status",
+      "top": 250,
+      "left": 120,
+      "attrs": {
+        "text": "GPIO8 status LED\n(active high)"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "label_ssr",
+      "top": 290,
+      "left": 120,
+      "attrs": {
+        "text": "GPIO10 SSR\n(5 Hz, active high)"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "label_heat",
+      "top": 350,
+      "left": 120,
+      "attrs": {
+        "text": "GPIO1 heat-sense\nRIGHT = no current (start here)\nLEFT = current\n(F2 / heat-sense only)"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "label_pins",
+      "top": 40,
+      "left": 290,
+      "attrs": {
+        "text": "BT  CS=GPIO4\nET  CS=GPIO3\nSCK=GPIO6 MOSI=GPIO7 MISO=GPIO5\nFan PWM=GPIO9 (no LED: strapping pin)\nUART0 TX=GPIO21 RX=GPIO20"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "label_cmds",
+      "top": 170,
+      "left": 290,
+      "attrs": {
+        "text": "Serial monitor: 115200\nSend: READ\nSTART / OT1;100 / STOP\nSTREAM;ON for # telemetry"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:8", "r_status:1", "green", []],
+    ["r_status:2", "led_status:A", "green", []],
+    ["led_status:C", "esp:GND.8", "black", []],
+    ["esp:10", "r_ssr:1", "red", []],
+    ["r_ssr:2", "led_ssr:A", "red", []],
+    ["led_ssr:C", "esp:GND.4", "black", []],
+    ["esp:1", "sw:1", "blue", []],
+    ["sw:2", "esp:GND.3", "black", []],
+    ["esp:3V3.1", "bt:VCC", "red", []],
+    ["esp:GND.1", "bt:GND", "black", []],
+    ["esp:4", "bt:CS", "orange", []],
+    ["esp:6", "bt:SCK", "purple", []],
+    ["esp:7", "bt:MOSI", "blue", []],
+    ["esp:5", "bt:MISO", "green", []],
+    ["esp:3V3.2", "et:VCC", "red", []],
+    ["esp:GND.2", "et:GND", "black", []],
+    ["esp:3", "et:CS", "orange", []],
+    ["esp:6", "et:SCK", "purple", []],
+    ["esp:7", "et:MOSI", "blue", []],
+    ["esp:5", "et:MISO", "green", []],
+    ["la:GND", "esp:GND.6", "black", []],
+    ["la:D0", "esp:10", "red", []],
+    ["la:D1", "esp:9", "blue", []],
+    ["la:D2", "esp:4", "orange", []],
+    ["la:D3", "esp:3", "yellow", []],
+    ["la:D4", "esp:6", "purple", []],
+    ["la:D5", "esp:7", "cyan", []],
+    ["la:D6", "esp:5", "green", []],
+    ["la:D7", "esp:TX", "white", []]
+  ]
+}

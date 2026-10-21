@@ -45,6 +45,7 @@ instrumentation = []
 async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
+simulated-typical-roast = ["simulated-sensors"]
 # H4: heat-source current-sense on GPIO1 is OPT-IN. The default build does
 # NOT interpret GPIO1, so boards without the sense circuit heat normally.
 # Enable `heat-sense` only with a validated stretched-pulse circuit (see

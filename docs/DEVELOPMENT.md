@@ -48,6 +48,7 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 - **`instrumentation`** — enables telemetry/instrumentation hooks (pulled in by `test`)
 - **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
 - **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
+- **`simulated-typical-roast`** — F3 simulation build: pulls in `simulated-sensors` and selects the guard-safe charge-dip curve for `START`/`Heating` tests without the RoR latch
 - **`heat-sense`** — opt-in GPIO1 current-sense interpretation for builds with a validated stretched-pulse circuit (default: not interpreted; all other safety layers stay active)
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
 - **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
@@ -147,6 +148,18 @@ Real control-loop ticks over the synthetic `simulated-sensors` temperature curve
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test --features simulated-sensors --lib control_loop_tick_simulated
 ```
+
+### Pinout simulation without hardware (Wokwi)
+
+Builds the firmware and prepares the Wokwi project in `sim/wokwi/` for a visual pin check without hardware. F1 uses `simulated-sensors` (UART, status LED, SSR/fan PWM); F2 uses `heat-sense` plus the custom MAX31856 chip (real SPI and GPIO1 heat-sense); F3 uses `simulated-typical-roast` (F1 plus a charge-dip curve that stays below the RoR guard, for a solid-green `START`/`Heating` test):
+
+```bash
+./scripts/sim-wokwi-prepare.sh
+FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
+FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
+```
+
+Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls and the experimental esp-emulator status.
 
 ### Artisan wire-contract tests (Audit A-TC4)
 
@@ -277,5 +290,6 @@ For non-trivial firmware changes, this is the safest sequence:
 - `ARCHITECTURE.md` for the runtime model
 - `PROTOCOL.md` for serial behavior
 - `HARDWARE.md` for the electrical/pin model
+- `SIMULATION.md` for the no-hardware Wokwi/esp-emu workflows
 - `ARTISAN_CONNECTION.md` for desktop-side setup
 - `INSTRUMENTATION.md` for telemetry interpretation

@@ -57,8 +57,9 @@ The system is wired through a `ServiceContainer` singleton that owns `RoasterCon
 - ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
 - ✅ USB CDC responds to Artisan `READ` with TC4 format
  - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-  - ✅ All host tests pass (**913 as of 2026-10-16, after the 2026-10-16 audit fix round**, 579 lib + 334 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
+  - ✅ All host tests pass (**914 as of 2026-10-21, after the 2026-10-16 audit fix round plus the READ keepalive test**, 580 lib + 334 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
  - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
+ - ✅ No-hardware pinout simulation (`sim/wokwi/`): Wokwi project with a custom MAX31856 chip and `scripts/sim-wokwi-prepare.sh`; F1 (`embedded,simulated-sensors`) brings up UART/LED/PWM, F2 (`embedded,heat-sense`) exercises the real SPI sensor path and GPIO1 heat-sense, and F3 (`embedded,simulated-typical-roast`) uses a charge-dip typical curve (positive BT slopes <= ~0.33 °C/s) so `START`/`Heating` can be tested without the RoR latch. `scripts/sim-esp-emu.sh` is experimental (esp-emulator v0.50.0 software-interrupt blocker). `sim/wokwi/scenarios/f3-roast.yaml` + `scripts/sim-wokwi-scenario.sh` automate the F3 keepalive check with `wokwi-cli` (optional CI token). See `docs/SIMULATION.md`
 
 **Recent architecture work (v5.4):**
 - RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
@@ -139,6 +140,7 @@ Read these in order depending on what you need to do:
 | Change pin assignments or hardware init | `docs/HARDWARE.md` |
 | Fix a bug | Investigate source code (current bug/risk notes live in code comments; see `docs/ARCHITECTURE.md` §13) |
 | Build, flash, test | `docs/DEVELOPMENT.md` |
+| Validate the pinout without hardware | `docs/SIMULATION.md` (roast preset and heat-sense switch runbook: `docs/WOKWI_ROAST_PRESET.md`) |
 | Understand telemetry/STATUS fields | `docs/INSTRUMENTATION.md` |
 | Configure Artisan integration | `docs/ARTISAN_CONNECTION.md` |
 | Check compatibility boundaries | Review source code and test implementations |
@@ -207,4 +209,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-10-17. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-10-21. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*

@@ -114,6 +114,19 @@ Using the official Artisan app in serial-controller mode, LibreRoaster is built 
 
 This is the project’s core compatibility target.
 
+### Comms-idle and the 15 s rule
+
+Artisan polls `READ` once per sampling interval (the default is 2 s). Every
+inbound command refreshes `last_command_received_at_ms`, so normal Artisan
+polling keeps the 15 s comms-idle guard (`COMMS_IDLE_TIMEOUT_MS`) from firing.
+The guard is armed whenever the heater is energized or a roast is active; if
+Artisan stops polling, closes, or loses the serial link, the firmware latches,
+turns the heater off, and runs the fan at 100 % by design.
+
+Do not configure an Artisan sampling interval above 15 s. Custom serial
+clients that do not poll must send `READ` or `STATUS` every 5-10 s while the
+heater is on. `STREAM;ON` is output-only and does not refresh the timer.
+
 ## 8. What Artisan should not assume
 
 The official Artisan ecosystem is broader than LibreRoaster’s firmware surface.

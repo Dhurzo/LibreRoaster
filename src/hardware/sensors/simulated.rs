@@ -134,6 +134,84 @@ impl RoastCurve {
         curve
     }
 
+    /// Create a guard-safe typical roast profile for START/Heating tests.
+    ///
+    /// The bean probe starts at a realistic charge temperature, drops through
+    /// the turning point, and then rises slowly enough that every positive BT
+    /// segment stays below the soft rate-of-rise limit. Unlike
+    /// [`Self::default_medium_roast`], `START` can stay in `Heating` without
+    /// latching `Bean temperature rate-of-rise exceeded`.
+    ///
+    /// Approximate profile:
+    /// - 0–60s:   Charge at 200°C BT / 220°C ET, dropping to a 100°C turning point
+    /// - 60–300s: Drying ramp to 168°C BT / 225°C ET
+    /// - 300–420s: Maillard ramp to 196°C BT / 234°C ET (first crack)
+    /// - 420–600s: Development to 214°C BT / 243°C ET
+    pub fn typical_roast() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 200.0,
+            env_temp: 220.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 30,
+            bean_temp: 120.0,
+            env_temp: 210.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 60,
+            bean_temp: 100.0,
+            env_temp: 205.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 120,
+            bean_temp: 110.0,
+            env_temp: 210.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 180,
+            bean_temp: 130.0,
+            env_temp: 215.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 240,
+            bean_temp: 150.0,
+            env_temp: 220.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 300,
+            bean_temp: 168.0,
+            env_temp: 225.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 360,
+            bean_temp: 184.0,
+            env_temp: 230.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 420,
+            bean_temp: 196.0,
+            env_temp: 234.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 480,
+            bean_temp: 204.0,
+            env_temp: 238.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 540,
+            bean_temp: 210.0,
+            env_temp: 241.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 600,
+            bean_temp: 214.0,
+            env_temp: 243.0,
+        });
+        curve
+    }
+
     /// Create a light roast profile: shorter, milder curve peaking at 210°C BT.
     ///
     /// Approximate profile:
@@ -510,9 +588,17 @@ impl SimulatedSensorSource {
         }
     }
 
-    /// Create a simulated source using the built-in medium roast curve.
+    /// Create a simulated source using the build's default curve.
+    ///
+    /// With `simulated-typical-roast`, the default is the guard-safe
+    /// [`RoastCurve::typical_roast`]; otherwise it is
+    /// [`RoastCurve::default_medium_roast`].
     pub fn default_curve() -> Self {
-        Self::new(RoastCurve::default_medium_roast())
+        #[cfg(feature = "simulated-typical-roast")]
+        let curve = RoastCurve::typical_roast();
+        #[cfg(not(feature = "simulated-typical-roast"))]
+        let curve = RoastCurve::default_medium_roast();
+        Self::new(curve)
     }
 
     /// Set noise amplitude in °C. A value of 0.5 adds ±0.5°C noise.
@@ -696,6 +782,7 @@ impl SimulatedSensorSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::constants::MAX_BT_RATE_OF_RISE;
     use proptest::prelude::*;
 
     proptest! {
@@ -888,6 +975,76 @@ mod tests {
             bean_mid > 150.0 && bean_mid < 200.0,
             "BT at t=180s should be in ramp zone, got {bean_mid}"
         );
+    }
+
+    #[test]
+    fn typical_roast_has_charge_dip_and_development() {
+        let curve = RoastCurve::typical_roast();
+        assert!(curve.len() >= 10);
+
+        let (charge_bt, charge_et) = curve.temperatures_at(0);
+        assert!(
+            (190.0..=210.0).contains(&charge_bt),
+            "charge BT should be ~200, got {charge_bt}"
+        );
+        assert!(
+            (210.0..=230.0).contains(&charge_et),
+            "charge ET should be ~220, got {charge_et}"
+        );
+
+        let (turning_bt, _) = curve.temperatures_at(60);
+        assert!(
+            (95.0..=105.0).contains(&turning_bt),
+            "turning point BT should be ~100, got {turning_bt}"
+        );
+
+        let (first_crack_bt, _) = curve.temperatures_at(420);
+        assert!(
+            (190.0..=200.0).contains(&first_crack_bt),
+            "first-crack BT should be ~196, got {first_crack_bt}"
+        );
+
+        let (end_bt, end_et) = curve.temperatures_at(600);
+        assert!(
+            (210.0..=215.0).contains(&end_bt),
+            "development BT should be ~214, got {end_bt}"
+        );
+        assert!(
+            end_et < 250.0,
+            "development ET should stay below 250, got {end_et}"
+        );
+    }
+
+    #[cfg(feature = "simulated-typical-roast")]
+    #[test]
+    fn default_curve_uses_typical_roast_when_feature_is_enabled() {
+        let mut source = SimulatedSensorSource::default_curve();
+        let (bt, et) = source.current_temperatures();
+        assert!(
+            (150.0..=200.0).contains(&bt),
+            "F3 default BT should start near the 200 C charge, got {bt}"
+        );
+        assert!(
+            (200.0..=220.0).contains(&et),
+            "F3 default ET should start near the 220 C charge, got {et}"
+        );
+    }
+
+    #[test]
+    fn typical_roast_positive_bt_slopes_stay_below_soft_ror_limit() {
+        let curve = RoastCurve::typical_roast();
+        let mut previous_bt = curve.temperatures_at(0).0;
+        for time_secs in (30u32..=600).step_by(30) {
+            let current_bt = curve.temperatures_at(time_secs).0;
+            let slope = (current_bt - previous_bt) / 30.0;
+            if slope > 0.0 {
+                assert!(
+                    slope <= MAX_BT_RATE_OF_RISE,
+                    "positive BT slope {slope} °C/s at {time_secs}s exceeds soft RoR limit {MAX_BT_RATE_OF_RISE}"
+                );
+            }
+            previous_bt = current_bt;
+        }
     }
 
     #[test]

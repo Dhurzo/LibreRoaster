@@ -1,0 +1,31 @@
+{
+  "name": "max31856",
+  "author": "LibreRoaster",
+  "pins": ["VCC", "GND", "CS", "SCK", "MOSI", "MISO"],
+  "controls": [
+    {
+      "id": "temperature",
+      "label": "Thermocouple temperature (C)",
+      "type": "range",
+      "min": -200,
+      "max": 1350,
+      "step": 1
+    },
+    {
+      "id": "coldJunction",
+      "label": "Cold-junction temperature (C)",
+      "type": "range",
+      "min": -20,
+      "max": 85,
+      "step": 0.5
+    },
+    {
+      "id": "fault",
+      "label": "Fault register (0 = healthy)",
+      "type": "range",
+      "min": 0,
+      "max": 255,
+      "step": 1
+    }
+  ]
+}
