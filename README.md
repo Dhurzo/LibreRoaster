@@ -264,7 +264,7 @@ cargo build --release --target riscv32imc-unknown-none-elf \
 
 See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
 
-For a visual, no-hardware pinout check in Wokwi (real SPI sensor path, LEDs, PWM, and the GPIO1 heat-sense switch), see [`docs/SIMULATION.md`](docs/SIMULATION.md). F3 (`simulated-typical-roast`) is the guard-safe synthetic curve for testing `START`/`Heating` without tripping the rate-of-rise guard. The default roast-temperature preset and switch runbook are in [`docs/WOKWI_ROAST_PRESET.md`](docs/WOKWI_ROAST_PRESET.md). For a scripted `PREHEAT`/`START` keepalive check with `wokwi-cli`, see `docs/SIMULATION.md` §3.4.
+For a visual, no-hardware pinout check in Wokwi (real SPI sensor path, LEDs, PWM, and the GPIO1 heat-sense switch), see [`docs/SIMULATION.md`](docs/SIMULATION.md). F3 (`simulated-typical-roast`) is the guard-safe synthetic curve for testing `START`/`Heating` without tripping the rate-of-rise guard. The default roast-temperature preset and switch runbook are in [`docs/WOKWI_ROAST_PRESET.md`](docs/WOKWI_ROAST_PRESET.md). Scripted scenarios for F1 (simulated `READ`/`PREHEAT`), F2 (real SPI), and F3 (`PREHEAT`/`START` keepalive) are documented in `docs/SIMULATION.md` §3.4.1.
 
 ### Additional quality checks
 

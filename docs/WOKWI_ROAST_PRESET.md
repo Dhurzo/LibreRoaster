@@ -147,6 +147,13 @@ FEATURES=embedded ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
 ```
 
+The matching automated checks are `scenarios/f1-smoke.yaml` (simulated
+`READ`/`PREHEAT`), `scenarios/f2-spi.yaml` (real SPI reads; it does not move
+the heat-sense switch), and `scenarios/f3-roast.yaml` (`PREHEAT`/`START`
+keepalive plus the GPIO8 assertion). The full run commands and the
+compile-time curve-selection matrix are in [`SIMULATION.md`](SIMULATION.md)
+§3.4.1.
+
 ## 7. Troubleshooting
 
 | Symptom | Cause and action |

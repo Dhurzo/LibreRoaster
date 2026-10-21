@@ -265,6 +265,49 @@ refreshes `last_command_received_at_ms`, so the scenario must finish without a
 latch. The scenario needs a Wokwi CI token and is not part of the default
 local workflow; the VS Code GUI checklist in §3.3 remains the fallback.
 
+### 3.4.1 F1/F2/F3 scenario matrix and curve selection
+
+Each scripted scenario requires the firmware image built with the matching
+feature set:
+
+| Build | Feature set | Scenario | What it checks |
+|---|---|---|---|
+| F1 | `embedded,simulated-sensors` | `scenarios/f1-smoke.yaml` | Handshake, `READ`, `PREHEAT 200`, the 20 % fan floor, and the 15 s keepalive. It does **not** send `START` (the default medium curve would latch the RoR guard). |
+| F2 | `embedded,heat-sense` | `scenarios/f2-spi.yaml` | Handshake, initial `35.0,220.0,200.0`, then slider changes to `35.0,230.0,250.0`. It does **not** energize the heater or move the heat-sense switch. |
+| F3 | `embedded,simulated-typical-roast` | `scenarios/f3-roast.yaml` | `PREHEAT`, 15 s keepalive, `START`/`Heating`, GPIO8 high, then `PID;OFF` and GPIO8 low. |
+
+```bash
+# F1
+FEATURES=embedded,simulated-sensors ./scripts/sim-wokwi-prepare.sh
+./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml
+
+# F2
+FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
+./scripts/sim-wokwi-scenario.sh scenarios/f2-spi.yaml
+
+# F3 (default scenario/log)
+FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
+./scripts/sim-wokwi-scenario.sh
+```
+
+The runner writes `target/wokwi-<scenario-name>.log` unless a second argument
+overrides it. It fails on `safety_fault`, `Emergency shutdown`, `BT RoR`, or
+`Control update error`. The image must match the scenario: rebuilding is
+required when switching feature set. Wokwi's free API session is limited to
+5 minutes, so keep scenarios short.
+
+**Switching curves is compile-time, not runtime.** There is no serial command
+or Wokwi setting that selects a roast curve:
+
+- F1 uses `RoastCurve::default_medium_roast()` (the default of
+  `embedded,simulated-sensors`).
+- F3 uses `RoastCurve::typical_roast()` via `embedded,simulated-typical-roast`.
+- F2 does not use a curve; the MAX31856 slider values are the temperatures.
+  Edit them in `sim/wokwi/diagram.json` or move them in the Wokwi UI.
+- `RoastCurve::light_roast()` has no Cargo feature. It is available from code
+  and host tests only; see [`simulated-curve-test.md`](simulated-curve-test.md)
+  for custom curves and noise.
+
 ### 3.5 Why PREHEAT/START latches after 15 s
 
 There are two different inactivity timers:
@@ -299,8 +342,8 @@ Recovery and keepalive:
 - Artisan polls `READ` once per sampling interval (default 2 s), so a normal
   Artisan roast keeps the timer refreshed. If Artisan is closed, loses the
   serial link, or is configured above 15 s, the latch is intentional.
-- The scripted scenario in §3.4 sends `READ` every 4 s and fails if this latch
-  appears.
+- The scripted scenarios in §3.4/§3.4.1 send `READ` within the 15 s window and
+  fail if this latch appears.
 
 ## 4. Pin checklist
 

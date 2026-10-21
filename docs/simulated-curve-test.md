@@ -126,6 +126,23 @@ construction, so the first `READ` after a multi-second boot may already show
 a few seconds of the charge dip. See [`SIMULATION.md`](SIMULATION.md) §3.3
 for the Wokwi checklist.
 
+### Switching curves
+
+Curve selection is compile-time. `SimulatedSensorSource::default_curve()` uses
+`RoastCurve::typical_roast()` when `simulated-typical-roast` is enabled and
+`RoastCurve::default_medium_roast()` otherwise:
+
+| Curve | How to select it | Typical use |
+|---|---|---|
+| Medium (`default_medium_roast`) | `--features "embedded,simulated-sensors"` | F1 bring-up; `READ`/`PREHEAT`/`OT1`; `START` correctly latches the RoR guard |
+| Typical (`typical_roast`) | `--features "embedded,simulated-typical-roast"` | F3 guard-safe `START`/`Heating` |
+| Light (`light_roast`) | No Cargo feature; call it from code or a host test | Light-roast regression work |
+| Custom | Build a `RoastCurve` and pass it to `SimulatedSensorSource::new` | Custom trajectories |
+
+There is no runtime curve selector and no need to rebuild after changing
+Wokwi MAX31856 sliders (F2 has no synthetic curve). The Wokwi run commands are
+in [`SIMULATION.md`](SIMULATION.md) §3.4.1.
+
 ### Noise
 
 By default, the simulated signal is perfectly clean (no jitter). You can add deterministic triangle-wave noise to simulate realistic sensor behaviour:

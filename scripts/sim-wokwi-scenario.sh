@@ -6,11 +6,12 @@ cd "$ROOT"
 
 # Relative to the Wokwi project root (sim/wokwi), per --scenario semantics.
 SCENARIO="${1:-scenarios/f3-roast.yaml}"
-LOG="${2:-$ROOT/target/wokwi-f3-roast.log}"
+SCENARIO_NAME="$(basename "$SCENARIO" .yaml)"
+LOG="${2:-$ROOT/target/wokwi-${SCENARIO_NAME}.log}"
 
 if [[ ! -f sim/wokwi/libreroaster.bin ]]; then
     echo "Missing sim/wokwi/libreroaster.bin." >&2
-    echo "Build the F3 image first:" >&2
+    echo "Build the image for the scenario's feature set first, for example:" >&2
     echo "  FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh" >&2
     exit 2
 fi
@@ -29,7 +30,7 @@ fi
 
 mkdir -p "$(dirname "$LOG")"
 
-echo "Running $SCENARIO (F3 image; 90 s simulation timeout)"
+echo "Running $SCENARIO (90 s simulation timeout; image must match the scenario build)"
 if ! wokwi-cli sim/wokwi \
     --scenario "$SCENARIO" \
     --timeout 90000 \
@@ -45,5 +46,5 @@ if grep -Eq 'safety_fault|Emergency shutdown|BT RoR|Control update error' "$LOG"
     exit 1
 fi
 
-echo "Scenario passed (no latch; green LED high in Heating, low after PID;OFF)."
+echo "Scenario passed (no latch or safety text in the serial log)."
 echo "Serial log: $LOG"

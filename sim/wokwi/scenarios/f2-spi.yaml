@@ -1,0 +1,29 @@
+name: 'F2 real SPI sensor path'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0, UNITS;C, READ: AMB, ET, BT from the two MAX31856 chips.
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 1500ms
+
+  # Move both thermocouple controls and read them back after the EMA settles.
+  - set-control:
+      part-id: bt
+      name: temperature
+      value: 250
+  - set-control:
+      part-id: et
+      name: temperature
+      value: 230
+  - delay: 10000ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - wait-serial: '35.0,230.0,250.0'
+  - delay: 500ms
