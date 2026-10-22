@@ -92,7 +92,7 @@
 
 <!-- Footer -->
 <rect x="40" y="720" width="1120" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
-<text x="60" y="742" class="t" font-size="12">Bring-Up Order (see wiring-diagrams-images.md)</text>
+<text x="60" y="742" class="t" font-size="12">Bring-Up Order (see pinout.md)</text>
 <text x="60" y="762" class="n">1. Power 3.3V only → verify 3.135–3.465V + boot log “LibreRoaster v0.1”.  2. +Thermocouples → hil_tc reads 25°C ambient.  3. +Fan → hil_fan sweep.  4. +SSR DC only → hil_ssr duty 0.  5. Full + AC last with extinguisher.</text>
 <text x="60" y="782" class="n">Native USB flashing: cargo espflash flash --port /dev/ttyACM0 --features embedded. UART fallback: --port /dev/ttyUSB0.</text>
 

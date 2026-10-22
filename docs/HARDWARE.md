@@ -1,199 +1,226 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-10-17 — pin map, PWM topology and line references re-verified against `src/config/constants.rs` + `src/hardware/init.rs` asserts
+**Last updated:** 2026-10-22 — pin map, PWM topology, and electrical limits reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
 
-This document describes the hardware topology that the current firmware expects, the actual pin mapping in the codebase, and the electrical and timing constraints that matter when you build or modify the roaster.
+This document owns the firmware-facing hardware model: the pin mapping the firmware expects, the
+subsystem topology, and the electrical constraints that shape the safety case. Physical assembly,
+connector-level wiring, and board-damage prevention live in [`pinout.md`](pinout.md). Host-side
+USB/UART setup lives in [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md) and
+[`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md).
 
-## 1. Hardware role split
+---
 
-LibreRoaster assumes four major hardware responsibilities:
+## 1. Hardware Role Split
 
-- **compute and transport** on the ESP32-C3,
-- **temperature acquisition** through two MAX31856 thermocouple front ends,
-- **heater switching** through an SSR-controlled output,
+LibreRoaster assumes four hardware responsibilities:
+
+- **compute and transport** on the ESP32-C3;
+- **temperature acquisition** through two MAX31856 thermocouple front ends;
+- **heater switching** through an SSR-controlled output;
 - **airflow control** through a PWM-driven fan stage.
 
-The firmware is opinionated about this topology. It is adaptable, but not dynamically auto-discovered.
+The firmware is opinionated about this topology. It is adaptable, but not dynamically
+auto-discovered.
 
-## 2. Pin map used by the firmware
+## 2. Pin Map Used by the Firmware
 
-The constants and hardware init code define this effective mapping (single source: `src/config/constants.rs:20-40`, enforced at boot by `src/hardware/init.rs:86-111`):
+The constants in `src/config/constants.rs` define the effective mapping; boot-time assertions in
+`src/hardware/init.rs` enforce it.
 
 | Signal | GPIO | Notes |
 |---|---:|---|
-| Heat detection input | 1 | input, internal pull-up; LOW = SSR conducting |
-| ET thermocouple chip select | 3 | output, shared SPI bus |
-| BT thermocouple chip select | 4 | output, shared SPI bus |
-| SPI MISO | 5 | input, routed through GPIO matrix to avoid GPIO2 strap conflict |
-| SPI SCLK | 6 | output, FSPI clock |
-| SPI MOSI | 7 | output, FSPI data out |
-| Status LED | 8 | output, push-pull, active-high; not sampled for normal boot (see §8) |
-| Fan PWM | 9 | output, LEDC 25 kHz; **strapping pin** — external pull-up 10 kΩ → 3.3 V mandatory on custom boards |
-| SSR control PWM | 10 | output, LEDC 5 Hz zero-cross, 14-bit; external 10 kΩ pull-down mandatory |
-| UART RX | 20 | input, 3.3 V only, 115200 baud |
-| UART TX | 21 | output, 3.3 V only, 115200 baud |
+| Heat detection input | 1 | Input, internal pull-up; LOW = SSR conducting |
+| ET thermocouple chip select | 3 | Output, shared SPI bus |
+| BT thermocouple chip select | 4 | Output, shared SPI bus |
+| SPI MISO | 5 | Input, routed through the GPIO matrix to avoid the GPIO2 strap |
+| SPI SCLK | 6 | Output, FSPI clock |
+| SPI MOSI | 7 | Output, FSPI data out |
+| Status LED | 8 | Output, push-pull, active-high; not sampled for normal boot |
+| Fan PWM | 9 | Output, LEDC 25 kHz; **strapping pin** — external 10 kΩ → 3.3 V mandatory on custom boards |
+| SSR control PWM | 10 | Output, LEDC 5 Hz zero-cross, 14-bit; external 10 kΩ pull-down mandatory |
+| UART RX | 20 | Input, 3.3 V only, 115200 baud |
+| UART TX | 21 | Output, 3.3 V only, 115200 baud |
 
-> USB D+/D− is internal to ESP32-C3 (native USB CDC) — no external GPIO.
->
-> For a no-hardware pinout check that exercises these signals, see `SIMULATION.md` (Wokwi F1/F2). It does not replace HIL validation.
+USB D+/D− is internal to the ESP32-C3 (native USB CDC). It has no external GPIO.
 
-## 3. Why the SPI pins look unusual
+For the full connector-level wiring diagram, subsystem images, and assembly order, see
+[`pinout.md`](pinout.md).
 
-ESP32-C3 nominal FSPI MISO maps to GPIO2, but GPIO2 is a strapping pin. LibreRoaster avoids that boot-risk path and instead routes MISO through GPIO5 via the GPIO matrix.
+## 3. Why the SPI Pins Look Unusual
 
-That design choice is not cosmetic. It is a boot-reliability measure.
+The ESP32-C3 nominal FSPI MISO maps to GPIO2, but GPIO2 is a strapping pin. LibreRoaster avoids
+that boot-risk path and routes MISO through GPIO5 via the GPIO matrix.
 
-## 4. Thermocouple subsystem
+That choice is a boot-reliability measure, not a cosmetic preference.
 
-LibreRoaster expects two MAX31856 devices on the same SPI controller with separate chip selects.
+## 4. Thermocouple Subsystem
 
-### Functional mapping
+LibreRoaster expects two MAX31856 devices on one SPI controller with separate chip selects:
 
-- **BT**: bean temperature channel
-- **ET**: environment/exhaust temperature channel
+- **BT**: bean-temperature channel;
+- **ET**: environment/exhaust-temperature channel.
 
-Both devices are wrapped through a shared SPI device abstraction and then lifted into a sensor conversion hub above the raw drivers.
+Both devices sit behind a shared SPI abstraction and feed a sensor conversion hub above the raw
+drivers. The control core reasons about converted temperatures, not raw MAX31856 frames, which keeps
+the protocol and PID layers hardware-agnostic.
 
-### Design consequence
+The bus runs at 1 MHz in SPI mode 1 (CPOL=0, CPHA=1). Conversion is one-shot with a 210 ms wait;
+FAULT and DRDY are not wired.
 
-The control core reasons about converted temperatures, not raw MAX31856 frames. That keeps the protocol and PID layers hardware-agnostic once the sensor layer has done its job.
-
-## 5. Actuator subsystem
+## 5. Actuator Subsystem
 
 ### Heater path
 
-The heater is driven through an SSR-backed LEDC channel. A separate heat-detection input provides a sanity signal about whether the heating path appears electrically active.
-
-This means LibreRoaster does not blindly trust “PWM command sent” as proof of “heat applied.”
+The heater is driven through an SSR-backed LEDC channel. A separate heat-detection input provides a
+sanity signal about whether the heating path appears electrically active, so LibreRoaster does not
+treat “PWM command sent” as proof of “heat applied.”
 
 ### Fan path
 
-The fan is driven through a second LEDC channel. The firmware expresses fan values in the protocol as percentages and then scales them into the hardware driver’s PWM domain.
+The fan is driven through a second LEDC channel. Protocol percentages are scaled into the hardware
+driver's PWM domain.
 
-Because GPIO9 is a strapping pin, the external fan stage must be designed so it does not assert a dangerous boot level during reset.
+GPIO9 is a strapping pin, so the external fan stage must not assert a dangerous boot level during
+reset. The safe failure direction is airflow with no heat.
 
-## 6. PWM and timer topology
+## 6. PWM and Timer Topology
 
-The hardware init code (`src/hardware/init.rs:122-182`) configures two low-speed LEDC timers:
+`src/hardware/init.rs` configures two low-speed LEDC timers:
 
-- Timer0 for the SSR at **5 Hz** (zero-cross compatible, `SSR_PWM_RESOLUTION = 14` bit), bound to LEDC channel 1, and
-- Timer1 for the fan at **25 kHz** (`FAN_PWM_RESOLUTION = 8` bit), bound to LEDC channel 0.
+- **Timer0** for the SSR at **5 Hz** (zero-cross compatible, 14-bit),
+  bound to LEDC channel 1;
+- **Timer1** for the fan at **25 kHz** (8-bit), bound to LEDC channel 0.
 
-The `SSR_LEDC_CHANNEL`/`SSR_LEDC_TIMER`/`FAN_LEDC_CHANNEL`/`FAN_LEDC_TIMER` constants in `src/config/constants.rs:49-52` mirror this mapping, but the init path hard-codes `Timer0`/`Timer1` and `Channel0`/`Channel1`; the constants are not referenced by the code.
+The `SSR_LEDC_CHANNEL`/`SSR_LEDC_TIMER`/`FAN_LEDC_CHANNEL`/`FAN_LEDC_TIMER` constants mirror this
+mapping, but the init path currently hard-codes timer and channel numbers. Treat the init path and
+its boot assertions as the enforced mapping.
 
-## 7. Timing values that matter physically
+## 7. Timing Values That Matter Physically
 
-The firmware currently relies on these operational assumptions:
+The firmware relies on these operational assumptions:
 
-- control-loop period **100 ms** (`CONTROL_LOOP_PERIOD_MS`); the real tick is
-  **≈ 310–330 ms** because each tick also waits for the MAX31856 conversion
-  (`MAX31856_CONVERSION_TIME_MS = 210`),
-- MAX31856 one-shot conversion wait **210 ms** (datasheet 185 ms + margin),
-- watchdog feed interval **once per control tick** (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS` ≈ 310 ms),
-- hardware watchdog timeout **≈ 2.2 s nominal** (`HW_WATCHDOG_STAGE0_CYCLES = 300000` / 136 kHz ≈ 2206 ms; without compensation the naive write would be lengthened by the efuse `wdt_delay_sel` shift to ~4.4/8.8/17.6/35.2 s — the firmware compensates with a shift-right so the programmed timeout stays ≈ 2.2 s nominal),
-- LEDC guard timeout **10 ms**,
+- control-loop period **100 ms** (`CONTROL_LOOP_PERIOD_MS`); the real tick is **≈ 310–330 ms**
+  because each tick waits for the MAX31856 conversion;
+- MAX31856 one-shot conversion wait **210 ms** (datasheet 185 ms + margin);
+- watchdog feed once per control tick (`WATCHDOG_FEED_INTERVAL_MS = CONTROL_LOOP_TICK_MS`);
+- hardware watchdog timeout **≈ 2.2 s nominal** (`HW_WATCHDOG_STAGE0_CYCLES = 300000` at 136 kHz,
+  with firmware compensation for the efuse `wdt_delay_sel` shift);
+- LEDC guard timeout **10 ms**;
 - temperature validity timeout **1000 ms**.
 
-These values shape both roast behavior and failure behavior. If you change them, you are changing more than performance. Canonical timing reference: `ARCHITECTURE.md` §9 (`src/config/constants.rs` is the single source of truth).
+These values shape roast behavior and failure behavior, not just performance. The canonical timing
+reference is [`ARCHITECTURE.md`](ARCHITECTURE.md) §9; `src/config/constants.rs` is the source of
+truth.
 
-## 8. Safety-relevant electrical constraints
+## 8. Safety-Relevant Electrical Constraints
 
 ### Heat detection
 
-GPIO1 is used as a pulled-up input to detect heater-side activity. Its value feeds safety reasoning about whether the commanded heater state matches observed behavior.
+GPIO1 is a pulled-up input that detects heater-side activity. Its value feeds safety reasoning
+about whether the commanded heater state matches observed behavior.
 
-The expected circuit: a current sensor on the heater
-load whose output pulls GPIO1 LOW while the heater conducts (open-collector
-or optocoupler in the load path); at rest the internal pull-up keeps the pin
-HIGH. The exact sensor (current transformer, optocoupler) is builder's
-choice — the only contract is the polarity above.
+Expected circuit: a current sensor on the heater load whose output pulls GPIO1 LOW while the heater
+conducts (open-collector or optocoupler in the load path). At rest the internal pull-up keeps the
+pin HIGH. The sensor type is the builder's choice; the polarity above is the contract.
 
-- **Without the circuit** (default build): GPIO1 is not interpreted at all.
-  The heat-source check is opt-in via the `heat-sense` cargo feature —
-  build with `--features embedded,heat-sense` only when the circuit below
-  is present and validated. Without the feature the availability state
-  machine stays `Available` and all other safety layers (overtemp, RoR,
-  probe-stuck, comms-idle, roast-time cap, watchdog, fan floor) stay active.
-- **With the circuit** (`heat-sense` build): the pin must stay LOW
-  **continuously** while the SSR conducts. A bare AC optocoupler follows
-  the mains sine and releases near every zero crossing — at the per-tick
-  sampling cadence those HIGH stretches trip the time-debounce window
-  (`HEAT_MISMATCH_WINDOW_MS = 1500 ms`) on every roast. Stretch the pulse
-  with an RC or a retriggerable monostable of 20 ms or more so GPIO1 reads
-  LOW for the whole conduction time. Validate with an oscilloscope at
-  50/75/100 % duty (`examples/hil_gpio.rs` + `examples/hil_ssr.rs`) before
-  trusting the interlock.
-- A transient "no heat" read is time-debounced (latch only after
-  `HEAT_MISMATCH_WINDOW_MS` with no LOW at observable duty ≥ 50 %;
-  `SsrControlBase::cross_check_heat_detection`,
-  `src/hardware/ssr_logic.rs`), and a single LOW sample re-clears the
-  window immediately. The cross-check samples exactly once per control
-  tick from `periodic_check` — never on the write path (H4).
+- **Without the circuit** (default build): GPIO1 is not interpreted. The heat-source check is
+  opt-in via the `heat-sense` cargo feature. Without the feature the availability state stays
+  `Available`, and all other safety layers (overtemp, RoR, probe-stuck, comms-idle, roast-time cap,
+  watchdog, fan floor) stay active.
+- **With the circuit** (`heat-sense` build): the pin must stay LOW **continuously** while the SSR
+  conducts. A bare AC optocoupler follows the mains sine and releases near every zero crossing, so
+  at the per-tick sampling cadence those HIGH stretches trip the time-debounce window
+  (`HEAT_MISMATCH_WINDOW_MS = 1500 ms`) on every roast. Stretch the pulse with an RC or a
+  retriggerable monostable of 20 ms or more so GPIO1 reads LOW for the whole conduction time.
+  Validate with an oscilloscope at 50/75/100 % duty (`examples/hil_gpio.rs` and
+  `examples/hil_ssr.rs`) before trusting the interlock.
+- A transient “no heat” read is time-debounced: the cross-check latches only after
+  `HEAT_MISMATCH_WINDOW_MS` with no LOW at observable duty ≥ 50 %; a single LOW sample re-clears the
+  window. The cross-check samples once per control tick from `periodic_check`, never on the write
+  path.
 
 ### Status LED (GPIO8)
 
-GPIO8 is **not** a strapping pin for normal flash boot (see `docs/pinout.md`); it is safe as a
-push-pull status indicator. Single owner: the service container, pattern logic in
-`src/hardware/status_led.rs:26-48`, GPIO write driven once per tick by the control loop
-(`update_status_led_stage` in `src/application/tasks.rs:920-939`, riscv32-only; called from `control_loop_tick` at `tasks.rs:1026`).
+GPIO8 is **not** a strapping pin for normal flash boot; it is safe as a push-pull status indicator.
+The service container owns it; `src/hardware/status_led.rs` holds the pattern logic and the control
+loop drives the GPIO once per tick.
 
 Pattern: off in `Idle`, 1 Hz blink in `Preheating`, solid in `Heating`/`Stable`, 4 Hz blink on
-`Error` or any fault. The safe-shutdown path (init failure) takes GPIO8 via `Peripherals::steal()`
-and blinks it 3 × (200 ms low, 200 ms high) + ~1 s pause (`src/main.rs:96-107`) — by then all application tasks are dead, so the steal is the final owner.
-Use a 330 Ω series resistor; never open-drain.
+`Error` or any fault. The safe-shutdown path takes GPIO8 via `Peripherals::steal()` and blinks it
+3 × (200 ms low, 200 ms high) plus a ~1 s pause after application tasks are dead. Use a 330 Ω series
+resistor; never drive it open-drain.
 
 ### Strapping pins
 
-The project documentation must always keep these points visible:
+Keep these points visible in any build:
 
-- avoid GPIO2 for SPI MISO in this design (VDD_SPI strap; see `docs/pinout.md` ⚠️ GPIO2),
-- treat GPIO9 carefully because it is a strap pin used for fan PWM — the datasheet 45 kΩ internal weak pull-up boots correctly when floating (firmware neither configures nor verifies it); external 10 kΩ → 3.3 V is mandatory on custom boards/bare modules and with any external driver that could pull low at reset (see `docs/CONNECTION_TYPES.md:102-166`),
-- GPIO8 is ignored for normal SPI-boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW matters),
+- avoid GPIO2 for SPI MISO (VDD_SPI strap; see [`pinout.md`](pinout.md) §GPIO2);
+- treat GPIO9 carefully because it is the boot-mode strap used for fan PWM. The datasheet 45 kΩ
+  internal weak pull-up boots correctly when floating, but firmware neither configures nor verifies
+  it. External 10 kΩ → 3.3 V is mandatory on custom boards, bare modules, and any external driver
+  that could pull low at reset (see [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md) §4);
+- GPIO8 is ignored for normal SPI boot; only the download-mode combination GPIO8=HIGH + GPIO9=LOW
+  matters;
 - avoid external circuitry that forces invalid boot levels on any strap.
 
 ### High-voltage separation
 
-The firmware docs assume the heater power stage is externally isolated and properly designed. LibreRoaster does not make unsafe hardware safe by software alone.
+The heater power stage is externally isolated and properly designed. LibreRoaster does not make
+unsafe hardware safe by software alone. Keep mains wiring physically separated from logic, bond the
+chassis to protective earth, and fit a hardware thermal cutoff in series with the heater.
 
-## 9. Expected supporting hardware
+## 9. Expected Supporting Hardware
 
-Typical build assumptions are:
+Typical build assumptions:
 
-- ESP32-C3 development board
-- two MAX31856 boards
-- two type-K thermocouples
-- SSR for heater switching
-- fan stage capable of PWM control
-- appropriate low-voltage supply for logic and fan stage
-- safe isolation and mains-rated heater wiring where applicable
+- ESP32-C3 development board;
+- two MAX31856 boards;
+- two type-K thermocouples;
+- zero-cross SSR for heater switching;
+- fan stage capable of PWM control;
+- appropriate low-voltage supply for logic and fan stage;
+- safe isolation and mains-rated heater wiring where applicable.
 
-The exact part choices are flexible, but the signal model is not.
+Exact part choices are flexible; the signal model is not.
 
-## 10. Practical integration notes
+## 10. Practical Integration Notes
 
 ### USB-first development
 
-For most development work, native USB CDC is the simplest path because it avoids a separate UART adapter and matches the recommended Artisan setup.
-
-### UART as a secondary transport
-
-UART remains useful for bring-up, debug, and scenarios where USB CDC is unavailable or intentionally isolated.
+Native USB CDC is the simplest development path: one cable, no adapter, and the same transport
+Artisan expects. Use UART for bring-up, debug, or isolation from USB.
 
 ### Thermal sensor sanity
 
-Before trusting PID behavior, verify that BT and ET are wired to the intended channels. A swapped pair is electrically valid but behaviorally misleading.
+Before trusting PID behavior, verify that BT and ET are wired to the intended channels. A swapped
+pair is electrically valid but behaviorally misleading.
 
-## 11. Hardware-facing risks to remember
+### HIL calibration
 
-The hardware layer is stable enough to run, but these are the main points engineers should keep in mind:
+The host thermal plant in `src/hardware/sensors/thermal_model.rs` is a provisional model tuned for
+closed-loop tests. Its gains and time constants must be recalibrated on real drum hardware before
+PID gains derived from that plant are trusted for production. Simulation results are not electrical
+safety evidence.
 
-1. strap-pin sensitivity on GPIO9,
-2. slow sensor-read timing relative to nominal control cadence,
-3. the fact that the heat-detection line is safety-relevant, not optional fluff.
+## 11. Hardware-Facing Risks
 
-## 12. Related documents
+The hardware layer is stable enough to run, but keep these points in mind:
 
-- `ARCHITECTURE.md` for how hardware feeds the runtime model
-- `PROTOCOL.md` for how hardware state appears over serial
-- `SIMULATION.md` for the Wokwi pinout simulation and its limits
-- `ARTISAN_CONNECTION.md` for the host-side connection workflow
+1. strap-pin sensitivity on GPIO9;
+2. slow sensor reads relative to the nominal control cadence;
+3. the heat-detection line is safety-relevant, not optional decoration;
+4. mains isolation and a hardware thermal cutoff are mandatory, not firmware responsibilities.
+
+## 12. Related Documents
+
+- [`pinout.md`](pinout.md) — physical wiring, subsystem diagrams, and board-damage prevention.
+- [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md) — USB/UART choice and GPIO9 boot behavior.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — how hardware feeds the runtime model.
+- [`PROTOCOL.md`](PROTOCOL.md) — how hardware state appears over serial.
+- [`SAFETY_CASE.md`](SAFETY_CASE.md) — hazards and guard evidence.
+- [`SIMULATION.md`](SIMULATION.md) — Wokwi pinout simulation and its limits.
+- [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) — host-side connection workflow.
+
+---
+
+*Last updated: 2026-10-22.*

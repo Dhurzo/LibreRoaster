@@ -1,5 +1,7 @@
 # LibreRoaster ESP32-C3 Pinout & Connection Diagram
 
+**Last updated:** 2026-10-22 — firmware pin map and wiring references reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
+
 ## Overview
 
 Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-C3** (RISC-V). All pins are optimized for the ESP32-C3's capabilities and the coffee roaster application requirements.
@@ -95,6 +97,37 @@ Pin assignments for the LibreRoaster coffee roaster firmware running on **ESP32-
 │  └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+## Wiring Diagrams
+
+Full pin-to-pin build reference:
+
+![LibreRoaster complete wiring diagram](diagrams/wiring-diagram.svg)
+
+[Fritzing version](diagrams/wiring-diagram_fritzing.svg) — same circuit, breadboard style.
+
+### Subsystem diagrams
+
+| Subsystem | Diagram |
+|---|---|
+| Thermocouples and MAX31856 | [SVG](diagrams/libreroaster_sub_termopares_en.svg) · [Fritzing](diagrams/libreroaster_sub_termopares_fritzing_en.svg) |
+| Fan / motor stage | [SVG](diagrams/libreroaster_sub_motor_ventilador_en.svg) · [Fritzing](diagrams/libreroaster_sub_motor_ventilador_fritzing_en.svg) |
+| SSR and heater | [SVG](diagrams/libreroaster_sub_ssr_calentador_en.svg) · [Fritzing](diagrams/libreroaster_sub_ssr_calentador_fritzing_en.svg) |
+| Power and communication | [SVG](diagrams/libreroaster_sub_alimentacion_comms_en.svg) · [Fritzing](diagrams/libreroaster_sub_alimentacion_comms_fritzing_en.svg) |
+
+The diagrams are checked against the firmware constants. They do not replace the safety notes
+below or the first-power-on checklist in [`preflight-check.md`](preflight-check.md).
+
+## Assembly Order
+
+Assemble and verify one subsystem at a time:
+
+1. **Power and communication** — verify startup and both transport paths.
+2. **Thermocouples** — verify readings before any heat is possible.
+3. **Fan / motor** — verify the PWM sweep and safe boot behavior.
+4. **SSR and heater** — verify control at duty 0 %, then with a safe load.
+5. **Full wiring** — run the host tests and a dry run of the HIL scripts under `tests/hardware/`.
+6. **AC mains last** — with the heater isolated, an extinguisher nearby, and the enclosure closed.
 
 ## Special Pin Warnings
 
@@ -286,6 +319,78 @@ GPIO9 ──┤ 1kΩ                 │──── MOSFET Gate
 ### Thermocouple Polarity
 - Type-K thermocouples are polarity-sensitive. Reversing leads produces inverted (negative) temperature readings.
 - Yellow = positive (+), Red = negative (−) for Type-K connectors.
+
+---
+
+## Detailed Build Notes
+
+### Passives and decoupling
+
+- GPIO9: 10 kΩ pull-up to 3.3 V, 1 kΩ series to the MOSFET gate, and a weak 100 kΩ gate pull-down.
+  The divider puts the gate at ≈3.0 V at reset, so a logic-level fan MOSFET may run during boot.
+  That is the safe direction: airflow with no heat. A guaranteed-off fan needs an inverted driver,
+  not a stronger pull-down that would break the strap.
+- GPIO10: 10 kΩ pull-down to GND; the line must never be HIGH before firmware drives it.
+- GPIO8 LED: 330 Ω series resistor (≈3.9 mA at a 2.0 V LED drop).
+- UART lines: 1 kΩ series resistors recommended, plus 3.3 V clamping on any 5 V adapter.
+- Decoupling: 100 µF bulk plus 10 µF and 0.1 µF ceramics near the ESP32-C3 and each MAX31856.
+
+### SPI bus
+
+- Shared SCLK=GPIO6, MOSI=GPIO7, MISO=GPIO5 on the ESP32-C3 side.
+- Separate chip selects: BT=GPIO4, ET=GPIO3. Both must default HIGH after boot.
+- 1 MHz, mode 1 (CPOL=0, CPHA=1), software chip select.
+- FAULT and DRDY are not wired; the firmware waits 210 ms for each one-shot conversion.
+- Keep the MISO run short and return it to GPIO5, not GPIO2. Both chip selects must never be LOW
+  together.
+
+### Fan stage
+
+- GPIO9 → LEDC channel 0 / timer 1 at 25 kHz.
+- Use a logic-level N-channel MOSFET such as IRLZ44N in low-side switching; the IRF520 is not a
+  reliable 3.3 V logic-level part.
+- Gate: 1 kΩ series stopper, 100 kΩ weak pull-down, and the mandatory 10 kΩ boot pull-up.
+- Flyback: Schottky diode such as SS34 or 1N5819 across the motor terminals. A 1N4007 is far too
+  slow for 25 kHz PWM.
+- Confirm the fan is safe when it runs at boot. Do not add a pull-down strong enough to break the
+  GPIO9 boot strap.
+
+### SSR and heater
+
+- GPIO10 → LEDC channel 1 / timer 0 at 5 Hz, zero-cross time proportioning.
+- Compatible with zero-cross SSRs such as SSR-25DA. Fit a mains fuse, a hardware thermal cutoff
+  (klixon or thermal fuse) in series with the heater, a heatsink sized for the load, and protective
+  earth to the metal chassis.
+- The SSR minimum duty is one AC half-cycle; very small `OT1` requests snap to zero. Use a duty
+  high enough to be observable when checking the heat-sense circuit.
+- Heat detection is opt-in via the `heat-sense` feature. A bare AC optocoupler is not sufficient:
+  stretch the pulse so GPIO1 stays LOW for the whole conduction time. See
+  [`HARDWARE.md`](HARDWARE.md) §8.
+
+### Power rails and star ground
+
+- 3.3 V logic rail: regulated, 3.3 V ±5 %, at least 200 mA available.
+- Fan rail: separate 12 V supply sized for the motor; do not back-power the logic rail.
+- Star ground at one point; keep mains and logic returns physically separated.
+- Native USB-C is the default communication path; the optional UART adapter must be 3.3 V.
+- Both transports are listened to, but the multiplexer latches one active channel and resets after
+  60 s idle. See [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md) §6.
+
+### Status LED
+
+- GPIO8 → 330 Ω → LED → GND, push-pull, active-high.
+- Patterns: off in Idle, 1 Hz in Preheating, solid in Heating/Stable, 4 Hz on Error.
+- The safe-shutdown path takes GPIO8 directly and blinks three times after application tasks stop.
+
+### Bench checks before mains
+
+- Measure 3.3 V and 12 V rails with a DMM before connecting the ESP32-C3.
+- Scope GPIO9 and GPIO10 during reset: GPIO9 must be HIGH, GPIO10 must not be HIGH.
+- Confirm both MAX31856 chip selects idle HIGH and that removing one probe produces a fault, not a
+  plausible temperature.
+- Verify the fan direction and airflow before installing the heater.
+- Run the heat-sense check only with the heater on a safe load and the current-sense circuit
+  installed.
 
 ---
 
