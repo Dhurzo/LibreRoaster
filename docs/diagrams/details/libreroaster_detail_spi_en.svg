@@ -109,7 +109,7 @@
 <text x="60" y="704" font-family="monospace" font-size="11" fill="#86efac">let bt_cs = Output::new(gpio4, High); let et_cs = Output::new(gpio3, High);</text>
 <text x="60" y="724" font-family="monospace" font-size="11" fill="#fca5a5">Max31856::new_tolerant() → degrades single dead channel (BT-only/ET-only boot ok)</text>
 <text x="60" y="744" class="n" fill="#94a3b8">If both dead → boot_policy aborts with thermocouples init error</text>
-<text x="60" y="764" class="n" fill="#cbd5e1">Ref: src/hardware/init.rs:240-318 + src/hardware/max31856.rs</text>
+<text x="60" y="764" class="n" fill="#cbd5e1">Ref: src/hardware/init.rs + src/hardware/max31856.rs</text>
 
 <!-- Footer -->
 <rect x="40" y="800" width="1120" height="60" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>

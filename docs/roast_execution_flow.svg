@@ -92,7 +92,7 @@
 <text x="177" y="747" fill="#fff" font-size="15.5" font-weight="800" text-anchor="middle">BOOT</text>
 <text x="253" y="749" fill="#5B6B82" font-size="17" font-weight="700">03</text>
 <text x="298" y="749" fill="#16202E" font-size="22" font-weight="800" font-family="'JetBrains Mono', Consolas, monospace">executor.run → async_main_task</text>
-<text x="298" y="773" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/main.rs:99–116 · :261–263</text>
+<text x="298" y="773" fill="#1F4E79" font-size="17" font-weight="700" font-family="'JetBrains Mono', Consolas, monospace">src/main.rs</text>
 <text x="298" y="800" fill="#16202E" font-size="17.5">verify_initialization → Application::start_tasks(spawner) — 5 Embassy tasks</text></g>
 <line x1="1000" y1="822" x2="1000" y2="834" stroke="#0E4C92" stroke-width="2.5"/>
 <circle cx="1000" cy="834" r="5.5" fill="#0E4C92"/>

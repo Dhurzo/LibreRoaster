@@ -9,7 +9,7 @@
 </style></defs>
 <rect width="1200" height="950" fill="#f7f7f9"/>
 <text x="600" y="28" text-anchor="middle" class="t" font-size="20">LibreRoaster — Detail: Resistor Networks &amp; Passive Values</text>
-<text x="600" y="48" text-anchor="middle" class="n">All values verified vs src/config/constants.rs, docs/pinout.md:256-272, docs/HARDWARE.md:130-137 · ESP32-C3 3.3V logic, max 3.6V on any GPIO</text>
+<text x="600" y="48" text-anchor="middle" class="n">All values verified vs src/config/constants.rs, docs/pinout.md, docs/HARDWARE.md · ESP32-C3 3.3V logic, max 3.6V on any GPIO</text>
 
 <!-- ============= GPIO9 FAN DIVIDER (center focus) ============= -->
 <rect x="40" y="80" width="700" height="280" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2.2"/>
@@ -134,7 +134,7 @@
 <!-- Footer -->
 <rect x="40" y="740" width="1120" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
 <text x="60" y="762" class="t" font-size="12">Traceability</text>
-<text x="60" y="782" class="n">Derived from src/config/constants.rs:32-40 (HEAT_DETECTION_PIN=1, FAN_PWM_PIN=9, STATUS_LED_PIN=8, UART 20/21) + docs/pinout.md:256-272 resistor chain + docs/HARDWARE.md:130-137 · Generated 2026-09-07</text>
+<text x="60" y="782" class="n">Derived from src/config/constants.rs (HEAT_DETECTION_PIN=1, FAN_PWM_PIN=9, STATUS_LED_PIN=8, UART 20/21) + docs/pinout.md resistor chain + docs/HARDWARE.md · Generated 2026-09-07</text>
 <text x="60" y="800" class="n">Build: measure GPIO9 at boot with scope, measure 3.3V rail with DMM, run hil_fan sweep 0→100% and hil_gpio heat detect read</text>
 
 <text x="600" y="940" text-anchor="middle" class="n" font-size="10">LibreRoaster · Resistor Networks Detail · CC BY-SA · printable 1200×950 · v0.1</text>

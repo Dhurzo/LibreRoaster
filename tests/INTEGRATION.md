@@ -37,9 +37,8 @@ cargo test --test read_command_usb_test --features test
 ### `tests/read_command_usb_test.rs` — 27 tests
 
 The binary runs 27 tests: 15 owned by the file plus the 12 tests of
-`mock_usb_driver.rs`, included via `#[path = "mock_usb_driver.rs"]` (see
-`read_command_usb_test.rs:46-47`). Validates TC4-standard READ response
-formatting:
+`mock_usb_driver.rs`, included via the `#[path = "mock_usb_driver.rs"]`
+attribute in that file. Validates TC4-standard READ response formatting:
 
 - **TC4 5-value format** (`AMB,ET,BT,0.0,0.0`) — PID off
 - **TC4 8-value format** (`AMB,ET,BT,0.0,0.0,heater,fan,SV`) — PID on
