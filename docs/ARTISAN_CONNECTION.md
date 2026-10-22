@@ -1,155 +1,184 @@
-# Artisan ↔ LibreRoaster Connection Guide
+# Connecting Artisan to LibreRoaster
 
-**Last updated:** 2026-08-12
+This guide covers the serial connection, the Artisan device and driver settings, the startup
+handshake, and the compatibility boundary. It does not restate the command grammar; use
+[`PROTOCOL.md`](PROTOCOL.md) for that, and use [`ARTISAN_MODES.md`](ARTISAN_MODES.md) and
+[`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md) for roast workflows.
 
-This guide explains how to connect the official Artisan application to LibreRoaster and, more importantly, what kind of compatibility to expect from that connection.
+LibreRoaster behaves like a serial roasting controller that Artisan can drive. It is not a
+reimplementation of the full Artisan desktop stack.
 
-LibreRoaster is designed to behave like a serial roasting controller that Artisan can drive. It is not a reimplementation of the full Artisan desktop stack.
+---
 
-## 1. Supported connection modes
+## 1. Choose a Transport
 
-LibreRoaster exposes two serial transports:
+LibreRoaster accepts the same protocol over both transports:
 
-- **USB CDC** on the ESP32-C3, recommended for normal use
-- **UART0** at 115200 baud through an external USB-to-UART adapter
+| Transport | Port | Baud | Use |
+|---|---|---|---|
+| **Native USB CDC** (recommended) | `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem-*` on macOS, `COMx` on Windows | 115200 8N1 | Normal operation; no adapter or extra wiring |
+| **UART0** | Adapter on GPIO20/GPIO21 | 115200 8N1 | USB CDC unavailable or a separate physical path |
 
-The firmware accepts the same command surface over both.
+UART wiring:
 
-## 2. Recommended path: native USB CDC
-
-USB CDC is the preferred route because it matches the firmware’s main development and test path.
-
-Typical port names:
-
-- Linux: `/dev/ttyACM0`
-- macOS: `/dev/cu.usbmodem-*`
-- Windows: `COMx`
-
-## 3. Alternative path: UART0
-
-Use UART when USB CDC is unavailable or when you want a physically separate serial path.
-
-Wiring model:
-
-| LibreRoaster signal | Connect to adapter |
+| LibreRoaster signal | Adapter signal |
 |---|---|
-| GPIO20 RX | adapter TX |
-| GPIO21 TX | adapter RX |
-| GND | adapter GND |
+| GPIO20 RX | Adapter TX |
+| GPIO21 TX | Adapter RX |
+| GND | GND |
 
-This is a 3.3 V serial path. The external adapter must be compatible with that level.
+The UART path is 3.3 V. Do not use a 5 V adapter without level shifting. USB CDC uses the
+ESP32-C3 USB-Serial-JTAG peripheral; on Windows it may appear as a generic CDC device or need the
+`esp32_usb_jtag` driver.
 
-## 4. Artisan settings
+For board-level boot behavior and the GPIO9 pull-up requirement, see
+[`CONNECTION_TYPES.md`](CONNECTION_TYPES.md).
 
-In the official Artisan app, use the serial-device workflow that matches Arduino/RPi-style devices.
+---
 
-Minimum settings:
+## 2. Configure Artisan
 
-| Setting | Value |
-|---|---|
-| Port | the detected USB CDC or UART port |
-| Baud | 115200 |
-| Data bits | 8 |
-| Stop bits | 1 |
-| Parity | none |
-| Device mode | Arduino/RPi-style serial device |
+### 2.1 Device tab
 
-The main requirement is that Artisan speaks plain serial commands over the selected port.
+Open **Config → Device** and set:
 
-## 5. Handshake expectations
+```text
+Device Type:   Arduino
+Port:          [detected port, e.g. /dev/ttyACM0 or COM3]
+Baud Rate:     115200
+Data Bits:     8
+Parity:        None
+Stop Bits:     1
+Flow Control:  None
+```
 
-Artisan may send startup commands such as:
+In the same tab, verify:
 
-- `CHAN;1200`
-- `UNITS;C` or `UNITS;F`
-- `FILT;...`
+| Setting | Value | Why |
+|---|---|---|
+| **DTR on connect** | Disabled | LibreRoaster ignores DTR/RTS; leaving them disabled keeps the session clean. |
+| **RTS on connect** | Disabled | Same; the firmware does not use these lines for reset or boot control. |
+| **Timeout (ms)** | 2000 | Covers several real control ticks (≈310–330 ms each). |
+| **Inter-byte timeout (ms)** | 100 | The parser expects complete lines. |
 
-LibreRoaster accepts these and responds with lightweight acknowledgements.
+### 2.2 Driver tab
 
-> Handshake responses are `#`-prefixed (`#1200` for `CHAN`, `#OK` for
-> `UNITS`/`FILT`). This is deliberate: Artisan's ArduinoTC4 driver rejects
-> any non-`#` initialisation response with "Arduino could not set
-> temperature unit/filters" and never proceeds to `READ` polling.
->
-> The handshake keeps working even while the device's safety latch is
-> armed: `CHAN`/`UNITS`/`FILT` are accepted in every state (they have no
-> actuator side effects), so reconnecting Artisan to a latched device
-> completes normally instead of looping on "Arduino could not set
-> channels/units/filters". Re-energizing commands remain rejected until
-> the latch is cleared.
+LibreRoaster speaks the TC4 serial protocol, compatible with Artisan's ArduinoTC4 driver.
 
-This means the connection model is forgiving: a terminal and a manually configured Artisan session can both talk to the device without a fragile startup contract.
+```text
+Driver: ArduinoTC4
+Port:   [same port as above]
+```
 
-## 6. Temperature scale synchronization
+Click **Configure** next to the driver and set:
 
-LibreRoaster stores temperatures internally in Celsius. `UNITS` only changes the output scale.
+| Option | Value | Notes |
+|---|---|---|
+| **Channels** | 1200 | Sent as `CHAN;1200`; acknowledged with `#1200`. |
+| **Temperature Unit** | Celsius or Fahrenheit | Sent as `UNITS;C` or `UNITS;F`. |
+| **Filter** | 70 | Sent as `FILT;70`; the firmware stores the first value but does not apply the filter. |
+| **Poll interval** | ~1 s | Artisan polls `READ`; do not exceed 15 s while heating (see §5). |
 
-That makes `UNITS` one of the most important commands in the session.
+Optional extra devices:
 
-### Operational rule
+- `+ArduinoTC4_34` exposes CH3/CH4 as RoR target and measured RoR. It sends `CHAN;1234`.
+- `+ArduinoTC4_56` and `+ArduinoTC4_78` expose heater/fan/SV curves, but the READ layout shifts.
+  Add `+ArduinoTC4_34` together with them or read the raw serial log instead.
 
-- if Artisan expects Celsius, send `UNITS;C`
-- if Artisan expects Fahrenheit, send `UNITS;F`
+---
 
-### How to detect drift
+## 3. Handshake
 
-`STATUS` field 19 reports the active display scale:
+Artisan normally sends this sequence on connect:
 
-- `0` = Celsius
-- `1` = Fahrenheit
+```text
+CHAN;1200
+UNITS;C
+FILT;70,70,70,70
+```
 
-If roast values look “wrong but plausible,” check the scale field before assuming a sensor or calibration failure.
+Expected responses:
 
-## 7. What Artisan can do successfully with LibreRoaster
+| Command | Response | Purpose |
+|---|---|---|
+| `CHAN;1200` | `#1200` | Channel-map acknowledgement |
+| `UNITS;C` / `UNITS;F` | `#OK` | Display scale for temperature-bearing output |
+| `FILT;...` | `#OK` | Compatibility acknowledgement |
 
-Using the official Artisan app in serial-controller mode, LibreRoaster is built to support:
+The `#` prefix is required. Artisan's ArduinoTC4 driver accepts only empty or `#`-prefixed lines
+during initialization; a plain `OK` produces “Arduino could not set temperature unit” or “...
+filters” and sends Artisan into a re-initialization loop without ever reaching `READ`.
 
-- live temperature polling via `READ`,
-- heater and fan control,
-- PID enable/disable and setpoint control,
-- profile command injection via `PROFILE` and `FANPROFILE`,
-- startup handshake commands (including reconnects to a latched device),
-- deeper runtime diagnostics via `STATUS`,
-- immediate safety-fault visibility (`ERR safety_fault <reason>` when an internal trap latches the device).
+The handshake is accepted while the safety latch is armed. `CHAN`, `UNITS`, and `FILT` have no
+actuator side effects, so reconnecting Artisan to a latched device completes normally. Every
+re-energizing command remains rejected until the operator recovers the device.
 
-This is the project’s core compatibility target.
+`UNITS` changes output formatting only. Temperatures are stored internally in Celsius; setpoints
+sent in Fahrenheit are converted before validation.
 
-### Comms-idle and the 15 s rule
+---
 
-Artisan polls `READ` once per sampling interval (the default is 2 s). Every
-inbound command refreshes `last_command_received_at_ms`, so normal Artisan
-polling keeps the 15 s comms-idle guard (`COMMS_IDLE_TIMEOUT_MS`) from firing.
-The guard is armed whenever the heater is energized or a roast is active; if
-Artisan stops polling, closes, or loses the serial link, the firmware latches,
-turns the heater off, and runs the fan at 100 % by design.
+## 4. Normal Session
 
-Do not configure an Artisan sampling interval above 15 s. Custom serial
-clients that do not poll must send `READ` or `STATUS` every 5-10 s while the
-heater is on. `STREAM;ON` is output-only and does not refresh the timer.
+A normal session looks like this:
 
-## 8. What Artisan should not assume
+```text
+1. Artisan opens the serial port.
+2. Artisan sends the handshake.
+3. Artisan polls READ at ~1 Hz.
+4. The operator uses sliders, PID controls, or profile/event buttons.
+```
 
-The official Artisan ecosystem is broader than LibreRoaster’s firmware surface.
+`READ` returns the TC4-style temperature line. With PID disabled it has five fields:
 
-LibreRoaster does **not** currently present itself as:
+```text
+AMB,ET,BT,0.0,0.0
+```
 
-- a Modbus device,
-- a WebSocket device,
-- a file-format endpoint for `.alog`,
-- an artisan.plus synchronization peer,
-- a full vendor-driver implementation.
+With PID enabled it appends heater, fan, and setpoint:
 
-The spontaneous `#` telemetry stream is opt-in
-(`STREAM;ON`) and OFF by default. Artisan needs nothing beyond its own
-`READ` polling — do not configure `STREAM;ON` for Artisan sessions; the
-stream is a LibreRoaster extension for custom clients. The `#`-prefixed
-handshake acks (`#1200`, `#OK`) are unrelated and always emitted.
+```text
+AMB,ET,BT,0.0,0.0,HEATER,FAN,SV
+```
 
-If you stay inside the serial TC4-style workflow, compatibility is strong. If you expect the rest of the Artisan ecosystem, compatibility drops sharply.
+`AMB` is the cold-junction mean of the healthy MAX31856 channels. `STATUS` is the separate
+20-field diagnostic line; its field semantics are in [`INSTRUMENTATION.md`](INSTRUMENTATION.md).
 
-## 9. Practical smoke test
+### Comms-idle rule
 
-Once connected, a good minimal verification sequence is:
+Artisan polling refreshes the firmware's host-activity timer. The 15 s comms-idle guard is armed
+whenever the heater is energized or a roast is active. If Artisan stops polling, closes, or loses
+the link, LibreRoaster latches, turns the heater off, and runs the fan at 100 %.
+
+Do not configure an Artisan sampling interval above 15 s. Custom clients that do not poll must send
+`READ` or `STATUS` every 5–10 s while heating. `STREAM;ON` is output-only and does **not** refresh
+the timer.
+
+---
+
+## 5. Operating Rules
+
+- **Artisan is the session owner.** It polls temperatures, sends operator actions, and decides when
+  a roast starts or ends. LibreRoaster owns the device-side control loop and safety interlocks.
+- **Keep `STREAM` off for Artisan.** The spontaneous `#` telemetry stream is a LibreRoaster
+  extension for custom clients. Artisan only needs `READ`; enabling the stream can cost a `READ`
+  sample because both share the wire.
+- **Use `PID;OFF` to recover from a latch.** `STOP` is an emergency stop that arms the safety latch.
+  `PID;OFF` un-latches and returns to `Idle`; `START` and `PREHEAT` are deliberate re-energizing
+  actions that also clear the latch. `PID;ON` never clears a latch.
+- **Watch Artisan's PID handshake.** Pressing *PID ON* sends Artisan's own gains, `PID;CHAN;1`
+  (feedback on ET, not BT), cycle time, limits, and `PID;ON`. If you want bean-temperature control,
+  set Artisan's PID input to channel 2. Never enable “PID ON at CHARGE”; an automatic `PID;ON`
+  cannot recover a latched device.
+- **Do not assume profile-file transfer.** `PROFILE` and `FANPROFILE` send runtime setpoints over
+  serial; LibreRoaster does not read Artisan `.alog` files. See
+  [`ARTISAN_MODES.md`](ARTISAN_MODES.md) for manual and profile workflows.
+
+---
+
+## 6. Smoke Test
+
+After connecting, verify the transport and protocol without heat:
 
 ```text
 CHAN;1200
@@ -158,53 +187,107 @@ READ
 STATUS
 ```
 
-Expected behaviors:
+Expected:
 
-- `CHAN` returns `#1200`
-- `UNITS` returns `#OK`
-- `READ` returns temperature-oriented CSV
-- `STATUS` returns the 20-field deep telemetry line
+- `CHAN` returns `#1200`;
+- `UNITS` returns `#OK`;
+- `READ` returns a temperature CSV;
+- `STATUS` returns the 20-field diagnostic line.
 
-At that point you know:
+This confirms the serial path, parser, formatter, and both response paths. It does not validate
+thermocouple accuracy or actuator wiring; use [`preflight-check.md`](preflight-check.md) for the
+hardware bring-up sequence.
 
-1. the transport works,
-2. the parser works,
-3. the formatter works,
-4. the firmware can publish both roast values and diagnostics.
+---
 
-## 10. Troubleshooting model
+## 7. Troubleshooting
 
-### No connection at all
+### Artisan says “Arduino could not set temperature unit” or “... filters”
 
-Usually a cable, port, permissions, or wrong serial-mode issue.
+The handshake response was not `#`-prefixed. Confirm the firmware is current and that `UNITS` and
+`FILT` return `#OK`.
 
-### Port opens but values look nonsensical
+### `READ` returns `0.0,0.0,0.0,0.0,0.0`
 
-Check:
+The sensor path is not producing valid readings. Check MAX31856 power, SPI wiring, and chip selects;
+the pin map is in [`HARDWARE.md`](HARDWARE.md). A simulated-sensors build is a useful control.
 
-- `UNITS` state,
-- ET/BT wiring,
-- whether the device has rebooted and reset scale state,
-- whether you are looking at `READ` or `STATUS` output.
+### Heater stays at 0 %
+
+Check `STATUS` field 20 (`FaultFlag`). If it is `1`, the safety latch is armed: recover with
+`PID;OFF`, or deliberately re-energize with `START`/`PREHEAT`. If the fault flag is `0`, check the
+SSR output and the hardware status in the debug log; the `heat-sense` feature is opt-in and must
+match the board's current-sense circuit.
+
+### Fan stays at 0 % in PID mode
+
+Send `OT2 50` or load a `FANPROFILE`. The firmware enforces a 20 % floor while the heater is on,
+but it does not invent a fan setpoint when neither command has been sent.
+
+### `ERR channel_full command_dropped`
+
+A command burst exceeded the 16-entry shared command channel in one tick. Artisan does not retry;
+the dropped command is lost. Reduce the startup burst or split the command sequence.
+
+### Telemetry is garbled or `READ` occasionally returns `-1`
+
+`esp_println` logs share UART0 with the protocol. Do not use UART0 for Artisan while verbose logging
+is enabled; use native USB CDC instead. The `instrumentation` build increases log volume and must
+not be used for production sessions.
+
+### PID output stays at 0 % after `PID;SV`
+
+`PID;SV` updates the target but does not enable the PID. Send `PID;ON` first.
+
+### RoR fault on a light-roast turnaround
+
+The RoR guard is two-tier: the soft band (0.75–1.0 °C/s) requires about 3.7 s of sustained
+exceedance before latching, while the hard band (>1.0 °C/s) latches within a few ticks. If the guard
+trips on a legitimate turnaround, check the roast state and thresholds in
+[`SAFETY_CASE.md`](SAFETY_CASE.md) before changing tuning.
 
 ### Commands work over UART but not USB CDC
 
-That points to the USB path, not the protocol core.
+This points to the USB path or host driver, not the protocol core. Recheck the cable, port, and
+USB-Serial-JTAG driver; see [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md).
 
-### `READ` works but automation fails
+---
 
-Usually means the client is using `READ` where it should use `STATUS`, or it assumes unsupported protocol features beyond the implemented TC4-style surface.
+## 8. Compatibility Boundary
 
-### `ERR safety_fault <reason>` appears and sliders stop responding
+Good compatibility:
 
-An internal trap (over-temperature, stale sensor, probe-stuck, comms-idle, …) armed the safety latch: the heater is at 0 % and the fan at 100 %. While latched, every re-energizing command is rejected with `ERR handler_failed … fault_condition_active`. Recovery: send `PID;OFF` (or `START`/`PREHEAT`). The handshake still works, so closing and reconnecting Artisan is also safe.
+- Artisan as a serial controller speaking TC4-style commands;
+- temperature polling with `READ`;
+- manual heater/fan control;
+- PID and profile commands;
+- startup handshake and reconnects to a latched device;
+- `STATUS` diagnostics.
 
-## 11. Compatibility summary
+Not implemented:
 
-The right mental model is:
+- Artisan `.alog` file interchange;
+- WebSocket device mode;
+- Modbus device mode;
+- artisan.plus synchronization;
+- vendor-specific driver behavior outside this serial surface.
 
-**Artisan as serial controller** → good compatibility
+The right mental model is **session compatibility, not ecosystem compatibility**.
 
-**Artisan as complete ecosystem** → partial compatibility
+Artisan 2.8+ is the recommended host version. Artisan 2.7 generally works but may require manual
+driver configuration.
 
-For a deeper, implementation-driven comparison against the official Artisan application and repository, see `PROTOCOL.md`.
+---
+
+## Related Documents
+
+- [`PROTOCOL.md`](PROTOCOL.md) — command grammar, responses, and error tokens.
+- [`INSTRUMENTATION.md`](INSTRUMENTATION.md) — STATUS fields and diagnostics.
+- [`ARTISAN_MODES.md`](ARTISAN_MODES.md) — manual and profile roast workflows.
+- [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md) — CHARGE/DROP, RoR-follow, and TUNE.
+- [`CONNECTION_TYPES.md`](CONNECTION_TYPES.md) — USB/UART and GPIO9 boot behavior.
+- [`HARDWARE.md`](HARDWARE.md) — pin map and electrical constraints.
+
+---
+
+*Last updated: 2026-10-22.*

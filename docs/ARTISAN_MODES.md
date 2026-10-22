@@ -4,8 +4,9 @@
 
 Practical guide to the two roast modes LibreRoaster exposes to the
 Artisan application over the serial port (USB CDC or UART0, 115200 8N1).
-Protocol reference: `docs/PROTOCOL.md`. Connection setup:
-`docs/ARTISAN_CONNECTION.md`, `docs/ARTISAN_CONFIG.md`.
+Protocol reference: [`PROTOCOL.md`](PROTOCOL.md). Connection setup:
+[`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md). Advanced features:
+[`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md).
 
 > Key idea: Artisan owns the session (`READ`, sliders, `START`/`STOP`);
 > the firmware owns device-side control, telemetry, and safety
@@ -32,11 +33,10 @@ OT1,up / OT1,down → same step as UP/DOWN
 * Without PID, `READ` returns 5 fields `AMB,ET,BT,0.0,0.0`.
 * Internal state stays `Idle` (`pid_enabled = false`,
   `artisan_control = true`). Implementation:
-  `src/control/roaster_control.rs:993-1007` (manual branch of
-  `update_control`).
+  the manual branch of `RoasterControl::update_control()`.
 * Out-of-range `OT2` is clamped to `0..100` and reported with
   `ERR OT2_CLAMPED fan=<n> heater_unchanged` without touching the heater
-  (`docs/PROTOCOL.md` §6).
+  (see [`PROTOCOL.md`](PROTOCOL.md) §6).
 
 ### Example manual session
 
@@ -86,19 +86,17 @@ STOP             → emergency stop: heater 0 %, fan 100 %, arms the safety latc
 > `PID;OFF` stops the heater and sets the fan to 100 %: Artisan sends it on the OFF button and on DROP, so it must stay a stop. To switch to manual mid-roast, move the `OT1` slider (it disables the PID by itself). To return to the PID, press *PID ON*: it resumes the PID without a power bump.
 
 * Up to `MAX_PROFILE_SETPOINTS = 16` points per profile
-  (`src/config/constants.rs:393`).
+  (`MAX_PROFILE_SETPOINTS` in `src/config/constants.rs`).
 * Temperatures are in **display units** (`UNITS;C/F`): converted to °C
   internally and validated against `50–300 °C`. A point outside the
   range rejects the profile with
   `ERR handler_failed invalid_state:profile_temp_out_of_range`.
-* Linear interpolation between points (`RoastProfile::target_at`,
-  `src/config/constants.rs:648-673`); before the first point returns
+* Linear interpolation between points (`RoastProfile::target_at`); before the first point returns
   the first one, after the last point **holds** the last one.
 * With PID enabled, `READ` returns 8 fields
   `AMB,ET,BT,0.0,0.0,HEATER,FAN,SV`, where `SV` is the current profile
   point. Each PID cycle recomputes `target_temp` from the profile
-  (`src/control/roaster_control.rs:2616-2631`) and the fan from
-  `fan_profile.target_at(elapsed)` (`:1100-1105`).
+  in the control update, and the fan from `fan_profile.target_at(elapsed)` in the fan selector.
 
 ### Example profile session
 
@@ -116,11 +114,11 @@ STOP               → heater 0 %, fan 100 %, latch armed (recover: PID;OFF / ST
 ### Rules to know
 
 * `START` pins `profile_start_time = now` (`handle_start_roast`,
-  `src/control/roaster_control.rs:1745-1857`). A repeated `START` while
+  `RoasterControl::handle_start_roast()`). A repeated `START` while
   `Heating`/`Stable` is ignored: the clock is not restarted.
 * `STOP` clears `profile_start_time` but **keeps** both loaded
   profiles: the next roast reuses them without resending
-  (`src/control/roaster_control.rs:533-537`).
+  `RoasterControl::handle_stop()`).
 * Without `FANPROFILE`/`OT2` the fan would fall to 0: the 20 % floor
   while heating prevents that anyway.
 * Artisan does **not** send `PROFILE` on its own. You have to trigger
@@ -154,7 +152,7 @@ Ways to send the profile:
 > Artisan on USB + console on UART at the same time: the multiplexer
 > serves only **one active transport** (the first one sending a valid
 > command; the other is ignored until 60 s of inactivity,
-> `src/input/multiplexer.rs:70-128`).
+> `CommandMultiplexer`).
 
 ---
 
@@ -173,3 +171,12 @@ START / STOP / PID;OFF
 READ     → 5 fields (manual) or 8 fields (profile/PID: ...,HEATER,FAN,SV)
 STATUS   → 20 fields, last one = safety latch (0/1)
 ```
+
+---
+
+## Related Documents
+
+- [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) — serial setup and handshake.
+- [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md) — CHARGE/DROP, RoR-follow, and TUNE.
+- [`PROTOCOL.md`](PROTOCOL.md) — command grammar and error tokens.
+- [`SAFETY_CASE.md`](SAFETY_CASE.md) — hazards and guard evidence.

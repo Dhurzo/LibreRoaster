@@ -77,3 +77,12 @@ A test that ends without gains prints `ERR tune_<reason>` (`bad_base_duty`, `bad
 `ERR handler_failed <token>:tune_needs_manual_mode` (or `:tune_needs_bt_channel` on `PID;CHAN;1`,
 `:tune_cooling_active`, `:fault_condition_active` while latched). Changing the PID channel
 (`PID;CHAN;1` ↔ `PID;CHAN;2`) unlocks tuned gains; re-sending the same channel does not.
+
+---
+
+## Related Documents
+
+- [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) — serial setup and handshake.
+- [`ARTISAN_MODES.md`](ARTISAN_MODES.md) — manual and profile roast workflows.
+- [`PROTOCOL.md`](PROTOCOL.md) — command grammar, spontaneous lines, and error tokens.
+- [`SAFETY_CASE.md`](SAFETY_CASE.md) — hazards and guard evidence.

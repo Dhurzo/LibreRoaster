@@ -1,8 +1,14 @@
 # LibreRoaster Protocol Reference
 
-**Last updated:** 2026-09-09
+**Last updated:** 2026-10-22
 
-This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the firmware currently accepts and emits, how the session behaves, and where compatibility with the official Artisan application starts and stops.
+This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the
+firmware accepts and emits, how the session behaves, and where compatibility with the official
+Artisan application starts and stops.
+
+STATUS field semantics and diagnostics live in [`INSTRUMENTATION.md`](INSTRUMENTATION.md). Artisan
+device setup and connection workflows live in [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md),
+[`ARTISAN_MODES.md`](ARTISAN_MODES.md), and [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md).
 
 ## 1. Transport model
 
@@ -128,30 +134,9 @@ Response shape:
 ET,BT,Heater,Fan,WatchdogOK,WatchdogFailures,LastWatchdogReason,LEDCGuardTimeouts,RegressionActive,PV,MV,IntegratorValue,DerivativeValue,SaturationFlag,IntegratorClampFlag,DerivativeAvailableFlag,CommandLatency,MaxCommandLatency,TempScale,FaultFlag
 ```
 
-> The order above is normative and matches `src/output/artisan.rs:200-281`. Per-field semantics live in `INSTRUMENTATION.md`.
-
-Field map:
-
-1. ET
-2. BT
-3. Heater
-4. Fan
-5. Watchdog feed success flag
-6. Consecutive watchdog failure count
-7. Last watchdog failure reason token
-8. LEDC guard timeout count
-9. Regression-active flag
-10. PID process variable
-11. PID manipulated variable
-12. PID integrator value
-13. PID derivative value (°C/min of the active display scale)
-14. Saturation flag
-15. Integrator clamp flag
-16. Derivative-available flag
-17. Last command latency in microseconds
-18. Maximum observed command latency in microseconds
-19. Temperature-scale flag (`0` = Celsius, `1` = Fahrenheit)
-20. Fault condition flag (`0` = normal, `1` = emergency fault active)
+> The order above is normative; the formatter is `format_status_response()` in
+> `src/output/artisan.rs`. Per-field types and semantics are owned by
+> [`INSTRUMENTATION.md`](INSTRUMENTATION.md).
 
 `STATUS` is the right interface for anything that needs runtime health, not just roast temperatures.
 
@@ -364,6 +349,19 @@ Loads a roast temperature profile into fixed-capacity profile storage.
 
 Loads a fan profile into fixed-capacity fan-profile storage.
 
+### Profile-adjacent commands
+
+| Command | Effect | Reply |
+|---|---|---|
+| `CHARGE` / `CHARGE;<g>` | Charge marker applied by the control tick; records batch weight. Kept through PREHEAT and for 5 s otherwise. | none |
+| `DROP` | Drop marker; stops RoR-follow and re-arms charge detection. | none |
+| `RORPROFILE;t,ror;...` | Load a RoR profile (≤16 points, 1–30 °C/min, increasing time). | `ERR handler_failed …:ror_profile_…` if invalid |
+| `RORPROFILE;OFF` | Unload the RoR profile and stop RoR-follow; accepted while latched. | none |
+
+`CHARGE;<g>` accepts decimals and rounds them. `READ` channels 3/4 carry the RoR target and
+measured RoR only after `CHAN;xx34` (both trailing digits non-zero); with `CHAN;1200` they remain
+`0.0,0.0`.
+
 ### Runtime behavior
 
 The firmware interpolates linearly between setpoints and holds the final target after the last point.
@@ -382,6 +380,14 @@ Response:
 - on builds with the `regression` feature, a run is already pending
   (capacity-1 trigger still holds an unconsumed request): `ERR regression_busy`
 - otherwise: `ERR regression_disabled`
+
+### `TUNE`
+
+`TUNE;<step>` starts a step-test autotune in manual mode on the BT channel only.
+`TUNE;ABORT`, `TUNE;UNLOCK`, and `TUNE;STATUS` abort, accept host gains, or report the result;
+`TUNE;STATUS` is also accepted while latched. A test emits `#TUNE …` on completion or
+`ERR tune_<reason>` on failure. Any non-monitoring command during a test aborts it with
+`ERR tune_aborted`. Workflow guidance is in [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md).
 
 ### `#DUMP`
 
@@ -448,7 +454,7 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
 
 ### `FILT` strictness
 
-The parser rejects malformed `FILT` payloads: a non-numeric first token or a value above 100 yields `ERR invalid_value` ("reject, don't coerce", `src/input/parser.rs:134-147`). Only the first comma-separated token is used.
+The parser rejects malformed `FILT` payloads: a non-numeric first token or a value above 100 yields `ERR invalid_value` ("reject, don't coerce"; see `parse_artisan_command()` in `src/input/parser.rs`). Only the first comma-separated token is used.
 
 ### `READ` vs `STATUS`
 
@@ -516,23 +522,14 @@ the Artisan RoR convention — not °C/s.
 
 ## 14. Related documents
 
-- `ARCHITECTURE.md` for the task and ownership model behind the protocol
-- `ARTISAN_CONNECTION.md` for official Artisan configuration guidance
-- `INSTRUMENTATION.md` for deep status-field interpretation
-- `tests/artisan_transcript_replay.rs` for the golden-transcript suite that pins the wire format
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — task and ownership model behind the protocol.
+- [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — tick stages, command flow, and state transitions.
+- [`INSTRUMENTATION.md`](INSTRUMENTATION.md) — STATUS fields, diagnostics, and TRACE.
+- [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) — Artisan device setup and handshake.
+- [`ARTISAN_MODES.md`](ARTISAN_MODES.md) — manual and profile roast workflows.
+- [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md) — CHARGE/DROP, RoR-follow, and TUNE workflows.
+- `tests/artisan_transcript_replay.rs` — golden-transcript suite that pins the wire format.
 
-## Differentiation commands (DIFF-2026-10-05)
+---
 
-| Command | Effect | Reply |
-|---|---|---|
-| `CHARGE` / `CHARGE;<g>` | Charge marker (applied by the control tick; kept through PREHEAT and for 5 s otherwise); records batch weight | none |
-| `DROP` | Drop marker; stops RoR-follow; re-arms charge detection | none |
-| `RORPROFILE;t,ror;...` | Load RoR profile (≤ 16 points, 1–30 °C/min, increasing t) | `ERR handler_failed …:ror_profile_…` if invalid |
-| `RORPROFILE;OFF` | Unload RoR profile, stop RoR-follow (also accepted while latched) | none |
-| `TUNE;<step>` | Start step-test autotune (manual mode, BT channel only) | `#TUNE …` or `ERR tune_…` when it ends; `ERR handler_failed …:tune_…` if refused |
-| `TUNE;ABORT` / `TUNE;UNLOCK` / `TUNE;STATUS` | Abort / accept host gains / report (`TUNE;STATUS` also while latched) | `TUNE;STATUS` → `#TUNE …` |
-
-Spontaneous lines of these features: `#TUNE …` and `ERR tune_<reason>` when a test ends, `ERR tune_aborted` when any non-monitoring command arrives during a test (sliders included), and `ERR probe_stuck_warning` from the two-stage manual detector or the firmware-PID plateau bound. `CHARGE;<g>` accepts decimals (rounded).
-
-READ channels 3/4 carry RoR target / measured RoR (display units per minute) **only** after
-`CHAN;xx34` (both last digits non-zero); with `CHAN;1200` they stay `0.0,0.0`.
+*Last updated: 2026-10-22.*
