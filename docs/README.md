@@ -1,7 +1,7 @@
 # LibreRoaster Documentation
 
 This is the canonical index for LibreRoaster documentation. Each topic has one owner document;
-other documents link to it instead of restating its tables, commands, or invariants.
+overview pages summarize it and link to the owner for normative tables, commands, and invariants.
 
 Start with the path that matches your goal:
 
@@ -24,6 +24,20 @@ Start with the path that matches your goal:
 | Find where a feature is implemented | [`FEATURE_MAP.md`](FEATURE_MAP.md) |
 | Check hazards and their automated evidence | [`SAFETY_CASE.md`](SAFETY_CASE.md) |
 | Read historical audits and fix-round notes | [`archive/README.md`](archive/README.md) |
+
+## README Overview Pages
+
+The project README links four short overview pages. They summarize the system for new readers and
+point to the canonical owner for normative detail.
+
+- [`HARDWARE_MODEL.md`](HARDWARE_MODEL.md) — pin map and hardware topology; owners:
+  [`HARDWARE.md`](HARDWARE.md) and [`pinout.md`](pinout.md).
+- [`SERIAL_PROTOCOL_SURFACE.md`](SERIAL_PROTOCOL_SURFACE.md) — command families and response
+  shapes; owner: [`PROTOCOL.md`](PROTOCOL.md).
+- [`RUNTIME_ARCHITECTURE.md`](RUNTIME_ARCHITECTURE.md) — boot, task graph, and control flow;
+  owners: [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`CONTROL_LOOP.md`](CONTROL_LOOP.md).
+- [`CURRENT_TECHNICAL_BASELINE.md`](CURRENT_TECHNICAL_BASELINE.md) — current stack and capabilities;
+  owners: [`../CONTEXT.md`](../CONTEXT.md) and [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## Reading Paths
 
