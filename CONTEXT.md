@@ -1,212 +1,106 @@
 # LibreRoaster — Agent Context
 
-*Entry point for LLM agents. Read this first before modifying code.*
+*Entry point for LLM agents. Read this first, then follow the links for technical detail.*
 
 ---
 
 ## What This Is
 
-ESP32-C3 firmware for a coffee roaster controller. Allows [Artisan](https://artisan-scope.org/) roasting software to read temperatures and control heater/fan via USB CDC or UART using a TC4-compatible serial protocol.
+ESP32-C3 firmware for a coffee roaster controller. It exposes a TC4-compatible serial surface so
+[Artisan](https://artisan-scope.org/) can read temperatures and control heater/fan over native USB
+CDC or UART.
 
-**Core value proposition:** Artisan can read temperatures and control heater/fan during a roast session via serial connection.
+**Core value proposition:** Artisan owns the roast session; LibreRoaster owns the device-side
+control loop, telemetry, and safety interlocks.
 
-**Current milestone:** v0.0.1 Alpha — First working version (in development on `develop`). Firmware compiles, flashes, boots on ESP32-C3 hardware without panics, responds to Artisan READ with real temperatures.
+**Current milestone:** v0.0.1 Alpha on `develop`. Firmware compiles, flashes, and boots on
+ESP32-C3 hardware; USB CDC answers Artisan `READ` with real temperatures. Real Artisan
+connectivity and full hardware integration remain pending.
 
 ## Technical Stack
 
 | Layer | Technology |
-|-------|-----------|
+|---|---|
 | **MCU** | ESP32-C3 (RISC-V, single-core) |
 | **Runtime** | `no_std` embedded, Embassy async executor |
 | **HAL** | esp-hal, embedded-hal 1.0 |
-| **Sensors** | 2× MAX31856 thermocouples (SPI, shared bus) |
-| **Actuators** | SSR heater (5 Hz zero-cross LEDC, GPIO10), PWM fan (LEDC PWM GPIO9) |
-| **Comms** | USB CDC (ttyACM0), UART0 (GPIO20/21) |
-| **Safety** | RTC watchdog, over-temperature cutoff, stale-temperature guard, heat-source detection |
-| **Language** | Rust 2021 edition, stable toolchain |
-| **Build target** | `riscv32imc-unknown-none-elf` (embedded), `x86_64-unknown-linux-gnu` (tests) |
+| **Sensors** | 2× MAX31856 thermocouples on a shared SPI bus |
+| **Actuators** | SSR heater (5 Hz zero-cross LEDC, GPIO10), PWM fan (25 kHz LEDC, GPIO9) |
+| **Comms** | USB CDC (`/dev/ttyACM0`), UART0 (GPIO20/21, 115200 8N1) |
+| **Safety** | RTC watchdog, over-temperature cutoff, stale-temperature guard, RoR guard, heat-source detection |
+| **Language** | Rust 2021, stable toolchain |
+| **Targets** | `riscv32imc-unknown-none-elf` (embedded), `x86_64-unknown-linux-gnu` (host tests) |
 
 ## Runtime Architecture
 
-The firmware boots, initialises LEDC/SPI/USB/UART/sensors/actuators, builds `RoasterControl` through `AppBuilder`, then spawns 5 long-lived Embassy worker tasks (`src/application/app_builder.rs:205-224`) plus the `async_main_task` supervisor (`src/main.rs:111-129`, spawned via `executor.run` in `src/main.rs:284-304`):
+`src/main.rs` initializes hardware, builds `RoasterControl` through `AppBuilder`, then starts one
+supervisor plus five long-lived Embassy tasks:
 
-1. **USB reader** — gathers bytes from native USB CDC and parses commands
-2. **UART reader** — gathers bytes from UART0 and parses commands
-3. **Control loop** — drains commands, reads sensors, updates control, feeds watchdog, emits telemetry (100 ms timer; real tick ≈ 310–330 ms with the MAX31856 conversion wait)
-4. **Dual output** — routes formatted output to active transport
-5. **Regression** — handles over-temperature regression runs on embedded targets
+1. **USB reader** — collects native USB CDC bytes and parses commands.
+2. **UART reader** — collects UART0 bytes and parses commands.
+3. **Control loop** — drains commands, reads sensors, updates control, feeds the watchdog, and
+   emits telemetry. The timer is 100 ms; a real tick is ≈310–330 ms because of the MAX31856
+   conversion wait.
+4. **Dual output** — routes formatted output to the active transport.
+5. **Regression** — runs explicit over-temperature regression checks on embedded targets.
 
-> F5.3 refactor note: the separate USB/UART queue-processor tasks were removed. Reader tasks now own both byte collection and command parsing directly — there is **one shared command channel** for both transports, no intermediate queue-processor stage. Each transport keeps only a byte-level event queue (a buffer, not a task).
+Both readers feed one shared command channel. Each transport has only a byte-level event queue;
+there is no intermediate queue-processor task.
 
-The system is wired through a `ServiceContainer` singleton that owns `RoasterControl` (async mutex), the artisan input, and the watchdog feeder. The command/output channels and the command multiplexer are module-level `statics` that `ServiceContainer` exposes via accessors.
+`ServiceContainer` is the process-wide singleton assembled before the executor starts. It owns the
+async-mutex `RoasterControl`, the Artisan input, and the watchdog feeder; the command/output
+channels and command multiplexer are module-level statics exposed through accessors.
+
+For the full model, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
+[`docs/CONTROL-LOOP.en.md`](docs/CONTROL-LOOP.en.md).
 
 ## Key Design Decisions
 
 | Decision | Rationale |
-|----------|-----------|
-| **TC4 protocol compatibility** | Artisan expects TC4-style serial responses. All responses must remain byte-identical. |
-| **Embassy async model** | Cooperative multitasking — `Send` bounds are critical; no blocking I/O in tasks. |
-| **Host/embedded split** | `embedded` feature for real hardware, `test` feature for host-side verification. |
-| **No persistence** | Roast state, telemetry, profiles are RAM-only (no storage layer). |
-| **Safety-first** | Multiple independent safety layers (watchdog, thermal cutoff, stale-temperature) — no single point of failure. |
+|---|---|
+| **TC4 wire compatibility** | Artisan expects TC4-style responses; wire bytes are a compatibility contract. |
+| **Embassy async model** | Cooperative multitasking with `Send` bounds and no blocking I/O inside tasks. |
+| **Host/embedded split** | `embedded` selects firmware hardware paths; `test` supplies host-side verification support. |
+| **No persistence** | Roast state, telemetry, and profiles are RAM-only. |
+| **Safety-first layering** | Watchdog, thermal cutoff, stale-data guard, and command gates are independent backstops. |
+| **Single command channel** | USB and UART share one parser/command path; the multiplexer selects the active transport. |
 
-## Project State
+## Current State
 
-**v0.0.1 Alpha** (in development on `develop`):
-- ✅ Firmware compiles and flashes to ESP32-C3
-- ✅ All hardware inits: SPI, MAX31856×2, SSR (5 Hz zero-cross), Fan (25 kHz LEDC), RTC WDT
-- ✅ USB CDC responds to Artisan `READ` with TC4 format
- - ✅ Control loop ticks at ≈ 310–330 ms (100 ms timer + 210 ms MAX31856 conversion wait)
-  - ✅ All host tests pass (**914 as of 2026-10-21, after the 2026-10-16 audit fix round plus the READ keepalive test**, 580 lib + 334 integration, 0 failures with `--features test`; the regression numeric suite adds `--features regression`, see Quality Gates below)
- - ✅ Full-roast verification suite (`tests/full_roast_verification.rs`, 18 tests) — deterministic L1 simulation of complete roasts: preheat, charge dip, profile/fan-profile following, RoR/first-crack, all 6 safety backstops, STOP/cooldown, two consecutive roasts, plus the light-roast suite (A-TC4-D). Plus an L3 end-to-end pipeline test (real control-loop ticks over `simulated-sensors` curves) gated behind `--features simulated-sensors`
- - ✅ No-hardware pinout simulation (`sim/wokwi/`): Wokwi project with a custom MAX31856 chip and `scripts/sim-wokwi-prepare.sh`; F1 (`embedded,simulated-sensors`) brings up UART/LED/PWM, F2 (`embedded,heat-sense`) exercises the real SPI sensor path and GPIO1 heat-sense, and F3 (`embedded,simulated-typical-roast`) uses a charge-dip typical curve (positive BT slopes <= ~0.33 °C/s) so `START`/`Heating` can be tested without the RoR latch. `scripts/sim-esp-emu.sh` is experimental (esp-emulator v0.50.0 software-interrupt blocker). `sim/wokwi/scenarios/{f1-smoke,f2-spi,f3-roast}.yaml` + `scripts/sim-wokwi-scenario.sh` automate F1/F2/F3 checks with `wokwi-cli` (optional CI token; curve choice is compile-time). See `docs/SIMULATION.md`
-
-**Recent architecture work (v5.4):**
-- RoasterControl decomposed into focused controllers (SensorController, ActuatorController — heater+fan together —, SafetyController, CommandDispatcher)
-- ServiceContainer as process-wide singleton (`get_instance()` + module statics for channels/multiplexer), assembled by `AppBuilder` before the executor starts
-- 24 clippy warnings fixed, 17 files quality-improved
-- All 906 host tests pass, ESP32 build warning-free; control-core rules in `docs/CONTROL_CORE.md`
-
-**Bug-hunt fix round (2026-09-25, from `BUG_HUNT_2026-09-25.md`):**
-- H1: PID integrator can no longer wind up across a latch (`clear_emergency_explicit` disarms the PID; `delta_seconds` clamps gaps > max(2·cycle, 2 s) to one default cycle)
-- H2: two time budgets — `MAX_ROAST_TIME_SECS` (1800 s) anchors to START/PROFILE; manual OT1 sessions cap at `MAX_MANUAL_HEAT_SESSION_SECS` (5400 s)
-- H3: re-energizing via sliders (`OT1>0`/`UP`) drops the cooldown fan latch — back-to-back batches keep operator fan control
-- H4: heat-sense is now **opt-in** (`heat-sense` feature; default build never interprets GPIO1); cross-check samples once per tick (write path removed); time-window debounce (`HEAT_MISMATCH_WINDOW_MS` = 1500 ms) replaces consecutive-sample counting
-- H6/H6b: RoR guard armed only when the firmware PID is in control (`!artisan_control`), counters reset while disarmed; soft band recalibrated to 0.75 °C/s (45 °C/min)
-- H8: probe-stuck exempts hot manual equilibrium (BT > 60 °C with ET flat within 3 °C since the BT anchor, no PID; a frozen BT with a moving ET still latches) — cold short signature still latches
-- H9: a persistently failing sensor channel NaN-marks only that channel (`resolve_channel` no longer aborts the whole sample)
-- H10: slew limiter anchored at 0 with a fresh timestamp on force-off/emergency (next energize ramps)
-- H11: `PID;ON` is a distinct `ArtisanCommand::PidOn` that NEVER clears a safety latch (START/PREHEAT/PID;OFF remain the recovery paths)
-- H12: START without a profile inherits the PREHEAT target
-- H13: MAX31856 reads CJTH:CJTL + LTC + fault in one 6-byte burst; all-zero frame (MISO stuck LOW) rejected; AMB on the wire is the real cold-junction mean
-- H14: `REG` checks the latch before signaling the runner
-- H5/S3/S4/S5/S6/S7 + doc fixes (STOP latch semantics, `CHAN;1200`, real safety-fault reason strings, logic-level MOSFET BOM, Schottky-only flyback, log transport via UART not USB-JTAG, `#CHARGE` gated by streaming)
-- Host tests: **779/779** (529 lib + 250 integration) with `--features test`, plus 16 regression, 18 heat-sense state-machine (feature-gated), 1 L3 simulated pipeline; race check (`-- --test-threads=1`) green
-
-**Deep-audit fix round (2026-09-26, bugs found by two-pass code audit + executable reproduction):**
-- BUG 1 (state-gate): `PREHEAT` during an active roast (Heating/Stable) is now **ignored** exactly like START (`handle_preheat` gate mirroring `handle_start_roast`). Previously a mid-roast PREHEAT degraded the FSM to `Preheating`, silently disarming the RoR guard, the roast-time budgets and charge detection while the heater stayed energized. Latch recovery via PREHEAT is unaffected (a latched device is in `Error`, which the gate does not block).
-- BUG 2 (time-budget hole): the Preheating exemption from the time caps now applies ONLY while the firmware PID is the thing heating (`pid_preheating = Preheating && pid_enabled && !artisan_control`). A manual OT1/UP takeover during Preheating keeps the `MAX_MANUAL_HEAT_SESSION_SECS` (90 min) budget, matching the same session started from Idle — previously it escaped every time budget.
-- BUG 3 (telemetry honesty): `dispatch.stop_streaming` no longer unconditionally zeroes `status.ssr_output`; each caller (`RoasterControl::stop_streaming`, `handle_emergency_stop`) zeroes it ONLY after `force_heater_off` succeeded — matching the documented `ActuatorController::emergency_shutdown` contract. A STOP with a failed off-write now keeps the honest duty on the wire next to `ssr_hardware_status = Error` (which also re-arms the comms-idle/MAX_ROAST_TIME gates on a possibly stuck-on heater); the next tick escalates to the "Heater control failure" emergency. This aligns the STOP path with invariant I1 of the safety-invariant harness.
-- Regression tests: 9 new in `roaster_control_tests.rs` (mid-roast PREHEAT ignore + Idle/Error transitions preserved, manual-during-preheat budget + PID exemption contrast, honest-duty on failed off-write for EmergencyStop/PID;OFF/internal-trap + success-path zero preserved). Docs: PROTOCOL.md §7 (`PREHEAT`/`START` state gating). Host tests: **779/779** (529 lib + 250 integration), sim-suite 791, embedded build green.
-
-**Audit fix round (2026-10-04, multi-agent audit `plan_auditoria_libreroaster.md` + independent `verificacion_informe_bugs.md`, both against `develop` @ `2443386` — 8/8 REAL bugs confirmed, note 6.9 FUNCIONARÍA CON REPAROS):**
-- BUG-2c-1 (profile echo): profile payloads are drained when a `PROFILE`/`FANPROFILE` is refused by the safety latch or dropped by a full command channel — a refused profile can no longer be silently applied by the next roast (the original wipe-all `parser::clear_staged_profiles()` was superseded by the per-FIFO drains of the 2026-10-16 round)
-- BUG-2b-1 (regression gate): `RoastCurve::temperatures_at` snaps to the authored waypoint at `frac >= 1.0` and clamps mid-segment lerps to the segment (the two-step f32 lerp could land ~5 ULP outside the envelope); the previously-failing proptest seed is committed as a pinned case — the `test,regression` battery is green again
-- BUG-2b-2: inactive-channel ERR coalesce uses modular `wrapping_sub` (was `saturating_sub`), so the u32 millis wrap (~49.7 days) no longer suppresses the notification for another full wrap
-- BUG-2c-3: UART `write_bytes` pushes a best-effort `\r\n` on a partial-write timeout, mirroring the USB CDC driver (no more fused lines on the host)
-- BUG-2d-1: the over-temp regression runner aborts with `SAFETY OT-REGRESSION-ABORTED foreign_latch` when a safety latch is already armed at run start (entry guard, whole first closure atomic under the roaster mutex) — a foreign time-budget/RoR latch can no longer be cleared away (H11)
-- BUG-2c-2/2d-2/2d-3 (docs): `ERR rate_limited` removed from PROTOCOL.md §10 (zero emitters); priority-drain/emergency-bypass comments rewritten to the real whole-channel drain; `MAX_COMMANDS_PER_TICK` deleted; `queue_metrics_snapshot` documented as future instrumentation (no wire consumer)
-- Host tests: **784/784** (534 lib + 250 integration) with `--features test`; regression battery **855/0** (`test,regression`); golden transcripts + pipeline soak byte-identical; race check (`-- --test-threads=1`) green; all three embedded builds (`embedded` / `embedded,heat-sense` / `embedded,regression`) warning-free; clippy (host + ESP32) 0 warnings
-
-**Audit fix round (2026-10-16, multi-agent audit `plan_auditoria_libreroaster_EN.md` against `develop` @ `0050177` — 4/4 REAL bugs fixed on `fix/audit-2026-10-16-findings`; the audit scored 9.0/10 + 4 unconfirmed SUSPECTS left alone):**
-- BUG-2b-1 (heat-sense, MEDIUM — opt-in feature): `cross_check_heat_detection` clears `last_heat_seen_ms` when a sample is uninformative (HIGH at duty-unobservable < 50 %) and refreshes it on the residual-heat branch — a duty-zero gap no longer leaves a stale baseline that false-latches "heater not detected" on the next observable-duty resume. New test `stale_baseline_across_duty_zero_gap_must_not_trip_on_resume` (verified failing pre-fix)
-- BUG-2c-1 (transport drain, LOW): `process_event_queue` keeps draining after emitting `ERR buffer_overflow` — a complete clean command queued behind an overflow terminator in the same read chunk now executes in that same drain turn instead of waiting for the next received byte. New test `post_overflow_clean_command_in_same_chunk_executes` (verified failing pre-fix)
-- BUG-2c-2 (profile echo, LOW, supersedes the 2026-10-04 wipe-all): `clear_staged_profiles()` replaced by `discard_newest_staged_profile()` (transport channel-full drop: the just-parsed command's payload is the newest entry of the matching FIFO, `pop_back`) and `discard_oldest_staged_profile()` (latch refusal at process time: commands are processed in order → front entry, `pop_front`); per-FIFO isolation and exact-entry semantics pinned by `tests/audit_2026_10_16_fixes.rs`
-- BUG-2d-1 (`REG` double-ack, LOW — `regression` feature builds): `request_regression()` returns `bool` (`try_send` outcome) and is signaled inside `handle_run_regression` under the roaster mutex (the H14 latch gate rejects `REG` while armed before the trigger is consulted); a second `REG` while a request is pending gets `ERR regression_busy` instead of a lie `OK regression_started` for a run that never started. `ERR regression_busy` documented in PROTOCOL.md §9/§10, INSTRUMENTATION.md §3
-- Host tests: **913/913** (579 lib + 334 integration) with `--features test`; lib **597** with `test,heat-sense`; regression numeric gate (16/16) green; race check (`-- --test-threads=1`) 913/913 green; all three embedded builds (`embedded` / `embedded,heat-sense` / `embedded,regression`) warning-free; host clippy 0 warnings
-
-**Hardware-readiness round (2026-08-21, audit informe 2026-08-21):**
-- `SsrControlBase::rearm()` + `Heater::rearm_hardware_status()`; explicit operator recovery (`PID;OFF`/`START`/`PREHEAT`/`StopRoast` via `clear_emergency_explicit` and `handle_stop`) re-arms the SSR availability state machine. There is no bare `OFF` token on the wire — `PID;OFF` parses to `ArtisanCommand::Stop` (`src/input/parser.rs` has no `OFF` arm). Internal stop paths never re-arm. New opt-in `heat-sense` cargo feature for builds with a validated GPIO1 current-sense circuit (default build does not interpret GPIO1; time-window debounce + one sample per tick in `ssr_logic.rs`). **M1-lite refactor**: `SsrControlBase`/`SsrError`/`SsrHardwareStatus`/`StatusGetters` moved to un-gated `src/hardware/ssr_logic.rs` (re-exported from `ssr.rs`) — the state machine now has 12 host unit tests including the recoverability property.
-- `src/logging/edge_log_gate.rs` (`EdgeLogGate`) — FAN-FLOOR (2 sites), the PID "setpoint capped" warning, and "SSR cycle busy" warn once per activation episode. LEDC-GUARD timeouts are counter-only (exposed as the STATUS `ledc_guard_timeouts` field) with a per-occurrence `debug!`; they are not edge-log-gated. The dedicated UART1 log sink remains deferred (needs bench validation).
-- Status LED is a real indicator — pure pattern logic in `src/hardware/status_led.rs` (host-tested), single owner stored in `ServiceContainer`, driven once per tick by the control loop. `enter_safe_shutdown` keeps `Peripherals::steal()` as documented fallback (app tasks are dead by then).
-- `Max31856::new_tolerant()` returns `(device, verified)`; `init_spi_sensors` degrades a single dead channel (BT-only / ET-only configs boot) and aborts only when BOTH channels are dead (`boot_policy` helper). `new()` keeps the hard-fail contract for HIL examples. Scripted SPI mock + 9 host tests.
-- Continuous `#` telemetry is **opt-in via `STREAM;ON`** (`ArtisanCommand::SetStreaming`, `#OK` ack, allowed while latched) and OFF by default — START/OT1/OT2/PID;SV no longer enable it. The `#DUMP` ring-buffer feed is decoupled from the stream flag (driven by `roast_logger::is_logging_active()`). Golden transcripts and pipeline soak stay green (soak sends STREAM;ON to keep the `#`-line validation exercised). Docs updated: PROTOCOL/HARDWARE/ARTISAN_CONNECTION/README.
-
-**Artisan compatibility audit (A-TC4, 2026-08-12):**
-- Internal safety traps now emit `ERR safety_fault <reason>` on the wire, once per latch event (`emergency_shutdown` in `roaster_control.rs`) — Artisan/automation no longer discovers latches only via rejected commands. The operator `STOP` path does not emit it.
-- Probe-stuck detector is two-stage in manual/software-PID mode (A-TC4-C): `ERR probe_stuck_warning` on the wire at 120 s of flat BT (no latch — a slow finish can legitimately hold BT flat), real latch at 300 s via `ERR safety_fault Probe stuck`. Firmware-PID mode keeps the original single-stage 120 s latch. The dead-probe backstop (Bug S1) stays closed in both modes.
-- Handshake commands `CHAN`/`UNITS`/`FILT` are accepted while the safety latch is armed (zero actuator side effects) — Artisan can reconnect to a latched device instead of looping on "Arduino could not set channels/units/filters". All re-energizing commands remain rejected while latched.
-- Golden-transcript replay suite (`tests/artisan_transcript_replay.rs` + `tests/fixtures/artisan_transcripts/*.txt`) pins the wire contract against real Artisan session bytes; `tests/pipeline_soak.rs` stress-tests the full pipeline; T-B4 covers byte-level interleave across two transports; degenerate PROFILE/FANPROFILE shapes tested at the control layer.
-- CI coverage job now instruments `regression` + `simulated-sensors` (previously the conversion math and L3 pipeline showed as uncovered).
-- **Light-roast verification (A-TC4-D, 2026-08-12):** the RoR guard is two-tier. Soft band (`0.75..=1.0 °C/s`, `MAX_BT_RATE_OF_RISE`..`MAX_BT_RATE_OF_RISE_HARD`) requires `ROR_SOFT_DEBOUNCE_LIMIT` (12) consecutive exceedances (~3.7 s) before latching — a ~3 s light-roast turnaround spike (0.6 °C/s) no longer false-trips. Hard band (> `1.0 °C/s`) keeps the original fast 3-tick latch. Both `check_bt_rate` and `check_rate_of_rise` use the same tiering (`tiered_ror_trip` in `src/control/controllers/sensor.rs`); constants are provisional pending HIL calibration. Manual/software-PID mode remains RoR-guard-disarmed by design (comms-idle + MAX_ROAST_TIME cover it).
+- Firmware compiles and flashes to ESP32-C3.
+- Hardware init covers SPI, both MAX31856 channels, SSR (5 Hz), fan (25 kHz), USB CDC, UART0, and
+  the RTC watchdog.
+- USB CDC responds to Artisan `READ` in TC4 format.
+- The control loop runs at the documented ≈310–330 ms real tick.
+- Host tests are green. The current command matrix and “last verified” snapshot live in
+  [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+- Full-roast simulation, the L3 pipeline test, and Wokwi F1/F2/F3 scenarios exist. See
+  [`docs/SIMULATION.md`](docs/SIMULATION.md).
+- Pending: real Artisan session, real thermocouple reads, real fan/heater control, and a real
+  coffee roast. Do not treat synthetic validation as electrical safety evidence.
 
 ## Known Constraints
 
-- `no_std` environment — no alloc, no standard library on target
-- Clippy config denies: `unwrap_used`, `expect_used`, `panic` in production code
-- GPIO9 is a strapping pin — external fan must not force invalid boot state
-- SPI MISO routed through GPIO5 (not GPIO2) to avoid FSPIQ strap conflict
-- Command queue intentionally small (capacity 16, `try_send`-only backpressure; no per-tick command budget)
-- Sensor timing pressure: MAX31856 conversion (210 ms) is slow relative to the 100 ms loop timer — the real tick is ≈ 310–330 ms
+- `no_std` target: no allocator and no standard library.
+- Clippy denies `unwrap_used`, `expect_used`, and `panic` in production code.
+- GPIO9 is a strapping pin; external fan circuitry must not force an invalid boot state.
+- SPI MISO uses GPIO5, not GPIO2, to avoid the FSPIQ strapping conflict.
+- The command channel holds 16 entries and uses `try_send` backpressure only; there is no
+  per-tick command budget.
+- MAX31856 one-shot conversion (210 ms) dominates the control cadence.
 
-## Documentation Map
+## Documentation and Navigation
 
-Read these in order depending on what you need to do:
+- Canonical documentation index: [`docs/README.md`](docs/README.md).
+- Code navigation and change recipes: [`docs/FEATURE_MAP.md`](docs/FEATURE_MAP.md).
+- Build, flash, test, and quality-gate commands: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+- Baseline policy contract: [`.planning/quality/README.md`](.planning/quality/README.md).
+- Historical audits and fix-round chronology: [`docs/archive/README.md`](docs/archive/README.md).
 
-| If you need to... | Read this first |
-|---|---|
-| Understand the full system | `docs/ARCHITECTURE.md` |
-| Add/modify a serial command | `docs/PROTOCOL.md` |
-| Change pin assignments or hardware init | `docs/HARDWARE.md` |
-| Fix a bug | Investigate source code (current bug/risk notes live in code comments; see `docs/ARCHITECTURE.md` §13) |
-| Build, flash, test | `docs/DEVELOPMENT.md` |
-| Validate the pinout without hardware | `docs/SIMULATION.md` (roast preset and heat-sense switch runbook: `docs/WOKWI_ROAST_PRESET.md`) |
-| Understand telemetry/STATUS fields | `docs/INSTRUMENTATION.md` |
-| Configure Artisan integration | `docs/ARTISAN_CONNECTION.md` |
-| Check compatibility boundaries | Review source code and test implementations |
-| Follow coding conventions | See `.planning/codebase/CONVENTIONS.md`, otherwise follow Rust best practices |
-| Run quality gates | `.planning/quality/README.md` |
-
-**Source layout:**
-- `src/main.rs` — Entry point (binary)
-- `src/lib.rs` — Library root (`no_std`)
-- `src/application/` — App orchestration, `AppBuilder`, `ServiceContainer`; contains 2 of the 5 Embassy tasks (control loop, dual output)
-- `src/control/` — `RoasterControl`, command handlers, PID, safety
-- `src/control/controllers/` — Focused controllers (Sensor, Actuator, Safety, Dispatch)
-- `src/control/handlers/` — Command handlers and artisans
-- `src/hardware/` — MAX31856, SSR, fan, UART, shared SPI
-- `src/hardware/sensors/` — Sensor implementations and conversions
-- `src/hardware/ssr.rs` + `ssr_stub.rs` — SSR control implementations (the `ssr/` subdirectory is empty); the pure state machine lives in un-gated `src/hardware/ssr_logic.rs`
-- `src/hardware/uart/` — UART communication (UART reader task)
-- `src/hardware/usb_cdc/` — USB CDC communication (USB reader task)
-- `src/input/` — Artisan command parser
-- `src/output/` — `ArtisanFormatter` + `MutableArtisanFormatter` (continuous-output state machine), `OutputError`; the `OutputController` flag lives in `src/control/abstractions.rs`
-- `src/config/` — Constants, `SystemStatus`, command enums
-- `src/error/` — `AppError` types
-- `src/logging/` — Logging infrastructure, telemetry, TRACE stream, roast ring buffer (`roast_logger.rs`)
-- `src/memory/` — Memory constants and strategy notes
-- `src/safety/` — Safety implementations, watchdogs, regression task
-- `src/common/` — Common utilities and shared functionality
-
-## Quality Gates
-
-```bash
-# Full baseline (fmt → clippy → test):
-# NB: the plain `cargo test --locked --lib --tests` command FAILS at link
-# time (`undefined symbol: _embassy_time_now`) — host tests need the `test`
-# feature (and the host target) so the Embassy time driver is provided.
-cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic && cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast
-
-# Regression numeric suite (H-9): the strongest numeric tests
-# (sensor_conversion.rs — 19-bit two's-complement LSB math, fixture→fault
-# mapping) are gated `#![cfg(all(test, not(riscv32), feature = "regression"))]`
-# and are NOT part of the `--features test` gate above. Run them explicitly:
-cargo test --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
-
-# Simulated-sensors pipeline (L3): real control-loop ticks over the synthetic
-# `simulated-sensors` temperature curves (wall clock). Includes the full
-# pipeline test `control_loop_tick_simulated_sensors_full_pipeline`:
-cargo test --target x86_64-unknown-linux-gnu --features test --features simulated-sensors --lib control_loop_tick_simulated
-
-# Embedded build:
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
-
-# All host tests:
-cargo test --target x86_64-unknown-linux-gnu --features test
-
-# SSR heat-sense state machine (H4): its pin-interpretation tests are gated
-# behind the opt-in feature — the default host run compiles them out:
-cargo test --target x86_64-unknown-linux-gnu --features test,heat-sense --lib hardware::ssr_logic
-
-# Race check (strongest cross-test interference check on the shared
-# ServiceContainer channels):
-cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1
-
-# Coverage (as CI): include regression + simulated-sensors, otherwise the
-# conversion math and the L3 pipeline show as uncovered:
-cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info
-```
+Do not duplicate command tables, pin maps, or STATUS schemas here. Put normative detail in the
+owner document and link to it.
 
 ---
 
-*Last updated: 2026-10-22. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-10-22. This file tracks current project state and agent-facing constraints,
+not historical change logs.*
