@@ -1,20 +1,38 @@
 # Simulated Sensor Curves
 
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-22
 
 ## Overview
 
-LibreRoaster can run on real ESP32-C3 hardware **without any thermocouples connected** by enabling the `simulated-sensors` Cargo feature. Instead of reading real MAX31856 chips over SPI, the firmware generates synthetic temperature readings from a configurable roast curve and feeds them through the entire control stack: PID, safety guards, telemetry, and Artisan serial protocol.
+LibreRoaster can run on real ESP32-C3 hardware **without thermocouples
+connected** by enabling the `simulated-sensors` Cargo feature. Instead of
+reading MAX31856 chips over SPI, the firmware generates synthetic BT/ET
+readings from a roast curve and feeds them through the normal control stack:
+PID, safety guards, telemetry, and the Artisan serial protocol.
 
-This means you can verify the full firmware behaviour — command parsing, PID control, safety shutdown, STATUS telemetry — on a bare ESP32-C3 dev board with no external sensors, no heater, and no fan.
+This lets you validate command parsing, PID control, safety shutdown, and
+STATUS telemetry on a bare board with no external sensors, heater, or fan. It
+does **not** exercise the real MAX31856 SPI path; use Wokwi F2 for that.
 
 ## When to use this
 
-- Bring-up testing on a new ESP32-C3 board before wiring thermocouples
-- Verifying Artisan serial connectivity over USB CDC or UART
-- Validating PID tuning logic against a known temperature trajectory
-- End-to-end firmware regression without hardware risk
-- Demonstrating the roaster control surface without a physical machine
+- Bring-up on a new ESP32-C3 board before wiring thermocouples.
+- Verifying Artisan serial connectivity over USB CDC or UART.
+- Validating PID behavior against a known temperature trajectory.
+- End-to-end firmware regression without hardware risk.
+- Demonstrating the roaster control surface without a physical machine.
+
+## Quick reference
+
+| Goal | Build/feature | Curve |
+|---|---|---|
+| Board/UART/PWM bring-up | `embedded,simulated-sensors` | Medium (`default_medium_roast`) |
+| Guard-safe `START`/`Heating` | `embedded,simulated-typical-roast` | Typical (`typical_roast`) |
+| Light-roast work | No Cargo feature; call `light_roast()` from code/tests | Light |
+| Custom trajectory | `SimulatedSensorSource::new(custom_curve)` | Custom `RoastCurve` |
+
+Curve selection is compile-time. There is no serial command or runtime switch.
+See “Switching curves” below.
 
 ## Build and flash
 
@@ -26,7 +44,9 @@ cargo espflash flash --release --target riscv32imc-unknown-none-elf \
   --features "embedded,simulated-sensors"
 ```
 
-The firmware boots normally, initialises LEDC, UART, USB CDC, watchdog, and SSR/fan drivers. The only difference is that SPI and MAX31856 initialisation is skipped entirely, and temperature readings come from the curve generator instead.
+The firmware boots normally and initializes LEDC, UART, USB CDC, watchdog, and
+the SSR/fan drivers. SPI and MAX31856 initialization are skipped, and
+temperature readings come from the curve generator.
 
 To build with real sensors (the default):
 
@@ -38,24 +58,32 @@ cargo build --release --target riscv32imc-unknown-none-elf --features embedded
 
 ### Architecture
 
-The feature flag controls which backend `SensorConversionHub` uses at compile time:
+The feature flag selects the `SensorConversionHub` backend at compile time:
 
-| Configuration | Sensor backend | What happens at runtime |
+| Configuration | Sensor backend | Runtime path |
 |---|---|---|
-| `embedded` (default) | Real MAX31856 over SPI | SPI init → one-shot conversions → fault detection → fallback logic |
+| `embedded` (default) | Real MAX31856 over SPI | SPI init → one-shot conversions → fault detection → fallback |
 | `embedded,simulated-sensors` | `SimulatedSensorSource` | Curve lookup → interpolation → optional noise → clean `SensorSample` |
-| Host tests (`test` feature) | Stub returning 0.0 °C | No real hardware involved |
+| Host tests (`test` feature) | Stub returning 0.0 °C | No hardware involved |
 
 When `simulated-sensors` is active:
 
-1. `init_hardware()` in `src/hardware/init.rs` skips SPI bus creation, GPIO3/GPIO4 (CS pins), and MAX31856 driver initialisation entirely. LEDC, SSR, fan, UART, USB CDC, and watchdog still initialise normally.
-2. `AppBuilder` calls `with_simulated_sensors()` instead of `with_temperature_sensors()`, which constructs a `SensorConversionHub` backed by a `SimulatedSensorSource`.
-3. The control loop calls `SensorConversionHub::sample()` as usual. Internally it reads from the curve generator instead of triggering SPI transactions.
-4. The generated `SensorSample` is structurally identical to a real one — same fields, same types, same fault semantics (no faults in simulated mode). Everything downstream (PID, safety, telemetry) works unmodified.
+1. `init_hardware()` in `src/hardware/init.rs` skips the SPI bus, GPIO3/GPIO4
+   chip selects, and MAX31856 driver initialization. LEDC, SSR, fan, UART,
+   USB CDC, and the watchdog still initialize normally.
+2. `AppBuilder` calls `with_simulated_sensors()` instead of
+   `with_temperature_sensors()`, constructing a `SensorConversionHub` backed
+   by `SimulatedSensorSource`.
+3. The control loop calls `SensorConversionHub::sample()` as usual. The hub
+   reads the curve generator instead of triggering SPI transactions.
+4. The generated `SensorSample` has the same fields, types, and fault semantics
+   as a real sample (there are no faults in simulated mode). PID, safety, and
+   telemetry run unmodified.
 
 ### Curve model
 
-A roast curve is a sequence of **waypoints**, each defining temperatures at a point in time:
+A curve is a sequence of **waypoints**, each defining temperatures at a point
+in time:
 
 ```rust
 pub struct CurvePoint {
@@ -65,13 +93,21 @@ pub struct CurvePoint {
 }
 ```
 
-The generator **linearly interpolates** between consecutive waypoints to produce smooth temperature trajectories at the control-loop cadence — ≈10 Hz with the 100 ms loop timer, since the simulated path has no MAX31856 conversion wait (real-hardware builds tick at ≈310–330 ms because of that wait). Before the first waypoint, temperatures hold at that waypoint's values. After the last waypoint, they hold at the final values.
+The generator linearly interpolates between consecutive waypoints at the
+control-loop cadence. The simulated path has no MAX31856 conversion wait, so it
+ticks at roughly 10 Hz with the 100 ms loop timer; real-hardware builds tick at
+roughly 310–330 ms because of that wait.
 
-Maximum curve length: **32 waypoints** (heapless, no heap allocation).
+Before the first waypoint, temperatures hold at that waypoint's values. After
+the last waypoint, they hold at the final values. Maximum curve length is
+**32 waypoints** (heapless, no heap allocation).
 
-### Default curve
+## Built-in curves
 
-The built-in default curve (`RoastCurve::default_medium_roast()`) models a typical 10-minute medium roast:
+### Medium: `default_medium_roast()`
+
+The default of `embedded,simulated-sensors`. It models a typical 10-minute
+medium roast:
 
 | Phase | Time (s) | BT (°C) | ET (°C) |
 |---|---:|---:|---:|
@@ -83,21 +119,21 @@ The built-in default curve (`RoastCurve::default_medium_roast()`) models a typic
 | First crack | 420–540 | 215–225 | 240–250 |
 | Development hold | 540–600 | 225 | 250 |
 
-The curve stays below the over-temperature threshold (260 °C) to avoid triggering the safety shutdown during normal simulation.
+The curve stays below the 260 °C over-temperature threshold.
 
-> **Rate-of-rise interaction:** this is a time-based roast profile, not a
-> closed-loop plant, and its early ramp (~1.5–1.8 °C/s) is steeper than the
-> RoR guard (0.75 °C/s soft / 1.0 °C/s hard). Sending `START` against this
-> default curve enters Heating, arms the guard, and correctly latches
+> **Rate-of-rise interaction:** this is a time-based profile, not a closed-loop
+> plant. Its early ramp (up to ~1.8 °C/s) is steeper than the RoR guard
+> (0.75 °C/s soft / 1.0 °C/s hard). Sending `START` against this curve enters
+> Heating, arms the guard, and correctly latches
 > `Bean temperature rate-of-rise exceeded`. Use `PREHEAT` and `OT1` for
-> LED/actuator checks, use the guard-safe curve below, or define a custom
-> curve with a slope below 0.75 °C/s for a START/Heating test.
+> LED/actuator checks, use the typical curve below for `START`, or define a
+> custom curve with a slope below 0.75 °C/s.
 
-### Guard-safe typical roast
+### Typical: `typical_roast()`
 
-`RoastCurve::typical_roast()` models a charge-dip roast whose positive BT
-slopes stay below the soft RoR limit (at most ~0.33 °C/s). It is selected by
-the `simulated-typical-roast` feature, which implies `simulated-sensors`:
+Selected by `simulated-typical-roast`, which implies `simulated-sensors`. It
+models a charge-dip roast whose positive BT slopes stay below the soft RoR
+limit (at most ~0.33 °C/s):
 
 ```bash
 cargo build --release --target riscv32imc-unknown-none-elf \
@@ -116,21 +152,23 @@ FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
 | Turning point | 60 | 100 | 205 |
 | Drying | 120–300 | 110–168 | 210–225 |
 | Maillard / first crack | 360–420 | 184–196 | 230–234 |
-| Development | 480–600 | 204–214 | 238–243 |
+| Development | 420–600 | 196–214 | 234–243 |
 
-The initial negative slope (charge to turning point) cannot trip the RoR
-guard, and the subsequent positive slopes stay below 0.75 °C/s, so `START`
-remains in `Heating` with the solid green LED instead of latching
-`Bean temperature rate-of-rise exceeded`. The curve is time-based from source
-construction, so the first `READ` after a multi-second boot may already show
-a few seconds of the charge dip. See [`SIMULATION.md`](SIMULATION.md) §3.3
-for the Wokwi checklist.
+The initial negative slope cannot trip the RoR guard. The subsequent positive
+slopes stay below 0.75 °C/s, so `START` remains in `Heating` with the solid
+green LED. The curve is time-based from source construction, so the first
+`READ` after a multi-second boot already shows part of the charge dip. See
+[`SIMULATION.md`](SIMULATION.md) §3.3 for the Wokwi checklist.
 
-### Switching curves
+### Light: `light_roast()`
 
-Curve selection is compile-time. `SimulatedSensorSource::default_curve()` uses
-`RoastCurve::typical_roast()` when `simulated-typical-roast` is enabled and
-`RoastCurve::default_medium_roast()` otherwise:
+A light-roast trajectory used by host-side regression work. It has no Cargo
+feature; call it from code or tests. See the source module for the exact
+waypoints and the light-roast regression suite.
+
+## Switching curves
+
+`SimulatedSensorSource::default_curve()` selects the curve at compile time:
 
 | Curve | How to select it | Typical use |
 |---|---|---|
@@ -139,24 +177,27 @@ Curve selection is compile-time. `SimulatedSensorSource::default_curve()` uses
 | Light (`light_roast`) | No Cargo feature; call it from code or a host test | Light-roast regression work |
 | Custom | Build a `RoastCurve` and pass it to `SimulatedSensorSource::new` | Custom trajectories |
 
-There is no runtime curve selector and no need to rebuild after changing
-Wokwi MAX31856 sliders (F2 has no synthetic curve). The Wokwi run commands are
-in [`SIMULATION.md`](SIMULATION.md) §3.4.1.
+There is no runtime curve selector and no need to rebuild after changing Wokwi
+MAX31856 sliders (F2 has no synthetic curve). The Wokwi run commands are in
+[`SIMULATION.md`](SIMULATION.md) §3.4.1.
 
-### Noise
+## Noise
 
-By default, the simulated signal is perfectly clean (no jitter). You can add deterministic triangle-wave noise to simulate realistic sensor behaviour:
+By default the simulated signal is clean. You can add deterministic
+triangle-wave noise to model sensor jitter:
 
 ```rust
 let source = SimulatedSensorSource::default_curve()
     .with_noise_amplitude(0.5);  // ±0.5 °C
 ```
 
-The noise is deterministic (same input → same output) so tests remain reproducible. It uses a triangle wave with a period of ~2 seconds, offset between bean and env channels so they don't correlate perfectly.
+The noise is deterministic (same input → same output), so tests remain
+reproducible. It uses a triangle wave with a period of about 2 s, offset
+between the bean and environment channels so they do not correlate perfectly.
 
 ## Custom curves
 
-You can define a custom roast curve by building a `RoastCurve` with your own waypoints:
+Build a `RoastCurve` with your own waypoints:
 
 ```rust
 use libreroaster::hardware::sensors::{CurvePoint, RoastCurve, SimulatedSensorSource};
@@ -174,95 +215,116 @@ Points must be added in ascending `time_secs` order.
 
 ## Safety considerations
 
-The simulated sensor source produces valid, fault-free readings at every tick. This means:
+The simulated source produces valid, fault-free readings every tick:
 
-- **Stale-temperature guard** (1-second timeout) will not trigger — the curve generator produces a fresh reading on every `sample()` call.
-- **Over-temperature cutoff** (260 °C) will only trigger if the curve includes values at or above that threshold. The default medium roast curve stays below 260 °C.
-- **Consecutive-fallback guard** (5 failures) will never trigger — there are no read failures in simulated mode.
-- **PID and heater control** work normally because temperatures are finite and valid.
-- **Heat-source detection** (GPIO1) is a no-op here: the pin-interpretation path is gated `heat-sense` **without** `simulated-sensors` (`src/hardware/ssr_logic.rs`), so a simulated build never reports `NotDetected` and never forces heater output to 0%. (On real hardware, only the opt-in `heat-sense` build interprets GPIO1, and only above ≈50% duty.)
+- **Stale-temperature guard** (1 s) does not trigger; the generator returns a
+  fresh reading on every `sample()`.
+- **Over-temperature cutoff** (260 °C) triggers only if the curve includes
+  values at or above that threshold. The medium curve stays below it.
+- **Consecutive-fallback guard** (5 failures) never triggers; simulated mode
+  has no read failures.
+- **PID and heater control** work normally because temperatures are finite and
+  valid.
+- **Heat-source detection** (GPIO1) is a no-op: the pin-interpretation path is
+  gated on `heat-sense` **without** `simulated-sensors`
+  (`src/hardware/ssr_logic.rs`). A simulated build never reports `NotDetected`
+  and never forces heater output to 0 %. On real hardware, only the opt-in
+  `heat-sense` build interprets GPIO1, and only above ≈50 % duty.
 
-## What is and isn't tested
+## Coverage: what this mode proves
 
-### Tested (exercised by simulated curves)
+### Exercised by simulated curves
 
-- Artisan serial protocol (READ, STATUS, OT1, IO3, START, STOP, PID commands)
-- PID control loop computation and output
-- Stale-temperature and over-temperature safety guards
-- Control loop cadence and timing
-- Watchdog feeding
-- Telemetry emission and STATUS field formatting
-- Command parsing and multiplexing over USB CDC and UART
-- Temperature scale conversion (Celsius/Fahrenheit)
-- Profile and fan-profile interpolation
+- Artisan serial protocol (`READ`, `STATUS`, `OT1`, `IO3`, `START`, `STOP`,
+  PID commands).
+- PID computation and heater output.
+- Stale-temperature and over-temperature safety guards.
+- Control-loop cadence and timing.
+- Watchdog feeding.
+- Telemetry emission and `STATUS` field formatting.
+- Command parsing and multiplexing over USB CDC and UART.
+- Celsius/Fahrenheit conversion.
+- Profile and fan-profile interpolation.
 
-### Not tested (requires real hardware)
+### Not exercised by this mode
 
-- MAX31856 SPI communication and fault detection
-- Thermocouple signal integrity and noise rejection
-- Actual SSR switching behaviour
-- Fan PWM frequency and acoustic output
-- Heat-source detection GPIO response
-- Real thermal dynamics (thermal inertia, heat transfer delays)
+- MAX31856 SPI communication and fault detection (Wokwi F2 covers the SPI
+  path).
+- Thermocouple signal integrity and noise rejection.
+- Actual SSR switching behavior.
+- Fan PWM frequency and acoustic output.
+- Heat-source detection GPIO response (against real current sensing).
+- Real thermal dynamics: thermal inertia, heat transfer delays, and plant
+  feedback.
 
 ## Source files
 
 | File | Purpose |
 |---|---|
 | `src/hardware/sensors/simulated.rs` | `RoastCurve`, `CurvePoint`, `SimulatedSensorSource` — curve model, interpolation, noise |
-| `src/hardware/sensors/conversion.rs` | `SensorConversionHub` — conditional real/simulated/host backend |
+| `src/hardware/sensors/conversion.rs` | `SensorConversionHub` — real/simulated/host backend selection |
 | `src/hardware/sensors/mod.rs` | Module exports |
 | `src/hardware/init.rs` | Hardware init — SPI skipped when `simulated-sensors` is active |
 | `src/application/app_builder.rs` | `with_simulated_sensors()` builder method |
-| `src/main.rs` | Conditional build path for simulated vs real sensors |
-| `Cargo.toml` | `simulated-sensors` feature definition |
+| `src/main.rs` | Conditional path for simulated vs real sensors |
+| `Cargo.toml` | `simulated-sensors` and `simulated-typical-roast` features |
 
 ## Host-side tests
 
-The simulated curve module includes 21 tests (19 unit + 2 proptest properties) covering edge cases (empty/single-point/zero-range curves, interpolation boundaries, the 32-waypoint cap, the BUG-2b-1 exact-segment-end case, and hostile-input properties). The module only compiles with `simulated-sensors`, so the feature is required on the host:
+The simulated curve module includes 23 tests under `simulated-sensors`
+(21 unit + 2 proptest properties). Enabling `simulated-typical-roast` adds one
+test for default-curve selection (24 total). Coverage includes
+empty/single-point/zero-range curves, interpolation boundaries, the
+32-waypoint cap, the BUG-2b-1 exact-segment-end case, and hostile-input
+properties. The module compiles only with `simulated-sensors`, so the feature
+is required on the host:
 
 ```bash
-cargo test --target x86_64-unknown-linux-gnu --features test,simulated-sensors --lib hardware::sensors::simulated
+cargo test --target x86_64-unknown-linux-gnu \
+  --features test,simulated-sensors \
+  --lib hardware::sensors::simulated
 ```
 
 ## Hardware validation scripts (no sensors needed)
 
-Two scripts in `scripts/` exercise the simulated curve on a real ESP32-C3
-over the Artisan serial protocol. Both follow the repo HIL line format
-(`TEST:<name>:<PASS|FAIL>:<detail>`, `TESTSUITE:COMPLETE:x/y:<status>`)
-and exit 0 only when every check passes. Last full hardware pass:
-2026-09-14 (virtual roast 15/15, soak 12/12).
+Two scripts exercise the simulated curve on a real ESP32-C3 over the Artisan
+serial protocol. Flash the board with
+`--features "embedded,simulated-sensors"` first. Both follow the repo HIL line
+format (`TEST:<name>:<PASS|FAIL>:<detail>`, `TESTSUITE:COMPLETE:x/y:<status>`) and exit 0
+only when every check passes. Last full hardware pass: 2026-09-14 (virtual
+roast 15/15, soak 12/12).
 
 | Script | What it proves on hardware | Runtime |
 |---|---|---|
-| `scripts/hw_virtual_roast.py` | Full roast lifecycle (idle → preheat → roast → stop → recovered idle); PROFILE/FANPROFILE interpolation follows roast time (SV/fan vs expected); STOP operator path (heater cut, fan 100 %, latch) + `PID;OFF` recovery | ~2 min |
-| `scripts/hw_soak.py` | 1 Hz `#` stream integrity over the whole default curve: format, cadence, monotonic timestamps (no resets), no glitches, full BT span, no `safety_fault`, device responsive afterwards | ~12 min (660 s capture) |
+| `scripts/hw_virtual_roast.py` | Full roast lifecycle (idle → preheat → roast → stop → recovered idle); PROFILE/FANPROFILE interpolation follows roast time; STOP operator path (heater cut, fan 100 %, latch) + `PID;OFF` recovery | ~2 min |
+| `scripts/hw_soak.py` | 1 Hz `#` stream integrity over the default curve: format, cadence, monotonic timestamps, no glitches, full BT span, no `safety_fault`, device responsive afterward | ~12 min (660 s capture) |
 
 ```bash
 python3 scripts/hw_virtual_roast.py --port /dev/ttyUSB0
 python3 scripts/hw_soak.py --port /dev/ttyUSB0 --duration 660
 ```
 
-Two things the scripts encode that are easy to get wrong by hand:
+Two details the scripts encode because they are easy to get wrong by hand:
 
-- **Session keepalive.** The firmware drops the active transport after
-  60 s without commands in Idle (`CommandMultiplexer::IDLE_TIMEOUT_SECS`
-  anti-hijack failover), which silently stops telemetry routing even
-  with `STREAM;ON`. When the heater is energized or a roast is active, the
-  safety `COMMS_IDLE_TIMEOUT_MS` (15 s) latches first, so send `READ` or
-  `STATUS` every 5-10 s. Like Artisan (which polls `READ` continuously),
-  `hw_soak.py` sends `STATUS` every 25 s because it only observes the curve
-  in Idle.
-- **Single UART cable.** See `docs/DEVELOPMENT.md` §9: with the native-USB
-  cable plugged, `esp-println`'s `auto` printer may route lines to the
-  unread USB side once the host enumerates it. Capture HIL output on
-  UART0 with native USB unplugged.
+- **Session keepalive.** In Idle, the firmware drops the active transport after
+  60 s without commands (`CommandMultiplexer::IDLE_TIMEOUT_SECS`), which stops
+  telemetry routing even with `STREAM;ON`. When the heater is energized or a
+  roast is active, the safety `COMMS_IDLE_TIMEOUT_MS` (15 s) latches first, so
+  send `READ` or `STATUS` every 5–10 s. `hw_soak.py` sends `STATUS` every 25 s
+  because it observes the curve in Idle.
+- **Single UART cable.** With the native-USB cable plugged, `esp-println`'s
+  `auto` printer may route lines to the unread USB side once the host
+  enumerates it. Capture HIL output on UART0 with native USB unplugged. See
+  [`DEVELOPMENT.md`](DEVELOPMENT.md) §9.
 
 Soak raw captures are saved under `logs/` (git-ignored) for forensics.
 
 ## Related documentation
 
-- `docs/ARCHITECTURE.md` — Runtime architecture and task topology
-- `docs/DEVELOPMENT.md` — Build, flash, and test workflows
-- `docs/HARDWARE.md` — Pin map and hardware constraints
-- `docs/PROTOCOL.md` — Artisan serial command reference
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime architecture and task
+  topology.
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) — build, flash, and test workflows.
+- [`HARDWARE.md`](HARDWARE.md) — pin map and hardware constraints.
+- [`PROTOCOL.md`](PROTOCOL.md) — Artisan serial command reference.
+- [`SIMULATION.md`](SIMULATION.md) — Wokwi no-hardware simulation and scripted
+  scenarios.

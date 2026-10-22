@@ -159,7 +159,7 @@ FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
 ```
 
-Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls and the experimental esp-emulator status.
+Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls, and the experimental esp-emulator status. For automated serial checks with `wokwi-cli`, including the F1/F2/F3 scenario files, see `SIMULATION.md` §3.4.1.
 
 ### Artisan wire-contract tests (Audit A-TC4)
 

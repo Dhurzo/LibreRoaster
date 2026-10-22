@@ -242,7 +242,7 @@ cargo espflash monitor --port /dev/ttyACM0 --speed 115200
 
 ### Simulated sensors mode
 
-Build and flash with the `simulated-sensors` feature to run on a bare ESP32-C3 **without any thermocouples or actuators connected**. The firmware generates synthetic temperature readings from a configurable roast curve and feeds them through the entire control stack — PID, safety, telemetry, and Artisan serial protocol — exactly as if real sensors were connected.
+Build and flash with the `simulated-sensors` feature to run on a bare ESP32-C3 **without thermocouples (or a real heater/fan) connected**. The firmware generates synthetic BT/ET readings from a configurable roast curve and feeds them through the normal control stack: PID, safety, telemetry, and the Artisan serial protocol. This mode bypasses the MAX31856 SPI path; use Wokwi F2 or HIL when you need to exercise that path.
 
 Useful for:
 - Verifying serial connectivity over USB CDC or UART
@@ -262,9 +262,15 @@ cargo build --release --target riscv32imc-unknown-none-elf \
   --features "embedded,simulated-typical-roast"
 ```
 
-See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, and the full architecture.
+See [`docs/simulated-curve-test.md`](docs/simulated-curve-test.md) for curve presets, noise injection, curve selection, and the full architecture.
 
-For a visual, no-hardware pinout check in Wokwi (real SPI sensor path, LEDs, PWM, and the GPIO1 heat-sense switch), see [`docs/SIMULATION.md`](docs/SIMULATION.md). F3 (`simulated-typical-roast`) is the guard-safe synthetic curve for testing `START`/`Heating` without tripping the rate-of-rise guard. The default roast-temperature preset and switch runbook are in [`docs/WOKWI_ROAST_PRESET.md`](docs/WOKWI_ROAST_PRESET.md). Scripted scenarios for F1 (simulated `READ`/`PREHEAT`), F2 (real SPI), and F3 (`PREHEAT`/`START` keepalive) are documented in `docs/SIMULATION.md` §3.4.1.
+For no-hardware Wokwi checks, see [`docs/SIMULATION.md`](docs/SIMULATION.md):
+
+- **F1** — synthetic temperatures and board/UART/PWM bring-up.
+- **F2** — real MAX31856 SPI path, LEDs, PWM, and the GPIO1 heat-sense switch.
+- **F3** — guard-safe `START`/`Heating` without tripping the RoR guard.
+
+F2's temperature preset and switch runbook are in [`docs/WOKWI_ROAST_PRESET.md`](docs/WOKWI_ROAST_PRESET.md). Scripted F1/F2/F3 checks with `wokwi-cli` are in `docs/SIMULATION.md` §3.4.1.
 
 ### Additional quality checks
 
@@ -290,8 +296,9 @@ The main technical documents are:
 - **`docs/ARTISAN_MODES.md`** — manual vs profile roast modes with Artisan (commands, examples, rules)
 - **`docs/DEVELOPMENT.md`** — build, flash, test, and quality workflow
 - **`docs/INSTRUMENTATION.md`** — deep explanation of the 20-field status line and internal diagnostics
-- **`docs/simulated-curve-test.md`** — simulated sensor curve presets, noise injection, and architecture
-- **`docs/WOKWI_ROAST_PRESET.md`** — typical thermocouple preset and heat-sense switch runbook for the Wokwi simulation
+- **`docs/SIMULATION.md`** — Wokwi F1/F2/F3, scripted scenarios, pin checklist, and safety boundary
+- **`docs/simulated-curve-test.md`** — simulated sensor curve presets, curve selection, noise injection, and architecture
+- **`docs/WOKWI_ROAST_PRESET.md`** — typical thermocouple preset and heat-sense switch runbook for Wokwi F2
 - **`docs/pinout.md`** — pin mapping reference
 - **`SECURITY.md`** — supported versions, vulnerability reporting, and disclosure policy
 - **`.github/dependabot.yml`** — automated dependency updates (Cargo weekly, Actions monthly)

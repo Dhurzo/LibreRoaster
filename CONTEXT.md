@@ -209,4 +209,4 @@ cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,sim
 
 ---
 
-*Last updated: 2026-10-21. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
+*Last updated: 2026-10-22. This file is the single source of truth for project context. If information here conflicts with other docs, update this file.*
