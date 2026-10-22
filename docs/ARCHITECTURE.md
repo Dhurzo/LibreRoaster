@@ -2,7 +2,14 @@
 
 **Last updated:** 2026-10-17
 
-This document describes the current firmware architecture of LibreRoaster from the implementation outward. It is written for engineers who need to reason about runtime behavior, ownership boundaries, timing, and the points where protocol handling meets real hardware.
+This document describes the current firmware architecture of LibreRoaster from the implementation
+outward. It is written for engineers who need to reason about runtime behavior, ownership
+boundaries, timing, and the points where protocol handling meets real hardware.
+
+Related documents: [`CONTROL_LOOP.md`](CONTROL_LOOP.md) for tick-level behavior,
+[`CONTROL_CORE.md`](CONTROL_CORE.md) for normative control rules,
+[`SAFETY_CASE.md`](SAFETY_CASE.md) for hazard evidence, and [`PROTOCOL.md`](PROTOCOL.md) for the
+wire contract.
 
 ## 1. System model
 
@@ -61,7 +68,7 @@ also means the `ServiceContainer` becomes the central ownership hub.
 `ServiceContainer` is the process-wide service locator. It owns three
 fields on host (`roaster`: async-mutex guarded control state,
 `artisan_input`, `watchdog_feeder`), plus a fourth embedded-only field
-`status_led` on `riscv32` (`service_container.rs:33-47`):
+`status_led` on `riscv32`:
 
 The command channel (`ARTISAN_CMD_CHANNEL`), the output channel, and the
 command multiplexer are module-level `static`s that the container accesses
@@ -78,10 +85,8 @@ through accessor methods (`get_artisan_channel`, `get_output_channel`,
 ## 4. Task graph
 
 The embedded system is built around a fixed task graph: 5 long-lived worker
-tasks spawned by `Application::start_tasks` (`src/application/app_builder.rs:205-224`) plus
-the `async_main_task` supervisor (`src/main.rs:111-129`, spawned via
-`executor.run` in `src/main.rs:284-304`)
-(6 Embassy tasks total; docs count the 5 workers).
+tasks spawned by `Application::start_tasks` plus the `async_main_task` supervisor (six Embassy
+tasks total; this document counts the five long-lived workers).
 
 ### Input side
 
@@ -167,7 +172,7 @@ Since the CORE refactor (2026-10-09) three concerns live in small pure modules n
 
 ### State model
 
-The high-level firmware states are (`src/config/constants.rs:290-301`):
+The high-level firmware states are defined in `src/config/constants.rs`:
 
 - `Idle`
 - `Preheating`
@@ -207,7 +212,7 @@ The device controls:
 - **fan** through a separate LEDC-backed PWM path,
 - **heat detection** through a GPIO input used as a hardware sanity signal
   (optional circuit — interpreted only with the opt-in `heat-sense` feature;
-  see `docs/HARDWARE.md` §8).
+  see [`HARDWARE.md`](HARDWARE.md) §8).
 
 The LEDC subsystem is wrapped by a guard layer to catch long or stalled access paths.
 
@@ -269,67 +274,32 @@ real ticks).
 
 ## 10. Safety architecture
 
-LibreRoaster’s safety story is layered, not singular.
+Safety is layered, not singular. Each layer has a different failure mode and a different recovery
+path:
 
-### Control and thermal safeguards
+- **Thermal and sensor guards** — over-temperature cutoff, stale-temperature invalidation,
+  probe-stuck detection, RoR limits, and sensor fault debounce.
+- **Actuator guards** — emergency heater-off, fan floor, SSR cycle guard, slew limiting, and
+  optional heat-source cross-check.
+- **Runtime guards** — software watchdog reporting, hardware RTC watchdog reset, LEDC timeout
+  counters, bounded command/output channels, and a panic path that drives the SSR control line low.
+- **Operator-visible state** — a latched fault rejects re-energizing commands and is reported on the
+  wire; `STATUS` exposes watchdog, guard, PID, latency, and fault state.
 
-- over-temperature shutdown threshold
-- stale-temperature invalidation
-- emergency stop path
-- heat-source detection
-
-### Runtime safeguards
-
-- software watchdog reporting
-- hardware RTC watchdog reset
-- LEDC timeout guard (counter-only; exposed as the STATUS `ledc_guard_timeouts` field)
-- command-channel backpressure (capacity 16; a full channel drops the newest command with `ERR channel_full command_dropped`)
-- panic guard that re-muxes GPIO10 low before the backtrace
-
-### Diagnostic visibility
-
-The `STATUS` line exports watchdog health, guard timeout counts, PID internals, command latency, regression state, and current display scale. The firmware is built so external automation can detect not only roast conditions but also operational degradation.
-
-Since the A-TC4 audit (2026-08-12), internal safety traps additionally
-emit a `ERR safety_fault <reason>` line on the wire exactly once per latch
-event (`emergency_shutdown` in `RoasterControl`) — a connected host learns
-about the latch immediately instead of discovering it through the next
-rejected command. The operator-initiated `STOP` path does not emit it.
-While the latch is armed, the handshake commands `CHAN`/`UNITS`/`FILT`
-plus `SetStreaming` (`STREAM;ON`/`STREAM;OFF`, allowed under latch per
-the whitelist in `src/control/roaster_control.rs:1314-1347`) remain accepted (they carry no
-actuator side effects), so Artisan can
-reconnect to a latched device instead of looping on "Arduino could not set
-channels/units/filters"; every re-energizing command stays rejected.
-
-The rate-of-rise guard is two-tier since the A-TC4-D audit (2026-08-12):
-soft-band exceedances (0.75–1.0 °C/s) require ~3.7 s of sustained rate
-before latching, so a brief light-roast turnaround spike no longer
-false-trips, while the hard band (> 1.0 °C/s) keeps the fast 3-tick latch.
-In manual/software-PID mode the probe-stuck detector is two-stage
-(A-TC4-C): a wire warning at 120 s of flat BT, the latch at 300 s.
+The hazard table, threshold rationale, and test evidence live in [`SAFETY_CASE.md`](SAFETY_CASE.md).
+State transitions and latch recovery live in [`CONTROL_LOOP.md`](CONTROL_LOOP.md). Wire-level error
+and latch semantics live in [`PROTOCOL.md`](PROTOCOL.md).
 
 ## 11. Protocol boundary with Artisan
 
-LibreRoaster is compatible with the official Artisan application at the serial-command level, but it is not a full reimplementation of Artisan’s broader ecosystem.
+LibreRoaster is compatible with the official Artisan application at the serial-command level. It
+implements TC4-style command/response flows, temperature-scale negotiation, PID and profile
+commands, and live telemetry. It is not a reimplementation of Artisan's broader ecosystem: profile
+file interchange, WebSocket/Modbus device modes, artisan.plus synchronization, and the full vendor
+driver matrix are out of scope.
 
-It implements:
-
-- TC4-style command/response flows,
-- temperature scale negotiation,
-- PID command aliases,
-- profile-following commands,
-- live telemetry.
-
-It does not natively implement:
-
-- Artisan profile file interchange,
-- WebSocket device mode,
-- Modbus device mode,
-- artisan.plus cloud synchronization,
-- the broader vendor-driver matrix that Artisan supports.
-
-That boundary is intentional. LibreRoaster is a device firmware endpoint, not a desktop roasting suite.
+The exact command grammar, response shapes, error tokens, and compatibility boundary belong to
+[`PROTOCOL.md`](PROTOCOL.md).
 
 ## 12. Architectural pressure points
 
@@ -345,11 +315,10 @@ If a future change affects one of these areas, it is architectural work, not jus
 
 ## 13. Reading order for new contributors
 
-For a cold technical reader, the best order is:
-
-1. this architecture guide,
-2. the protocol reference (`docs/PROTOCOL.md`),
-3. the hardware guide (`docs/HARDWARE.md`),
-4. the development guide (`docs/DEVELOPMENT.md`),
-5. the instrumentation guide (`docs/INSTRUMENTATION.md`),
-6. check `CONTEXT.md` (repo root) for current project state and source layout.
+1. [`../CONTEXT.md`](../CONTEXT.md) for current state and constraints.
+2. this architecture guide.
+3. [`CONTROL_LOOP.md`](CONTROL_LOOP.md) for the tick and control flow.
+4. [`PROTOCOL.md`](PROTOCOL.md) for the serial contract.
+5. [`HARDWARE.md`](HARDWARE.md) for pins and electrical constraints.
+6. [`DEVELOPMENT.md`](DEVELOPMENT.md) for build and verification.
+7. [`README.md`](README.md) for the full documentation map.

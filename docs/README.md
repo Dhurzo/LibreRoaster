@@ -11,7 +11,7 @@ Start with the path that matches your goal:
 | Connect the official Artisan app | [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) |
 | Run a manual or profile roast from Artisan | [`ARTISAN_MODES.md`](ARTISAN_MODES.md) |
 | Use CHARGE/DROP, RoR-follow, or autotune | [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md) |
-| Understand the runtime and control core | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CONTROL-LOOP.en.md`](CONTROL-LOOP.en.md), [`CONTROL_CORE.md`](CONTROL_CORE.md) |
+| Understand the runtime and control core | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CONTROL_LOOP.md`](CONTROL_LOOP.md), [`CONTROL_CORE.md`](CONTROL_CORE.md) |
 | Look up the serial protocol | [`PROTOCOL.md`](PROTOCOL.md) |
 | Interpret STATUS and diagnostics | [`INSTRUMENTATION.md`](INSTRUMENTATION.md) |
 | Build or wire the hardware | [`HARDWARE.md`](HARDWARE.md), [`pinout.md`](pinout.md) |
@@ -31,7 +31,7 @@ Start with the path that matches your goal:
 
 1. [`../CONTEXT.md`](../CONTEXT.md) for current state and constraints.
 2. [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system model.
-3. [`CONTROL-LOOP.en.md`](CONTROL-LOOP.en.md) for tick-level behavior.
+3. [`CONTROL_LOOP.md`](CONTROL_LOOP.md) for tick-level behavior.
 4. [`FEATURE_MAP.md`](FEATURE_MAP.md) for code navigation.
 5. [`DEVELOPMENT.md`](DEVELOPMENT.md) for the verification workflow.
 
@@ -53,8 +53,8 @@ Start with the path that matches your goal:
 
 | Topic | Owner | Other documents must link, not duplicate |
 |---|---|---|
-| Runtime architecture, boot, task graph | `ARCHITECTURE.md` | README, CONTEXT, CONTROL_LOOP |
-| Tick stages, PID flow, event handling | `CONTROL-LOOP.en.md` | ARCHITECTURE |
+| Runtime architecture, boot, task graph | `ARCHITECTURE.md` | README, CONTEXT, CONTROL_LOOP.md |
+| Tick stages, PID flow, event handling | `CONTROL_LOOP.md` | ARCHITECTURE |
 | Normative control-core rules | `CONTROL_CORE.md` | ARCHITECTURE, DEVELOPMENT |
 | Hazard → guard → test evidence | `SAFETY_CASE.md` | README, ARCHITECTURE, Artisan guides |
 | Wire grammar, commands, responses, errors | `PROTOCOL.md` | Artisan guides, README, INSTRUMENTATION |

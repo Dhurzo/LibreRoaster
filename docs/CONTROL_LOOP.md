@@ -1,6 +1,10 @@
-# Control Loop & Event Management
+# Control Loop and Event Management
 
-> Technical documentation of the main control loop and command/event handling in LibreRoaster v0.0.1 Alpha.
+This document owns tick-level behavior: the order of stages inside a control-loop tick, how
+commands and telemetry move through the system, and how the control state machine reacts. The
+task graph and ownership model live in [`ARCHITECTURE.md`](ARCHITECTURE.md); normative control
+rules live in [`CONTROL_CORE.md`](CONTROL_CORE.md); hazard evidence lives in
+[`SAFETY_CASE.md`](SAFETY_CASE.md); wire grammar lives in [`PROTOCOL.md`](PROTOCOL.md).
 
 ---
 
@@ -18,7 +22,7 @@ The firmware runs on a **single‑thread cooperative model** (Embassy executor o
 │         │               │               │                        │
 │         ▼               ▼               ▼                        │
 │  artisan_channel  MAX31856×2      RoasterControl                │
-│  (MPSC cap=16)    (async SPI)     (Mutex<RefCell<...>>)        │
+│  (MPSC cap=16)    (async SPI)     (async Mutex)        │
 └─────────────────────────────────────────────────────────────────┘
          │               │               │
          ▼               ▼               ▼
@@ -33,7 +37,7 @@ The firmware runs on a **single‑thread cooperative model** (Embassy executor o
 
 ## 2. Control Loop Task
 
-**File:** `src/application/tasks.rs:1041`
+**File:** `src/application/tasks.rs` — `control_loop_task()`
 
 ```rust
 #[embassy_executor::task]
@@ -54,7 +58,7 @@ pub async fn control_loop_task() {
 
 ## 3. Tick Stages (`control_loop_tick`)
 
-`src/application/tasks.rs:949` — executed **sequentially** within the same tick.
+`control_loop_tick()` — executed **sequentially** within the same tick.
 
 | # | Stage | Function | Approx. time | Description |
 |---|-------|----------|--------------|-------------|
@@ -70,7 +74,7 @@ pub async fn control_loop_task() {
 ### 3.1 Drain Commands
 
 ```rust
-// src/application/tasks.rs:221
+// src/application/tasks.rs — drain_commands()
 async fn drain_commands(tick_state: &mut TickState) {
     let cmd_channel = ServiceContainer::get_artisan_channel();
     while let Ok(traced_command) = cmd_channel.try_receive() {
@@ -85,7 +89,7 @@ async fn drain_commands(tick_state: &mut TickState) {
 ### 3.2 Read Sensors
 
 ```rust
-// src/application/tasks.rs:332
+// src/application/tasks.rs — read_sensors()
 async fn read_sensors(...) {
     tick_state.sensor_err = ServiceContainer::roaster_async_sensor_read().await.err();
     // Internally:
@@ -101,18 +105,18 @@ async fn read_sensors(...) {
 ### 3.3 Control Update
 
 ```rust
-// src/application/tasks.rs:378
+// src/application/tasks.rs — update_control_stage()
 async fn update_control_stage(...) -> (Option<ControlUpdateSnapshot>, Option<SystemStatus>) {
     ServiceContainer::with_roaster_async(|roaster| roaster.update_control(Instant::now()))
 }
 ```
 
-→ Delegates to **`RoasterControl::update_control()`** (sync, see §4).
+→ Delegates to **`RoasterControl::update_control()`** (sync, see control logic below).
 
 ### 3.4 Telemetry Emit
 
 ```rust
-// src/application/tasks.rs:686
+// src/application/tasks.rs — emit_telemetry_stage()
 async fn emit_telemetry_stage(...) {
     // Continuous # @ 1 Hz (DEFAULT_OUTPUT_INTERVAL_MS = 1000)
     // Epoch aligned to START (not to prior OT1/OT2)
@@ -128,7 +132,7 @@ async fn emit_telemetry_stage(...) {
 
 ## 4. Control Logic: `RoasterControl::update_control()`
 
-`src/control/roaster_control.rs:762` — **sync function** called from stage 3.
+`RoasterControl::update_control()` — **sync function** called from the control-update stage.
 
 ### 4.1 Safety Gates (evaluated in order; any triggers emergency)
 
@@ -190,7 +194,7 @@ let desired_output = if safety.is_emergency_active() {
 
 ### 4.3 PID Control (`update_pid_control`)
 
-`src/control/roaster_control.rs:2575`
+`RoasterControl::update_pid_control()`
 
 - **Throttle:** `pid_cycle_time_ms` (default 100 ms, configurable via `PID;CT`, floor 10 ms)
 - **RoR‑follow:** the follower's setpoint is stepped on every control tick; the temperature profile interpolation is suspended while RoR‑follow runs
@@ -247,31 +251,14 @@ ServiceContainer::with_roaster_async(|roaster| {
 
 ### 5.2 Command Dispatch (`process_artisan_command`)
 
-`src/control/roaster_control.rs:1260`
-
-```rust
-// WHITELIST when fault_condition active: READ, STATUS, STOP, EMERGENCY_STOP, START, PREHEAT, CHAN, UNITS, FILT, STREAM, CHARGE, DROP, TUNE;STATUS, RORPROFILE;OFF
-// Others → ERR fault_condition_active
-
-match command {
-    ArtisanCommand::StartRoast       → handle_start_roast()
-    ArtisanCommand::SetHeater(v)     → forward_artisan_manual_command(SetHeaterManual(v))
-    ArtisanCommand::SetFan(v)        → forward_artisan_manual_command(SetFanManual(v))
-    ArtisanCommand::Stop             → if fault: clear_emergency_explicit(); handle_stop()
-    ArtisanCommand::EmergencyStop    → handle_emergency_stop()  // Latch, NO auto‑recover
-    ArtisanCommand::Preheat(t)       → handle_preheat(t)
-    ArtisanCommand::SetProfile       → handle_set_profile()     // Loads buffered profile
-    ArtisanCommand::SetFanProfile    → handle_set_fan_profile()
-    ArtisanCommand::SetPidGain(kp,ki,kd) → dispatch.set_pid_gains()
-    ArtisanCommand::SetTargetTemp(t) → handle_set_target_temp() // Enables PID
-    ArtisanCommand::SetStreaming(on) → enable/disable continuous `#` output
-    // ... PID;CHAN, PID;SV, PID;LIMIT, PID;CT, UNITS, FILT, CHAN, REG, DUMP
-}
-```
+`RoasterControl::process_artisan_command()` applies the safety-latch whitelist: monitoring,
+handshake, stop, and explicit-recovery commands are accepted while latched; re-energizing commands
+are rejected with `ERR fault_condition_active`. The authoritative command list and error tokens are
+in [`PROTOCOL.md`](PROTOCOL.md).
 
 ### 5.3 Internal Command Flow (`process_command`)
 
-`src/control/roaster_control.rs:310`
+`RoasterControl::process_command()`
 
 ```rust
 fn process_command(command: RoasterCommand, now: Instant) {
@@ -318,16 +305,11 @@ multiplexer.get_active_channel() → USB or UART
 Artisan PC
 ```
 
-### 5.5 Formatters (`src/output/artisan.rs`)
+### 5.5 Formatters
 
-| Command | Function | Format |
-|---------|----------|--------|
-| `READ` | `format_read_response_full()` | `AMB,ET,BT,CHAN3,CHAN4[,heater%,fan%,SV]` (8 fields PID on) / 5 fields PID off |
-| `STATUS` | `format_status_response()` | Single‑line CSV, 20 fields |
-| `CHAN` | `format_chan_ack(rate)` | `#<rate>` (e.g. `#1200`) |
-| `UNITS`/`FILT`/`STREAM` | `format_handshake_ack()` | `#OK` |
-| Continuous `#` | `MutableArtisanFormatter::format()` | `#<time>,ET,BT,ROR,Gas` @ 1 Hz |
-| `#DUMP` | `roast_logger::dump()` | Ring buffer 256 rows, drained 4/tick |
+Wire formats are owned by [`PROTOCOL.md`](PROTOCOL.md); field semantics are owned by
+[`INSTRUMENTATION.md`](INSTRUMENTATION.md). The implementation lives in
+`src/output/artisan.rs` (`ArtisanFormatter`, `MutableArtisanFormatter`).
 
 ---
 
@@ -352,107 +334,53 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
 
 ---
 
-## 7. Key Data Structures
+## 7. Concurrency and Ownership
 
-| Struct | File | Purpose |
-|--------|------|---------|
-| `SystemStatus` | `src/config/` | Live snapshot: temps, heater%, fan%, PID state, faults, SSR hw status |
-| `RoasterControl` | `src/control/roaster_control.rs` | Facade owning 4 controllers + roast state + profiles + charge detection |
-| `SensorController` | `src/control/controllers/sensor.rs` | Sampling, fault debounce, RoR guards (PV + BT‑only) |
-| `ActuatorController` | `src/control/controllers/actuator.rs` | SSR (zero‑cross), fan (PWM), slew/guard, health check |
-| `SafetyController` | `src/control/controllers/safety.rs` | Evaluates safety commands → `SafetyPolicyOutcome` |
-| `CommandDispatcher` | `src/control/controllers/dispatch.rs` | PID state, manual setpoints, continuous output manager |
-| `ServiceContainer` | `src/application/service_container.rs` | Singleton: `Mutex<RoasterControl>`, channels, watchdog, multiplexer |
+`RoasterControl` is held behind the `ServiceContainer` async mutex and accessed in short
+`with_roaster_async(...)` closures. Reader tasks send into the bounded command channel; the control
+loop drains it; output lines enter a bounded output channel consumed by the dual-output task. The
+multiplexer uses a critical-section mutex because it is read from the output path. The ownership
+diagram and channel capacities are in [`ARCHITECTURE.md`](ARCHITECTURE.md); the code map is in
+[`FEATURE_MAP.md`](FEATURE_MAP.md).
 
----
-
-## 8. Concurrency & Synchronization
-
-| Resource | Protection | Access Pattern |
-|----------|------------|----------------|
-| `RoasterControl` | `EmbassyMutex<CriticalSectionRawMutex, Option<...>>` in `ServiceContainer` | `with_roaster_async(|r| { ... }).await` (brief lock) |
-| `artisan_channel` | `Channel<CriticalSectionRawMutex, 16>` | `try_send` (readers), `try_receive` (control_loop) |
-| `output_channel` | `Channel<CriticalSectionRawMutex, 16>` | `try_send` (control/handlers), `try_receive` (dual_output) |
-| `multiplexer` | `Mutex<RefCell<Option<CommandMultiplexer>>>` | `critical_section::with` (dual_output) |
-| Watchdog | `WatchdogFeeder` in `ServiceContainer` | `with_watchdog(|w| w.feed_async(bt))` (sync, called from the control loop) |
-
-**No shared mutable state without sync primitives.** All cross‑task communication via channels.
-
----
-
-## 9. Critical Constants (`src/config/constants.rs`)
+## 8. Control-Loop Constants
 
 | Constant | Value | Use |
-|----------|-------|-----|
-| `CONTROL_LOOP_PERIOD_MS` | 100 | Nominal timer (real ~310‑330 ms) |
-| `MAX31856_CONVERSION_TIME_MS` | 210 | One‑shot conversion wait |
-| `TEMP_VALIDITY_TIMEOUT_MS` | 1000 | Staleness guard (tolerates ~2 missed ticks) |
-| `COMMS_IDLE_TIMEOUT_MS` | 15000 | Comms idle emergency |
-| `MAX_ROAST_TIME_SECS` | 1800 | 30 min roast budget (START/PROFILE anchor) |
-| `MAX_MANUAL_HEAT_SESSION_SECS` | 5400 | 90 min manual OT1 session cap (H2) |
-| `OVERTEMP_THRESHOLD` | 260.0 | °C BT overtemp latch |
-| `ET_OVERTEMP_THRESHOLD` | 300.0 | °C ET overtemp latch (provisional) |
-| `MAX_PID_UNCHARGED_SESSION_SECS` | 3600 | s cap for a `PID;ON` session before the charge |
-| `PROBE_STUCK_PID_PLATEAU_WARN_SECS` / `_LATCH_SECS` | 300 / 600 | s bound of the PID-mode equilibrium exemption at ≥ 50 % heater |
-| `MAX_BT_RATE_OF_RISE` | 0.75 | °C/s soft RoR band (H6b) |
-| `FAN_MIN_SAFETY_PCT` | 20.0 | Interlock minimum with heater>0 |
-| `SENSOR_FAULT_DEBOUNCE` | 5 | Fault latch threshold |
-| `MAX_BT_RATE_OF_RISE_HARD` | 1.0 | °C/s hard band |
-| `ROR_EXCEEDED_CONSECUTIVE_LIMIT` | 3 | Hard band ticks |
-| `ROR_SOFT_DEBOUNCE_LIMIT` | 12 | Soft band ticks |
-| `PROBE_STUCK_TIMEOUT_SECS` | 120 | Warning (manual) / latch (PID) |
-| `PROBE_STUCK_MANUAL_LATCH_SECS` | 300 | Latch stage (manual) |
-| `PROBE_STUCK_VARIATION_C` | 1.0 | Minimum °C movement |
-| `COOLING_RELEASE_BEAN_TEMP_C` | 60.0 | Cooldown latch release |
-| `DEFAULT_OUTPUT_INTERVAL_MS` | 1000 | Telemetry continuous rate |
-| `LOG_CAPACITY` | 256 | Ring buffer samples |
-| `HEAT_SESSION_OFF_DEBOUNCE_SECS` | 60 | Heat session end debounce |
+|---|---|---|
+| `CONTROL_LOOP_PERIOD_MS` | 100 | Nominal timer; real tick ≈310–330 ms |
+| `MAX31856_CONVERSION_TIME_MS` | 210 | One-shot conversion wait |
+| `TEMP_VALIDITY_TIMEOUT_MS` | 1000 | Staleness guard |
+| `COMMS_IDLE_TIMEOUT_MS` | 15000 | Host-loss guard while heating |
+| `MAX_ROAST_TIME_SECS` | 1800 | Roast budget anchored to START/PROFILE |
+| `MAX_MANUAL_HEAT_SESSION_SECS` | 5400 | Manual `OT1` session cap |
+| `MAX_PID_UNCHARGED_SESSION_SECS` | 3600 | `PID;ON` session before charge |
+| `DEFAULT_OUTPUT_INTERVAL_MS` | 1000 | Continuous telemetry interval |
+| `LOG_CAPACITY` | 256 | Roast ring-buffer samples |
+
+Safety thresholds, rationale, and test evidence live in [`SAFETY_CASE.md`](SAFETY_CASE.md). Timing
+constraints and the watchdog cadence live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## 9. Testing the Control Loop
+
+Run the canonical host and feature-specific commands from [`DEVELOPMENT.md`](DEVELOPMENT.md). The
+control-loop-specific coverage is:
+
+- `control_loop_tick_simulated_sensors_full_pipeline` — full tick over simulated sensors.
+- `tests/artisan_transcript_replay.rs` — wire-contract replay.
+- `tests/full_roast_verification.rs` — deterministic roast and safety scenarios.
+- `tests/core_golden.rs` — mode, recovery, and invariant trace.
+- `tests/sensor_conversion.rs` with `regression` — numeric conversion math.
+
+## 10. Related Documents
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system model, task graph, ownership, timing.
+- [`CONTROL_CORE.md`](CONTROL_CORE.md) — normative mode, batch, and detector rules.
+- [`SAFETY_CASE.md`](SAFETY_CASE.md) — hazards, guards, and automated evidence.
+- [`PROTOCOL.md`](PROTOCOL.md) — command grammar and wire responses.
+- [`INSTRUMENTATION.md`](INSTRUMENTATION.md) — STATUS fields and diagnostics.
+- [`FEATURE_MAP.md`](FEATURE_MAP.md) — code locations and change recipes.
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) — build and test commands.
 
 ---
 
-## 10. Testing the Control Loop
-
-```bash
-# Full tick with simulated sensors (L3 pipeline)
-cargo test --target x86_64-unknown-linux-gnu --features test,simulated-sensors \
-  --lib control_loop_tick_simulated_sensors_full_pipeline
-
-# Replay real Artisan transcripts (wire contract)
-cargo test --target x86_64-unknown-linux-gnu --features test \
-  --test artisan_transcript_replay
-
-# Full roast verification (18 deterministic tests: preheat, charge, profile, safety, STOP, 2× roasts)
-cargo test --target x86_64-unknown-linux-gnu --features test \
-  --test full_roast_verification
-
-# Race check (forces interleaving on shared container)
-cargo test --target x86_64-unknown-linux-gnu --features test \
-  --lib --tests --test-threads=1 --no-fail-fast
-
-# Regression numeric suite (sensor_conversion: 19‑bit two's‑complement math)
-cargo test --target x86_64-unknown-linux-gnu --features test,regression \
-  --test sensor_conversion --no-fail-fast
-```
-
----
-
-## 11. Quick Reference Files
-
-| What you need | File |
-|---------------|------|
-| Main task & tick loop | `src/application/tasks.rs` |
-| Per‑tick control logic | `src/control/roaster_control.rs::update_control()` |
-| Controllers (sensor, actuator, safety, dispatch) | `src/control/controllers/*.rs` |
-| Command parsing | `src/input/parser.rs` |
-| Artisan formatting | `src/output/artisan.rs` |
-| UART/USB readers | `src/hardware/uart/tasks.rs`, `src/hardware/usb_cdc/tasks.rs` |
-| Watchdog | `src/safety/watchdog.rs` |
-| Regression task | `src/safety/regression.rs` |
-| Status LED | `src/hardware/status_led.rs` |
-| Roast ring buffer | `src/logging/roast_logger.rs` |
-| Traceability / Instrumentation | `src/logging/traceability.rs`, `src/application/stage_instrumentation.rs` |
-| ServiceContainer (singleton) | `src/application/service_container.rs` |
-
----
-
-*Last updated: 2026‑10‑17. Synced with `develop` branch.*
+*Last updated: 2026-10-22.*

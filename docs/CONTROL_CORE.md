@@ -81,3 +81,12 @@ For each one it hashes a quantized per-tick trace. The trace includes the privat
 ```bash
 CORE_FUZZ_SEEDS=500 CORE_FUZZ_BASE=1000 cargo test --target x86_64-unknown-linux-gnu --features test --test core_golden -- --ignored
 ```
+
+---
+
+## Related Documents
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system model and ownership.
+- [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — tick stages and event flow.
+- [`SAFETY_CASE.md`](SAFETY_CASE.md) — hazards, guards, and test evidence.
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) — running the golden trace and regression suites.

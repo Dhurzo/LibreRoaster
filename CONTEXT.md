@@ -52,7 +52,7 @@ async-mutex `RoasterControl`, the Artisan input, and the watchdog feeder; the co
 channels and command multiplexer are module-level statics exposed through accessors.
 
 For the full model, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
-[`docs/CONTROL-LOOP.en.md`](docs/CONTROL-LOOP.en.md).
+[`docs/CONTROL_LOOP.md`](docs/CONTROL_LOOP.md).
 
 ## Key Design Decisions
 

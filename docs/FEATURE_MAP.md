@@ -5,7 +5,7 @@ when changing X?”.*
 
 Use this document to find the owning module and the symbols involved. Prefer symbol names over line
 numbers; line numbers drift with every refactor. Architecture and behavior belong in
-[`ARCHITECTURE.md`](ARCHITECTURE.md), [`CONTROL-LOOP.en.md`](CONTROL-LOOP.en.md), and
+[`ARCHITECTURE.md`](ARCHITECTURE.md), [`CONTROL_LOOP.md`](CONTROL_LOOP.md), and
 [`CONTROL_CORE.md`](CONTROL_CORE.md).
 
 ---

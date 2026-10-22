@@ -19,3 +19,13 @@ Each row: hazard → guard in firmware → automated evidence (test) → bench e
 | 13 | RoR-follow drives a runaway target | setpoint clamped to BT ± 3 °C, RoR 1–30 °C/min, BT channel only, ramp needs a real ≥ 20 °C charge drop (measured from the BT before the charge), probe-stuck armed while ramping, stops on DROP / SV after the ramp started / latch, re-armed only by *PID ON* after a CHARGE marker sent during OT1, never by the drop fall after DROP | `setpoint_always_within_lead_of_bt` (proptest), `e3_*`, `a1_*`, `a4_*`, `b1_*`, `b2_*`, `b5_*`, `b9_*` | First RoR-follow roast attended |
 | 14 | Autotune overheats | manual mode only, aborts on any command/latch/BT ≥ 230 °C, duty ≤ base+step | `e4_*`, `too_hot_aborts_mid_test` | First TUNE attended |
 | 15 | Old/new feature interaction | cross-feature fuzz invariants (128 random sequences per run) | `fuzz_new_commands_keep_safety_invariants` | — |
+
+---
+
+## Related Documents
+
+- [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — control flow and latch transitions.
+- [`CONTROL_CORE.md`](CONTROL_CORE.md) — normative mode and detector rules.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — safety architecture and runtime ownership.
+- [`PROTOCOL.md`](PROTOCOL.md) — wire-level fault and recovery commands.
+- [`HARDWARE.md`](HARDWARE.md) — electrical constraints behind the guards.
