@@ -1,5 +1,7 @@
 # Wokwi Roast Preset: Typical Thermocouple Temperatures
 
+**Last updated:** 2026-10-22
+
 This runbook covers the default MAX31856 values used by Wokwi F2 and the GPIO1
 heat-sense switch procedure. It changes simulation inputs only; it does not
 change firmware behavior.
@@ -128,38 +130,12 @@ If you do not need to test GPIO1, build `embedded` instead of
 `embedded,heat-sense`. The real SPI path and the actuators still run, and the
 switch is ignored.
 
-## 6. Build variants and automated checks
+## 6. Build and Scenario Selection
 
-| Build | Features | Sensors | GPIO1 heat-sense |
-|---|---|---|---|
-| F1 (bring-up) | `embedded,simulated-sensors` | Synthetic curve; SPI idle | Compiled out |
-| F2 (full pinout) | `embedded,heat-sense` | Real MAX31856 over SPI | Active; manual switch |
-| F2 without interlock | `embedded` | Real MAX31856 over SPI | Compiled out |
-| F3 (guard-safe START) | `embedded,simulated-typical-roast` | Synthetic typical curve; SPI idle | Compiled out |
-
-```bash
-# F2: real SPI + heat-sense
-FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
-
-# Real SPI + actuators, no GPIO1 interlock
-FEATURES=embedded ./scripts/sim-wokwi-prepare.sh
-
-# F1: board/UART/PWM bring-up with synthetic temperatures
-./scripts/sim-wokwi-prepare.sh
-
-# F3: guard-safe typical roast for START/Heating without the RoR latch
-FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
-```
-
-The matching automated checks are:
-
-- `scenarios/f1-smoke.yaml` — simulated `READ`/`PREHEAT`.
-- `scenarios/f2-spi.yaml` — real SPI reads; it does not move the heat-sense
-  switch.
-- `scenarios/f3-roast.yaml` — `PREHEAT`/`START` keepalive plus the GPIO8
-  assertion.
-
-The run commands and the compile-time curve-selection matrix are in
+This preset is used by F2 (`embedded,heat-sense`). F1 uses
+`embedded,simulated-sensors` for synthetic temperatures; F3 uses
+`embedded,simulated-typical-roast` for the guard-safe `START`/`Heating` path.
+The build variants, prepare commands, and scenario matrix are owned by
 [`SIMULATION.md`](SIMULATION.md) §3.4.1.
 
 ## 7. Troubleshooting

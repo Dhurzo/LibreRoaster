@@ -1,5 +1,7 @@
 # No-Hardware Simulation
 
+**Last updated:** 2026-10-22
+
 This guide explains how to run LibreRoaster without a physical ESP32-C3, what
 the Wokwi simulation can and cannot prove, and how to move between the
 supported test builds.
@@ -52,22 +54,11 @@ same `embedded` code path, plus simulation-only Cargo features
   point, then rises slowly enough that `START` can remain in `Heating` without
   tripping the rate-of-rise (RoR) guard.
 - **F0** (`scripts/sim-esp-emu.sh`) is a reproduction harness for the blocked
-  esp-emulator path. It is not a working firmware run; see §7.
+  esp-emulator path. It is not a working firmware run; see §6.
 
 ## 2. Prerequisites
 
-- Rust target `riscv32imc-unknown-none-elf`:
-
-  ```bash
-  rustup target add riscv32imc-unknown-none-elf
-  ```
-
-- `espflash` on `PATH`:
-
-  ```bash
-  cargo install espflash --locked
-  ```
-
+- Rust target and `espflash`: follow [`DEVELOPMENT.md`](DEVELOPMENT.md) §2.
 - VS Code with the Wokwi extension. The extension offers a free local license
   via `Wokwi: Request a new License`; a paid plan is not required for the GUI
   workflow.
@@ -204,6 +195,9 @@ exceeds the RoR guard and the firmware correctly latches
    is −50…100 °C. The warning is informational. There must be no
    `boot self-test failed`, `channel degraded`, or both-channels-dead abort.
    If you need the full `info!` block, add `instrumentation` to `FEATURES`.
+   A single failed channel degrades to single-channel operation; boot aborts
+   only when both channels fail. Set both sliders to 25 °C before reset for a
+   clean cold-boot log.
 
 3. Send `READ`. Expect approximately `35.0,220.0,200.0,0.0,0.0`
    (`AMB,ET,BT`).
@@ -450,50 +444,7 @@ A permanently all-zero conversion frame is rejected by the firmware (H13). The
 default chip values are non-zero, so this only matters if you force both
 temperature and cold junction to 0.
 
-## 6. F2 details: real SPI and heat-sense
-
-Build F2 without `simulated-sensors`:
-
-```bash
-FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
-```
-
-Use `FEATURES=embedded` to exercise the real SPI driver and actuators without
-the GPIO1 interlock; the heat-sense switch is then ignored. Use F1
-(`embedded,simulated-sensors`) only for board/UART/PWM bring-up, because it
-bypasses the SPI sensors entirely.
-
-At boot the firmware runs the real MAX31856 self-test on both channels. The
-diagram starts at a first-crack-like point: BT 200 °C, ET 220 °C, cold junction
-35 °C. The self-test plausibility window is −50…100 °C, so a hot preset logs
-`Temperature out of expected range` for both channels; that is expected and
-does not fail the channel. Set both sliders to 25 °C before reset for a clean
-cold-boot log. If one channel fails to respond, `init_spi_sensors` degrades
-that channel (single-channel boot) and aborts only when both fail.
-
-Move the `temperature` slider to see `READ` change. Large steps settle through
-the EMA filter over several seconds. Move `fault` to `0x01` to inject an open
-circuit; the control layer marks that channel faulted and the safety path
-reacts. Restore it to `0` to recover on a subsequent tick.
-
-The GPIO1 slide switch is the heat-sense input: LEFT connects GPIO1 to GND,
-which the firmware interprets as current flowing through the SSR. The diagram
-starts in the RIGHT position (no current). With the heater off, RIGHT is the
-only valid state; LEFT at boot makes the firmware latch `SSR stuck-on` after
-`HEAT_PRESENT_MISMATCH_MAX` samples.
-
-When you energize the heater in F2, move the switch LEFT within
-`HEAT_MISMATCH_WINDOW_MS` (1.5 s) and move it RIGHT again when the heater is
-off. This is a manual current-sense stimulus for the pinout test, not automatic
-electrical feedback. If the heater is energized with the switch RIGHT for
-longer than 1.5 s, the cross-check latches `heater not detected`; that is
-expected behavior, not a simulator bug. Move the switch RIGHT first, then use
-the documented recovery path (or reset the simulator) to clear the latch.
-
-In F1/F3 (`simulated-sensors`), `detect_heat_source` is compiled out, so the
-switch has no effect and the SPI pins stay idle.
-
-## 7. F0: esp-emulator (experimental, currently blocked)
+## 6. F0: esp-emulator (experimental, currently blocked)
 
 `scripts/sim-esp-emu.sh` builds the merged image and runs
 [esp-emulator](https://github.com/esp-emulator/esp-emulator). The emulator
@@ -521,7 +472,7 @@ ESP_EMU=/path/to/esp-emu ./scripts/sim-esp-emu.sh
 CONSOLE=uart0 ESP_EMU=/path/to/esp-emu ./scripts/sim-esp-emu.sh
 ```
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
@@ -539,7 +490,7 @@ CONSOLE=uart0 ESP_EMU=/path/to/esp-emu ./scripts/sim-esp-emu.sh
 | Fan PWM not visible on an LED | There is no fan LED by design (GPIO9 strapping); use LA D1 |
 | VCD file is huge | `vcdFile` is optional; remove it from `wokwi.toml` for long sessions |
 
-## 9. Safety boundary
+## 8. Safety boundary
 
 Simulation can prove that the firmware drives the intended pins, parses the
 intended protocol, and follows its control/safety state machine. It cannot

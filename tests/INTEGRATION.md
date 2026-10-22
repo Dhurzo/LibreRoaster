@@ -21,8 +21,9 @@ how to run it, and whether it needs real hardware.
 
 These run on x86_64 (your development machine). They validate formatting,
 parsing, and state-machine logic using mocks and stubs — no ESP32-C3 required.
-The canonical host gate (`--features test --lib --tests`) currently runs
-**913 tests** (579 library unit tests + 334 integration tests, 1 ignored).
+The canonical host gate is `--features test --lib --tests`. The current
+recorded counts live in the verification snapshot in
+[`docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md) §6.
 
 ```bash
 # Run all host integration tests

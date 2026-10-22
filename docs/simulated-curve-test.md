@@ -36,23 +36,19 @@ See “Switching curves” below.
 
 ## Build and flash
 
-```bash
-cargo build --release --target riscv32imc-unknown-none-elf \
-  --features "embedded,simulated-sensors"
+Only the feature set changes. Use the canonical build and flash commands in
+[`DEVELOPMENT.md`](DEVELOPMENT.md) §4–§5, adding `simulated-sensors` to the
+`embedded` feature set:
 
-cargo espflash flash --release --target riscv32imc-unknown-none-elf \
-  --features "embedded,simulated-sensors"
+```text
+--features "embedded,simulated-sensors"
 ```
 
 The firmware boots normally and initializes LEDC, UART, USB CDC, watchdog, and
 the SSR/fan drivers. SPI and MAX31856 initialization are skipped, and
 temperature readings come from the curve generator.
 
-To build with real sensors (the default):
-
-```bash
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
-```
+The real-sensor build is the plain `embedded` feature set.
 
 ## How it works
 

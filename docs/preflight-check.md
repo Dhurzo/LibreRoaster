@@ -1,318 +1,287 @@
-# LibreRoaster — Pre-Flight Checklist
+# LibreRoaster Pre-Flight Checklist
 
-**Purpose:** Mandatory verification before first power-on with real hardware.
-Complete every item in order. Do NOT skip steps.
+**Purpose:** mandatory verification before first power-on with real hardware. Complete every item
+in order and do not skip steps.
 
-**Last updated:** 2026-09-09
+**Last updated:** 2026-10-22
+
+This checklist owns the physical bring-up sequence. Build, flash, and test commands are owned by
+[`DEVELOPMENT.md`](DEVELOPMENT.md); pin definitions and electrical limits are owned by
+[`HARDWARE.md`](HARDWARE.md) and [`pinout.md`](pinout.md). Command grammar is owned by
+[`PROTOCOL.md`](PROTOCOL.md).
 
 ---
 
 ## Phase 0 — Build Verification (Computer)
 
-Run these commands before touching hardware.
+Run the canonical verification commands from [`DEVELOPMENT.md`](DEVELOPMENT.md) §4–§7 before
+touching hardware.
 
-```bash
-# 1. Embedded build must compile clean (zero warnings)
-cargo build --release --target riscv32imc-unknown-none-elf --features embedded
-
-# 2. Host test suite (expect all pass — 913 tests, 0 failures)
-cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1
-
-# 3. Format + clippy gate
-cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic
-```
-
-- [ ] Embedded build: **zero errors, zero warnings**
-- [ ] Host tests: **913 passed, 0 failed** (579 lib + 334 integration, 2026-10-17; any failure = regression)
-- [ ] Clippy: clean
+- [ ] Embedded build completes with zero errors and zero warnings.
+- [ ] Host test suite passes with no failures.
+- [ ] `cargo fmt --check` and the Clippy gate pass.
+- [ ] The firmware artifact was built with the intended feature set (`embedded`, plus
+  `heat-sense` only if the current-sense circuit is installed and validated).
 
 ---
 
 ## Phase 1 — Visual Inspection (Unpowered)
 
-With a multimeter in continuity/resistance mode, board **unpowered**.
+Use a multimeter in continuity/resistance mode with the board unpowered.
 
-### Power Rails
+### Power rails
 
-- [ ] 3.3V rail measures **3.3V ±5%** (3.15V – 3.45V) when powered
-- [ ] NO 5V connection to any ESP32-C3 pin
-- [ ] 100 µF electrolytic + 0.1 µF ceramic decoupling on 3.3V near ESP32-C3
+- [ ] 3.3 V rail measures **3.3 V ±5 %** (3.15–3.45 V) when powered.
+- [ ] No 5 V connection reaches any ESP32-C3 pin.
+- [ ] 100 µF electrolytic plus 0.1 µF ceramic decoupling are fitted near the ESP32-C3.
 
-### SPI Bus (MAX31856 Thermocouples)
+### SPI bus (MAX31856 thermocouples)
 
-Verify wiring matches the **firmware pinout** (not any other document):
+Verify against the pin map in [`HARDWARE.md`](HARDWARE.md) §2:
 
-| Signal | GPIO | Wire Color (note yours) |
-|--------|------|------------------------|
-| SCLK | **GPIO 6** | |
-| MOSI (SDI) | **GPIO 7** | |
-| MISO (SDO) | **GPIO 5** | |
-| CS ET | **GPIO 3** | |
-| CS BT | **GPIO 4** | |
+| Signal | GPIO |
+|---|---:|
+| SCLK | 6 |
+| MOSI (SDI) | 7 |
+| MISO (SDO) | 5 |
+| CS ET | 3 |
+| CS BT | 4 |
 
-- [ ] SCLK → GPIO 6 (not GPIO 7)
-- [ ] MOSI → GPIO 7 (not GPIO 5)
-- [ ] MISO → GPIO 5 (not GPIO 6)
-- [ ] CS ET → GPIO 3
-- [ ] CS BT → GPIO 4
-- [ ] MAX31856 VCC = **3.3V** (NOT 5V) — measure with multimeter
-- [ ] Type-K thermocouple polarity: yellow (+), red (−)
-- [ ] Both CS lines have no external pull-up/pull-down (firmware drives them)
+- [ ] SCLK → GPIO6, MOSI → GPIO7, MISO → GPIO5.
+- [ ] CS ET → GPIO3; CS BT → GPIO4.
+- [ ] MAX31856 VCC = **3.3 V**, not 5 V.
+- [ ] Type-K polarity: yellow (+), red (−).
+- [ ] Neither CS line has an external pull-up or pull-down; firmware drives both.
 
 ### Actuators
 
 | Signal | GPIO | Frequency |
-|--------|------|-----------|
-| SSR (heater) | **GPIO 10** | 5 Hz (zero-cross) |
-| Fan (MOSFET) | **GPIO 9** | 25 kHz |
-| Status LED | **GPIO 8** | — |
+|---|---:|---|
+| SSR heater | 10 | 5 Hz zero-cross |
+| Fan MOSFET | 9 | 25 kHz |
+| Status LED | 8 | — |
 
-- [ ] SSR control line → GPIO 10 (not any other pin)
-- [ ] Fan PWM line → GPIO 9
-- [ ] Status LED → GPIO 8 (if applicable)
+- [ ] SSR control line → GPIO10.
+- [ ] Fan PWM line → GPIO9.
+- [ ] Status LED → GPIO8 with a 330 Ω series resistor (if fitted).
 
-### Strapping Pin Protection
+### Strapping and protection
 
-- [ ] **GPIO 9**: 10 kΩ pull-up to 3.3V installed (mandatory on custom boards/bare modules; official dev boards already include it)
-- [ ] **GPIO 9**: Fan MOSFET gate driver is high-impedance at reset (must not pull GPIO9 LOW during boot; 1 kΩ series + 100 kΩ weak gate→GND)
-- [ ] **GPIO 10**: no strapping function (SSR PWM safe); external pull-down optional, not required by firmware
-- [ ] **GPIO 8**: LED circuit does NOT force download-mode combo (GPIO8=HIGH + GPIO9=LOW); push-pull safe for normal boot
-- [ ] **GPIO 2**: Nothing connected (strapping pin, avoided)
+- [ ] GPIO9 has a **10 kΩ pull-up to 3.3 V** on custom boards and bare modules; official dev boards
+  may already include it.
+- [ ] The fan gate driver is high-impedance at reset and cannot pull GPIO9 LOW during boot.
+- [ ] GPIO9 additionally has the 1 kΩ series resistor and 100 kΩ weak gate pull-down from
+  [`pinout.md`](pinout.md).
+- [ ] GPIO10 has a **10 kΩ pull-down to GND**. This is mandatory; the SSR line must not be HIGH
+  before firmware drives it.
+- [ ] GPIO8 does not form the invalid download-mode combination (GPIO8=HIGH + GPIO9=LOW).
+- [ ] GPIO2 is unconnected.
 
 ### Communication
 
-- [ ] UART RX → GPIO 20 (from CH341 TX)
-- [ ] UART TX → GPIO 21 (to CH341 RX)
-- [ ] CH341 VCC = 3.3V (not 5V) — or level-shifted if 5V CH341
-- [ ] USB cable connected to ESP32-C3 native USB port (not UART adapter)
+- [ ] UART RX ← adapter TX on GPIO20; UART TX → adapter RX on GPIO21.
+- [ ] The UART adapter is **3.3 V**, or its 5 V signals are level-shifted.
+- [ ] The USB cable is connected to the ESP32-C3 native USB port, not to a UART adapter.
 
 ---
 
-## Phase 2 — First Power-On (Heater DISCONNECTED)
+## Phase 2 — First Power-On (Heater Disconnected)
 
-**⚠️ CRITICAL: Do NOT connect the heater element yet.**
+**Do not connect the heater element yet.**
 
-1. Flash firmware:
-   ```bash
-   cargo espflash flash --release --target riscv32imc-unknown-none-elf \
-     --features embedded --monitor
-   ```
+1. Flash the firmware with the `embedded` feature using the command in
+   [`DEVELOPMENT.md`](DEVELOPMENT.md) §5.
+2. Open the serial monitor.
 
-2. Verify boot sequence in serial monitor:
+- [ ] Boot banner and `Hardware initialized` appear.
+- [ ] `Sensors initialized (BT: GPIO4, ET: GPIO3)` appears on a non-simulated build.
+- [ ] `Hardware watchdog initialized (RTC WDT)` appears.
+- [ ] `USB CDC initialized` appears.
+- [ ] No panic or fatal error appears.
+- [ ] The status LED follows the state pattern: off in `Idle`, 1 Hz in `Preheating`, solid in
+  `Heating`/`Stable`, 4 Hz on fault.
 
-- [ ] See `LibreRoaster v0.0.1 Alpha starting...`
-- [ ] See `Hardware initialized`
-- [ ] See `Sensors initialized (BT: GPIO4, ET: GPIO3)` (non-simulated build)
-- [ ] See `Hardware watchdog initialized (RTC WDT)`
-- [ ] See `USB CDC initialized`
-- [ ] See `Wake the f*** up samurai we have beans to burn!`
-- [ ] NO panic messages
-- [ ] LED on GPIO8 follows state pattern (`status_led.rs`: Off in `Idle`, 1 Hz in `Preheating`, solid in `Heating`/`Stable`, 4 Hz on fault) — not simply steady
+With a multimeter:
 
-3. GPIO state verification with multimeter:
-
-- [ ] GPIO 10 (SSR): **< 0.1V** (LOW — heater off)
-- [ ] GPIO 9 (Fan): **< 0.1V** (LOW — fan off)
-- [ ] GPIO 8 (LED): **~3.3V** (HIGH — LED on)
-- [ ] GPIO 3 (CS ET): **~3.3V** (HIGH — CS inactive)
-- [ ] GPIO 4 (CS BT): **~3.3V** (HIGH — CS inactive)
+- [ ] GPIO10 (SSR) < 0.1 V (LOW; heater off).
+- [ ] GPIO9 (fan) < 0.1 V (LOW; fan off).
+- [ ] GPIO8 (LED) follows the status pattern; in `Idle` it is LOW (≈0 V, LED off), not stuck HIGH.
+- [ ] GPIO3 (CS ET) ≈3.3 V (HIGH; inactive).
+- [ ] GPIO4 (CS BT) ≈3.3 V (HIGH; inactive).
 
 ---
 
 ## Phase 3 — Sensor Verification
 
-Connect via USB CDC (`/dev/ttyACM0`) using a serial terminal or Artisan.
+Connect over native USB (`/dev/ttyACM0`) or UART at 115200 8N1.
 
-### Temperature Reading
+### Temperature reading
 
-Send `READ` and verify response:
+Send `READ` and verify:
 
-```
-Expected: AMB,ET,BT,0.0,0.0   (PID off — 5 fields)
+```text
+Expected: AMB,ET,BT,0.0,0.0   (PID off; 5 fields)
 Example:  0.0,23.5,24.1,0.0,0.0
 ```
 
-- [ ] `READ` returns 5 comma-separated values (AMB carries the MAX31856 cold-junction mean, ≈ ambient — not a placeholder)
-- [ ] ET and BT are reasonable ambient temps (18°C – 30°C)
-- [ ] Heater = 0.0, Fan = 0.0 (both off)
+- [ ] `READ` returns five comma-separated values.
+- [ ] `AMB` is the MAX31856 cold-junction mean and is near ambient, not a placeholder.
+- [ ] ET and BT are reasonable ambient temperatures (18–30 °C).
+- [ ] Heater and fan fields are `0.0`.
 
-### Sensor Self-Test
+### Sensor self-test
 
-- [ ] ET temperature is not 0.0 or -999 (indicates SPI failure)
-- [ ] BT temperature is not 0.0 or -999
-- [ ] ET and BT are within ~2°C of each other at ambient
-- [ ] Touch BT thermocouple → BT reading rises within 2 seconds
-- [ ] Touch ET thermocouple → ET reading rises within 2 seconds
+- [ ] ET is not `0.0` or `-999` (either indicates SPI failure).
+- [ ] BT is not `0.0` or `-999`.
+- [ ] ET and BT are within ~2 °C of each other at ambient.
+- [ ] Touching the BT probe raises BT within 2 seconds.
+- [ ] Touching the ET probe raises ET within 2 seconds.
 
-**If any sensor reads 0.0 or absurd values → STOP. Do NOT proceed.** SPI wiring issue.
+**If any sensor reads 0.0 or an absurd value, stop. Do not proceed.** Check SPI wiring first.
 
-### Status Report
+### Status report
 
-Send `STATUS` and verify:
+Send `STATUS` and verify against [`INSTRUMENTATION.md`](INSTRUMENTATION.md):
 
-- [ ] Returns a 20-field numeric CSV line (fields: ET,BT,Heater,Fan,WatchdogOK,...)
-- [ ] Field 5 `WatchdogOK` = `1`
-- [ ] Field 3 `Heater` = `0.0` and field 4 `Fan` = `0.0` (both off)
-- [ ] Field 19 `TempScale` = `0`, field 20 `FaultFlag` = `0`
+- [ ] The response is a 20-field numeric CSV line.
+- [ ] Field 5 `WatchdogOK` = `1`.
+- [ ] Field 3 `Heater` = `0.0` and field 4 `Fan` = `0.0`.
+- [ ] Field 19 `TempScale` = `0` and field 20 `FaultFlag` = `0`.
 
 ---
 
-## Phase 4 — Actuator Verification (Heater STILL Disconnected)
+## Phase 4 — Actuator Verification (Heater Still Disconnected)
 
-### Fan Test
+### Fan test
 
-Send these commands via serial:
-
-```
+```text
 IO3 50
 ```
 
-- [ ] Fan spins at ~50% speed
-- [ ] Multimeter shows PWM on GPIO9 (~1.6V average at 50% duty)
+- [ ] Fan spins at ~50 % speed.
+- [ ] GPIO9 shows PWM (≈1.6 V average at 50 % duty on a DMM).
 
-```
+```text
 IO3 100
-```
-
-- [ ] Fan spins at full speed
-
-```
 IO3 0
 ```
 
-- [ ] Fan stops completely
+- [ ] Full speed, then a complete stop.
 
-### SSR Test (Heater Disconnected — Verify GPIO Only)
+### SSR test (heater disconnected, GPIO only)
 
-```
+```text
 OT1 50
 ```
 
-- [ ] Multimeter shows PWM activity on GPIO10 (~1.6V average at 50% duty)
+- [ ] GPIO10 shows PWM activity (≈1.6 V average at 50 % duty).
+- [ ] Keep the session alive with `READ` or `STATUS` every 5–10 s while the heater is energized.
 
-```
+```text
 OT1 0
 ```
 
-- [ ] GPIO10 returns to < 0.1V (LOW)
+- [ ] GPIO10 returns below 0.1 V.
 
-### Emergency Stop Test
+### Emergency stop test
 
-```
+```text
 OT1 80
 IO3 80
 STOP
 ```
 
-- [ ] After STOP: GPIO10 goes LOW (heater off)
-- [ ] Fan goes to 100% sticky (cooldown latch, stays until BT < 60 °C; not "briefly then off")
-- [ ] STATUS shows field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
-  (note: the run state itself is not part of the STATUS line — it is visible in the
-  serial log `info!` output; `STATUS` is a numeric 20-field CSV)
+- [ ] GPIO10 goes LOW immediately.
+- [ ] Fan goes to 100 % and stays there (cooldown latch, until BT < 60 °C).
+- [ ] `STATUS` shows `Heater = 0.0`, `Fan = 100.0`, `FaultFlag = 1`.
+- [ ] The run state is visible in the serial log; it is not a STATUS field.
 
 ---
 
-## Phase 5 — Artisan Connectivity Test
+## Phase 5 — Artisan Connectivity
 
-1. Configure Artisan to connect to `/dev/ttyACM0` (USB CDC)
-2. Set baud rate: **115200** (or leave auto for USB CDC)
-3. Start Artisan connection
+Configure Artisan using [`ARTISAN_CONNECTION.md`](ARTISAN_CONNECTION.md) §2. Use the native USB
+port, 115200, and the ArduinoTC4 driver.
 
-- [ ] Artisan connects without errors
-- [ ] Temperature readings appear in Artisan plot
-- [ ] ET and BT values update every ~1 second
-- [ ] Send `OT1 30` from Artisan → SSR responds
-- [ ] Send `IO3 50` from Artisan → Fan responds
-- [ ] Artisan handshake does not crash firmware (FILT, CHAN, UNITS commands)
+- [ ] Artisan connects without errors.
+- [ ] Temperature readings appear in the plot.
+- [ ] ET and BT update about once per second.
+- [ ] `OT1 30` from Artisan changes the SSR output.
+- [ ] `IO3 50` changes the fan output.
+- [ ] The handshake (`CHAN`, `UNITS`, `FILT`) does not crash or reset the firmware.
 
 ---
 
 ## Phase 6 — Connect Heater (Final Step)
 
-**Only proceed if ALL previous phases passed.**
+Proceed only if every previous phase passed.
 
-- [ ] Verify heater element is properly mounted in roaster
-- [ ] Verify thermal fuse (260°C) is in series with heater element
-- [ ] Connect SSR output to heater AC circuit
-- [ ] Ensure fire extinguisher is accessible
-- [ ] Ensure area is well-ventilated
+- [ ] The heater element is mounted securely in the roaster.
+- [ ] A hardware thermal fuse or cutoff rated for the heater is in series with the element.
+- [ ] The SSR output is connected to the heater AC circuit with proper isolation.
+- [ ] Protective earth is bonded to the metal chassis.
+- [ ] A fire extinguisher is accessible and the area is ventilated.
 
-### First Heat Test
+### First heat test
 
-```
+```text
 OT1 10
 ```
 
-- [ ] Heater produces gentle warmth (10% duty)
-- [ ] Temperature readings in Artisan RISE
-- [ ] No smoke, no unusual smells
+- [ ] The heater produces gentle warmth at 10 % duty.
+- [ ] Artisan temperature readings rise.
+- [ ] No smoke, arcing, or unusual smell.
 
-```
+```text
 OT1 0
 ```
 
-- [ ] Heater turns off
-- [ ] Temperature stabilizes then falls
+- [ ] The heater turns off and the temperature stabilizes, then falls.
 
-### Safety Shutdown Test
+### Safety shutdown test
 
-```
+```text
 OT1 50
 ```
+
 Wait 5 seconds, then:
 
-```
+```text
 STOP
 ```
 
-- [ ] Heater cuts immediately
-- [ ] Fan goes to emergency speed (100% sticky)
-- [ ] System enters `Error` state (all failures use `Error`; `Cooling`/`Fault`/`EmergencyStop` removed M-A7 — visible in serial log)
-- [ ] STATUS confirms field 3 Heater = `0.0`, field 4 Fan = `100.0`, field 20 FaultFlag = `1`
-
----
-
-## Quick Reference — Commands for Testing
-
-| Command | Effect | Expected Response |
-|---------|--------|-------------------|
-| `READ` | Poll temperatures | `AMB,ET,BT,0.0,0.0` (PID off; 8 fields with PID on) |
-| `STATUS` | Full diagnostics | 20-field CSV |
-| `IO3 50` | Fan to 50% | *(no response — silent)* |
-| `IO3 0` | Fan off | *(no response — silent)* |
-| `OT1 50` | Heater to 50% | *(no response — silent)* |
-| `OT1 0` | Heater off | *(no response — silent)* |
-| `STOP` | Emergency stop | *(no response — silent)* |
-| `CHAN;1200` | Handshake | `#1200` |
-| `UNITS;C` | Celsius mode | `#OK` (not bare `OK` — Artisan handshake requires `#`-prefix) |
-| `FILT;70,70,70,70` | Filter config | `#OK` (not bare `OK`) |
+- [ ] The heater cuts immediately.
+- [ ] The fan goes to 100 % and stays there.
+- [ ] The system enters the `Error` state; the serial log confirms it.
+- [ ] `STATUS` shows `Heater = 0.0`, `Fan = 100.0`, `FaultFlag = 1`.
 
 ---
 
 ## Emergency Procedures
 
-### If firmware panics or crashes
-1. The hardware watchdog (RWDT) will reset the CPU in ~2 seconds
-2. After reset, all outputs initialize to OFF (LOW)
-3. If reset loop occurs (blinking LED), disconnect heater and investigate
+### Firmware panic or crash
 
-### If temperature exceeds 260°C
-- Firmware triggers automatic emergency shutdown
-- Heater forced to 0%, fan forced to 100%
-- If firmware cannot control heater, the thermal fuse (260°C) is the last line of defense
+1. The hardware watchdog resets the CPU in roughly 2 seconds.
+2. Outputs initialize LOW after reset.
+3. If the reset repeats (blinking LED pattern), disconnect the heater and investigate.
 
-### If SSR appears stuck ON
-1. Send `STOP` command immediately
-2. Disconnect heater AC power
-3. Check SSR for welded contacts (measure resistance across SSR output with power off)
-4. Do NOT reconnect heater until SSR is verified functional
+### Temperature exceeds 260 °C
+
+- The firmware commands an emergency shutdown: heater 0 %, fan 100 %.
+- If firmware cannot control the heater, the hardware thermal fuse is the last line of defense.
+
+### SSR appears stuck ON
+
+1. Send `STOP` immediately, or disconnect heater AC power first if there is any doubt.
+2. Do not reconnect the heater until the SSR is verified functional.
+3. Check for welded contacts with the power off.
 
 ---
 
 ## Sign-Off
 
 | Phase | Status | Date | Notes |
-|-------|--------|------|-------|
+|---|---|---|---|
 | 0 — Build | ☐ Pass / ☐ Fail | | |
 | 1 — Visual | ☐ Pass / ☐ Fail | | |
 | 2 — Boot | ☐ Pass / ☐ Fail | | |
@@ -322,3 +291,7 @@ STOP
 | 6 — Heater | ☐ Pass / ☐ Fail | | |
 
 **All phases must pass before regular operation.**
+
+---
+
+*Last updated: 2026-10-22.*
