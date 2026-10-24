@@ -2,13 +2,20 @@
 
 ## Purpose
 
-This HIL validation playbook documents how contributors turn **manifest-driven HIL runs** into auditor-ready artifacts that satisfy the HW-03 golden-output requirements. Follow it step-by-step so every scenario run captures the same metadata, analysis, and packaging expectations auditors rely on.
+This HIL validation playbook documents how contributors turn **manifest-driven HIL runs** into auditor-ready artifacts that satisfy the golden-output requirements. Follow it step-by-step so every scenario run captures the same metadata, analysis, and packaging expectations auditors rely on.
+
+> **Current tooling limits**
+>
+> - The repository ships the manifest and promotion paths, but **no golden CSV files**. `tests/hardware/goldens/` is created when a validated run is promoted.
+> - `validation_runner.py` writes 19 STATUS columns. `TempScale` and `FaultFlag` are not persisted; verify them on live `STATUS` (fields 19 and 20) and record the result in the report.
+> - There is no `--run-all` flag. Run hardware scenarios one ID at a time; `--scenario all` means unfiltered STATUS polling in normal mode, not a hardware sweep.
+> - `hardware_test_runner.py` builds and flashes test firmware automatically. It has no `--auto-flash` flag.
 
 ## Manifest-first workflow
 
 1. **Read the manifest** at `tests/hardware/scenario_manifest.json`. Each entry contains:
    - `id`, `category`, `description`, and `command_sequence` so you know which scenario is being exercised.
-   - A `golden_output` path under `tests/hardware/goldens/` and associated `metadata.retention_days` / `evidence_owner` values.
+   - A `golden_output` path under `tests/hardware/goldens/` and associated `metadata.retention_days` / `evidence_owner` values. The path is a promotion target; the file is not present until a validated run is copied there.
    - Threshold expectations inside the manifest metadata for auditors (watchdog passes, guard timeouts, fault conditions).
 2. **Pick a scenario** by its `id`. The scenario manifest drives the `validation_runner` filters, the `analysis.py` report, and the `tests/hardware/goldens/*.csv` reference.
 3. **Ensure the manifest stays unchanged** while you run the scenario; copy it into your artifact bundle if you document a new golden output.
@@ -31,7 +38,9 @@ python tests/hardware/validation_runner.py \
 - The runner creates `tests/hardware/runs/<SCENARIO>/<TIMESTAMP>/telemetry.csv` plus `<telemetry.csv>.json` metadata.
 - Metadata includes run ID, max latency, manifest pointers, and the scenario entry used for the run.
 
-Stop the runner with `Ctrl+C`. When it exits gracefully, it writes metadata beside the CSV so you know which manifest entry produced each stream.
+Hardware mode exits after the command sequence. Normal polling mode runs until you press `Ctrl+C`.
+In both cases the runner writes metadata beside the CSV so you know which manifest entry produced
+each stream.
 
 ## Running `analysis.py`
 
@@ -55,8 +64,8 @@ python tests/hardware/analysis.py \
 ## Packaging golden artifacts for audits
 
 1. **Identify the golden CSV** produced by the validated run (e.g., `tests/hardware/runs/WD-01/20260320T120000Z/telemetry.csv`).
-2. **Mark it as golden** by copying it to the manifest-provided golden path (e.g., `tests/hardware/goldens/WD-01.csv`).
-3. **Bundle everything auditors expect** into a tarball named `tests/hardware/goldens/WG-HW03-WD-01-<TIMESTAMP>.tar.gz` containing:
+2. **Mark it as golden** by creating `tests/hardware/goldens/` if needed and copying the run to the manifest-provided path (e.g., `tests/hardware/goldens/WD-01.csv`).
+3. **Bundle everything auditors expect** into a tarball named `tests/hardware/goldens/WD-01-<TIMESTAMP>.tar.gz` containing:
    - `telemetry.csv` and its metadata JSON
    - The markdown report (`tests/hardware/reports/.../.md`)
    - The manifest (`tests/hardware/scenario_manifest.json`) or the trimmed entry for traceability
@@ -73,7 +82,7 @@ python tests/hardware/analysis.py \
 
 ## Reporting
 
-When you ship a run, link the tarball and the report in your work item, note the `telemetry.csv` run ID, and point to this playbook. Auditors rely on the manifest + report + golden artifact to sign HW-03 off, so keep this workflow atomic and repeatable.
+When you ship a run, link the tarball and the report in your work item, note the `telemetry.csv` run ID, and point to this playbook. Auditors rely on the manifest, report, and golden artifact to sign the run off, so keep this workflow atomic and repeatable.
 
 ---
 
@@ -105,16 +114,19 @@ python tests/hardware/validation_runner.py \
   --hardware-mode
 ```
 
-Run all hardware scenarios:
+There is no all-hardware-scenarios flag. Run each ID separately:
 
 ```bash
-python tests/hardware/validation_runner.py \
-  --port /dev/ttyACM0 \
-  --hardware-mode \
-  --run-all
+for id in TC-01 TC-02 TC-03 TC-04 SSR-01 SSR-02 SSR-03 \
+          FAN-01 FAN-02 FAN-03 GPIO-01 GPIO-02; do
+  python tests/hardware/validation_runner.py \
+    --port /dev/ttyACM0 \
+    --scenario "$id" \
+    --hardware-mode
+done
 ```
 
-The runner executes the `command_sequence` from `scenario_manifest.json`, captures `STATUS` telemetry, and writes results to `tests/hardware/runs/<SCENARIO>/<TIMESTAMP>/telemetry.csv`.
+The runner executes the `command_sequence` from `scenario_manifest.json`, captures `STATUS` telemetry, and writes results to `tests/hardware/runs/<SCENARIO>/<TIMESTAMP>/telemetry.csv` plus `read_telemetry.csv` for `READ` rows. Add `--pause-for-manual` for TC-03; without it the `[manual_disconnect_tc]` step is skipped.
 
 ### Running Tier 2 Test Firmware via hardware_test_runner
 
@@ -179,10 +191,12 @@ Metadata: tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv.json
 ```
 
 Open the telemetry CSV to verify:
-- `env_temp` and `bean_temp` are within expected ranges
-- `fault_condition=0` (no faults)
+- `et` and `bt` are within expected ranges (`env_temp` and `bean_temp` are the manifest aliases)
 - `watchdog_flag=1` (watchdog healthy)
 - `heater` and `fan` values match commanded values (for SSR/FAN tests)
+
+`TempScale` and `FaultFlag` are not in the CSV. Check them on live `STATUS` (fields 19 and 20)
+and record the values in the report.
 
 #### Tier 2 (hardware_test_runner output)
 
@@ -208,17 +222,18 @@ Once a hardware scenario passes and you want to promote it as the golden referen
    - Stable telemetry (temps within 2°C, outputs within 2%)
    - `watchdog_flag=1`, `failure_count=0`
    - `guard_timeouts < 3`
-   - `fault_condition=0` (unless scenario expects otherwise)
+   - Live `STATUS` `FaultFlag=0` (unless the scenario expects a fault)
 
 3. **Copy to golden path** (from `scenario_manifest.json` `golden_output` field):
    ```bash
+   mkdir -p tests/hardware/goldens
    cp tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv \
       tests/hardware/goldens/TC-01.csv
    ```
 
 4. **Bundle for auditors** (same as fault injection scenarios):
    ```bash
-   tar -czf tests/hardware/goldens/WG-HW03-TC-01-20260501T120000Z.tar.gz \
+   tar -czf tests/hardware/goldens/TC-01-20260501T120000Z.tar.gz \
      tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv \
      tests/hardware/runs/TC-01/20260501T120000Z/telemetry.csv.json \
      tests/hardware/reports/TC-01/20260501T120000Z.md \

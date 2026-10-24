@@ -53,13 +53,16 @@ The `--hardware-mode` flag tells the runner to execute hardware scenarios (TC-, 
 |----|-------------|--------|-----------|
 | **TC-01** | READ returns plausible ambient temperature from both ET and BT channels | Read-only | ESP32-C3, thermocouples connected |
 | **TC-02** | Both thermocouple channels report valid, non-identical temperatures | Read-only | ESP32-C3, two thermocouples |
-| **TC-03** | Firmware detects and reports thermocouple fault when sensor disconnected | Read-only | ESP32-C3, ability to disconnect TC |
+| **TC-03** | Firmware detects and reports a fault when the BT thermocouple is disconnected | Read-only | ESP32-C3, ability to disconnect TC |
 | **TC-04** | Temperature readings stable over 10-second window (no random jumps) | Read-only | ESP32-C3, stable temperature environment |
 
 Expected behavior:
 - TC-01: `READ` returns `AMB,ET,BT,0.0,0.0` with temperatures between 0-50°C for ambient
 - TC-02: ET and BT differ by less than 15°C (they measure different locations)
-- TC-03: `STATUS` shows `fault_condition=1` when TC disconnected, clears when reconnected
+- TC-03: Disconnecting the **BT** thermocouple eventually drives BT non-finite and latches a
+  sensor fault (`FaultFlag=1` on live `STATUS`). The latch does **not** clear when the probe is
+  reconnected; recover with `PID;OFF`, then confirm `READ` resumes. Disconnecting only ET does not
+  necessarily latch while BT remains valid.
 - TC-04: 10 consecutive reads show temperature delta less than 5°C
 
 ### SSR Tests (SSR-01 through SSR-03)
@@ -96,11 +99,12 @@ Expected behavior:
 
 | ID | Description | Safety | Equipment |
 |----|-------------|--------|-----------|
-| **GPIO-01** | Heat detection pin (GPIO1) reads HIGH when no load (internal pull-up active) | Safe | ESP32-C3 |
+| **GPIO-01** | `OT1 0` + `STATUS` confirm heater off and no fault/guard error; GPIO1 level is covered by `hil_gpio` | Safe | ESP32-C3 |
 | **GPIO-02** | GPIO state consistency - multiple STATUS queries return consistent data | Safe | ESP32-C3 |
 
 Expected behavior:
-- GPIO-01: `OT1 0` then `STATUS` — heat detection reflects SSR off state
+- GPIO-01: `OT1 0` then `STATUS` — heater is `0.0` and no fault/guard error is reported. The GPIO1
+  electrical level is validated separately by the `hil_gpio` test firmware.
 - GPIO-02: Three consecutive `STATUS` commands return consistent `heater`, `fan`, `guard_timeouts` values
 
 ### Complete Scenario Table
@@ -109,7 +113,7 @@ Expected behavior:
 |----|-----------|-------------|-------------|-----------|
 | TC-01 | Thermocouple | READ returns plausible ambient temperature | Read-only | ESP32-C3, thermocouples |
 | TC-02 | Thermocouple | Dual-channel valid, non-identical temps | Read-only | ESP32-C3, two thermocouples |
-| TC-03 | Thermocouple | Fault detection on sensor disconnect | Read-only | ESP32-C3, disconnectable TC |
+| TC-03 | Thermocouple | Fault detection on BT thermocouple disconnect | Read-only | ESP32-C3, disconnectable TC |
 | TC-04 | Thermocouple | Temperature stability over 10s window | Read-only | ESP32-C3, stable environment |
 | SSR-01 | SSR | OT1 0 sets heater to 0%, LEDC init | SAFE | ESP32-C3 |
 | SSR-02 | SSR | SSR initialization, heater 0 after boot | SAFE | ESP32-C3 |
@@ -117,7 +121,7 @@ Expected behavior:
 | FAN-01 | Fan | IO3 0 sets fan to 0% | Safe | ESP32-C3 |
 | FAN-02 | Fan | IO3 50 sets fan to ~50% | Safe | ESP32-C3 |
 | FAN-03 | Fan | Full 0-100% range in 25% steps | Safe | ESP32-C3 |
-| GPIO-01 | GPIO | Heat detection pin reads HIGH, pull-up active | Safe | ESP32-C3 |
+| GPIO-01 | GPIO | Heater off and no fault; GPIO1 level via `hil_gpio` | Safe | ESP32-C3 |
 | GPIO-02 | GPIO | GPIO state consistency across queries | Safe | ESP32-C3 |
 
 ## Tier 2 Tests (Test Firmware)
@@ -147,13 +151,13 @@ cargo build --release --target riscv32imc-unknown-none-elf \
 cargo espflash flash --release --example hil_tc
 ```
 
-Or let the runner handle it:
+Or let the runner handle it. `hardware_test_runner.py` builds and flashes the example firmware
+automatically; there is no separate flash flag:
 
 ```bash
 python tests/hardware/hardware_test_runner.py \
   --port /dev/ttyACM0 \
-  --example hil_tc \
-  --auto-flash
+  --example hil_tc
 ```
 
 ### Test Firmware Suites
@@ -184,7 +188,7 @@ Validates LEDC PWM peripheral configuration for heater control. **Heater is NEVE
 
 #### `hil_c1` — DUTY_R Latency / Write-Verification (5 tests) — **DRIVES GPIO10 NON-ZERO**
 
-Bench measurement closing audit finding C1 (2026-08-10): verifies the register
+Bench measurement: verifies the register
 semantics the fix relies on, at production SSR configuration (Timer0, 14-bit, 5 Hz,
 Channel1, GPIO10). **⚠️ Disconnect SSR/load power before running** — the channel
 carries non-zero duty; it is left at 0 % on completion.

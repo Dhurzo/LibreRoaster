@@ -129,6 +129,9 @@ impl AppBuilder {
     /// Installs synthetic temperature curves for host-side L3 pipeline tests.
     #[cfg(feature = "simulated-sensors")]
     pub fn with_simulated_sensors(self) -> Self {
+        #[cfg(feature = "simulated-web-medium-roast")]
+        let source = SimulatedSensorSource::web_medium_roast();
+        #[cfg(not(feature = "simulated-web-medium-roast"))]
         let source = SimulatedSensorSource::default_curve();
         let hub = SensorConversionHub::new_simulated(source);
         self.with_sensor_conversion_hub(hub)

@@ -1,6 +1,8 @@
-// Dual-channel Artisan communication verification
-// This file documents what needs to be tested and provides test patterns
-// that can be run when hardware is available.
+<!--
+Dual-channel Artisan communication verification. This file documents what
+needs to be tested and provides test patterns that can be run when hardware is
+available.
+-->
 
 # Dual-Channel Artisan Communication Test Plan
 
@@ -41,7 +43,8 @@ form `AMB,ET,BT,0.0,0.0,heater,fan,SV` (heater/fan are percentages, never
 
 ### Test 2: UART Connection
 ```
-1. Connect USB-UART adapter to GPIO20 (TX) and GPIO21 (RX)
+1. Connect the 3.3 V USB-UART adapter: adapter TX → GPIO20 (UART RX), adapter RX →
+   GPIO21 (UART TX), and GND → GND.
 2. Open terminal to the UART port (e.g., /dev/ttyUSB0)
 3. Send: READ\r
 4. Expected: Same response as USB
@@ -74,6 +77,10 @@ form `AMB,ET,BT,0.0,0.0,heater,fan,SV` (heater/fan are percentages, never
 ```
 
 ## Expected Log Output
+
+These are `info!` lines on UART0. The default firmware build filters them out (`Warn` level), and
+native USB carries only the Artisan protocol. To see them, flash an `embedded,instrumentation`
+build and monitor UART0 through a 3.3 V adapter; do not run Artisan on UART0 at the same time.
 
 ```
 [INFO] Artisan command received on Usb, switching active channel to Usb

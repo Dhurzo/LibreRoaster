@@ -9,6 +9,7 @@
 
 extern crate std;
 
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use embassy_time::{Duration, Instant};
@@ -26,6 +27,9 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 /// Real embedded cadence: sample stamped BEFORE the 210 ms wait, control after it; period ≈ 320 ms.
 const PERIOD_MS: u64 = 320;
 const CONV_MS: u64 = 215;
+
+type Sample = (f32, f32);
+type PlantState = (f32, VecDeque<f32>);
 
 struct Sim {
     c: RoasterControl,
@@ -84,7 +88,7 @@ impl Sim {
     fn run(&mut self, secs: f32, mut bt: impl FnMut(f32) -> f32, mut et: impl FnMut(f32) -> f32) {
         let ticks = (secs * 1000.0 / PERIOD_MS as f32) as u64;
         for _ in 0..ticks {
-            if self.n % 6 == 0 {
+            if self.n.is_multiple_of(6) {
                 self.cmd(ArtisanCommand::ReadStatus);
             }
             let s = self.secs();
@@ -120,7 +124,7 @@ const DT: f32 = PERIOD_MS as f32 / 1000.0;
 fn plant_run(s: &mut Sim, secs: f32, bt: &mut f32, mut each: impl FnMut(&Sim, f32)) {
     let ticks = (secs / DT) as u64;
     for _ in 0..ticks {
-        if s.n % 6 == 0 {
+        if s.n.is_multiple_of(6) {
             s.cmd(ArtisanCommand::ReadStatus);
         }
         s.tick(*bt, *bt + 20.0);
@@ -357,7 +361,7 @@ fn e3_ror_follow_tracks_profile_and_stays_near_bt() {
     let mut bt = 150.0f32;
     let tc = ror_roast(&mut s, &mut bt);
     let mut max_gap = 0.0f32;
-    let mut samples: Vec<(f32, f32)> = Vec::new();
+    let mut samples: Vec<Sample> = Vec::new();
     plant_run(&mut s, 600.0, &mut bt, |s, _| {
         if s.c.ror_follow_active() && s.c.ror_target_c_per_min() > 0.0 {
             let st = s.c.get_status();
@@ -596,16 +600,11 @@ fn e2_extras_carry_ror_target_and_scale_to_fahrenheit() {
 // ── D5: step-test autotune (E4) ──
 
 /// Integrating plant with 8 s dead time: dBT/dt = 0.005 + 0.003·(u(t−8) − 40).
-fn tune_plant_run(
-    s: &mut Sim,
-    secs: f32,
-    bt: &mut f32,
-    hist: &mut std::collections::VecDeque<f32>,
-) -> f32 {
+fn tune_plant_run(s: &mut Sim, secs: f32, bt: &mut f32, hist: &mut VecDeque<f32>) -> f32 {
     let delay = (8.0 / DT) as usize;
     let mut max_u = 0.0f32;
     for _ in 0..(secs / DT) as u64 {
-        if s.n % 6 == 0 {
+        if s.n.is_multiple_of(6) {
             s.cmd(ArtisanCommand::ReadStatus);
         }
         s.tick(*bt, *bt + 20.0);
@@ -622,11 +621,11 @@ fn tune_plant_run(
     max_u
 }
 
-fn manual_at_40(s: &mut Sim) -> (f32, std::collections::VecDeque<f32>) {
+fn manual_at_40(s: &mut Sim) -> PlantState {
     assert!(s.cmd(ArtisanCommand::SetHeater(40)));
     assert!(s.cmd(ArtisanCommand::SetFan(40)));
     let mut bt = 150.0f32;
-    let mut hist = std::collections::VecDeque::new();
+    let mut hist = VecDeque::new();
     tune_plant_run(s, 20.0, &mut bt, &mut hist);
     (bt, hist)
 }

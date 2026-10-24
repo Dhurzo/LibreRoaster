@@ -8,7 +8,7 @@ Quick-reference table of all hardware component test scenarios. These scenarios 
 |----|-----------|------|-------------|--------|-----------|-------------|
 | **TC-01** | Thermocouple | 1 | READ returns plausible ambient temperature from both ET and BT channels | Read-only | ESP32-C3, thermocouples connected | Yes |
 | **TC-02** | Thermocouple | 1 | Both thermocouple channels report valid, non-identical temperatures | Read-only | ESP32-C3, two thermocouples | Yes |
-| **TC-03** | Thermocouple | 1 | Firmware detects and reports thermocouple fault when sensor disconnected | Read-only | ESP32-C3, ability to disconnect TC | Partial (manual disconnect) |
+| **TC-03** | Thermocouple | 1 | Firmware detects and reports a fault when the BT thermocouple is disconnected | Read-only | ESP32-C3, ability to disconnect TC | Partial (manual disconnect) |
 | **TC-04** | Thermocouple | 1 | Temperature readings stable over 10-second window (no random jumps) | Read-only | ESP32-C3, stable temperature environment | Yes |
 | **SSR-01** | SSR | 1 | OT1 0 sets heater to 0%, STATUS confirms heater=0 and LEDC initialized | SAFE | ESP32-C3 | Yes |
 | **SSR-02** | SSR | 1 | SSR initialization verification - heater remains 0 after boot | SAFE | ESP32-C3 | Yes |
@@ -16,7 +16,7 @@ Quick-reference table of all hardware component test scenarios. These scenarios 
 | **FAN-01** | Fan | 1 | IO3 0 sets fan to 0%, STATUS confirms fan=0 | Safe | ESP32-C3 | Yes |
 | **FAN-02** | Fan | 1 | IO3 50 sets fan to ~50%, STATUS confirms | Safe | ESP32-C3 | Yes |
 | **FAN-03** | Fan | 1 | Fan responds correctly across full 0-100% range in 25% steps | Safe | ESP32-C3 | Yes |
-| **GPIO-01** | GPIO | 1 | Heat detection pin (GPIO1) reads HIGH when no load (internal pull-up active) | Safe | ESP32-C3 | Yes |
+| **GPIO-01** | GPIO | 1 | `OT1 0` + `STATUS` confirm heater off and no fault; GPIO1 level is covered by `hil_gpio` | Safe | ESP32-C3 | Yes |
 | **GPIO-02** | GPIO | 1 | GPIO state consistency - multiple STATUS queries return consistent data | Safe | ESP32-C3 | Yes |
 
 ## Tier 2 Test Firmware Scenarios
@@ -52,12 +52,16 @@ python tests/hardware/validation_runner.py \
   --scenario TC-01 \
   --hardware-mode
 
-# Run all hardware scenarios
+# There is no all-hardware-scenarios flag. Repeat --hardware-mode per ID.
 python tests/hardware/validation_runner.py \
   --port /dev/ttyACM0 \
-  --hardware-mode \
-  --run-all
+  --scenario TC-02 \
+  --hardware-mode
 ```
+
+`--scenario all` in normal (non-hardware) mode only disables manifest filtering; it does not run
+every hardware sequence. Add `--pause-for-manual` when running TC-03; otherwise its disconnect
+step is skipped.
 
 ### Tier 2 (Test Firmware)
 
@@ -99,8 +103,9 @@ These scenarios are defined in `tests/hardware/scenario_manifest.json` with the 
 - `description`: Plain-text description of the test
 - `command_sequence`: Semicolon-separated commands the automation executes
 - `requires_unsafe`: Always `false` for the manifest's Tier 1 hardware scenarios (all are safe). The Tier 2 `hil_c1` example is not in the manifest and does drive GPIO10 at non-zero duty — disconnect SSR/load power first.
-- `expected_columns`: STATUS/READ columns validated during the test
-- `golden_output`: Path to approved golden CSV for the scenario
+- `expected_columns`: STATUS/READ columns the scenario expects; these are descriptive aliases, not
+  a schema enforced by the current runner
+- `golden_output`: Promotion path for an approved golden CSV; no golden files are committed
 - `metadata`: Retention, owner, and scenario-specific expectations
 
 ## Comparison with Fault Injection Scenarios

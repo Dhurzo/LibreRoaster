@@ -149,7 +149,7 @@ if (heater_energized || roast_active) &&
    now - last_command_received_at_ms > COMMS_IDLE_TIMEOUT_MS (15000)
     → emergency_shutdown("Comms idle timeout")
 
-// 4. MAX_ROAST_TIME (H2 + F-C2: three budgets)
+// 4. MAX_ROAST_TIME (three budgets)
 //    START/PROFILE-anchored roast: 1800 s (MAX_ROAST_TIME_SECS)
 //    PID;ON session before the charge: 3600 s (MAX_PID_UNCHARGED_SESSION_SECS)
 //    Manual OT1 session without START: 5400 s (MAX_MANUAL_HEAT_SESSION_SECS)
@@ -157,7 +157,7 @@ if (heater_energized || roast_active) &&
 if elapsed > limit_for(start)
     → emergency_shutdown("Maximum roast time exceeded")
 
-// 5. Cooldown latch (STOP → fan 100% until BT < 60 °C)
+// 5. Cooldown latch (STOP → fan 100% until BT < 60 °C; PID;OFF clears the emergency first)
 if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (60.0) && BT finite > 0
     → cooling_active = false
 
@@ -165,16 +165,16 @@ if cooling_active && BT < COOLING_RELEASE_BEAN_TEMP_C (60.0) && BT finite > 0
 //    BT history: 10 samples / 3 s (CHARGE_SAMPLE_TICK_DIV = 1)
 //    Drop > CHARGE_DROP_THRESHOLD_C (6.0) → #CHARGE event
 
-// 7. RoR Guards (TIERED — A‑TC4‑D, recalibrated H6b)
+// 7. RoR Guards (TIERED)
 //    HARD (> MAX_BT_RATE_OF_RISE_HARD = 1.0 °C/s): ROR_EXCEEDED_CONSECUTIVE_LIMIT = 3 ticks
 //    SOFT (MAX_BT_RATE_OF_RISE = 0.75 .. 1.0 °C/s): ROR_SOFT_DEBOUNCE_LIMIT = 12 ticks (~3.7 s)
-//    Armed only when the FIRMWARE PID is in control (H6: artisan_control disarms) and
+//    Armed only when the FIRMWARE PID is in control (artisan_control disarms) and
 //    (Heating|Stable, or Idle with PID enabled and the heater energized)
 //    BT‑only guard INDEPENDENT of PID channel (check_bt_rate vs check_rate_of_rise)
 
 // 8. Probe stuck
 //    PID mode: flat BT > PROBE_STUCK_TIMEOUT_SECS (120 s) → emergency
-//    PID hot equilibrium at ≥ 50 % duty: warning 300 s / latch 600 s (N4)
+//    PID hot equilibrium at ≥ 50 % duty: warning 300 s / latch 600 s
 //    Manual: warning at 120 s (ERR probe_stuck_warning), emergency at 300 s (PROBE_STUCK_MANUAL_LATCH_SECS)
 ```
 
@@ -262,7 +262,7 @@ in [`PROTOCOL.md`](PROTOCOL.md).
 
 ```rust
 fn process_command(command: RoasterCommand, now: Instant) {
-    if command == StopRoast {           // ONLY explicit recovery path
+    if command == StopRoast {           // internal explicit recovery path
         stop_streaming();
         clear_emergency_explicit();     // Unlatch emergency, rearm SSR
         return;
@@ -289,6 +289,13 @@ fn process_command(command: RoasterCommand, now: Instant) {
     }
 }
 ```
+
+Wire-level `PID;OFF` is handled before this internal path: `process_artisan_command` maps it to
+`ArtisanCommand::Stop`, clears any active emergency latch, then calls `handle_stop()`. Because
+`handle_stop()` runs `stop_streaming()`, the cooldown latch is re-armed after the emergency is
+cleared. The internal `StopRoast` path has no production producer and exists only for explicit
+recovery tests; it runs `stop_streaming()` and then `clear_emergency_explicit()`, which drops the
+cooldown latch.
 
 ### 5.4 Output Path (Firmware → Artisan)
 
@@ -329,8 +336,11 @@ Idle ──PREHEAT──► Preheating ──START──► Heating ──conver
                          PID;OFF / START / PREHEAT → clear_emergency_explicit() → Idle
 ```
 
-- **Emergency latch** (`safety.is_emergency_active()` + `status.fault_condition`): set by safety traps; cleared only by explicit operator recovery — `PID;OFF` (`ArtisanCommand::Stop`), `START`, `PREHEAT`, or the internal `StopRoast` — all routing through `clear_emergency_explicit()`. `PID;ON` never clears the latch (H11).
-- **Cooldown latch** (`cooling_active`): set by STOP, cleared by BT < 60 °C (a real reading > 0), a new roast, explicit recovery, or a re-energizing `OT1>0`/`UP` (H3).
+- **Emergency latch** (`safety.is_emergency_active()` + `status.fault_condition`): set by safety traps; cleared only by explicit operator recovery — `PID;OFF` (`ArtisanCommand::Stop`), `START`, `PREHEAT`, or the internal `StopRoast` — all routing through `clear_emergency_explicit()`. `PID;ON` never clears the latch.
+- **Cooldown latch** (`cooling_active`): set by `stop_streaming()` (including a wire `STOP` or
+  `PID;OFF`), cleared by BT < 60 °C (a real reading > 0), a new roast, a re-energizing
+  `OT1>0`/`UP`, or the internal `StopRoast` recovery. A wire `PID;OFF` clears the emergency latch
+  first but then runs `stop_streaming()`, so the fan stays at 100 % until BT falls below 60 °C.
 
 ---
 
@@ -383,4 +393,4 @@ control-loop-specific coverage is:
 
 ---
 
-*Last updated: 2026-10-22.*
+*Last updated: 2026-10-24.*

@@ -46,6 +46,9 @@ async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
 simulated-typical-roast = ["simulated-sensors"]
+# F4: real public bean-probe curve (Zenodo 21383046, medium roast) for Artisan
+# end-to-end tests. Precedence over `simulated-typical-roast` in AppBuilder.
+simulated-web-medium-roast = ["simulated-sensors"]
 # H4: heat-source current-sense on GPIO1 is OPT-IN. The default build does
 # NOT interpret GPIO1, so boards without the sense circuit heat normally.
 # Enable `heat-sense` only with a validated stretched-pulse circuit (see

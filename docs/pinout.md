@@ -1,6 +1,6 @@
 # LibreRoaster ESP32-C3 Pinout & Connection Diagram
 
-**Last updated:** 2026-10-22 — firmware pin map and wiring references reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
+**Last updated:** 2026-10-24 — firmware pin map and wiring references reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
 
 ## Overview
 
@@ -187,8 +187,8 @@ GPIO8=HIGH + GPIO9=LOW is used; GPIO8=0 + GPIO9=0 is invalid.
 
 | Property          | Value                        |
 |-------------------|------------------------------|
-| Strapping Role    | Boot-mode strap (must float/high at reset; legacy ESP32 name "VDD_SPI" does not apply to the C3) |
-| Boot Effect       | Determines SPI flash voltage (1.8V vs 3.3V) |
+| Strapping Role    | Boot-mode strap; must be HIGH at reset for a normal SPI boot |
+| Boot Effect       | Sampled at reset to select the boot mode. It is **not** a 1.8 V/3.3 V flash-voltage selector; the legacy ESP32 "VDD_SPI" function does not apply to the ESP32-C3. |
 | Status            | **Deliberately avoided** in this design |
 
 SPI MISO is routed through **GPIO5 via the GPIO Matrix** instead of using the native FSPIQ (GPIO2). This avoids the strapping conflict entirely. Do not connect anything to GPIO2.
@@ -297,11 +297,11 @@ NOT USED (avoid connecting anything)
 ### Fan Driver Compatibility
 - If using a MOSFET to drive the fan, the GPIO9 line itself must be pulled
   UP (boot strap). Note the divider math honestly: 10 kΩ pull-up + 1 kΩ
-  series + 100 kΩ gate pull-down puts the gate at ≈2.97 V while GPIO9 is
-  HIGH — enough to turn a logic-level MOSFET ON, so the fan normally
-  **runs during boot**. That is the safe direction (airflow with no heat);
-  a guaranteed-OFF-at-boot needs an inverted driver stage, not a stronger
-  pull-down (which would break the strap).
+  series + 100 kΩ gate pull-down puts the gate at about 3.0 V while GPIO9 is
+  HIGH — enough to turn a logic-level MOSFET ON, so the fan normally **runs
+  during boot**. That is the safe direction (airflow
+  with no heat); a guaranteed-OFF-at-boot needs an inverted driver stage, not
+  a stronger pull-down (which would break the strap).
 - **Solution:** Add both a pull-up (10 kΩ to 3.3V) on the GPIO9 line **and** a **weak** pull-down (100 kΩ to GND) on the MOSFET gate side, separated by a series resistor (1 kΩ) from GPIO9 to the gate.
 
 ```
@@ -417,7 +417,10 @@ CH341 TX ──┬── 1kΩ ──── GPIO20 (UART RX)
            └── 3.3V Zener ── GND   (clamp to 3.3V)
 ```
 
-Use a **10 kΩ series resistor** on any GPIO connected to an unknown external signal. This limits fault current if the pin is accidentally exposed to overvoltage.
+Use a series resistor on any GPIO connected to an unknown external signal. **1 kΩ** is the default
+for the 115200 UART and fan-PWM lines; **10 kΩ** is acceptable only where the added RC time constant
+does not distort the signal (slow or normally-idle lines). The resistor limits fault current if the
+pin is accidentally exposed to overvoltage.
 
 ---
 
@@ -454,8 +457,9 @@ Each ESP32-C3 GPIO has an internal ESD protection diode to VDD. If you apply 3.3
 
 **Mitigation:**
 ```text
-GPIO signal ──── 10 kΩ ──── External device
-                          (limits backpowering current to <330 µA)
+GPIO signal ──── 1–10 kΩ ──── External device
+                           (limits backpowering current; use 10 kΩ only
+                            when the signal's rise time allows it)
 ```
 Or add a series Schottky diode (e.g., BAT54) on any external signal that may be active when the ESP32-C3 is off.
 
@@ -551,7 +555,7 @@ While not lethal to the chip itself, misconfiguring strapping pins can make the 
 
 | Pin | Strapping Function | If Wrong at Boot |
 |-----|-------------------|------------------|
-| GPIO2 | VDD_SPI voltage | Flash operates at wrong voltage → CRC errors → no boot |
+| GPIO2 | Boot-mode strap | Wrong level can prevent a normal SPI boot; it does not select flash voltage on the C3 |
 | GPIO8 | None for normal boot (only the download-mode combo GPIO8=HIGH + GPIO9=LOW) | No effect on flash boot |
 | GPIO9 | Boot mode select | Chip enters download mode → waits for USB serial |
 
@@ -630,7 +634,8 @@ Before applying power, verify every pin on this table:
 2. **Never power a GPIO when the chip is off.** Sequence power or add series resistors.
 3. **Never drive inductive loads directly.** Always use a flyback diode.
 4. **Never skip the GPIO9 pull-up.** The chip won't boot without it.
-5. **Always use current-limiting resistors.** 10 kΩ on signals, 330 Ω on LEDs.
+5. **Always use current-limiting resistors.** 1 kΩ on UART/fan signals (10 kΩ only where signal
+   speed allows), 330 Ω on LEDs.
 6. **Always decouple the power supply.** 100 µF + 0.1 µF ceramic near the chip.
 7. **Never trust CH341 clones.** Many run at 5V — verify with a multimeter.
 8. **Measure twice, power once.** Check all voltages with a DMM before connecting power.

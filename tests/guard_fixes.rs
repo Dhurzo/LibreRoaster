@@ -78,7 +78,7 @@ impl Sim {
     fn run(&mut self, secs: f32, mut bt: impl FnMut(f32) -> f32, mut et: impl FnMut(f32) -> f32) {
         let ticks = (secs * 1000.0 / PERIOD_MS as f32) as u64;
         for _ in 0..ticks {
-            if self.n % 6 == 0 {
+            if self.n.is_multiple_of(6) {
                 self.cmd(ArtisanCommand::ReadStatus);
             }
             let s = self.secs();

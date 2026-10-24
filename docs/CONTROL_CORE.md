@@ -1,6 +1,6 @@
-# Control core — structure and rules (CORE-2026-10-09)
+# Control Core — Structure and Rules
 
-`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Since the CORE refactor, three parts of it live in small pure modules, with unit tests, instead of being spread through the 2,700-line file — alongside the older pure helpers (`ror_follow.rs`, `autotune.rs`).
+`RoasterControl` (`src/control/roaster_control.rs`) is still the single object that turns protocol intent into hardware behaviour. Three parts of it live in small pure modules, with unit tests, instead of being spread through the 2,700-line file — alongside the older pure helpers (`ror_follow.rs`, `autotune.rs`).
 
 ## Module map
 
@@ -34,7 +34,7 @@ These are the only places that write the two flags:
 - `CommandDispatcher::enable_pid` and `CommandDispatcher::stop_streaming`;
 - policy application in `policies.rs` and the temperature handler (`handlers/temperature.rs`).
 
-EmergencyStop keeps the batch state (pending CHARGE marker included) by design: a CHARGE sent while latched still anchors the recovered roast (N2). The emergency latch itself is not a mode. It overrides every mode (`SafetyController`).
+EmergencyStop keeps the batch state (pending CHARGE marker included) by design: a CHARGE sent while latched still anchors the recovered roast. The emergency latch itself is not a mode. It overrides every mode (`SafetyController`).
 
 ## Lifecycle of a batch: `BatchState`
 
@@ -58,7 +58,7 @@ RoR-follow arms only through `BatchState::arm_follower(follower, can_arm)`, wher
 | Firmware PID | 120 s | latch |
 | Manual / Artisan software PID | 120 s / 300 s | warning / latch |
 | Equilibrium (BT hot, ET flat) | — | clock re-anchors |
-| … firmware PID at ≥ 50 % duty (N4) | 300 s / 600 s | warning / latch |
+| … firmware PID at ≥ 50 % duty | 300 s / 600 s | warning / latch |
 
 `update_control` only executes the verdict: the warning line first, then `emergency_shutdown("Probe stuck")`.
 
@@ -67,7 +67,7 @@ RoR-follow arms only through `BatchState::arm_follower(follower, can_arm)`, wher
 The core runs on synthetic time, through `process_artisan_command_at(cmd, now)`. The production wrapper `process_artisan_command(cmd)` passes the real clock.
 
 `tests/core_golden.rs` drives the core through:
-- 20 scripted scenarios, covering every mode, every recovery path and the bugs of the 2026-10 audits;
+- 20 scripted scenarios, covering every mode and every recovery path;
 - 24 seeded random operator sessions.
 
 For each one it hashes a quantized per-tick trace. The trace includes the private state exposed by `core_snapshot()` (test feature only). The same harness checks 11 invariants on every tick.

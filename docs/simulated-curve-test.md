@@ -271,7 +271,7 @@ The simulated curve module includes 23 tests under `simulated-sensors`
 (21 unit + 2 proptest properties). Enabling `simulated-typical-roast` adds one
 test for default-curve selection (24 total). Coverage includes
 empty/single-point/zero-range curves, interpolation boundaries, the
-32-waypoint cap, the BUG-2b-1 exact-segment-end case, and hostile-input
+32-waypoint cap, the exact-segment-end case, and hostile-input
 properties. The module compiles only with `simulated-sensors`, so the feature
 is required on the host:
 

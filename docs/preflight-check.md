@@ -3,7 +3,7 @@
 **Purpose:** mandatory verification before first power-on with real hardware. Complete every item
 in order and do not skip steps.
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-24
 
 This checklist owns the physical bring-up sequence. Build, flash, and test commands are owned by
 [`DEVELOPMENT.md`](DEVELOPMENT.md); pin definitions and electrical limits are owned by
@@ -31,7 +31,7 @@ Use a multimeter in continuity/resistance mode with the board unpowered.
 
 ### Power rails
 
-- [ ] 3.3 V rail measures **3.3 V ±5 %** (3.15–3.45 V) when powered.
+- [ ] No short between the 3.3 V rail and GND.
 - [ ] No 5 V connection reaches any ESP32-C3 pin.
 - [ ] 100 µF electrolytic plus 0.1 µF ceramic decoupling are fitted near the ESP32-C3.
 
@@ -91,23 +91,34 @@ Verify against the pin map in [`HARDWARE.md`](HARDWARE.md) §2:
 
 1. Flash the firmware with the `embedded` feature using the command in
    [`DEVELOPMENT.md`](DEVELOPMENT.md) §5.
-2. Open the serial monitor.
+2. For log verification, flash an `embedded,instrumentation` build and connect a **3.3 V UART
+   adapter** to GPIO20/21. Logs are emitted on UART0 at `info!`/`debug!`; the default `embedded`
+   build filters them to `Warn`, and native USB carries only the Artisan protocol.
+3. Open the UART0 serial monitor at 115200 8N1. Do not connect Artisan to UART0 at the same time.
 
-- [ ] Boot banner and `Hardware initialized` appear.
-- [ ] `Sensors initialized (BT: GPIO4, ET: GPIO3)` appears on a non-simulated build.
-- [ ] `Hardware watchdog initialized (RTC WDT)` appears.
-- [ ] `USB CDC initialized` appears.
+- [ ] With the instrumentation build, the boot banner and `Hardware initialized` appear.
+- [ ] With the instrumentation build, `Sensors initialized (BT: GPIO4, ET: GPIO3)` appears on a
+  non-simulated build.
+- [ ] With the instrumentation build, `Hardware watchdog initialized (RTC WDT)` appears.
+- [ ] With the instrumentation build, `USB CDC initialized` appears.
 - [ ] No panic or fatal error appears.
 - [ ] The status LED follows the state pattern: off in `Idle`, 1 Hz in `Preheating`, solid in
   `Heating`/`Stable`, 4 Hz on fault.
 
+If no UART adapter is available, the log assertions cannot be verified in this phase. Do not sign
+off Phase 2 as fully passed on electrical checks alone.
+
 With a multimeter:
 
+- [ ] The 3.3 V rail measures **3.3 V ±5 %** (3.15–3.45 V).
 - [ ] GPIO10 (SSR) < 0.1 V (LOW; heater off).
 - [ ] GPIO9 (fan) < 0.1 V (LOW; fan off).
 - [ ] GPIO8 (LED) follows the status pattern; in `Idle` it is LOW (≈0 V, LED off), not stuck HIGH.
 - [ ] GPIO3 (CS ET) ≈3.3 V (HIGH; inactive).
 - [ ] GPIO4 (CS BT) ≈3.3 V (HIGH; inactive).
+
+After log verification, reflash the production `embedded` build (without `instrumentation`) before
+configuring Artisan or connecting the heater.
 
 ---
 
@@ -143,7 +154,8 @@ Example:  0.0,23.5,24.1,0.0,0.0
 
 Send `STATUS` and verify against [`INSTRUMENTATION.md`](INSTRUMENTATION.md):
 
-- [ ] The response is a 20-field numeric CSV line.
+- [ ] The response has exactly 20 CSV fields. Field 7 `LastWatchdogReason` is a token such as
+  `none`; the other fields are numeric.
 - [ ] Field 5 `WatchdogOK` = `1`.
 - [ ] Field 3 `Heater` = `0.0` and field 4 `Fan` = `0.0`.
 - [ ] Field 19 `TempScale` = `0` and field 20 `FaultFlag` = `0`.
@@ -194,7 +206,18 @@ STOP
 - [ ] GPIO10 goes LOW immediately.
 - [ ] Fan goes to 100 % and stays there (cooldown latch, until BT < 60 °C).
 - [ ] `STATUS` shows `Heater = 0.0`, `Fan = 100.0`, `FaultFlag = 1`.
-- [ ] The run state is visible in the serial log; it is not a STATUS field.
+- [ ] The run state is visible in the serial log; it is not a STATUS field. This requires the
+  instrumentation build and the UART0 log connection from Phase 2.
+
+`STOP` arms the emergency latch. Recover explicitly before proceeding:
+
+```text
+PID;OFF
+```
+
+- [ ] `STATUS` shows `FaultFlag = 0`; the state returns to `Idle`.
+- [ ] The heater remains off. The fan may stay at 100 % until BT falls below 60 °C; wait for it to
+  stop, or power-cycle, before starting Phase 5.
 
 ---
 
@@ -254,6 +277,7 @@ STOP
 - [ ] The fan goes to 100 % and stays there.
 - [ ] The system enters the `Error` state; the serial log confirms it.
 - [ ] `STATUS` shows `Heater = 0.0`, `Fan = 100.0`, `FaultFlag = 1`.
+- [ ] `PID;OFF` clears the latch (`FaultFlag = 0`) and leaves the heater off.
 
 ---
 
@@ -265,9 +289,10 @@ STOP
 2. Outputs initialize LOW after reset.
 3. If the reset repeats (blinking LED pattern), disconnect the heater and investigate.
 
-### Temperature exceeds 260 °C
+### Temperature reaches a cutoff
 
-- The firmware commands an emergency shutdown: heater 0 %, fan 100 %.
+- The firmware commands an emergency shutdown at BT ≥ 260 °C or ET ≥ 300 °C: heater 0 %, fan
+  100 %.
 - If firmware cannot control the heater, the hardware thermal fuse is the last line of defense.
 
 ### SSR appears stuck ON
@@ -294,4 +319,4 @@ STOP
 
 ---
 
-*Last updated: 2026-10-22.*
+*Last updated: 2026-10-24.*

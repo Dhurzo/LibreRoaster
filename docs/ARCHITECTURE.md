@@ -1,6 +1,6 @@
 # LibreRoaster Architecture Guide
 
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-24
 
 This document describes the current firmware architecture of LibreRoaster from the implementation
 outward. It is written for engineers who need to reason about runtime behavior, ownership
@@ -68,19 +68,16 @@ also means the `ServiceContainer` becomes the central ownership hub.
 `ServiceContainer` is the process-wide service locator. It owns three
 fields on host (`roaster`: async-mutex guarded control state,
 `artisan_input`, `watchdog_feeder`), plus a fourth embedded-only field
-`status_led` on `riscv32`:
+`status_led` on `riscv32`.
 
 The command channel (`ARTISAN_CMD_CHANNEL`), the output channel, and the
 command multiplexer are module-level `static`s that the container accesses
 through accessor methods (`get_artisan_channel`, `get_output_channel`,
 `get_multiplexer`).
 
-> F5.2 refactor note: the previous **dual-slot design** — a sync
-> `Mutex<RefCell<Option<_>>>` mirror (`roaster_sync`) plus an async embassy
-> mutex, with a lazy “initialization handoff” migration on startup — was
-> **removed**. There is now a single async-mutex ownership slot, so no
-> sync/async handoff phase exists. `ServiceContainer::init_roaster` writes
-> directly into the one mutex via `try_lock()`.
+`ServiceContainer` uses a single async-mutex ownership slot; there is no
+sync/async initialization handoff. `ServiceContainer::init_roaster` writes
+directly into that mutex via `try_lock()`.
 
 ## 4. Task graph
 
@@ -90,11 +87,11 @@ tasks total; this document counts the five long-lived workers).
 
 ### Input side
 
-The input path was simplified in F5.3: reader tasks now own both byte collection and command parsing directly — the separate queue-processor tasks were removed.
+Reader tasks own both byte collection and command parsing directly; there are no separate
+queue-processor tasks.
 
 - **USB reader task**: gathers bytes from native USB CDC and parses commands
 - **UART reader task**: gathers bytes from UART0 and parses commands
-- **control loop task**: drains commands, updates control, emits telemetry
 
 ### Core runtime
 
@@ -126,7 +123,8 @@ The runtime data path is:
 
 1. Artisan sends text over USB CDC or UART.
 2. Reader tasks collect bytes until a command boundary is reached.
-3. The reader task itself parses the text into `ArtisanCommand` values (F5.3 — there are no separate queue-processor tasks).
+3. The reader task parses the text into `ArtisanCommand` values; there are no separate
+   queue-processor tasks.
 4. Parsed commands enter the shared command channel.
 5. The control loop drains commands and calls `RoasterControl::process_artisan_command`.
 6. Some commands generate immediate formatted output.
@@ -154,7 +152,7 @@ That is why duplicate-response bugs have historically appeared around `STATUS`: 
 - safety transitions,
 - runtime status publication.
 
-The v5.4 refactoring split responsibilities into four controller submodules
+The control core is split into four controller submodules
 (`src/control/controllers/`):
 
 - **SensorController** — sensor sampling, validation, EMA filtering, per-channel fault debounce
@@ -168,7 +166,10 @@ The v5.4 refactoring split responsibilities into four controller submodules
 
 But the architectural truth remains the same: `RoasterControl` is the single object where protocol intent becomes hardware behavior.
 
-Since the CORE refactor (2026-10-09) three concerns live in small pure modules next to it — `mode.rs` (`ControlMode`), `batch.rs` (`BatchState`) and `probe_stuck.rs` (`ProbeStuckDetector`) — and a golden-trace test (`tests/core_golden.rs`) freezes the behaviour of the whole core. Read [`CONTROL_CORE.md`](CONTROL_CORE.md) before changing anything in `src/control/`.
+Three concerns live in small pure modules next to it — `mode.rs` (`ControlMode`), `batch.rs`
+(`BatchState`) and `probe_stuck.rs` (`ProbeStuckDetector`) — and a golden-trace test
+(`tests/core_golden.rs`) freezes the behaviour of the whole core. Read
+[`CONTROL_CORE.md`](CONTROL_CORE.md) before changing anything in `src/control/`.
 
 ### State model
 
@@ -180,8 +181,7 @@ The high-level firmware states are defined in `src/config/constants.rs`:
 - `Stable`
 - `Error`
 
-Audit M-A7 (2026-08-11): `Cooling`, `Fault` and `EmergencyStop` were removed
-— zero references existed; every failure transition uses `Error`.
+Every failure transition uses `Error`; the state set above is the complete set.
 
 These are not UI-only states. They influence how commands are interpreted, whether PID is active, and whether the heater is allowed to drive power.
 
@@ -261,8 +261,9 @@ The MAX31856 one-shot conversion dominates the real tick: each control-loop
 tick waits `MAX31856_CONVERSION_TIME_MS = 210` ms on top of the 100 ms timer,
 so the **actual cadence is ≈ 310–330 ms**
 (`CONTROL_LOOP_TICK_MS = CONTROL_LOOP_PERIOD_MS + MAX31856_CONVERSION_TIME_MS`).
-The `160 ms` figure sometimes quoted elsewhere is the sensor read interval
-(`TEMPERATURE_READ_INTERVAL_MS`), not the loop cycle.
+`TEMPERATURE_READ_INTERVAL_MS = 160` is a legacy API-compatibility constant; it
+does not describe the current sensor read or the loop cycle. The real
+one-shot wait is `MAX31856_CONVERSION_TIME_MS = 210 ms`.
 
 The code compensates with stale-data protection and instrumentation, but
 developers must not assume the control loop is operating on fresh sensor data

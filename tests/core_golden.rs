@@ -247,7 +247,7 @@ impl Rig {
         if s.ror_resume_pending && s.follower.is_some() {
             bad("I4 a pending re-arm implies no follower");
         }
-        if s.tune_running && !(st.artisan_control && !st.pid_enabled) {
+        if s.tune_running && (!st.artisan_control || st.pid_enabled) {
             bad("I5 TUNE runs only in manual mode");
         }
         if s.emergency && st.ssr_output != 0.0 {

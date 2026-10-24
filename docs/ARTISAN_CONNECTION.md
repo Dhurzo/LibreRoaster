@@ -8,6 +8,9 @@ handshake, and the compatibility boundary. It does not restate the command gramm
 LibreRoaster behaves like a serial roasting controller that Artisan can drive. It is not a
 reimplementation of the full Artisan desktop stack.
 
+To connect the real Artisan application to the Wokwi simulation instead of hardware, use the
+RFC2217-to-PTY bridge in [`SIMULATION.md`](SIMULATION.md) §3.6.
+
 ---
 
 ## 1. Choose a Transport
@@ -274,8 +277,9 @@ Not implemented:
 
 The right mental model is **session compatibility, not ecosystem compatibility**.
 
-Artisan 2.8+ is the recommended host version. Artisan 2.7 generally works but may require manual
-driver configuration.
+Artisan 4.0.2 is the validated host version, tested end-to-end against the Wokwi simulation.
+Newer releases should work at the TC4 protocol level but are not yet validated; older releases
+are not supported. Validation against physical LibreRoaster hardware remains pending.
 
 ---
 
@@ -290,4 +294,4 @@ driver configuration.
 
 ---
 
-*Last updated: 2026-10-22.*
+*Last updated: 2026-10-24.*

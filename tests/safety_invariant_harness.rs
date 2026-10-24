@@ -121,8 +121,10 @@ fn probe_effective(cfg: RoastConfig, tick: u32) -> bool {
     !matches!(cfg.trigger, Trigger::DisconnectAfter(n) if tick >= n)
 }
 
+type TickProfile = (f32, f32, SensorFault, SensorFault);
+
 /// Temperaturas/faults del tick según perfil y fase.
-fn profile_temps(cfg: RoastConfig, tick: u32) -> (f32, f32, SensorFault, SensorFault) {
+fn profile_temps(cfg: RoastConfig, tick: u32) -> TickProfile {
     let clean = SensorFault::default();
     let faulted = SensorFault {
         fault_detected: true,
@@ -351,7 +353,7 @@ fn run_roast(seed: u64) -> RoastOutcome {
             // armado con ssr_output > 0.
             let probe_stuck_armed = s.ssr_output > 0.0;
             let comms_idle_armed =
-                sim_ms.saturating_sub(last_command_sim_ms) > COMMS_IDLE_TIMEOUT_MS as u64;
+                sim_ms.saturating_sub(last_command_sim_ms) > COMMS_IDLE_TIMEOUT_MS;
 
             // (probe_ok && ror_armed) es subsumido por probe_ok; se lista
             // ror_armed por documentación de la intención I6.
@@ -365,7 +367,7 @@ fn run_roast(seed: u64) -> RoastOutcome {
             if probe_ok {
                 i6_unexpected += 1;
                 assert!(
-                    false,
+                    !probe_ok,
                     "seed {seed} tick {tick}: I6 heater={} sin supervisión efectiva \
                      (state={state:?} pid={} probe_stuck={probe_stuck_armed} comms={comms_idle_armed})",
                     s.ssr_output, s.pid_enabled
@@ -451,7 +453,7 @@ fn dead_probe_manual_roast_now_trips_probe_stuck() {
     let ticks_to_latch =
         (libreroaster::config::constants::PROBE_STUCK_MANUAL_LATCH_SECS * 1000 / TICK_MS) + 30;
     for tick in 0..ticks_to_latch {
-        let now = baseline + Duration::from_millis(TICK_MS * tick as u64);
+        let now = baseline + Duration::from_millis(TICK_MS * tick);
 
         // Polling de Artisan cada 3 ticks — neutraliza comms-idle. El campo
         // se parchea con el tiempo sintético (misma disciplina que

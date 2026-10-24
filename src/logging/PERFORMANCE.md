@@ -1,6 +1,6 @@
 # Logging & Telemetry — Current Design
 
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-24
 **Scope:** how the firmware emits diagnostics and telemetry today. Source is truth; no benchmark claims.
 
 ## Edge-gated warnings
@@ -9,9 +9,9 @@ Persistent conditions are logged once per activation episode via `EdgeLogGate`
 (`src/logging/edge_log_gate.rs`): `warn!` on the inactive → active transition,
 `debug!` while the condition stays active, re-armed on the falling edge. Gate sites:
 
-- FAN-FLOOR interlock — command path (`src/control/roaster_control.rs:435`) and control-loop path (`:1115`)
-- PID setpoint above the channel limit (`target_cap_gate`, `:2561`)
-- SSR cycle busy (`cycle_busy_gate`, `src/control/controllers/actuator.rs:132`)
+- FAN-FLOOR interlock — command path and control-loop path in `roaster_control.rs`
+- PID setpoint above the channel limit (`target_cap_gate` in `roaster_control.rs`)
+- SSR cycle busy (`cycle_busy_gate` in `src/control/controllers/actuator.rs`)
 
 The LEDC spin guard (`src/hardware/ledc_guard.rs`) has no edge-gated warning: a timeout increments a counter exposed as the STATUS field `ledc_guard_timeouts` (u16). A per-tick `debug!` trace is emitted only when a timeout happened, and `debug!` is visible only in `instrumentation`/`test` builds (the logger defaults to `Warn`).
 
@@ -19,7 +19,9 @@ The LEDC spin guard (`src/hardware/ledc_guard.rs`) has no edge-gated warning: a 
 
 With `instrumentation` (or the host `test` feature), `src/logging/traceability.rs` exposes the event API used by the control pipeline:
 
-- `trace_command_enqueue` / `trace_queue_dequeue`
+- `trace_command_enqueue`
+- `trace_queue_dequeue` (API exists, but there is no production call site; no dequeue events are
+  emitted today)
 - `trace_actuation`
 - `trace_telemetry`
 - `trace_guard`

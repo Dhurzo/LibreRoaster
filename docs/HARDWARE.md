@@ -1,6 +1,6 @@
 # LibreRoaster Hardware Guide
 
-**Last updated:** 2026-10-22 — pin map, PWM topology, and electrical limits reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
+**Last updated:** 2026-10-24 — pin map, PWM topology, and electrical limits reviewed against `src/config/constants.rs` and `src/hardware/init.rs`.
 
 This document owns the firmware-facing hardware model: the pin mapping the firmware expects, the
 subsystem topology, and the electrical constraints that shape the safety case. Physical assembly,
@@ -154,7 +154,7 @@ resistor; never drive it open-drain.
 
 Keep these points visible in any build:
 
-- avoid GPIO2 for SPI MISO (VDD_SPI strap; see [`pinout.md`](pinout.md) §GPIO2);
+- avoid GPIO2 for SPI MISO (boot-mode strap; see [`pinout.md`](pinout.md) §GPIO2);
 - treat GPIO9 carefully because it is the boot-mode strap used for fan PWM. The datasheet 45 kΩ
   internal weak pull-up boots correctly when floating, but firmware neither configures nor verifies
   it. External 10 kΩ → 3.3 V is mandatory on custom boards, bare modules, and any external driver
@@ -223,4 +223,4 @@ The hardware layer is stable enough to run, but keep these points in mind:
 
 ---
 
-*Last updated: 2026-10-22.*
+*Last updated: 2026-10-24.*

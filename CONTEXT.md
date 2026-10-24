@@ -14,8 +14,8 @@ CDC or UART.
 control loop, telemetry, and safety interlocks.
 
 **Current milestone:** v0.0.1 Alpha on `develop`. Firmware compiles, flashes, and boots on
-ESP32-C3 hardware; USB CDC answers Artisan `READ` with real temperatures. Real Artisan
-connectivity and full hardware integration remain pending.
+ESP32-C3 hardware; USB CDC answers Artisan `READ` with TC4-formatted readings. Real thermocouple
+reads, physical Artisan connectivity, and full hardware integration remain pending.
 
 ## Technical Stack
 
@@ -74,17 +74,22 @@ For the full model, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
 - The control loop runs at the documented ≈310–330 ms real tick.
 - Host tests are green. The current command matrix and “last verified” snapshot live in
   [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
-- Full-roast simulation, the L3 pipeline test, and Wokwi F1/F2/F3 scenarios exist. See
+- Full-roast simulation, the L3 pipeline test, and Wokwi F1/F2/F3/F4 scenarios exist; an
+  RFC2217-to-PTY bridge is available for connecting the real Artisan app to the simulation. See
   [`docs/SIMULATION.md`](docs/SIMULATION.md).
-- Pending: real Artisan session, real thermocouple reads, real fan/heater control, and a real
-  coffee roast. Do not treat synthetic validation as electrical safety evidence.
+- Real Artisan 4.0.2 has been validated against the Wokwi simulation (TC4 handshake, live
+  `READ`, `START` recording) including a full 696 s public medium-roast profile in F4; the desktop
+  app on physical hardware remains pending.
+- Pending: real thermocouple reads, real fan/heater control, and a real coffee roast. Do not
+  treat synthetic validation as electrical safety evidence.
 
 ## Known Constraints
 
-- `no_std` target: no allocator and no standard library.
+- `no_std` target: no standard library. A 72 KiB heap allocator is initialized in `main`, so the
+  firmware is not allocation-free.
 - Clippy denies `unwrap_used`, `expect_used`, and `panic` in production code.
 - GPIO9 is a strapping pin; external fan circuitry must not force an invalid boot state.
-- SPI MISO uses GPIO5, not GPIO2, to avoid the FSPIQ strapping conflict.
+- SPI MISO uses GPIO5, not GPIO2, because GPIO2 is a boot-mode strap (and the native FSPIQ pin).
 - The command channel holds 16 entries and uses `try_send` backpressure only; there is no
   per-tick command budget.
 - MAX31856 one-shot conversion (210 ms) dominates the control cadence.
@@ -102,5 +107,5 @@ owner document and link to it.
 
 ---
 
-*Last updated: 2026-10-22. This file tracks current project state and agent-facing constraints,
+*Last updated: 2026-10-24. This file tracks current project state and agent-facing constraints,
 not historical change logs.*

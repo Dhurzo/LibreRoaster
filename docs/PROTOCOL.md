@@ -1,6 +1,6 @@
 # LibreRoaster Protocol Reference
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-24
 
 This is the implementation-facing serial protocol reference for LibreRoaster. It describes what the
 firmware accepts and emits, how the session behaves, and where compatibility with the official
@@ -80,7 +80,7 @@ Current behavior is intentionally shallow: the firmware acknowledges the command
 ### `READ`
 
 `READ` is the main temperature polling command. It is answered in the
-drain phase of the same control tick (S1) — worst-case latency is one tick
+drain phase of the same control tick — worst-case latency is one tick
 (~310–330 ms: 100 ms timer + 210 ms MAX31856 conversion wait), inside
 Artisan's ~0.5 s budget (0.1 s wait + 0.4 s timeout) with ~170 ms of
 margin. A stretched tick (SPI fallback, LEDC-guard contention) can still
@@ -96,7 +96,7 @@ AMB,ET,BT,0.0,0.0
 
 Field meaning:
 
-1. ambient temperature (cold-junction mean of the healthy MAX31856 channels, H13)
+1. ambient temperature (cold-junction mean of the healthy MAX31856 channels)
 2. environment temperature
 3. bean temperature
 4. unused channel placeholder
@@ -193,7 +193,7 @@ When the firmware detects the bean-charge event (a BT drop of more than
 
 `dt` is the observed temperature drop. This is a one-shot event emitted at
 charge detection time, not a periodic line. The wire copy is gated by the
-streaming state (`STREAM;ON`, PID or manual control active, H5) — detection
+streaming state (`STREAM;ON`, PID or manual control active) — detection
 itself always runs and latches `charge_detected` in `STATUS`.
 
 ## 6. Manual actuator commands
@@ -233,11 +233,9 @@ Implementation behavior:
 - marks whether clamping occurred.
 
 If clamping occurs, the control layer emits an `ERR OT2_CLAMPED fan=<n> heater_unchanged`
-notification so Artisan knows the value was sanitised. Per Spec F4.8 the `OT2` command
-is intentionally fan-only: the heater and PID state are left untouched. (Bug L10:
-earlier drafts of this document claimed clamping cut the heater — that diverged from
-the implementation in `roaster_control.rs::handle_set_fan_speed`, which keeps the
-heater unchanged by design.)
+notification so Artisan knows the value was sanitised. `OT2` is intentionally fan-only:
+clamping the fan never changes the heater or PID state. This matches
+`roaster_control.rs::handle_set_fan_speed`.
 
 ### `IO3 <0-100>` / `IO3;<0-100>` / `IO3,<0-100>` / `IO3=<0-100>`
 
@@ -269,9 +267,10 @@ admitted deliberately: they have no actuator side effects, and rejecting
 them would break Artisan reconnects (its ArduinoTC4 handshake fails on any
 non-`#` line and re-initialises forever). Recovery:
 
-1. `PID;OFF` — unconditional un-latch, returns to `Idle`; or
+1. `PID;OFF` — unconditional un-latch, returns to `Idle`; the cooldown latch still holds the fan
+   at 100 % until BT falls below 60 °C; or
 2. `START` / `PREHEAT` — treated as the operator's deliberate re-energize:
-   the latch is cleared and the new roast/preheat proceeds directly (Bug P3).
+   the latch is cleared and the new roast/preheat proceeds directly.
 
 > Note: a bare `OFF` token is **not** parsed by the firmware (only the
 > `PID;OFF` form is, in the PID subcommand parser). Earlier drafts of this
@@ -284,7 +283,8 @@ LibreRoaster accepts both Artisan-standard semicolon-delimited PID commands and 
 
 ### Supported forms
 
-- `PID;ON` (enables the firmware PID; begins a roast when none is active, but NEVER clears a safety latch — H11; recovery is `START`/`PREHEAT`/`PID;OFF`)
+- `PID;ON` (enables the firmware PID; begins a roast when none is active, but NEVER clears a
+  safety latch; recovery is `START`/`PREHEAT`/`PID;OFF`)
 - `PID;OFF`
 - `PID;SV;<temp>`
 - `PID;T;<kp>;<ki>;<kd>`
@@ -309,22 +309,21 @@ either command mid-roast neither re-anchors the roast clock nor degrades the
 state machine. Without this gate a mid-roast `PREHEAT` used to flip the state
 to `Preheating`, silently disarming the rate-of-rise guard, the
 maximum-roast-time budget and charge detection while the heater stayed
-energized (audit 2026-09-25, BUG 1). The latch-recovery semantics are
-unaffected: a latched device is in `Error`, so `PREHEAT` still clears the
-latch and starts a preheat from there.
+energized. The latch-recovery semantics are unaffected: a latched device is
+in `Error`, so `PREHEAT` still clears the latch and starts a preheat from
+there.
 
 Relatedly, a **manual** heat session (`OT1`/`UP` takeover) that begins while
 the state is `Preheating` is capped by `MAX_MANUAL_HEAT_SESSION_SECS`
 (90 min) exactly like a manual session started from `Idle` — only a
-firmware-PID preheat is exempt from the time budgets (audit 2026-09-25,
-BUG 2).
+firmware-PID preheat is exempt from the time budgets.
 
 ### Key validation rules
 
 - target temperature values must parse as finite floats at the parser layer
-  (NaN/Inf rejected); **there is no raw-numeric range check in the parser**
-  (Bug B9: the old `50.0..=300.0` check ran on the raw display-unit value
-  and rejected legitimate °F setpoints such as `400` °F ≈ 204 °C). The
+  (NaN/Inf rejected); **there is no raw-numeric range check in the parser**.
+  A parser-layer `50.0..=300.0` check would run on the raw display-unit value
+  and reject legitimate °F setpoints such as `400` °F ≈ 204 °C. The
   `50–300 °C` range is enforced in the control layer **after** display-unit
   conversion to Celsius (`convert_from_display`), so `SETTARGET`, `PREHEAT`
   and `PROFILE` setpoints are validated in true °C.
@@ -436,9 +435,9 @@ The wire can also carry these transport/scheduling-level `ERR` lines:
   the latch lands at 300 s via `ERR safety_fault Probe stuck`. Emitted once
   per stuck episode. Firmware-PID mode latches directly at 120 s, except
   during a hot-equilibrium plateau (both probes flat, heater ≥ 50 %): there
-  it emits this warning at 300 s and latches at 600 s (N4).
+  it emits this warning at 300 s and latches at 600 s.
 
-> RoR-guard tiering (A-TC4-D, 2026-08-12): the `rate_of_rise_exceeded` trap
+> RoR-guard tiering: the `rate_of_rise_exceeded` trap
 > is two-tier. Rates in the soft band (0.75–1.0 °C/s) latch only after ~3.7 s
 > of sustained exceedance (12 consecutive control ticks); rates above
 > 1.0 °C/s keep the fast 3-tick latch. A healthy light-roast turnaround
@@ -532,4 +531,4 @@ the Artisan RoR convention — not °C/s.
 
 ---
 
-*Last updated: 2026-10-22.*
+*Last updated: 2026-10-24.*

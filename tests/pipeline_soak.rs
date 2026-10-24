@@ -225,7 +225,7 @@ fn random_command_soak_keeps_queues_bounded_and_wire_wellformed() {
     init_service_container();
     drain_channels();
 
-    let mut rng = XorShift64::new(0xA11C_EA0C_4FEED);
+    let mut rng = XorShift64::new(0x000A_11CE_A0C4_FEED);
     let rounds = 70;
     let commands_per_round = 10;
     let mut total_commands = 0u64;

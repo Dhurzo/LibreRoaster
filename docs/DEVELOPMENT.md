@@ -1,6 +1,6 @@
 # LibreRoaster Development Guide
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-24
 
 This guide explains how to build, flash, test, and verify LibreRoaster without losing sight of the project’s two-runtime architecture: a real embedded firmware target and a host-side verification target.
 
@@ -49,6 +49,7 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 - **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
 - **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
 - **`simulated-typical-roast`** — F3 simulation build: pulls in `simulated-sensors` and selects the guard-safe charge-dip curve for `START`/`Heating` tests without the RoR latch
+- **`simulated-web-medium-roast`** — F4 simulation build: pulls in `simulated-sensors` and selects the 696 s public medium-roast curve (BT from Zenodo 21383046; ET = BT + 20 °C) for real-Artisan runs
 - **`heat-sense`** — opt-in GPIO1 current-sense interpretation for builds with a validated stretched-pulse circuit (default: not interpreted; all other safety layers stay active)
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
 - **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
@@ -132,7 +133,7 @@ This is the correct default verification command when documentation or behavior 
 
 ### Regression numeric suite
 
-The strongest numeric tests (`tests/sensor_conversion.rs` — 19-bit two's-complement LSB math, fixture→fault mapping) are gated behind the `regression` feature, so they are NOT part of the default `--features test` run. Run them explicitly (audit H-9, 2026-08-11):
+The strongest numeric tests (`tests/sensor_conversion.rs` — 19-bit two's-complement LSB math, fixture→fault mapping) are gated behind the `regression` feature, so they are NOT part of the default `--features test` run. Run them explicitly:
 
 ```bash
 cargo test --target x86_64-unknown-linux-gnu --features test --features regression --test sensor_conversion --no-fail-fast
@@ -148,17 +149,18 @@ cargo test --target x86_64-unknown-linux-gnu --features test --features simulate
 
 ### Pinout simulation without hardware (Wokwi)
 
-Builds the firmware and prepares the Wokwi project in `sim/wokwi/` for a visual pin check without hardware. F1 uses `simulated-sensors` (UART, status LED, SSR/fan PWM); F2 uses `heat-sense` plus the custom MAX31856 chip (real SPI and GPIO1 heat-sense); F3 uses `simulated-typical-roast` (F1 plus a charge-dip curve that stays below the RoR guard, for a solid-green `START`/`Heating` test):
+Builds the firmware and prepares the Wokwi project in `sim/wokwi/` for a visual pin check without hardware. F1 uses `simulated-sensors` (UART, status LED, SSR/fan PWM); F2 uses `heat-sense` plus the custom MAX31856 chip (real SPI and GPIO1 heat-sense); F3 uses `simulated-typical-roast` (F1 plus a charge-dip curve that stays below the RoR guard, for a solid-green `START`/`Heating` test); F4 uses `simulated-web-medium-roast` (F1 plus the 696 s public medium-roast trace for end-to-end Artisan recording):
 
 ```bash
 ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
+FEATURES=embedded,simulated-web-medium-roast ./scripts/sim-wokwi-prepare.sh
 ```
 
-Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls, and the experimental esp-emulator status. For automated serial checks with `wokwi-cli`, including the F1/F2/F3 scenario files, see `SIMULATION.md` §3.4.1.
+Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls, and the experimental esp-emulator status. For automated serial checks with `wokwi-cli`, including the F1/F2/F3 scenario files, see `SIMULATION.md` §3.4.1. To drive the simulation with the real Artisan application, use the RFC2217-to-PTY bridge in `SIMULATION.md` §3.6.
 
-### Artisan wire-contract tests (Audit A-TC4)
+### Artisan wire-contract tests
 
 Golden-transcript replay pins the wire contract against real Artisan session bytes; the soak stress-tests the full pipeline with a random command stream:
 
@@ -192,11 +194,11 @@ rerun the commands above before citing them as current.
 
 | Battery | Result | Date |
 |---|---|---|
-| Host baseline (`--features test --lib --tests`) | 913 passed / 1 ignored (579 lib + 334 integration) | 2026-10-17 |
-| Heat-sense state machine (`--features test,heat-sense --lib hardware::ssr_logic`) | 20 tests; library total 597 | 2026-10-17 |
-| Doctests (`--features test --doc`) | 6 passed / 1 ignored | 2026-10-17 |
-| Regression (`--features test,regression --lib --tests`) | 981 passed (608 lib + 373 integration) | 2026-10-17 |
-| Regression CI form (includes doctests) | 987 passed / 2 ignored | 2026-10-17 |
+| Host baseline (`--features test --lib --tests`) | 914 passed / 1 ignored (580 lib + 334 integration) | 2026-10-24 |
+| Heat-sense state machine (`--features test,heat-sense --lib hardware::ssr_logic`) | 20 tests; library total 598 | 2026-10-24 |
+| Doctests (`--features test --doc`) | 6 passed / 1 ignored | 2026-10-24 |
+| Regression (`--features test,regression --lib --tests`) | 986 passed / 1 ignored (613 lib + 373 integration) | 2026-10-24 |
+| Regression CI form (includes doctests) | 992 passed / 2 ignored | 2026-10-24 |
 
 ## 7. Quality gates
 
@@ -215,7 +217,10 @@ The project also enforces important Clippy constraints at the manifest level, in
 
 ### Serial monitoring
 
-Use `espflash monitor` to observe boot logs and live runtime behavior.
+Use `espflash monitor` to observe panics and warning/error logs and live runtime behavior. Logs go to
+UART0; native USB carries the Artisan protocol. Boot `info!` lines are filtered by the default
+`Warn` level, so rebuild with the `instrumentation` feature (and use a UART adapter) when you need
+the startup log sequence.
 
 The firmware emits useful startup logs during hardware init, watchdog init, and task startup. Those logs are often the fastest way to distinguish:
 

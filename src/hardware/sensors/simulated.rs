@@ -134,6 +134,149 @@ impl RoastCurve {
         curve
     }
 
+    /// Create a medium roast from a real, public bean-probe curve.
+    ///
+    /// Source: Zenodo record 21383046 (Teodoro et al., 2025), distributed by the
+    /// Hugging Face dataset `luispoveda93/coffee-roast-profiles` (CC-BY-4.0),
+    /// real row `real-zenodo-000`. The source publishes bean-probe temperature
+    /// only, so `env_temp` is derived as `bean_temp + 20.0 °C`; the bean trace is
+    /// the published data sampled every 30 s plus the final 696 s point.
+    ///
+    /// Approximate profile:
+    /// - 0–30s:   Charge at 184°C BT, briefly rising
+    /// - 30–60s:  Turning point at 165°C BT
+    /// - 60–420s: Drying/Maillard ramp to 195°C BT
+    /// - 420–696s: Development to 207°C BT (drop)
+    pub fn web_medium_roast() -> Self {
+        let mut curve = Self::new();
+        curve.add_point(CurvePoint {
+            time_secs: 0,
+            bean_temp: 183.8,
+            env_temp: 203.8,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 30,
+            bean_temp: 188.0,
+            env_temp: 208.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 60,
+            bean_temp: 165.4,
+            env_temp: 185.4,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 90,
+            bean_temp: 169.8,
+            env_temp: 189.8,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 120,
+            bean_temp: 173.7,
+            env_temp: 193.7,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 150,
+            bean_temp: 177.1,
+            env_temp: 197.1,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 180,
+            bean_temp: 179.5,
+            env_temp: 199.5,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 210,
+            bean_temp: 181.8,
+            env_temp: 201.8,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 240,
+            bean_temp: 184.4,
+            env_temp: 204.4,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 270,
+            bean_temp: 186.6,
+            env_temp: 206.6,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 300,
+            bean_temp: 188.7,
+            env_temp: 208.7,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 330,
+            bean_temp: 190.2,
+            env_temp: 210.2,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 360,
+            bean_temp: 191.6,
+            env_temp: 211.6,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 390,
+            bean_temp: 193.2,
+            env_temp: 213.2,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 420,
+            bean_temp: 194.6,
+            env_temp: 214.6,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 450,
+            bean_temp: 196.1,
+            env_temp: 216.1,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 480,
+            bean_temp: 197.5,
+            env_temp: 217.5,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 510,
+            bean_temp: 199.2,
+            env_temp: 219.2,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 540,
+            bean_temp: 200.4,
+            env_temp: 220.4,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 570,
+            bean_temp: 201.5,
+            env_temp: 221.5,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 600,
+            bean_temp: 203.0,
+            env_temp: 223.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 630,
+            bean_temp: 204.4,
+            env_temp: 224.4,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 660,
+            bean_temp: 205.6,
+            env_temp: 225.6,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 690,
+            bean_temp: 207.0,
+            env_temp: 227.0,
+        });
+        curve.add_point(CurvePoint {
+            time_secs: 696,
+            bean_temp: 207.4,
+            env_temp: 227.4,
+        });
+        curve
+    }
+
     /// Create a guard-safe typical roast profile for START/Heating tests.
     ///
     /// The bean probe starts at a realistic charge temperature, drops through
@@ -601,6 +744,11 @@ impl SimulatedSensorSource {
         Self::new(curve)
     }
 
+    /// Create a simulated source using [`RoastCurve::web_medium_roast`].
+    pub fn web_medium_roast() -> Self {
+        Self::new(RoastCurve::web_medium_roast())
+    }
+
     /// Set noise amplitude in °C. A value of 0.5 adds ±0.5°C noise.
     pub fn with_noise_amplitude(mut self, amplitude: f32) -> Self {
         self.noise_amplitude = amplitude;
@@ -1035,6 +1183,40 @@ mod tests {
         let curve = RoastCurve::typical_roast();
         let mut previous_bt = curve.temperatures_at(0).0;
         for time_secs in (30u32..=600).step_by(30) {
+            let current_bt = curve.temperatures_at(time_secs).0;
+            let slope = (current_bt - previous_bt) / 30.0;
+            if slope > 0.0 {
+                assert!(
+                    slope <= MAX_BT_RATE_OF_RISE,
+                    "positive BT slope {slope} °C/s at {time_secs}s exceeds soft RoR limit {MAX_BT_RATE_OF_RISE}"
+                );
+            }
+            previous_bt = current_bt;
+        }
+    }
+
+    #[test]
+    fn web_medium_roast_has_published_endpoints_and_drop() {
+        let curve = RoastCurve::web_medium_roast();
+        assert_eq!(curve.len(), 25);
+
+        let (start_bt, start_et) = curve.temperatures_at(0);
+        assert!((start_bt - 183.8).abs() < 0.01);
+        assert!((start_et - 203.8).abs() < 0.01);
+
+        let (turning_bt, _) = curve.temperatures_at(60);
+        assert!((turning_bt - 165.4).abs() < 0.01);
+
+        let (drop_bt, drop_et) = curve.temperatures_at(696);
+        assert!((drop_bt - 207.4).abs() < 0.01);
+        assert!((drop_et - 227.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn web_medium_roast_positive_bt_slopes_stay_below_soft_ror_limit() {
+        let curve = RoastCurve::web_medium_roast();
+        let mut previous_bt = curve.temperatures_at(0).0;
+        for time_secs in (30u32..=696).step_by(30) {
             let current_bt = curve.temperatures_at(time_secs).0;
             let slope = (current_bt - previous_bt) / 30.0;
             if slope > 0.0 {

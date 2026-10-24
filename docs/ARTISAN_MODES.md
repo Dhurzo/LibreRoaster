@@ -1,6 +1,6 @@
 # Manual and Profile Modes with Artisan
 
-**Last updated:** 2026-09-21
+**Last updated:** 2026-10-24
 
 Practical guide to the two roast modes LibreRoaster exposes to the
 Artisan application over the serial port (USB CDC or UART0, 115200 8N1).
@@ -58,8 +58,8 @@ STOP         → heater 0 %, fan 100 %, latch armed (recover: PID;OFF / START)
   without commands while heating), manual heat-session cap (90 min without
   `START`; 30 min once anchored by `START`), two-stage stuck-probe
   detector (`ERR probe_stuck_warning` after 120 s of flat BT, latch at
-  300 s — hot BT-near-ET equilibrium holds exempt, H8), firmware-PID RoR
-  guard stays disarmed on the sliders even after `START` (H6).
+  300 s — hot BT-near-ET equilibrium holds exempt), and the firmware-PID
+  RoR guard stays disarmed on the sliders even after `START`.
 * **Artisan sends this on its own:** what stock Artisan sends without
   help is `CHAN`/`UNITS`/`FILT` on connect, `READ` polling, and the
   `OT1`/`OT2` sliders. See fixtures
