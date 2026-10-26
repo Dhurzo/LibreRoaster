@@ -3,7 +3,9 @@ name: Simulation
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'
+    # Weekly, not nightly: the Free plan allows 50 simulation minutes in a
+    # rolling 30-day window, and a full manifest run costs roughly 6 minutes.
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read

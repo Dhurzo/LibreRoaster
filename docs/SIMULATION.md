@@ -407,8 +407,8 @@ CI coverage is split deliberately:
 - `.github/workflows/ci.yml` builds F3/F4/F5 and rejects incompatible feature
   combinations without needing a Wokwi token.
 - `.github/workflows/simulation.yml` runs the full manifest on manual dispatch
-  or nightly when `WOKWI_CLI_TOKEN` is configured; otherwise it skips with a
-  notice.
+  or weekly (Mondays 06:00 UTC) when `WOKWI_CLI_TOKEN` is configured;
+  otherwise it skips with a notice.
 
 Local verification on 2026-10-26 passed F1-F4 (9/9) and the three F5
 scenarios individually (3/3) with Wokwi CLI 0.29.0 before the MAX31856

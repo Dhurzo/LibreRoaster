@@ -63,8 +63,8 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 
 CI runs 8 jobs (fmt, clippy, embedded-clippy, test, regression, coverage, embedded-build,
 simulation-profiles). `simulation-profiles` builds F3, F4, and F5 and rejects incompatible feature
-combinations without a Wokwi token; the nightly `Simulation` workflow runs the full Wokwi manifest
-when `WOKWI_CLI_TOKEN` is configured. The recorded counts and dates for each battery are in the
+combinations without a Wokwi token; the weekly `Simulation` workflow (Mondays 06:00 UTC) runs the full Wokwi
+manifest when `WOKWI_CLI_TOKEN` is configured. The recorded counts and dates for each battery are in the
 verification snapshot at the end of §6.
 Clippy runs both the default host `--all-targets` and a `--features test` pass because the `test`
 feature gates real code (multiplexer, `usb_cdc` tasks).
