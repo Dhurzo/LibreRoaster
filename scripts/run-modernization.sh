@@ -6,6 +6,7 @@ LOG_DIR="logs/modernization/$RUN_ID"
 mkdir -p "$LOG_DIR"
 
 SKIP_REASON=${SKIP_REASON:-}
+CLIPPY_FEATURES=${CLIPPY_FEATURES:-test}
 
 dump_step() {
   STEP_NAME=$1
@@ -24,7 +25,7 @@ dump_step quality_baseline scripts/quality-baseline.sh
 
 dump_step fix cargo fix --allow-dirty --allow-staged
 
-dump_step clippy cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
+dump_step clippy cargo clippy --all-targets --features "$CLIPPY_FEATURES" -- -D warnings -D clippy::pedantic
 
 SUMMARY_FILE="$LOG_DIR/summary.txt"
 {

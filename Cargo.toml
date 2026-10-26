@@ -51,7 +51,8 @@ simulated-sensors = []
 simulated-plant = ["simulated-sensors"]
 simulated-typical-roast = ["simulated-sensors"]
 # F4: real public bean-probe curve (Zenodo 21383046, medium roast) for Artisan
-# end-to-end tests. Precedence over `simulated-typical-roast` in AppBuilder.
+# end-to-end tests. Mutually exclusive with `simulated-typical-roast`; the
+# crate-level `compile_error!` in src/lib.rs enforces the choice.
 simulated-web-medium-roast = ["simulated-sensors"]
 # H4: heat-source current-sense on GPIO1 is OPT-IN. The default build does
 # NOT interpret GPIO1, so boards without the sense circuit heat normally.

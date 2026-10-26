@@ -361,8 +361,8 @@ tests and closed-loop inspection. Without that feature the firmware replies
 | `SIM;FAULT;<bt_mask>;<et_mask>` | Inject MAX31856 fault-register bits; decimal or `0x` hex. Bit 0 is open-circuit. |
 | `SIM;CHARGE;<drop_c>` | Inject a cold-bean drop into the plant (0…300 °C); returns `ERR sim_no_plant` without a plant. |
 | `SIM;TEMP;<bt>;<et>` | Hard-override reported temperatures (0…600 °C), e.g. to exercise ET over-temp. |
-| `SIM;TEMP;OFF` | Clear the temperature override. |
-| `SIM;FREEZE;ON` / `SIM;FREEZE;OFF` | Freeze/unfreeze evolution while retaining the last reading. |
+| `SIM;TEMP;OFF` | Clear the temperature override; evolution resumes from the paused time. |
+| `SIM;FREEZE;ON` / `SIM;FREEZE;OFF` | Freeze/unfreeze evolution while retaining the last reading; unfreezing does not jump the curve/plant forward by the paused duration. |
 
 `SIM` commands are deliberate test controls, not an Artisan production
 surface. They are included only in simulation features and must not be used
@@ -378,7 +378,10 @@ as a safety mechanism. `SIM;STATUS` is the only `SIM` command allowed while
 
 Artifacts are written to `target/wokwi/`: `<id>.log`, `<id>.verify.json`,
 `<id>.json`, and `summary.json`. `sim/wokwi/build-meta.json` is generated and
-ignored by git.
+ignored by git. Each scenario result has a `status` of `PASS`, `FAIL`, or
+`INFRA_ERROR`; `INFRA_ERROR` means Wokwi produced no serial log (quota, auth,
+or simulator startup failure), is counted separately in `summary.json`, and is
+not presented as a scenario assertion failure.
 
 The old wrapper still works for one scenario:
 
@@ -397,10 +400,9 @@ twice 4 s apart, and finishes with `PID;OFF`. It asserts that GPIO8 is high in
 `Heating` and low after the final `PID;OFF`.
 
 The VS Code GUI checklists in §3.1–§3.3 remain the fallback when no CI token is
-available. Wokwi CLI 0.29.0 emits an `invalid-attribute` warning for the
-`wokwi-slide-switch` `value` attribute, but the observed default is RIGHT and
-the heat-sense scenario passes; verify the switch position in the VS Code GUI
-before using it manually.
+available. The GPIO1 heat-sense switch must be RIGHT (open; no current) for
+`f2-heatsense`; Wokwi's default is RIGHT, but verify the position in the VS Code
+GUI after toggling it manually.
 
 CI coverage is split deliberately:
 

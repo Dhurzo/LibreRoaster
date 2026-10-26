@@ -28,7 +28,9 @@ fi
 clippy_output=$(mktemp)
 trap 'rm -f "$clippy_output"' EXIT
 
-cargo clippy --locked --lib --tests --benches --examples --all-features --message-format=json > "$clippy_output"
+INVENTORY_FEATURES=${INVENTORY_FEATURES:-test,simulated-plant}
+cargo clippy --locked --lib --tests --benches --examples \
+  --features "$INVENTORY_FEATURES" --message-format=json > "$clippy_output"
 
 export CLIPPY_OUTPUT="$clippy_output"
 export INVENTORY_FILE="$inventory_file"

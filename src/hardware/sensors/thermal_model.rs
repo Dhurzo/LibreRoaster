@@ -123,7 +123,7 @@ impl ThermalPlant {
     /// Instantly drop bean true temp (e.g. cold charge). `drop_c` >0.
     /// ET / drum dip is smaller (cold mass mostly hits BT probe).
     pub fn inject_charge(&mut self, bean_drop_c: f32) {
-        let drop = bean_drop_c.clamp(0.0, 120.0);
+        let drop = bean_drop_c.clamp(0.0, 300.0);
         self.bean_true = (self.bean_true - drop).max(-20.0);
         // ET sees ~25% of BT dip (exhaust still hot, drum recovers)
         let et_drop = drop * 0.25;
@@ -371,6 +371,23 @@ mod tests {
         assert!(
             (et_before - et_after) < (bt_before - bt_after),
             "ET dip smaller than BT"
+        );
+    }
+
+    #[test]
+    fn inject_charge_honors_documented_300c_limit() {
+        let cfg = ThermalPlantConfig::default();
+        let mut p = ThermalPlant::new_with_initial(cfg, 250.0, 250.0);
+        let (bt_before, et_before) = p.true_temps();
+        p.inject_charge(300.0);
+        let (bt_after, et_after) = p.true_temps();
+        assert!(
+            bt_after < bt_before - 200.0,
+            "300°C charge must not be truncated to 120°C: before {bt_before} after {bt_after}"
+        );
+        assert!(
+            et_after < et_before,
+            "ET should also dip on charge: before {et_before} after {et_after}"
         );
     }
 

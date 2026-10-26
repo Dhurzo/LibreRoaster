@@ -2033,6 +2033,22 @@ mod tests {
     }
 
     #[test]
+    fn test_sim_charge_range() {
+        assert_eq!(
+            parse_artisan_command("SIM;CHARGE;0"),
+            Ok(ArtisanCommand::Sim(SimCommand::Charge(0.0)))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;CHARGE;300"),
+            Ok(ArtisanCommand::Sim(SimCommand::Charge(300.0)))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;CHARGE;301"),
+            Err(ParseError::OutOfRange)
+        );
+    }
+
+    #[test]
     fn test_sim_fault_accepts_decimal_and_hex() {
         assert_eq!(
             parse_artisan_command("SIM;FAULT;0x21;0"),

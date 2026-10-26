@@ -724,6 +724,7 @@ pub struct SimulatedSensorSource {
     override_temps: Option<(f32, f32)>,
     /// When true, temperatures stop evolving but keep their last value.
     frozen: bool,
+    paused_since: Option<Instant>,
 }
 
 /// Read-only snapshot of the synthetic source for `SIM;STATUS`.
@@ -757,6 +758,7 @@ impl SimulatedSensorSource {
             env_fault_mask: 0,
             override_temps: None,
             frozen: false,
+            paused_since: None,
         }
     }
 
@@ -857,11 +859,28 @@ impl SimulatedSensorSource {
         if let Some(values) = temps {
             self.last_temps = values;
         }
+        self.sync_pause_anchor(Instant::now());
     }
 
     /// Freeze/unfreeze temperature evolution while keeping the last value.
     pub fn set_frozen(&mut self, frozen: bool) {
         self.frozen = frozen;
+        self.sync_pause_anchor(Instant::now());
+    }
+
+    fn sync_pause_anchor(&mut self, now: Instant) {
+        let paused = self.frozen || self.override_temps.is_some();
+        if paused {
+            if self.paused_since.is_none() {
+                self.paused_since = Some(now);
+            }
+            return;
+        }
+        if let Some(since) = self.paused_since.take() {
+            let pause = now.saturating_duration_since(since);
+            self.start_instant += pause;
+            self.last_update_instant = Some(now);
+        }
     }
 
     /// Whether temperature evolution is frozen.
@@ -938,6 +957,7 @@ impl SimulatedSensorSource {
         self.env_fault_mask = 0;
         self.override_temps = None;
         self.frozen = false;
+        self.paused_since = None;
         if let Some(p) = self.plant.as_mut() {
             p.reset();
             self.last_temps = p.measured();
@@ -1595,7 +1615,59 @@ mod tests {
         assert!(!source.frozen());
         assert_eq!(source.last_temperatures(), source.curve.temperatures_at(0));
     }
+    #[test]
+    fn unfreeze_reanchors_curve_and_plant_clocks() {
+        let mut source = SimulatedSensorSource::default_curve()
+            .with_thermal_plant(ThermalPlantConfig::default());
+        let start_before = source.start_instant;
+        source.set_frozen(true);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let resume_before = Instant::now();
+        source.set_frozen(false);
 
+        let shifted_ms = source
+            .start_instant
+            .saturating_duration_since(start_before)
+            .as_millis();
+        assert!(
+            shifted_ms >= 100,
+            "curve clock should resume at the pause point, shifted {shifted_ms}ms"
+        );
+        let last_update = source
+            .last_update_instant
+            .expect("plant clock must be anchored");
+        assert!(
+            last_update >= resume_before,
+            "plant clock must be re-anchored on unfreeze"
+        );
+    }
+
+    #[test]
+    fn clearing_override_reanchors_curve_and_plant_clocks() {
+        let mut source = SimulatedSensorSource::default_curve()
+            .with_thermal_plant(ThermalPlantConfig::default());
+        let start_before = source.start_instant;
+        source.set_temperature_override(Some((123.0, 234.0)));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let resume_before = Instant::now();
+        source.set_temperature_override(None);
+
+        let shifted_ms = source
+            .start_instant
+            .saturating_duration_since(start_before)
+            .as_millis();
+        assert!(
+            shifted_ms >= 100,
+            "curve clock should resume at the pause point, shifted {shifted_ms}ms"
+        );
+        let last_update = source
+            .last_update_instant
+            .expect("plant clock must be anchored");
+        assert!(
+            last_update >= resume_before,
+            "plant clock must be re-anchored when the override clears"
+        );
+    }
     #[test]
     fn simulation_fault_masks_reach_snapshot_and_reset_clears_them() {
         let mut source = SimulatedSensorSource::default_curve();

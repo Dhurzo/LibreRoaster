@@ -191,6 +191,8 @@ def _run_scenario(
     log = log_dir / f"{scenario.id}.log"
     verify_json = log_dir / f"{scenario.id}.verify.json"
     result_json = log_dir / f"{scenario.id}.json"
+    log.unlink(missing_ok=True)
+    verify_json.unlink(missing_ok=True)
     started = time.monotonic()
 
     command = [
@@ -221,20 +223,33 @@ def _run_scenario(
     if run_output.strip():
         print(run_output.rstrip())
 
-    verify_exit, verify_details, verify_output = _run_verifier(
-        scenario, log, verify_json
-    )
-    if verify_output.strip():
-        print(verify_output.rstrip())
+    log_has_data = log.is_file() and log.stat().st_size > 0
+    if log_has_data:
+        verify_exit, verify_details, verify_output = _run_verifier(
+            scenario, log, verify_json
+        )
+        if verify_output.strip():
+            print(verify_output.rstrip())
+        passed = wokwi_exit == 0 and verify_exit == 0
+        status = "PASS" if passed else "FAIL"
+        infra_error = None
+    else:
+        verify_exit = None
+        verify_details = None
+        passed = False
+        status = "INFRA_ERROR"
+        infra_error = f"wokwi-cli produced no serial log (exit {wokwi_exit})"
+        print(f"INFRA_ERROR: {scenario.id}: {infra_error}")
 
-    passed = wokwi_exit == 0 and verify_exit == 0
     result = {
         "id": scenario.id,
         "features": scenario.features,
         "kind": scenario.kind,
+        "status": status,
         "wokwi_exit": wokwi_exit,
         "verify_exit": verify_exit,
         "passed": passed,
+        "infra_error": infra_error,
         "duration_s": round(time.monotonic() - started, 3),
         "log": str(log.relative_to(ROOT)) if log.is_relative_to(ROOT) else str(log),
         "verify": verify_details,
@@ -242,7 +257,6 @@ def _run_scenario(
     }
     result_json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
-    status = "PASS" if passed else "FAIL"
     print(f"{status}: {scenario.id} -> {log}")
     return result
 
@@ -312,11 +326,18 @@ def main() -> int:
     if args.build_only:
         return 0
 
+    functional_failures = [
+        result for result in results if result["status"] == "FAIL"
+    ]
+    infra_errors = [
+        result for result in results if result["status"] == "INFRA_ERROR"
+    ]
     summary = {
-        "ok": all(result["passed"] for result in results),
+        "ok": bool(results) and not functional_failures and not infra_errors,
         "total": len(results),
-        "passed": sum(1 for result in results if result["passed"]),
-        "failed": sum(1 for result in results if not result["passed"]),
+        "passed": sum(1 for result in results if result["status"] == "PASS"),
+        "failed": len(functional_failures),
+        "infra_errors": len(infra_errors),
         "scenarios": results,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "git_commit": subprocess.run(
@@ -331,9 +352,15 @@ def main() -> int:
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
     print(
-        f"\nSummary: {summary['passed']}/{summary['total']} passed "
+        f"\nSummary: {summary['passed']}/{summary['total']} passed, "
+        f"{summary['failed']} failed, {summary['infra_errors']} infra error(s) "
         f"({summary_path})"
     )
+    if infra_errors:
+        print(
+            "INFRA_ERROR results are not scenario failures; check Wokwi access, "
+            "token/quota, and the CLI output."
+        )
     return 0 if summary["ok"] else 1
 
 
