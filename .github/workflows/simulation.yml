@@ -1,0 +1,60 @@
+name: Simulation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  wokwi:
+    name: Wokwi scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install espflash
+        run: cargo install espflash --locked --version 4.3.0
+
+      - name: Install wokwi-cli
+        run: |
+          curl -fsSL https://wokwi.com/ci/install.sh | sh -s -- 0.29.0
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/bin:$PATH"
+          command -v wokwi-cli
+          wokwi-cli --version
+
+      - name: Check Wokwi token
+        id: token
+        run: |
+          if [ -z "${WOKWI_CLI_TOKEN}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::WOKWI_CLI_TOKEN is not configured; skipping Wokwi scenarios."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Wokwi scenarios
+        if: steps.token.outputs.available == 'true'
+        run: ./scripts/sim-wokwi-check.sh --all
+
+      - name: Upload Wokwi artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wokwi-simulation-${{ github.run_id }}
+          path: target/wokwi/**
+          if-no-files-found: warn
+          retention-days: 14

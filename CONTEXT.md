@@ -74,8 +74,10 @@ For the full model, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
 - The control loop runs at the documented ≈310–330 ms real tick.
 - Host tests are green. The current command matrix and “last verified” snapshot live in
   [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
-- Full-roast simulation, the L3 pipeline test, and Wokwi F1/F2/F3/F4 scenarios exist; an
-  RFC2217-to-PTY bridge is available for connecting the real Artisan app to the simulation. See
+- Full-roast simulation, the L3 pipeline test, and Wokwi F1/F2/F3/F4/F5 scenarios exist; an
+  RFC2217-to-PTY bridge is available for connecting the real Artisan app to the simulation. F5
+  (`simulated-plant`) closes the heater/fan loop through `ThermalPlant`; `SIM` commands inject
+  faults, temperature overrides, charge drops, and freezes for negative scenarios. See
   [`docs/SIMULATION.md`](docs/SIMULATION.md).
 - Real Artisan 4.0.2 has been validated against the Wokwi simulation (TC4 handshake, live
   `READ`, `START` recording) including a full 696 s public medium-roast profile in F4; the desktop
@@ -107,5 +109,5 @@ owner document and link to it.
 
 ---
 
-*Last updated: 2026-10-24. This file tracks current project state and agent-facing constraints,
+*Last updated: 2026-10-26. This file tracks current project state and agent-facing constraints,
 not historical change logs.*

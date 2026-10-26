@@ -6,7 +6,8 @@
 //! payloads via interrupt-safe statics for the control loop to consume.
 
 use crate::config::{
-    ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RorPoint, RorProfile, TuneCommand,
+    ArtisanCommand, FanProfile, ProfileSetpoint, RoastProfile, RorPoint, RorProfile, SimCommand,
+    TuneCommand,
 };
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -151,6 +152,7 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
                 "FANPROFILE" => Some(parse_fan_profile_args(args.trim())),
                 "RORPROFILE" => Some(parse_ror_profile_args(args.trim())),
                 "PID" => Some(parse_pid_subcommand(args.trim())),
+                "SIM" => Some(parse_sim_args(args.trim())),
                 "STREAM" => Some(match args.trim().to_ascii_uppercase().as_str() {
                     "ON" => Ok(ArtisanCommand::SetStreaming(true)),
                     "OFF" => Ok(ArtisanCommand::SetStreaming(false)),
@@ -368,6 +370,60 @@ pub fn parse_artisan_command(command: &str) -> Result<ArtisanCommand, ParseError
     } else {
         Err(ParseError::UnknownCommand)
     }
+}
+
+/// Parse the payload of `SIM;<subcommand>`. The caller has already folded `;`
+/// and `,` into spaces, so split on whitespace only.
+fn parse_sim_args(args: &str) -> Result<ArtisanCommand, ParseError> {
+    let parts: heapless::Vec<&str, 4> = args.split_whitespace().take(4).collect();
+    let Some((head, rest)) = parts.split_first() else {
+        return Err(ParseError::InvalidValue);
+    };
+
+    let command = match head.to_ascii_uppercase().as_str() {
+        "STATUS" if rest.is_empty() => SimCommand::Status,
+        "RESET" if rest.is_empty() => SimCommand::Reset,
+        "FAULT" if rest.len() == 2 => SimCommand::Fault {
+            bean: parse_fault_mask(rest[0])?,
+            env: parse_fault_mask(rest[1])?,
+        },
+        "CHARGE" if rest.len() == 1 => {
+            let drop_c = parse_float(rest[0])?;
+            if !(0.0..=300.0).contains(&drop_c) {
+                return Err(ParseError::OutOfRange);
+            }
+            SimCommand::Charge(drop_c)
+        }
+        "TEMP" if rest.len() == 1 && rest[0].eq_ignore_ascii_case("OFF") => SimCommand::ClearTemp,
+        "TEMP" if rest.len() == 2 => {
+            let bean = parse_float(rest[0])?;
+            let env = parse_float(rest[1])?;
+            if !(0.0..=600.0).contains(&bean) || !(0.0..=600.0).contains(&env) {
+                return Err(ParseError::OutOfRange);
+            }
+            SimCommand::Temp { bean, env }
+        }
+        "FREEZE" if rest.len() == 1 => match rest[0].to_ascii_uppercase().as_str() {
+            "ON" | "1" => SimCommand::Freeze(true),
+            "OFF" | "0" => SimCommand::Freeze(false),
+            _ => return Err(ParseError::InvalidValue),
+        },
+        _ => return Err(ParseError::InvalidValue),
+    };
+
+    Ok(ArtisanCommand::Sim(command))
+}
+
+fn parse_fault_mask(value: &str) -> Result<u8, ParseError> {
+    let parsed = if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u8::from_str_radix(hex, 16).map_err(|_| ParseError::InvalidValue)?
+    } else {
+        value.parse::<u8>().map_err(|_| ParseError::InvalidValue)?
+    };
+    Ok(parsed)
 }
 
 fn parse_pid_subcommand(args: &str) -> Result<ArtisanCommand, ParseError> {
@@ -1938,6 +1994,79 @@ mod tests {
         assert_eq!(
             parse_artisan_command("UNITS;F"),
             Ok(ArtisanCommand::Units(true))
+        );
+    }
+
+    #[test]
+    fn test_sim_status_and_reset() {
+        assert_eq!(
+            parse_artisan_command("SIM;STATUS"),
+            Ok(ArtisanCommand::Sim(SimCommand::Status))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;RESET"),
+            Ok(ArtisanCommand::Sim(SimCommand::Reset))
+        );
+    }
+
+    #[test]
+    fn test_sim_temp_and_freeze() {
+        assert_eq!(
+            parse_artisan_command("SIM;TEMP;25.5;260"),
+            Ok(ArtisanCommand::Sim(SimCommand::Temp {
+                bean: 25.5,
+                env: 260.0
+            }))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;TEMP;OFF"),
+            Ok(ArtisanCommand::Sim(SimCommand::ClearTemp))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;FREEZE;ON"),
+            Ok(ArtisanCommand::Sim(SimCommand::Freeze(true)))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;FREEZE;0"),
+            Ok(ArtisanCommand::Sim(SimCommand::Freeze(false)))
+        );
+    }
+
+    #[test]
+    fn test_sim_fault_accepts_decimal_and_hex() {
+        assert_eq!(
+            parse_artisan_command("SIM;FAULT;0x21;0"),
+            Ok(ArtisanCommand::Sim(SimCommand::Fault {
+                bean: 0x21,
+                env: 0
+            }))
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;FAULT;33;128"),
+            Ok(ArtisanCommand::Sim(SimCommand::Fault {
+                bean: 33,
+                env: 128
+            }))
+        );
+    }
+
+    #[test]
+    fn test_sim_rejects_bad_arguments() {
+        assert_eq!(
+            parse_artisan_command("SIM;TEMP;700;20"),
+            Err(ParseError::OutOfRange)
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;FAULT;0xGG;0"),
+            Err(ParseError::InvalidValue)
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;FREEZE;MAYBE"),
+            Err(ParseError::InvalidValue)
+        );
+        assert_eq!(
+            parse_artisan_command("SIM;STATUS;EXTRA"),
+            Err(ParseError::InvalidValue)
         );
     }
 }

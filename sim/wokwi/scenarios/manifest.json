@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "f1-smoke",
+      "file": "scenarios/f1-smoke.yaml",
+      "features": "embedded,simulated-sensors",
+      "timeout_ms": 90000,
+      "kind": "happy",
+      "expect": [
+        "100\\.0,20\\.0,200\\.0"
+      ],
+      "forbid": [
+        "ERR safety_fault",
+        "Emergency shutdown",
+        "rate-of-rise exceeded",
+        "Comms idle timeout"
+      ],
+      "notes": "Handshake, PREHEAT 200 and the 20% fan floor; no START."
+    },
+    {
+      "id": "f2-spi",
+      "file": "scenarios/f2-spi.yaml",
+      "features": "embedded,heat-sense",
+      "timeout_ms": 90000,
+      "kind": "happy",
+      "expect": [
+        "35\\.0,220\\.0,200\\.0",
+        "35\\.0,230\\.0,250\\.0"
+      ],
+      "forbid": [
+        "ERR safety_fault",
+        "Emergency shutdown",
+        "boot self-test failed",
+        "both channels",
+        "no sensors"
+      ],
+      "notes": "Real MAX31856 SPI path; does not energize the heater."
+    },
+    {
+      "id": "f3-roast",
+      "file": "scenarios/f3-roast.yaml",
+      "features": "embedded,simulated-typical-roast",
+      "timeout_ms": 90000,
+      "kind": "happy",
+      "expect": [
+        "#OK",
+        "0\\.0,2[0-9][0-9]\\.[0-9],"
+      ],
+      "forbid": [
+        "ERR safety_fault",
+        "Emergency shutdown",
+        "rate-of-rise exceeded",
+        "Comms idle timeout"
+      ],
+      "notes": "Guard-safe PREHEAT/START keepalive; GPIO8 high then low."
+    },
+    {
+      "id": "f4-short",
+      "file": "scenarios/f4-short.yaml",
+      "features": "embedded,simulated-web-medium-roast",
+      "timeout_ms": 120000,
+      "kind": "happy",
+      "expect": [
+        "#OK",
+        "0\\.0,20[0-9]\\.[0-9],18[0-9]\\.[0-9]"
+      ],
+      "forbid": [
+        "ERR safety_fault",
+        "Emergency shutdown"
+      ],
+      "notes": "Short smoke of the public 696 s curve; not a full F4 run."
+    },
+    {
+      "id": "f5-plant",
+      "file": "scenarios/f5-plant.yaml",
+      "features": "embedded,simulated-plant",
+      "timeout_ms": 90000,
+      "kind": "happy",
+      "expect": [
+        "plant=1;frozen=0;bfault=0x00;efault=0x00",
+        "#SIM;PLANT;bt=([4-9][0-9]|1[0-9][0-9])\\.[0-9]",
+        "heater=0\\.0"
+      ],
+      "forbid": [
+        "ERR safety_fault",
+        "Emergency shutdown",
+        "Comms idle timeout"
+      ],
+      "notes": "Closed-loop ThermalPlant driven by OT1; BT rises and SIM;STATUS reflects the plant."
+    },
+    {
+      "id": "f5-et-overtemp",
+      "file": "scenarios/f5-et-overtemp.yaml",
+      "features": "embedded,simulated-plant",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Temperature exceeds valid range",
+        "ERR safety_fault"
+      ],
+      "forbid": [],
+      "notes": "SIM;TEMP forces ET above the 300 C ET threshold; the ET over-temperature latch must trip."
+    },
+    {
+      "id": "f5-sensor-fault",
+      "file": "scenarios/f5-sensor-fault.yaml",
+      "features": "embedded,simulated-plant",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Sensor fault",
+        "OK sim_reset"
+      ],
+      "forbid": [],
+      "notes": "SIM;FAULT injects MAX31856 open-circuit after SIM;RESET; the sensor-fault latch must trip."
+    },
+    {
+      "id": "f1-ror",
+      "file": "scenarios/f1-ror.yaml",
+      "features": "embedded,simulated-sensors",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "rate-of-rise exceeded"
+      ],
+      "forbid": [
+        "Comms idle timeout"
+      ],
+      "notes": "START on the default medium curve must latch the RoR guard."
+    },
+    {
+      "id": "f3-comms-idle",
+      "file": "scenarios/f3-comms-idle.yaml",
+      "features": "embedded,simulated-typical-roast",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Comms idle timeout"
+      ],
+      "forbid": [],
+      "notes": "Heater armed, then no inbound command for more than 15 s."
+    },
+    {
+      "id": "f2-overtemp",
+      "file": "scenarios/f2-overtemp.yaml",
+      "features": "embedded,heat-sense",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Temperature exceeds valid range"
+      ],
+      "forbid": [],
+      "notes": "BT slider above the 260 C emergency threshold."
+    },
+    {
+      "id": "f2-sensor-fault",
+      "file": "scenarios/f2-sensor-fault.yaml",
+      "features": "embedded,heat-sense",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Sensor fault"
+      ],
+      "forbid": [],
+      "notes": "BT MAX31856 fault bit set to open-circuit."
+    },
+    {
+      "id": "f2-heatsense",
+      "file": "scenarios/f2-heatsense.yaml",
+      "features": "embedded,heat-sense",
+      "timeout_ms": 90000,
+      "kind": "latch",
+      "expect": [
+        "Heat source not detected"
+      ],
+      "forbid": [],
+      "notes": "Heater ON with the GPIO1 switch RIGHT (no current)."
+    }
+  ]
+}

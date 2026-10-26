@@ -714,11 +714,35 @@ pub struct SimulatedSensorSource {
     last_heater_pct: f32,
     last_fan_pct: f32,
     last_update_instant: Option<Instant>,
+    /// Last emitted temperatures. Used by `SIM;STATUS` and by freeze mode.
+    last_temps: (f32, f32),
+    /// Simulated MAX31856 fault-register masks (bit map is the same as the
+    /// real chip). Applied to the next samples.
+    bean_fault_mask: u8,
+    env_fault_mask: u8,
+    /// Optional hard temperature override, e.g. to exercise ET over-temp.
+    override_temps: Option<(f32, f32)>,
+    /// When true, temperatures stop evolving but keep their last value.
+    frozen: bool,
+}
+
+/// Read-only snapshot of the synthetic source for `SIM;STATUS`.
+#[derive(Debug, Clone, Copy)]
+pub struct SimulationSnapshot {
+    pub bean_temp: f32,
+    pub env_temp: f32,
+    pub heater_pct: f32,
+    pub fan_pct: f32,
+    pub has_plant: bool,
+    pub frozen: bool,
+    pub bean_fault: u8,
+    pub env_fault: u8,
 }
 
 impl SimulatedSensorSource {
     /// Create a new simulated source from a roast curve.
     pub fn new(curve: RoastCurve) -> Self {
+        let initial_temps = curve.temperatures_at(0);
         Self {
             curve,
             start_instant: Instant::now(),
@@ -728,18 +752,34 @@ impl SimulatedSensorSource {
             last_heater_pct: 0.0,
             last_fan_pct: 0.0,
             last_update_instant: None,
+            last_temps: initial_temps,
+            bean_fault_mask: 0,
+            env_fault_mask: 0,
+            override_temps: None,
+            frozen: false,
         }
     }
 
     /// Create a simulated source using the build's default curve.
     ///
-    /// With `simulated-typical-roast`, the default is the guard-safe
-    /// [`RoastCurve::typical_roast`]; otherwise it is
-    /// [`RoastCurve::default_medium_roast`].
+    /// With `simulated-web-medium-roast`, the default is the public
+    /// [`RoastCurve::web_medium_roast`]; with `simulated-typical-roast` it is
+    /// the guard-safe [`RoastCurve::typical_roast`]; otherwise it is
+    /// [`RoastCurve::default_medium_roast`]. The two profile features are
+    /// mutually exclusive (enforced at crate level), so `AppBuilder` and
+    /// direct callers always agree on the selected curve.
     pub fn default_curve() -> Self {
-        #[cfg(feature = "simulated-typical-roast")]
+        #[cfg(feature = "simulated-web-medium-roast")]
+        let curve = RoastCurve::web_medium_roast();
+        #[cfg(all(
+            feature = "simulated-typical-roast",
+            not(feature = "simulated-web-medium-roast")
+        ))]
         let curve = RoastCurve::typical_roast();
-        #[cfg(not(feature = "simulated-typical-roast"))]
+        #[cfg(not(any(
+            feature = "simulated-typical-roast",
+            feature = "simulated-web-medium-roast"
+        )))]
         let curve = RoastCurve::default_medium_roast();
         Self::new(curve)
     }
@@ -760,6 +800,7 @@ impl SimulatedSensorSource {
     /// `set_heater_fan` after each `update_control` tick.
     pub fn with_thermal_plant(mut self, config: ThermalPlantConfig) -> Self {
         let plant = ThermalPlant::new(config);
+        self.last_temps = plant.measured();
         self.plant = Some(plant);
         self.last_update_instant = Some(Instant::now());
         self
@@ -773,6 +814,7 @@ impl SimulatedSensorSource {
         et_true: f32,
     ) -> Self {
         let plant = ThermalPlant::new_with_initial(config, bean_true, et_true);
+        self.last_temps = plant.measured();
         self.plant = Some(plant);
         self.last_update_instant = Some(Instant::now());
         self
@@ -798,6 +840,54 @@ impl SimulatedSensorSource {
         self.plant.is_some()
     }
 
+    /// Inject MAX31856 fault-register bits on the next samples. `0` clears.
+    pub fn set_fault_masks(&mut self, bean_mask: u8, env_mask: u8) {
+        self.bean_fault_mask = bean_mask;
+        self.env_fault_mask = env_mask;
+    }
+
+    /// Current simulated fault-register masks.
+    pub fn fault_masks(&self) -> (u8, u8) {
+        (self.bean_fault_mask, self.env_fault_mask)
+    }
+
+    /// Override both reported temperatures. `None` resumes curve/plant mode.
+    pub fn set_temperature_override(&mut self, temps: Option<(f32, f32)>) {
+        self.override_temps = temps;
+        if let Some(values) = temps {
+            self.last_temps = values;
+        }
+    }
+
+    /// Freeze/unfreeze temperature evolution while keeping the last value.
+    pub fn set_frozen(&mut self, frozen: bool) {
+        self.frozen = frozen;
+    }
+
+    /// Whether temperature evolution is frozen.
+    pub fn frozen(&self) -> bool {
+        self.frozen
+    }
+
+    /// Last emitted temperatures without advancing the model.
+    pub fn last_temperatures(&self) -> (f32, f32) {
+        self.last_temps
+    }
+
+    /// Snapshot for `SIM;STATUS` without advancing the simulation.
+    pub fn snapshot(&self) -> SimulationSnapshot {
+        SimulationSnapshot {
+            bean_temp: self.last_temps.0,
+            env_temp: self.last_temps.1,
+            heater_pct: self.last_heater_pct,
+            fan_pct: self.last_fan_pct,
+            has_plant: self.plant.is_some(),
+            frozen: self.frozen,
+            bean_fault: self.bean_fault_mask,
+            env_fault: self.env_fault_mask,
+        }
+    }
+
     /// Advance plant with explicit dt (s) without noise. Useful for
     /// deterministic tests (`Instant` wall-clock would otherwise quantise to
     /// seconds via `temperatures_at`).
@@ -811,6 +901,7 @@ impl SimulatedSensorSource {
             self.tick_count = self.tick_count.wrapping_add(1);
             self.last_heater_pct = heater_pct.clamp(0.0, 100.0);
             self.last_fan_pct = fan_pct.clamp(0.0, 100.0);
+            self.last_temps = (bean, env);
             // Keep wall-clock anchor coherent for HIL (`not(test)` uses
             // wall-clock dt). In `cfg(test)` dt is fixed (`CONTROL_LOOP_TICK_MS`),
             // so do NOT advance wall-clock — otherwise a subsequent
@@ -836,15 +927,22 @@ impl SimulatedSensorSource {
         }
     }
 
-    /// Reset the simulation to t=0.
+    /// Reset the simulation to t=0 and clear injected faults/overrides.
     pub fn reset(&mut self) {
         self.start_instant = Instant::now();
         self.tick_count = 0;
         self.last_update_instant = Some(Instant::now());
         self.last_heater_pct = 0.0;
         self.last_fan_pct = 0.0;
+        self.bean_fault_mask = 0;
+        self.env_fault_mask = 0;
+        self.override_temps = None;
+        self.frozen = false;
         if let Some(p) = self.plant.as_mut() {
             p.reset();
+            self.last_temps = p.measured();
+        } else {
+            self.last_temps = self.curve.temperatures_at(0);
         }
     }
 
@@ -855,6 +953,14 @@ impl SimulatedSensorSource {
     /// moves BT/ET with realistic lag (drum τ~12s, bean τ~18s, probe τ~4s /
     /// 1.5s, moisture plateau, crack exotherm).
     pub fn current_temperatures(&mut self) -> (f32, f32) {
+        if let Some(values) = self.override_temps {
+            self.last_temps = values;
+            return values;
+        }
+        if self.frozen {
+            return self.last_temps;
+        }
+
         if let Some(plant) = self.plant.as_mut() {
             // Deterministic dt in tests (`cfg(test)` → 0.31s = CONTROL_LOOP_TICK_MS)
             // eliminates wall-clock flakiness for L3/thermal tests that drive
@@ -889,6 +995,7 @@ impl SimulatedSensorSource {
                 env += self.noise(self.tick_count, 1);
             }
             self.tick_count = self.tick_count.wrapping_add(1);
+            self.last_temps = (bean, env);
             return (bean, env);
         }
 
@@ -902,6 +1009,7 @@ impl SimulatedSensorSource {
         }
 
         self.tick_count = self.tick_count.wrapping_add(1);
+        self.last_temps = (bean, env);
         (bean, env)
     }
 
@@ -948,7 +1056,7 @@ mod tests {
             elapsed in 0u32..86_400,
         ) {
             let mut curve = RoastCurve::new();
-            for i in 0..times.len() {
+            for (i, &time_secs) in times.iter().enumerate() {
                 // The temp vectors are independent generators: either may be
                 // empty while `times` is not. Fall back to 0.0 for missing
                 // temps.
@@ -961,7 +1069,7 @@ mod tests {
                     .copied()
                     .unwrap_or(0.0);
                 curve.add_point(CurvePoint {
-                    time_secs: times[i],
+                    time_secs,
                     bean_temp: bean,
                     env_temp: env,
                 });
@@ -1468,5 +1576,48 @@ mod tests {
                 "{name}: ET at t=0 should be ≤260, got {et}"
             );
         }
+    }
+
+    #[test]
+    fn simulation_override_and_freeze_hold_values() {
+        let mut source = SimulatedSensorSource::default_curve();
+        source.set_temperature_override(Some((123.0, 234.0)));
+        assert_eq!(source.current_temperatures(), (123.0, 234.0));
+        assert_eq!(source.last_temperatures(), (123.0, 234.0));
+
+        source.set_temperature_override(None);
+        source.set_frozen(true);
+        let frozen = source.current_temperatures();
+        assert_eq!(source.current_temperatures(), frozen);
+
+        source.set_frozen(false);
+        source.reset();
+        assert!(!source.frozen());
+        assert_eq!(source.last_temperatures(), source.curve.temperatures_at(0));
+    }
+
+    #[test]
+    fn simulation_fault_masks_reach_snapshot_and_reset_clears_them() {
+        let mut source = SimulatedSensorSource::default_curve();
+        source.set_fault_masks(0x21, 0x80);
+        let snap = source.snapshot();
+        assert_eq!((snap.bean_fault, snap.env_fault), (0x21, 0x80));
+        assert!(!snap.has_plant);
+
+        source.reset();
+        let snap = source.snapshot();
+        assert_eq!((snap.bean_fault, snap.env_fault), (0, 0));
+    }
+
+    #[test]
+    fn simulation_snapshot_tracks_plant_actuators() {
+        let mut source = SimulatedSensorSource::default_curve()
+            .with_thermal_plant(ThermalPlantConfig::default());
+        source.set_heater_fan(80.0, 20.0);
+        let _ = source.current_temperatures();
+        let snap = source.snapshot();
+        assert!(snap.has_plant);
+        assert_eq!(snap.heater_pct, 80.0);
+        assert_eq!(snap.fan_pct, 20.0);
     }
 }

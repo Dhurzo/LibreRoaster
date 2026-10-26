@@ -1,6 +1,6 @@
 # No-Hardware Simulation
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-26
 
 This guide explains how to run LibreRoaster without a physical ESP32-C3, what
 the Wokwi simulation can and cannot prove, and how to move between the
@@ -9,8 +9,11 @@ supported test builds.
 The simulation project lives in `sim/wokwi/`. It is deliberately isolated from
 the firmware source tree: the firmware is built for the simulator with the
 same `embedded` code path, plus simulation-only Cargo features
-(`simulated-sensors`, `simulated-typical-roast`, `simulated-web-medium-roast`, and optionally
-`heat-sense`).
+(`simulated-sensors`, `simulated-plant`, `simulated-typical-roast`, or
+`simulated-web-medium-roast`), or the `heat-sense` feature for the real-SPI F2 build.
+`simulated-plant` implies `simulated-sensors` and replaces the time curve with a heater/fan-driven
+`ThermalPlant`. The two roast-profile features are mutually exclusive, and `heat-sense` cannot be
+combined with `simulated-sensors`.
 
 > **Scope:** this is a development aid, not a hardware safety sign-off. Wokwi
 > cannot validate mains isolation, SSR thermal behavior, thermocouple accuracy,
@@ -27,17 +30,19 @@ same `embedded` code path, plus simulation-only Cargo features
 | F2 without interlock | `embedded` | Real MAX31856 over SPI | Compiled out | SPI and actuators without the GPIO1 interlock |
 | F3 | `embedded,simulated-typical-roast` | Synthetic typical curve; SPI idle | Compiled out | Guard-safe `START`/`Heating` test |
 | F4 | `embedded,simulated-web-medium-roast` | Published 696 s bean curve; ET = BT + 20 °C | Compiled out | Artisan end-to-end roast with a public profile |
+| F5 | `embedded,simulated-plant` | Closed-loop `ThermalPlant` driven by control-loop heater/fan output | Compiled out | PID/actuator and `SIM` closed-loop checks |
 | F0 | `embedded` + `esp-emulator` | Host emulator | Not modeled | Bootloader/app-load reproduction only (blocked) |
 
 ### Coverage matrix
 
-| Area | Wokwi (F1/F2/F3/F4) | esp-emu (F0) | Host tests |
+| Area | Wokwi (F1-F5) | esp-emu (F0) | Host tests |
 |---|---|---|---|
 | Boot, UART0, Artisan protocol | Yes | Bootloader/app load only | Protocol unit tests |
 | Status LED (GPIO8) | Yes | No (blocked) | Pattern logic |
 | SSR PWM (GPIO10) | Yes (LED + logic analyzer) | No (blocked) | State machine |
 | Fan PWM (GPIO9) | Logic analyzer only | No (blocked) | State machine |
 | MAX31856 SPI (CS/SCK/MOSI/MISO) | Yes in F2 | No (no external SPI model) | Scripted SPI |
+| Closed-loop heater/fan -> temperature | Yes in F5 (`simulated-plant`) | No | `tests/thermal_closed_loop.rs` |
 | Heat-sense input (GPIO1) | Yes in F2 | No (blocked) | State machine |
 | Native USB CDC | Not exposed on the board model | Blocked | Protocol unit tests |
 | Mains isolation, SSR thermal behavior, real thermocouple physics | No | No | No |
@@ -219,7 +224,7 @@ exceeds the RoR guard and the firmware correctly latches
    enough to prove there is no mismatch latch (>1.5 s). Turn the heater off
    (`OT1;0`) and move the switch **RIGHT** again. Negative checks: leave the
    switch RIGHT with the heater on for more than 1.5 s (expect
-   `heater not detected`), and boot with the switch LEFT while the heater is
+   `Heat source not detected`), and boot with the switch LEFT while the heater is
    off (expect `SSR stuck-on` after 10 samples). Recover by moving the switch
    RIGHT and using `PID;OFF`, `START`, `PREHEAT`, or a reset. Full runbook:
    [`WOKWI_ROAST_PRESET.md`](WOKWI_ROAST_PRESET.md).
@@ -315,56 +320,112 @@ Automated serial input requires `wokwi-cli` and a Wokwi CI token (the local
 VS Code license is not a CI token):
 
 ```bash
-curl -L https://wokwi.com/ci/install.sh | sh   # installs wokwi-cli
+curl -fsSL https://wokwi.com/ci/install.sh | sh -s -- 0.29.0   # pinned wokwi-cli
 export WOKWI_CLI_TOKEN=wok_...                 # https://wokwi.com/dashboard/ci
 ```
 
-### 3.4.1 F1/F2/F3 scenario matrix and curve selection
+### 3.4.1 Scenario manifest and runner
 
-Each scenario requires the matching firmware image. The runner writes
-`target/wokwi-<scenario-name>.log` unless you pass a second argument.
+`sim/wokwi/scenarios/manifest.json` is the source of truth for automated
+scenarios. Each entry declares the scenario file, required Cargo features,
+Wokwi timeout, kind (`happy` or `latch`), and the log patterns to expect or
+forbid. The runner builds each feature set once, verifies that
+`sim/wokwi/build-meta.json` matches the requested features and firmware hash,
+runs Wokwi, then verifies the serial log.
 
-| Build | Features | Scenario | What it checks |
+| ID | Build | Scenario | What it checks |
 |---|---|---|---|
-| F1 | `embedded,simulated-sensors` | `scenarios/f1-smoke.yaml` | Handshake, `READ`, `PREHEAT 200`, and the 20 % fan floor. It does **not** send `START` (the medium curve would latch the RoR guard). |
-| F2 | `embedded,heat-sense` | `scenarios/f2-spi.yaml` | Handshake, initial `35.0,220.0,200.0`, then slider changes to `35.0,230.0,250.0`. It does **not** energize the heater or move the heat-sense switch. |
-| F3 | `embedded,simulated-typical-roast` | `scenarios/f3-roast.yaml` | `PREHEAT`, 15 s keepalive, `START`/`Heating`, GPIO8 high, then `PID;OFF` and GPIO8 low. |
+| `f1-smoke` | F1 `embedded,simulated-sensors` | `scenarios/f1-smoke.yaml` | Handshake, `READ`, `PREHEAT 200`, and the 20 % fan floor. It does **not** send `START` (the default curve would latch the RoR guard). |
+| `f2-spi` | F2 `embedded,heat-sense` | `scenarios/f2-spi.yaml` | Real MAX31856 SPI path: initial `35.0,220.0,200.0`, then slider changes to `35.0,230.0,250.0`. Does not energize the heater. |
+| `f3-roast` | F3 `embedded,simulated-typical-roast` | `scenarios/f3-roast.yaml` | `PREHEAT`, 15 s keepalive, `START`/`Heating`, GPIO8 high, then `PID;OFF` and GPIO8 low. |
+| `f4-short` | F4 `embedded,simulated-web-medium-roast` | `scenarios/f4-short.yaml` | Short smoke of the public 696 s curve. It is not a full F4 recording. |
+| `f1-ror` | F1 `embedded,simulated-sensors` | `scenarios/f1-ror.yaml` | `START` on the default medium curve must latch `rate-of-rise exceeded`. |
+| `f3-comms-idle` | F3 `embedded,simulated-typical-roast` | `scenarios/f3-comms-idle.yaml` | Heater armed, then no inbound command for more than 15 s; expects `Comms idle timeout`. |
+| `f2-overtemp` | F2 `embedded,heat-sense` | `scenarios/f2-overtemp.yaml` | BT slider above 260 °C; expects `Temperature exceeds valid range`. |
+| `f2-sensor-fault` | F2 `embedded,heat-sense` | `scenarios/f2-sensor-fault.yaml` | BT MAX31856 fault bit set to open-circuit; expects `Sensor fault`. |
+| `f2-heatsense` | F2 `embedded,heat-sense` | `scenarios/f2-heatsense.yaml` | `OT1;100` with GPIO1 switch RIGHT (no current); expects `Heat source not detected` and forced SSR output 0 %. It is a heat-source interlock, not a full emergency latch. |
+| `f5-plant` | F5 `embedded,simulated-plant` | `scenarios/f5-plant.yaml` | `OT1;90` drives `ThermalPlant`; `SIM;STATUS` shows `plant=1`, rising BT, and the applied heater/fan. Unlike F1/F3/F4, temperature follows actuator output. |
+| `f5-et-overtemp` | F5 `embedded,simulated-plant` | `scenarios/f5-et-overtemp.yaml` | `SIM;TEMP;25;310` forces ET above the 300 °C ET threshold; expects `Temperature exceeds valid range`. |
+| `f5-sensor-fault` | F5 `embedded,simulated-plant` | `scenarios/f5-sensor-fault.yaml` | `SIM;FAULT;1;0` injects an open-circuit bit after a successful `SIM;RESET`; expects `Sensor fault`. |
+
+### 3.4.2 `SIM` control commands
+
+Builds with `simulated-sensors` accept a `SIM` command family for negative
+tests and closed-loop inspection. Without that feature the firmware replies
+`ERR sim_unavailable`.
+
+| Command | Effect |
+|---|---|
+| `SIM;STATUS` | Emit `#SIM;PLANT` with BT/ET, applied heater/fan, `plant=0/1`, `frozen=0/1`, and BT/ET fault masks as `0xNN`. Allowed while a safety latch is active. |
+| `SIM;RESET` | Reset the source (curve time, plant, filters, overrides, fault masks). Only accepted from `Idle`; recover from a latch with `PID;OFF` first. |
+| `SIM;FAULT;<bt_mask>;<et_mask>` | Inject MAX31856 fault-register bits; decimal or `0x` hex. Bit 0 is open-circuit. |
+| `SIM;CHARGE;<drop_c>` | Inject a cold-bean drop into the plant (0…300 °C); returns `ERR sim_no_plant` without a plant. |
+| `SIM;TEMP;<bt>;<et>` | Hard-override reported temperatures (0…600 °C), e.g. to exercise ET over-temp. |
+| `SIM;TEMP;OFF` | Clear the temperature override. |
+| `SIM;FREEZE;ON` / `SIM;FREEZE;OFF` | Freeze/unfreeze evolution while retaining the last reading. |
+
+`SIM` commands are deliberate test controls, not an Artisan production
+surface. They are included only in simulation features and must not be used
+as a safety mechanism. `SIM;STATUS` is the only `SIM` command allowed while
+`fault_condition` is latched.
 
 ```bash
-# F1
-FEATURES=embedded,simulated-sensors ./scripts/sim-wokwi-prepare.sh
-./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml
-
-# F2
-FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
-./scripts/sim-wokwi-scenario.sh scenarios/f2-spi.yaml
-
-# F3 (default scenario and log name)
-FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
-./scripts/sim-wokwi-scenario.sh
+./scripts/sim-wokwi-check.sh --list
+./scripts/sim-wokwi-check.sh --build-only
+./scripts/sim-wokwi-check.sh --scenario f1-smoke --scenario f4-short
+./scripts/sim-wokwi-check.sh --all
 ```
 
-The runner fails on `safety_fault`, `Emergency shutdown`, `BT RoR`, or
-`Control update error`. The image must match the scenario; rebuilding is
-required when you switch feature set. Wokwi's free API session is limited to
-5 minutes, so the scenarios are intentionally short.
+Artifacts are written to `target/wokwi/`: `<id>.log`, `<id>.verify.json`,
+`<id>.json`, and `summary.json`. `sim/wokwi/build-meta.json` is generated and
+ignored by git.
 
-`scenarios/f3-roast.yaml` waits for `Loaded app from partition`, gives the
-application 6 s to initialize, then sends `PREHEAT 200` and two `READ`s 8 s
-apart (16 s total, crossing the 15 s window). It then sends `PID;OFF` and
-`START`, polls `READ` twice 4 s apart, and finishes with `PID;OFF`. It asserts
-that GPIO8 is high in `Heating` and low after the final `PID;OFF`.
+The old wrapper still works for one scenario:
 
-The scenario path is relative to `sim/wokwi`; the default is
-`scenarios/f3-roast.yaml`. The VS Code GUI checklists in §3.1–§3.3 remain the
-fallback when no CI token is available.
+```bash
+./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml
+./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml /tmp/wokwi-logs
+```
+
+The optional second argument is a **log directory**; the file is named
+`<scenario-id>.log` inside it.
+
+`f3-roast` waits for `Loaded app from partition`, gives the application 6 s to
+initialize, then sends `PREHEAT 200` and two `READ`s 8 s apart (16 s total,
+crossing the 15 s window). It then sends `PID;OFF` and `START`, polls `READ`
+twice 4 s apart, and finishes with `PID;OFF`. It asserts that GPIO8 is high in
+`Heating` and low after the final `PID;OFF`.
+
+The VS Code GUI checklists in §3.1–§3.3 remain the fallback when no CI token is
+available. Wokwi CLI 0.29.0 emits an `invalid-attribute` warning for the
+`wokwi-slide-switch` `value` attribute, but the observed default is RIGHT and
+the heat-sense scenario passes; verify the switch position in the VS Code GUI
+before using it manually.
+
+CI coverage is split deliberately:
+
+- `.github/workflows/ci.yml` builds F3/F4/F5 and rejects incompatible feature
+  combinations without needing a Wokwi token.
+- `.github/workflows/simulation.yml` runs the full manifest on manual dispatch
+  or nightly when `WOKWI_CLI_TOKEN` is configured; otherwise it skips with a
+  notice.
+
+Local verification on 2026-10-26 passed F1-F4 (9/9) and the three F5
+scenarios individually (3/3) with Wokwi CLI 0.29.0 before the MAX31856
+chip-fidelity change. The subsequent combined 12-scenario sweep was
+interrupted after 3/12 when the local Wokwi Free-plan monthly CI quota ran out;
+re-run `./scripts/sim-wokwi-check.sh --all` with remaining quota before
+treating the full matrix as green. `f4-short` remains a smoke check, not a
+substitute for the full 696 s F4 recording.
 
 > **Curve selection is compile-time.** There is no serial command or Wokwi
 > setting that selects a roast curve. F1 uses `default_medium_roast()`; F3 uses
 > `typical_roast()` via `embedded,simulated-typical-roast`; F4 uses the public
-> `web_medium_roast()` trace via `embedded,simulated-web-medium-roast`; F2 does
-> not use a curve at all. `light_roast()` has no Cargo feature and is only
-> available from code or host tests. See
+> `web_medium_roast()` trace via `embedded,simulated-web-medium-roast`; F5 uses
+> `simulated-plant` (the plant starts at ambient and is actuator-driven); F2 does
+> not use a curve at all. `simulated-typical-roast` and
+> `simulated-web-medium-roast` are mutually exclusive. `light_roast()` has no
+> Cargo feature and is only available from code or host tests. See
 > [`simulated-curve-test.md`](simulated-curve-test.md) for the full matrix and
 > custom curves.
 
@@ -426,6 +487,7 @@ Prerequisites:
    ./scripts/sim-wokwi-prepare.sh
    # F3: FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
    # F4: FEATURES=embedded,simulated-web-medium-roast ./scripts/sim-wokwi-prepare.sh
+   # F5: FEATURES=embedded,simulated-plant ./scripts/sim-wokwi-prepare.sh
    # F2: FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
    ```
 
@@ -446,6 +508,16 @@ Prerequisites:
    ```
 
    Add `--trace /tmp/artisan-trace.log` to record timestamped raw traffic in both directions.
+Verify a trace without Artisan or Wokwi:
+
+```bash
+./scripts/verify-artisan-trace.py --trace /tmp/artisan-trace.log \
+    --expect '^#OK' --min-read-responses 10 --forbid 'ERR safety_fault'
+```
+
+The verifier decodes the bridge's `S` (device) and `A` (Artisan) byte streams,
+counts TC4-style temperature responses, applies the same regex checks used by
+the Wokwi log verifier, and writes an optional `--json-out` artifact.
 
 3. Configure Artisan under **Config → Device**:
 
@@ -466,8 +538,8 @@ Prerequisites:
    the polling interval at about 1 s. Click **ON**. The expected handshake is `CHAN`, `UNITS`,
    `FILT`, followed by `READ` polling.
 
-5. Use F1 for the handshake and `READ`/`STATUS`; F3 for `START`/`Heating`; or F4 for a full
-   696 s public-curve recording. While the heater is energized, Artisan's polling keeps the 15 s
+5. Use F1 for the handshake and `READ`/`STATUS`; F3 for `START`/`Heating`; F4 for a full
+   696 s public-curve recording; or F5 for closed-loop heater/fan dynamics. While the heater is energized, Artisan's polling keeps the 15 s
    comms-idle guard satisfied. If Artisan disconnects, the firmware can latch; reconnect and
    recover with `PID;OFF`, `START`, or `PREHEAT`.
 
@@ -486,9 +558,11 @@ Artisan's `DROP` marker at 12:00. Wokwi ran at 100 % speed with the simulator ta
 throttles when that tab is hidden.
 
 The F1/F3/F4 curves are time-based and open-loop: Artisan sees temperatures and can drive commands,
-but heater/fan changes do not move the simulated temperatures. F4's ET is synthesized as BT + 20 °C.
-F2 reports the static MAX31856 chip values. This setup exercises the Artisan session, protocol,
-telemetry, and UI; it is not a closed-loop thermal plant.
+but heater/fan changes do not move the simulated temperatures. F5 (`simulated-plant`) is the
+exception: the control loop's heater/fan output advances a first-order `ThermalPlant`, so BT/ET
+respond to `OT1`/`OT2` and PID. F4's ET is synthesized as BT + 20 °C; F2 reports the static
+MAX31856 chip values. Unless you select F5, this setup exercises the Artisan session, protocol,
+telemetry, and UI, not closed-loop thermal behavior.
 
 ## 4. Pin checklist
 
@@ -536,15 +610,15 @@ CS GPIO3, sharing SCLK/MOSI/MISO.
 
 | Address | Register | Behavior |
 |---:|---|---|
-| 0x00 | CR0 | Stored; bit 6 (1SHOT) updates the conversion block |
+| 0x00 | CR0 | Stored; writing bit 6 (1SHOT) updates the conversion block and self-clears bit 6 |
 | 0x01 | CR1 | Stored; read-back verification works |
-| 0x02 | MASK | Stored |
+| 0x02 | MASK | Stored; set bits mask the corresponding SR fault bits on read |
 | 0x0A | CJTH | High byte of the left-justified 14-bit CJ value |
 | 0x0B | CJTL | Low byte |
 | 0x0C | LTCBH | High byte of the left-justified 24-bit temperature |
 | 0x0D | LTCBM | Middle byte |
 | 0x0E | LTCBL | Low byte |
-| 0x0F | SR | Current `fault` control value |
+| 0x0F | SR | Current `fault` control value, masked by `MASK` |
 
 The driver writes CR0=0x11, CR1=0x03, and MASK=0x00 at boot, then runs its
 self-test (including the 0x13 write/read-back probe and a 0x51 one-shot). The
@@ -562,7 +636,8 @@ Encoding matches `convert_raw_temp` in
 - **SPI:** mode 1 at 1 MHz, matching `init.rs`.
 
 The chip updates the conversion registers immediately when CR0 bit 6 is
-written. It does **not** model the 210 ms conversion time, the 50/60 Hz notch
+written and clears the 1SHOT bit, matching the datasheet's self-clearing
+behavior. It does **not** model the 210 ms conversion time, the 50/60 Hz notch
 filter, the LTC delay, thermocouple physics, cold-junction compensation, or
 automatic open-circuit detection. The firmware still waits its normal
 conversion budget, and the fault register is whatever the slider says.

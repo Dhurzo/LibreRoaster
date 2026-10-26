@@ -1,6 +1,6 @@
 # Wokwi Roast Preset: Typical Thermocouple Temperatures
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-26
 
 This runbook covers the default MAX31856 values used by Wokwi F2 and the GPIO1
 heat-sense switch procedure. It changes simulation inputs only; it does not
@@ -42,8 +42,9 @@ ET 300 °C (`OVERTEMP_THRESHOLD` / `ET_OVERTEMP_THRESHOLD`). The absolute
 validity ceiling is 350 °C.
 
 This is a static snapshot, not a roast curve. Use the F1 `simulated-sensors`
-build (or F3 for a guard-safe `START` test), or move the sliders manually, to
-exercise a temperature trajectory.
+build (or F3 for a guard-safe `START` test), F5 `simulated-plant` for closed-loop
+heater/fan dynamics, or move the sliders manually, to exercise a temperature
+trajectory.
 
 ## 3. Changing the preset
 
@@ -90,7 +91,7 @@ If you want a clean boot log, set both sliders to 25 °C before resetting.
 ## 5. Heat-sense switch runbook (F2 only)
 
 The GPIO1 slide switch is the heat-sense input. It is interpreted only by the
-`embedded,heat-sense` build without `simulated-sensors` (F2). In F1/F3 the
+`embedded,heat-sense` build without `simulated-sensors` (F2). In F1/F3/F5 the
 detection code is compiled out and the switch has no effect.
 
 | Switch position | Contacts | GPIO1 | Firmware interpretation |
@@ -110,13 +111,19 @@ control-loop cadence.
 2. Energize the heater, for example with `OT1;100`.
 3. Move the switch **LEFT** within `HEAT_MISMATCH_WINDOW_MS` (1.5 s) and hold
    it there long enough to prove there is no mismatch latch (>1.5 s).
-   Otherwise the firmware latches “heater not detected” because the commanded
+   Otherwise the firmware latches “Heat source not detected” because the commanded
    duty is observable (≥ 50 %) and no heat has been seen for 1.5 s.
 4. Turn the heater off (`OT1;0` or `PID;OFF`) and move the switch **RIGHT**
    again.
 
 The switch is a manual stimulus, not automatic electrical feedback. The
 simulator does not couple it to the heater command.
+
+To run the negative check automatically:
+
+```bash
+./scripts/sim-wokwi-check.sh --scenario f2-heatsense
+```
 
 ### Recover from a heat-sense latch
 
@@ -134,9 +141,10 @@ switch is ignored.
 
 This preset is used by F2 (`embedded,heat-sense`). F1 uses
 `embedded,simulated-sensors` for synthetic temperatures; F3 uses
-`embedded,simulated-typical-roast` for the guard-safe `START`/`Heating` path.
-The build variants, prepare commands, and scenario matrix are owned by
-[`SIMULATION.md`](SIMULATION.md) §3.4.1.
+`embedded,simulated-typical-roast` for the guard-safe `START`/`Heating` path;
+F5 uses `embedded,simulated-plant` for closed-loop heater/fan dynamics. The
+build variants, prepare commands, scenario matrix, and `SIM` controls are owned
+by [`SIMULATION.md`](SIMULATION.md) §3.4.
 
 ## 7. Troubleshooting
 
@@ -144,14 +152,15 @@ The build variants, prepare commands, and scenario matrix are owned by
 |---|---|
 | `Temperature out of expected range` at boot | Expected with BT 200 °C / ET 220 °C; the self-test window is −50…100 °C. Not a fault. Set the sliders to 25 °C for a cold-boot log. |
 | `SSR stuck-on` at boot or with the heater off | The switch is LEFT. Move it RIGHT, then recover with `PID;OFF`/`START`/`PREHEAT` or reset. |
-| `heater not detected` after energizing | The switch stayed RIGHT for more than 1.5 s at observable duty. Move it LEFT within the window, or leave the interlock out with `FEATURES=embedded`. |
+| `Heat source not detected` after energizing | The switch stayed RIGHT for more than 1.5 s at observable duty. Move it LEFT within the window, or leave the interlock out with `FEATURES=embedded`. |
 | `ERR safety_fault Comms idle timeout` while the heater is on | No command arrived for 15 s (`COMMS_IDLE_TIMEOUT_MS`). Send `READ` or `STATUS` every 5–10 s, or keep Artisan connected (it polls `READ`). Recover with `PID;OFF` or resend `PREHEAT`/`START`. Full explanation: [`SIMULATION.md`](SIMULATION.md) §3.5. |
 | `READ` still shows old values | The control loop updates once per tick (~310–330 ms), and the EMA filter smooths changes. Large slider steps can take several seconds to settle. |
 | No temperatures in F2 | Check the SPI wiring (CS GPIO4/3, SCK GPIO6, MOSI GPIO7, MISO GPIO5) and the serial monitor at 115200 on UART0. |
 
 ## 8. What this preset does not model
 
-- A roast curve, thermal mass, or heater/bean dynamics.
+- A roast curve, thermal mass, or heater/bean dynamics in F2. F5 is the
+  closed-loop exception; its `ThermalPlant` is still synthetic and uncalibrated.
 - The MAX31856 conversion time, 50/60 Hz notch filter, or LTC delay.
 - Cold-junction compensation or automatic open-circuit detection.
 - Real current sensing: the heat-sense switch is manual.

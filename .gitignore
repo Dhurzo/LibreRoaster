@@ -45,6 +45,7 @@ config.json
 *.wasm
 *.vcd
 sim/wokwi/chips/wokwi-api.h
+sim/wokwi/build-meta.json
 
 # IDE files
 .vscode/

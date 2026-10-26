@@ -1,0 +1,18 @@
+name: 'F3 comms-idle negative latch'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0, UNITS;C, PREHEAT 200
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+  - write-serial: [80, 82, 69, 72, 69, 65, 84, 32, 50, 48, 48, 13, 10]
+
+  # No inbound command for > COMMS_IDLE_TIMEOUT_MS (15 s). The safety latch
+  # must fire even though the synthetic curve itself is healthy.
+  - delay: 18000ms

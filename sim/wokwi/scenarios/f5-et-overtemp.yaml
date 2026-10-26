@@ -1,0 +1,26 @@
+name: 'F5 ET over-temperature negative latch'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0 and UNITS;C
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+
+  # Force ET above ET_OVERTEMP_THRESHOLD (300 C) via the synthetic source.
+  - write-serial: [83, 73, 77, 59, 84, 69, 77, 80, 59, 50, 53, 59, 51, 49, 48, 13, 10]
+  - delay: 4000ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 1000ms
+
+  # Attempt recovery; the latch may suppress later serial handling, so the
+  # manifest asserts the latch itself, not successful recovery.
+  - write-serial: [80, 73, 68, 59, 79, 70, 70, 13, 10]
+  - delay: 1000ms
+  - write-serial: [83, 73, 77, 59, 84, 69, 77, 80, 59, 79, 70, 70, 13, 10]
+  - delay: 1000ms

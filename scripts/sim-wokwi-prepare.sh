@@ -40,7 +40,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${YELLOW}==> Building firmware (${FEATURES})${NC}"
-cargo build --release --target "$TARGET" --features "$FEATURES"
+cargo build --release --locked --target "$TARGET" --features "$FEATURES"
 
 if ! command -v espflash >/dev/null 2>&1; then
     echo -e "${RED}ERROR: espflash not found on PATH.${NC}"
@@ -68,6 +68,37 @@ if [ ! -f "$CHIP_WASM" ]; then
     echo -e "${RED}ERROR: ${CHIP_WASM} is missing; the custom chip cannot load.${NC}"
     exit 1
 fi
+
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "unavailable"
+    fi
+}
+
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+WOKWI_VERSION="$("$WOKWI_CLI" --version 2>/dev/null | head -n 1 || true)"
+if [ -z "$WOKWI_VERSION" ]; then
+    WOKWI_VERSION="unavailable"
+fi
+FIRMWARE_SHA="$(sha256_file "$BIN")"
+CHIP_SHA="$(sha256_file "$CHIP_WASM")"
+
+cat > "${PROJECT_DIR}/build-meta.json" <<EOF
+{
+  "features": "${FEATURES}",
+  "target": "${TARGET}",
+  "git_commit": "${GIT_COMMIT}",
+  "built_at_utc": "${BUILT_AT}",
+  "firmware_sha256": "${FIRMWARE_SHA}",
+  "chip_sha256": "${CHIP_SHA}",
+  "wokwi_cli_version": "${WOKWI_VERSION}"
+}
+EOF
 
 echo
 echo -e "${GREEN}Wokwi project ready: ${PROJECT_DIR}/${NC}"

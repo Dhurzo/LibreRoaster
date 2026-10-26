@@ -1,0 +1,26 @@
+name: 'F4 public-curve short smoke'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0, UNITS;C, READ. The public curve starts at 183.8 C BT / 203.8 C ET
+  # at boot; by the time the application is ready it is in the 184-188 C band.
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 1000ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 1000ms
+
+  # Exercise the continuous telemetry path without energizing the heater.
+  - write-serial: [83, 84, 82, 69, 65, 77, 59, 79, 78, 13, 10]
+  - delay: 3000ms
+  - write-serial: [83, 84, 82, 69, 65, 77, 59, 79, 70, 70, 13, 10]
+  - delay: 1000ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 500ms

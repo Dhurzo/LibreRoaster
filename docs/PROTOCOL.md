@@ -261,7 +261,7 @@ Emergency stop path. Heater is cut and fan is forced to 100%.
 
 `STOP` arms the safety latch: while latched, only `READ`, `STATUS`, `STOP`,
 `EmergencyStop`, `START`, `PREHEAT`, `STREAM`, the handshake commands `CHAN`/`UNITS`/`FILT`, the
-markers `CHARGE`/`DROP`, `TUNE;STATUS` and `RORPROFILE;OFF` are accepted (other commands return
+markers `CHARGE`/`DROP`, `TUNE;STATUS`, `RORPROFILE;OFF`, and the read-only `SIM;STATUS` are accepted (other commands return
 `ERR handler_failed invalid_state:fault_condition_active`). `CHAN`/`UNITS`/`FILT` are
 admitted deliberately: they have no actuator side effects, and rejecting
 them would break Artisan reconnects (its ArduinoTC4 handshake fails on any
@@ -387,6 +387,25 @@ Response:
 `TUNE;STATUS` is also accepted while latched. A test emits `#TUNE …` on completion or
 `ERR tune_<reason>` on failure. Any non-monitoring command during a test aborts it with
 `ERR tune_aborted`. Workflow guidance is in [`ARTISAN_ADVANCED.md`](ARTISAN_ADVANCED.md).
+
+### `SIM` (simulation builds only)
+
+`SIM` drives the synthetic sensor source for automated tests. It is compiled
+into builds with `simulated-sensors`; all other builds answer
+`ERR sim_unavailable`. See [`SIMULATION.md`](SIMULATION.md) §3.4.2 for the
+scenario workflow.
+
+| Command | Ack / effect |
+|---|---|
+| `SIM;STATUS` | `#SIM;PLANT;bt=…;et=…;heater=…;fan=…;plant=…;frozen=…;bfault=0xNN;efault=0xNN` |
+| `SIM;RESET` | `OK sim_reset`; only from `Idle` |
+| `SIM;FAULT;<bt>;<et>` | `OK sim_fault`; MAX31856 fault-register masks (decimal or `0x` hex) |
+| `SIM;CHARGE;<drop_c>` | `OK sim_charge`; plant-only cold-bean drop |
+| `SIM;TEMP;<bt>;<et>` / `SIM;TEMP;OFF` | `OK sim_temp` / `OK sim_temp_cleared` |
+| `SIM;FREEZE;ON` / `SIM;FREEZE;OFF` | `OK sim_frozen` / `OK sim_unfrozen` |
+
+This is a test/debug surface, not a production roast control. It is not
+whitelisted through a safety latch except for `SIM;STATUS`.
 
 ### `#DUMP`
 

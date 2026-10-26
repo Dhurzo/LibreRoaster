@@ -119,6 +119,48 @@ impl SensorController {
         self.sensor_hub.inject_simulated_charge(bean_drop_c);
     }
 
+    #[cfg(feature = "simulated-sensors")]
+    /// Snapshot of the synthetic source for `SIM;STATUS`.
+    pub fn simulation_snapshot(&self) -> crate::hardware::sensors::SimulationSnapshot {
+        self.sensor_hub.simulation_snapshot()
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Inject synthetic MAX31856 fault bits.
+    pub fn set_simulated_faults(&mut self, bean_mask: u8, env_mask: u8) {
+        self.sensor_hub.set_simulated_faults(bean_mask, env_mask);
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Override synthetic temperatures (`None` resumes the model).
+    pub fn set_simulated_temperature_override(&mut self, temps: Option<(f32, f32)>) {
+        self.sensor_hub.set_simulated_temperature_override(temps);
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Freeze/unfreeze synthetic temperature evolution.
+    pub fn set_simulated_frozen(&mut self, frozen: bool) {
+        self.sensor_hub.set_simulated_frozen(frozen);
+    }
+
+    #[cfg(feature = "simulated-sensors")]
+    /// Reset the synthetic source and its filter/fault state.
+    pub fn reset_simulation(&mut self) {
+        self.sensor_hub.reset_simulation();
+        self.last_temp_read = None;
+        self.last_pv_sample = None;
+        self.last_pv_sample_time = None;
+        self.last_filtered_derivative = 0.0;
+        self.last_bt_guard_sample = None;
+        self.bt_guard_derivative = 0.0;
+        self.pv_ror_exceeded_count = 0;
+        self.bt_ror_exceeded_count = 0;
+        self.consecutive_bean_faults = 0;
+        self.consecutive_env_faults = 0;
+        self.consecutive_bean_range_faults = 0;
+        self.consecutive_env_range_faults = 0;
+    }
+
     /// Sample both channels and update `status` (debounced faults, held/poisoned temps).
     pub async fn read_sensors(&mut self, status: &mut SystemStatus) -> Result<(), RoasterError> {
         let sample = self.sensor_hub.sample().await?;

@@ -1,6 +1,6 @@
 # LibreRoaster Development Guide
 
-**Last updated:** 2026-10-24
+**Last updated:** 2026-10-26
 
 This guide explains how to build, flash, test, and verify LibreRoaster without losing sight of the project’s two-runtime architecture: a real embedded firmware target and a host-side verification target.
 
@@ -48,9 +48,10 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 - **`instrumentation`** — enables telemetry/instrumentation hooks (pulled in by `test`)
 - **`test`** — enables host test support on top of `std` (equivalent to `std` + `instrumentation`)
 - **`simulated-sensors`** — simulated thermocouple curves for hardware-free runs on device (also pulled in by `regression`)
-- **`simulated-typical-roast`** — F3 simulation build: pulls in `simulated-sensors` and selects the guard-safe charge-dip curve for `START`/`Heating` tests without the RoR latch
-- **`simulated-web-medium-roast`** — F4 simulation build: pulls in `simulated-sensors` and selects the 696 s public medium-roast curve (BT from Zenodo 21383046; ET = BT + 20 °C) for real-Artisan runs
-- **`heat-sense`** — opt-in GPIO1 current-sense interpretation for builds with a validated stretched-pulse circuit (default: not interpreted; all other safety layers stay active)
+- **`simulated-plant`** — F5 simulation build: implies `simulated-sensors` and attaches the closed-loop `ThermalPlant`, so the control loop's heater/fan output drives BT/ET. Use for PID/actuator checks, not for the time-based F1/F3/F4 traces.
+- **`simulated-typical-roast`** — F3 simulation build: pulls in `simulated-sensors` and selects the guard-safe charge-dip curve for `START`/`Heating` tests without the RoR latch. Mutually exclusive with `simulated-web-medium-roast`.
+- **`simulated-web-medium-roast`** — F4 simulation build: pulls in `simulated-sensors` and selects the 696 s public medium-roast curve (BT from Zenodo 21383046; ET = BT + 20 °C) for real-Artisan runs. Mutually exclusive with `simulated-typical-roast`.
+- **`heat-sense`** — opt-in GPIO1 current-sense interpretation for builds with a validated stretched-pulse circuit (default: not interpreted; all other safety layers stay active). Cannot be combined with `simulated-sensors`; the build fails with `compile_error!`.
 - **`async-lock-depth-metrics`** — enables async lock instrumentation used by concurrency tests
 - **`regression`** — enables regression-specific mock support (pulls in `simulated-sensors`)
 
@@ -58,10 +59,13 @@ LibreRoaster uses Cargo features to separate embedded behavior from host-only he
 |---------|---------|
 | Race check | `cargo test --target x86_64-unknown-linux-gnu --features test --lib --tests --no-fail-fast -- --test-threads=1` |
 | Code coverage | `cargo llvm-cov --target x86_64-unknown-linux-gnu --features "test,regression,simulated-sensors" --no-fail-fast --lcov --output-path target/coverage/lcov.info` (CI; `scripts/run-coverage.sh` still uses only `--features test`, so the conversion math and the L3 simulated pipeline show uncovered there) |
-| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,heat-sense`, `embedded,regression`, `embedded,instrumentation`, `embedded,simulated-sensors` and `--examples`, mirroring the six CI build steps) |
+| Embedded build | `cargo build --release --target riscv32imc-unknown-none-elf --features embedded` (plus `embedded,heat-sense`, `embedded,regression`, `embedded,instrumentation`, `embedded,simulated-sensors`, `embedded,simulated-plant`, `--examples`, and the F3/F4/F5 simulation profiles, mirroring CI) |
 
-CI runs 7 jobs (fmt, clippy, embedded-clippy, test, regression, coverage, embedded-build). The
-recorded counts and dates for each battery are in the verification snapshot at the end of §6.
+CI runs 8 jobs (fmt, clippy, embedded-clippy, test, regression, coverage, embedded-build,
+simulation-profiles). `simulation-profiles` builds F3, F4, and F5 and rejects incompatible feature
+combinations without a Wokwi token; the nightly `Simulation` workflow runs the full Wokwi manifest
+when `WOKWI_CLI_TOKEN` is configured. The recorded counts and dates for each battery are in the
+verification snapshot at the end of §6.
 Clippy runs both the default host `--all-targets` and a `--features test` pass because the `test`
 feature gates real code (multiplexer, `usb_cdc` tasks).
 
@@ -149,16 +153,25 @@ cargo test --target x86_64-unknown-linux-gnu --features test --features simulate
 
 ### Pinout simulation without hardware (Wokwi)
 
-Builds the firmware and prepares the Wokwi project in `sim/wokwi/` for a visual pin check without hardware. F1 uses `simulated-sensors` (UART, status LED, SSR/fan PWM); F2 uses `heat-sense` plus the custom MAX31856 chip (real SPI and GPIO1 heat-sense); F3 uses `simulated-typical-roast` (F1 plus a charge-dip curve that stays below the RoR guard, for a solid-green `START`/`Heating` test); F4 uses `simulated-web-medium-roast` (F1 plus the 696 s public medium-roast trace for end-to-end Artisan recording):
+Builds the firmware and prepares the Wokwi project in `sim/wokwi/` for a visual pin check without hardware. F1 uses `simulated-sensors` (UART, status LED, SSR/fan PWM); F2 uses `heat-sense` plus the custom MAX31856 chip (real SPI and GPIO1 heat-sense); F3 uses `simulated-typical-roast` (F1 plus a charge-dip curve that stays below the RoR guard, for a solid-green `START`/`Heating` test); F4 uses `simulated-web-medium-roast` (F1 plus the 696 s public medium-roast trace for end-to-end Artisan recording); F5 uses `simulated-plant` (closed-loop `ThermalPlant` driven by heater/fan output):
 
 ```bash
 ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,heat-sense ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh
 FEATURES=embedded,simulated-web-medium-roast ./scripts/sim-wokwi-prepare.sh
+FEATURES=embedded,simulated-plant ./scripts/sim-wokwi-prepare.sh
 ```
 
-Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls, and the experimental esp-emulator status. For automated serial checks with `wokwi-cli`, including the F1/F2/F3 scenario files, see `SIMULATION.md` §3.4.1. To drive the simulation with the real Artisan application, use the RFC2217-to-PTY bridge in `SIMULATION.md` §3.6.
+Open `sim/wokwi/` in VS Code and run `Wokwi: Start Simulator`; the serial monitor at 115200 baud is the Artisan UART. See `SIMULATION.md` for the pin checklist, chip controls, and the experimental esp-emulator status. For automated serial checks with `wokwi-cli`, use the manifest-driven runner:
+
+```bash
+./scripts/sim-wokwi-check.sh --list
+./scripts/sim-wokwi-check.sh --scenario f1-smoke --scenario f4-short
+./scripts/sim-wokwi-check.sh --all
+```
+
+The runner builds each feature set once, verifies `sim/wokwi/build-meta.json`, and writes logs/results under `target/wokwi/`. See `SIMULATION.md` §3.4.1 for the scenario matrix and §3.4.2 for the `SIM` command family. To verify a bridge trace outside Artisan, run `./scripts/verify-artisan-trace.py --trace <file> --expect <regex>`. `--build-only` prepares the images without a Wokwi token. To drive the simulation with the real Artisan application, use the RFC2217-to-PTY bridge in `SIMULATION.md` §3.6.
 
 ### Artisan wire-contract tests
 
@@ -194,11 +207,12 @@ rerun the commands above before citing them as current.
 
 | Battery | Result | Date |
 |---|---|---|
-| Host baseline (`--features test --lib --tests`) | 914 passed / 1 ignored (580 lib + 334 integration) | 2026-10-24 |
-| Heat-sense state machine (`--features test,heat-sense --lib hardware::ssr_logic`) | 20 tests; library total 598 | 2026-10-24 |
-| Doctests (`--features test --doc`) | 6 passed / 1 ignored | 2026-10-24 |
-| Regression (`--features test,regression --lib --tests`) | 986 passed / 1 ignored (613 lib + 373 integration) | 2026-10-24 |
-| Regression CI form (includes doctests) | 992 passed / 2 ignored | 2026-10-24 |
+| Host baseline (`--features test --lib --tests`) | 918 passed / 1 ignored (584 lib + 334 integration) | 2026-10-26 |
+| Heat-sense state machine (`--features test,heat-sense --lib hardware::ssr_logic`) | 20 tests; library total 602 | 2026-10-26 |
+| Simulated plant (`--features test,simulated-plant --lib --tests`) | 960 passed / 1 ignored (620 lib + 340 integration); 6/1 doctests | 2026-10-26 |
+| Doctests (`--features test --doc`) | 6 passed / 1 ignored | 2026-10-26 |
+| Regression (`--features test,regression --lib --tests`) | 993 passed / 1 ignored (620 lib + 373 integration) | 2026-10-26 |
+| Regression CI form (includes doctests) | 999 passed / 2 ignored | 2026-10-26 |
 
 ## 7. Quality gates
 

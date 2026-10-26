@@ -13,6 +13,28 @@
 )]
 #![allow(clippy::type_complexity)]
 
+// Simulation profiles are mutually exclusive: each one selects a different
+// compile-time curve, and silently letting one win makes F3/F4 differ between
+// AppBuilder and direct `SimulatedSensorSource::default_curve()` callers.
+#[cfg(all(
+    feature = "simulated-typical-roast",
+    feature = "simulated-web-medium-roast"
+))]
+compile_error!(
+    "features `simulated-typical-roast` and `simulated-web-medium-roast` are \
+     mutually exclusive; select one simulation profile"
+);
+
+// `heat-sense` reads the real SPI sensors' GPIO1 current-sense circuit. The
+// simulated-sensors profile has no such circuit, and the SSR path currently
+// compiles heat-sense out in that combination. Fail loudly instead of shipping
+// a build that appears to have the interlock but silently ignores it.
+#[cfg(all(feature = "simulated-sensors", feature = "heat-sense"))]
+compile_error!(
+    "features `simulated-sensors` and `heat-sense` are incompatible; \
+     heat-sense requires the real MAX31856 build (`embedded,heat-sense`)"
+);
+
 extern crate alloc;
 
 #[cfg(any(test, feature = "test"))]

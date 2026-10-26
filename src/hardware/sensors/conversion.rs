@@ -15,7 +15,7 @@ use embedded_hal::spi::SpiDevice;
 use crate::hardware::max31856::{bt_spi::BtSpi, et_spi::EtSpi, Max31856};
 
 #[cfg(feature = "simulated-sensors")]
-use super::simulated::SimulatedSensorSource;
+use super::simulated::{SimulatedSensorSource, SimulationSnapshot};
 
 /// MAX31856 reports temperature using a 0.0078125°C LSB and two's-complement math.
 /// The 19-bit temperature value occupies bits `[23:5]` of the 24-bit concatenated
@@ -285,6 +285,43 @@ impl SensorConversionHub {
         self.simulated_source.inject_charge(bean_drop_c);
     }
 
+    /// Current synthetic-source snapshot without advancing the model.
+    #[cfg(feature = "simulated-sensors")]
+    pub fn simulation_snapshot(&self) -> SimulationSnapshot {
+        self.simulated_source.snapshot()
+    }
+
+    /// Inject MAX31856 fault-register bits into the synthetic samples.
+    #[cfg(feature = "simulated-sensors")]
+    pub fn set_simulated_faults(&mut self, bean_mask: u8, env_mask: u8) {
+        self.simulated_source.set_fault_masks(bean_mask, env_mask);
+    }
+
+    /// Override both synthetic temperatures (`None` resumes curve/plant).
+    #[cfg(feature = "simulated-sensors")]
+    pub fn set_simulated_temperature_override(&mut self, temps: Option<(f32, f32)>) {
+        self.simulated_source.set_temperature_override(temps);
+    }
+
+    /// Freeze synthetic temperature evolution (probe-stuck experiments).
+    #[cfg(feature = "simulated-sensors")]
+    pub fn set_simulated_frozen(&mut self, frozen: bool) {
+        self.simulated_source.set_frozen(frozen);
+    }
+
+    /// Reset the synthetic source, injected faults, overrides, and filters.
+    #[cfg(feature = "simulated-sensors")]
+    pub fn reset_simulation(&mut self) {
+        self.simulated_source.reset();
+        self.last_sample = None;
+        self.bean_consecutive_fallbacks = 0;
+        self.env_consecutive_fallbacks = 0;
+        self.bean_filtered = 0.0;
+        self.bean_filter_initialized = false;
+        self.env_filtered = 0.0;
+        self.env_filter_initialized = false;
+    }
+
     /// Deterministic plant advance for tests (bypasses wall-clock).
     #[cfg(feature = "simulated-sensors")]
     pub fn plant_advance(&mut self, heater_pct: f32, fan_pct: f32, dt_secs: f32) -> (f32, f32) {
@@ -391,8 +428,11 @@ impl SensorConversionHub {
         {
             let timestamp = Instant::now();
             let (bean_temp, env_temp) = self.simulated_source.current_temperatures();
-            let bean_result: SensorChannelResult = Ok((bean_temp, SensorFault::default()));
-            let env_result: SensorChannelResult = Ok((env_temp, SensorFault::default()));
+            let (bean_mask, env_mask) = self.simulated_source.fault_masks();
+            let bean_result: SensorChannelResult =
+                Ok((bean_temp, SensorFault::from_register(bean_mask)));
+            let env_result: SensorChannelResult =
+                Ok((env_temp, SensorFault::from_register(env_mask)));
             // No CJ hardware in simulation — ambient holds (0.0 on host).
             self.build_sample(timestamp, bean_result, env_result, None, None)
         }
@@ -599,7 +639,7 @@ impl SensorConversionHub {
     }
 }
 
-#[cfg(all(not(target_arch = "riscv32"), not(feature = "simulated-sensors")))]
+#[cfg(not(target_arch = "riscv32"))]
 impl Default for SensorConversionHub {
     fn default() -> Self {
         Self::new()

@@ -1,0 +1,30 @@
+name: 'F5 closed-loop thermal plant'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0, UNITS;C, then manual 90% heat. With simulated-plant, the real
+  # control-loop actuator output drives ThermalPlant, not a time curve.
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+  - write-serial: [79, 84, 49, 59, 57, 48, 13, 10]
+  - delay: 10000ms
+
+  # SIM;STATUS proves the plant is attached, the heater feedback reached it,
+  # and BT has risen above ambient.
+  - write-serial: [83, 73, 77, 59, 83, 84, 65, 84, 85, 83, 13, 10]
+  - delay: 1500ms
+
+  # Heater off, then verify the reported actuator follows the control loop.
+  - write-serial: [79, 84, 49, 59, 48, 13, 10]
+  - delay: 1500ms
+  - write-serial: [83, 73, 77, 59, 83, 84, 65, 84, 85, 83, 13, 10]
+  - delay: 1500ms
+
+  - write-serial: [80, 73, 68, 59, 79, 70, 70, 13, 10]
+  - delay: 1000ms

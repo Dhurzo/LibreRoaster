@@ -380,7 +380,6 @@ mod tests {
         let mut p = ThermalPlant::new(cfg);
         // Heat until bean enters moisture window ~110°C true
         let dt = 0.31;
-        let mut prev = p.true_temps().0;
         let mut ror_outside = 0.0f32;
         let mut ror_inside = 0.0f32;
         for _ in 0..300 {
@@ -395,8 +394,6 @@ mod tests {
                 ror_inside = ror;
                 break;
             }
-            prev = after;
-            let _ = prev;
         }
         assert!(
             ror_inside < ror_outside,
@@ -406,10 +403,12 @@ mod tests {
 
     #[test]
     fn crack_boost_adds_ror() {
-        let mut cfg = ThermalPlantConfig::default();
-        // Disable moisture to isolate crack: set plateau outside
-        cfg.moisture_start_c = 300.0;
-        cfg.moisture_end_c = 310.0;
+        let cfg = ThermalPlantConfig {
+            // Disable moisture to isolate crack: set plateau outside.
+            moisture_start_c: 300.0,
+            moisture_end_c: 310.0,
+            ..ThermalPlantConfig::default()
+        };
         let mut p = ThermalPlant::new(cfg);
         // Drive to ~190 then measure before/within crack
         let dt = 0.31;

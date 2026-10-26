@@ -27,6 +27,8 @@ use log::info;
 
 #[cfg(feature = "simulated-sensors")]
 use crate::hardware::sensors::SimulatedSensorSource;
+#[cfg(feature = "simulated-plant")]
+use crate::hardware::sensors::ThermalPlantConfig;
 
 /// Fluent builder collecting hardware handles and producing an `Application`.
 pub struct AppBuilder {
@@ -127,12 +129,22 @@ impl AppBuilder {
     }
 
     /// Installs synthetic temperature curves for host-side L3 pipeline tests.
+    ///
+    /// With `simulated-plant`, the source is backed by the closed-loop
+    /// `ThermalPlant`: heater/fan outputs from the control loop drive the
+    /// temperatures instead of a fixed time curve. The two simulation profiles
+    /// still select the fallback curve used by direct callers and open-loop
+    /// builds; the plant starts at ambient.
     #[cfg(feature = "simulated-sensors")]
     pub fn with_simulated_sensors(self) -> Self {
-        #[cfg(feature = "simulated-web-medium-roast")]
-        let source = SimulatedSensorSource::web_medium_roast();
-        #[cfg(not(feature = "simulated-web-medium-roast"))]
         let source = SimulatedSensorSource::default_curve();
+
+        #[cfg(feature = "simulated-plant")]
+        let source = {
+            info!("Simulated closed-loop thermal plant enabled");
+            source.with_thermal_plant(ThermalPlantConfig::default())
+        };
+
         let hub = SensorConversionHub::new_simulated(source);
         self.with_sensor_conversion_hub(hub)
     }

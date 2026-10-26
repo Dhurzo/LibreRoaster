@@ -374,6 +374,27 @@ pub enum ArtisanCommand {
     ClearRorProfile,
     /// `TUNE;...` — step-test PID autotune (DIFF E4).
     Tune(TuneCommand),
+    /// `SIM;...` — synthetic-source control (only with `simulated-sensors`).
+    Sim(SimCommand),
+}
+
+/// Sub-commands of the `SIM` simulation-control command.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimCommand {
+    /// `SIM;STATUS` — report plant/probe state.
+    Status,
+    /// `SIM;RESET` — reset the synthetic source and clear injected faults.
+    Reset,
+    /// `SIM;FAULT;<bean_mask>;<env_mask>` — inject MAX31856 fault bits.
+    Fault { bean: u8, env: u8 },
+    /// `SIM;CHARGE;<drop_c>` — cold-bean charge into the thermal plant.
+    Charge(f32),
+    /// `SIM;TEMP;<bt>;<et>` — hard temperature override.
+    Temp { bean: f32, env: f32 },
+    /// `SIM;TEMP;OFF` — clear the temperature override.
+    ClearTemp,
+    /// `SIM;FREEZE;ON|OFF` — freeze/unfreeze evolution.
+    Freeze(bool),
 }
 
 /// Sub-commands of `TUNE` (DIFF E4).

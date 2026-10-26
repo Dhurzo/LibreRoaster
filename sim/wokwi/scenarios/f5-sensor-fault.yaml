@@ -1,0 +1,23 @@
+name: 'F5 synthetic sensor-fault negative latch'
+version: 1
+author: 'LibreRoaster'
+
+steps:
+  - wait-serial: 'Loaded app from partition'
+  - delay: 6000ms
+
+  # CHAN;0 and UNITS;C
+  - write-serial: [67, 72, 65, 78, 59, 48, 13, 10]
+  - delay: 200ms
+  - write-serial: [85, 78, 73, 84, 83, 59, 67, 13, 10]
+  - delay: 200ms
+
+  # RESET is accepted from Idle and clears any previous injection.
+  - write-serial: [83, 73, 77, 59, 82, 69, 83, 69, 84, 13, 10]
+  - delay: 1000ms
+
+  # Inject the MAX31856 open-circuit bit (0x01) on the BT channel.
+  - write-serial: [83, 73, 77, 59, 70, 65, 85, 76, 84, 59, 49, 59, 48, 13, 10]
+  - delay: 5000ms
+  - write-serial: [82, 69, 65, 68, 13, 10]
+  - delay: 1000ms

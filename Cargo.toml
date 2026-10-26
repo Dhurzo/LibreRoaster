@@ -45,6 +45,10 @@ instrumentation = []
 async-lock-depth-metrics = []
 embedded = []
 simulated-sensors = []
+# F5: attach the heater/fan-driven ThermalPlant instead of a time-only curve.
+# The plant starts at ambient and reacts to the real control-loop output, so
+# the simulation can validate PID/actuator behaviour without hardware.
+simulated-plant = ["simulated-sensors"]
 simulated-typical-roast = ["simulated-sensors"]
 # F4: real public bean-probe curve (Zenodo 21383046, medium roast) for Artisan
 # end-to-end tests. Precedence over `simulated-typical-roast` in AppBuilder.

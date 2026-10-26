@@ -1286,6 +1286,7 @@ impl RoasterControl {
                     | crate::config::ArtisanCommand::Units(_)
                     | crate::config::ArtisanCommand::Filt(_)
                     | crate::config::ArtisanCommand::SetStreaming(_)
+                    | crate::config::ArtisanCommand::Sim(crate::config::SimCommand::Status)
                     | crate::config::ArtisanCommand::Tune(crate::config::TuneCommand::Status)
             )
         {
@@ -1328,7 +1329,9 @@ impl RoasterControl {
                 | crate::config::ArtisanCommand::Drop
                 // P-9 (audit 2026-10-06): report / unload only, no actuator effect.
                 | crate::config::ArtisanCommand::Tune(crate::config::TuneCommand::Status)
-                | crate::config::ArtisanCommand::ClearRorProfile => { /* allow */ }
+                | crate::config::ArtisanCommand::ClearRorProfile
+                // SIM;STATUS is monitoring only, like READ/STATUS.
+                | crate::config::ArtisanCommand::Sim(crate::config::SimCommand::Status) => { /* allow */ }
                 _ => {
                     warn!("Command rejected: fault condition active");
                     // BUG-2c-1/BUG-2c-2 (audits 2026-10-04, 2026-10-16): a
@@ -1420,6 +1423,7 @@ impl RoasterControl {
             crate::config::ArtisanCommand::SetRorProfile => self.handle_set_ror_profile(),
             crate::config::ArtisanCommand::ClearRorProfile => self.handle_clear_ror_profile(),
             crate::config::ArtisanCommand::Tune(cmd) => self.handle_tune(cmd),
+            crate::config::ArtisanCommand::Sim(cmd) => self.handle_sim(cmd),
         }
     }
 
@@ -1441,6 +1445,80 @@ impl RoasterControl {
             self.status.charge_detected = false;
         }
         info!("Artisan+ DROP marker received");
+        Ok(())
+    }
+
+    /// `SIM;...` commands: drive the synthetic source for hardware-in-the-loop
+    /// scenarios. Compiles to an `ERR sim_unavailable` acknowledgement when
+    /// the firmware was built without `simulated-sensors`.
+    #[cfg(feature = "simulated-sensors")]
+    fn handle_sim(&mut self, command: SimCommand) -> Result<(), RoasterError> {
+        use crate::logging::traceability::TRACE_EVENT_MAX_LEN;
+        use core::fmt::Write as _;
+
+        match command {
+            SimCommand::Status => {
+                let snap = self.sensor.simulation_snapshot();
+                let mut msg = heapless::String::<TRACE_EVENT_MAX_LEN>::new();
+                let _ = write!(
+                    msg,
+                    "#SIM;PLANT;bt={:.1};et={:.1};heater={:.1};fan={:.1};plant={};frozen={};bfault=0x{:02X};efault=0x{:02X}\r\n",
+                    snap.bean_temp,
+                    snap.env_temp,
+                    snap.heater_pct,
+                    snap.fan_pct,
+                    u8::from(snap.has_plant),
+                    u8::from(snap.frozen),
+                    snap.bean_fault,
+                    snap.env_fault,
+                );
+                self.send_text_response(&msg);
+            }
+            SimCommand::Reset => {
+                if !matches!(self.state, RoasterState::Idle) {
+                    return Err(RoasterError::InvalidState {
+                        source: Some("sim_reset_requires_idle"),
+                    });
+                }
+                self.sensor.reset_simulation();
+                self.send_text_response("OK sim_reset\r\n");
+            }
+            SimCommand::Fault { bean, env } => {
+                self.sensor.set_simulated_faults(bean, env);
+                self.send_text_response("OK sim_fault\r\n");
+            }
+            SimCommand::Charge(drop_c) => {
+                if !self.sensor.simulation_snapshot().has_plant {
+                    self.send_text_response("ERR sim_no_plant\r\n");
+                    return Ok(());
+                }
+                self.sensor.inject_simulated_charge(drop_c);
+                self.send_text_response("OK sim_charge\r\n");
+            }
+            SimCommand::Temp { bean, env } => {
+                self.sensor
+                    .set_simulated_temperature_override(Some((bean, env)));
+                self.send_text_response("OK sim_temp\r\n");
+            }
+            SimCommand::ClearTemp => {
+                self.sensor.set_simulated_temperature_override(None);
+                self.send_text_response("OK sim_temp_cleared\r\n");
+            }
+            SimCommand::Freeze(frozen) => {
+                self.sensor.set_simulated_frozen(frozen);
+                self.send_text_response(if frozen {
+                    "OK sim_frozen\r\n"
+                } else {
+                    "OK sim_unfrozen\r\n"
+                });
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "simulated-sensors"))]
+    fn handle_sim(&mut self, _command: SimCommand) -> Result<(), RoasterError> {
+        self.send_text_response("ERR sim_unavailable\r\n");
         Ok(())
     }
 

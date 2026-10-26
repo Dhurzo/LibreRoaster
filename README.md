@@ -27,7 +27,7 @@ already include it. See [`docs/CONNECTION_TYPES.md`](docs/CONNECTION_TYPES.md) f
 | Host test suite | ✅ Green; see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
 | TC4-compatible serial protocol | ✅ Implemented and tested synthetically |
 | PID, profiles, and safety interlocks | ✅ Implemented and tested synthetically |
-| Wokwi F1/F2/F3/F4 simulation | ✅ Available; see [`docs/SIMULATION.md`](docs/SIMULATION.md) |
+| Wokwi F1/F2/F3/F4/F5 simulation | ✅ Available; see [`docs/SIMULATION.md`](docs/SIMULATION.md) |
 | Artisan 4.0.2 against Wokwi | ✅ TC4 handshake, `READ`, `START`, and a 696 s F4 roast validated |
 | Real Artisan session on hardware | ⏳ Pending |
 | Real thermocouple, fan, and heater integration | ⏳ Pending |

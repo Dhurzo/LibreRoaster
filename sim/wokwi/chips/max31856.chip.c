@@ -52,6 +52,9 @@ static int32_t round_to_i32(float value) {
 }
 
 static void update_conversion(chip_state_t *chip) {
+  // 1SHOT is self-clearing on the real part once the conversion starts.
+  chip->regs[REG_CR0] &= (uint8_t)~0x40u;
+
   float temperature = attr_read_float(chip->temperature_attr);
   int32_t raw19 = round_to_i32(temperature * 128.0f);
   uint32_t raw24 = ((uint32_t)raw19 << 5) & 0xFFFFFFu;
@@ -72,7 +75,8 @@ static void update_conversion(chip_state_t *chip) {
 static uint8_t read_register(chip_state_t *chip, uint8_t address) {
   uint8_t reg = address & 0x0Fu;
   if (reg == REG_SR) {
-    return (uint8_t)attr_read(chip->fault_attr);
+    // MASK bits clear the corresponding SR bits (datasheet 0x02).
+    return (uint8_t)attr_read(chip->fault_attr) & (uint8_t)~chip->regs[REG_MASK];
   }
   return chip->regs[reg];
 }

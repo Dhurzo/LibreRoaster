@@ -60,7 +60,7 @@ use esp_hal::time::Rate;
 use static_cell::StaticCell;
 
 #[cfg(target_arch = "riscv32")]
-use libreroaster::hardware::sensors::simulated::{CurvePoint, RoastCurve};
+use libreroaster::hardware::sensors::simulated::RoastCurve;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -89,56 +89,6 @@ fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
     } else {
         value
     }
-}
-
-/// Create the pinout-verify roast curve: 25 C -> 200 C -> 50 C in ~120 s.
-/// Shortest built-in curve, designed for quick automated testing.
-///
-/// TODO: Replace with `RoastCurve::pinout_verify()` once added to library.
-#[cfg(target_arch = "riscv32")]
-fn create_pinout_verify_curve() -> RoastCurve {
-    let mut curve = RoastCurve::new();
-    curve.add_point(CurvePoint {
-        time_secs: 0,
-        bean_temp: 25.0,
-        env_temp: 25.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 20,
-        bean_temp: 60.0,
-        env_temp: 80.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 40,
-        bean_temp: 100.0,
-        env_temp: 130.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 60,
-        bean_temp: 140.0,
-        env_temp: 175.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 80,
-        bean_temp: 180.0,
-        env_temp: 215.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 100,
-        bean_temp: 200.0,
-        env_temp: 240.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 110,
-        bean_temp: 150.0,
-        env_temp: 180.0,
-    });
-    curve.add_point(CurvePoint {
-        time_secs: 120,
-        bean_temp: 50.0,
-        env_temp: 60.0,
-    });
-    curve
 }
 
 /// Spin forever with both PWM channels forced to duty 0.
@@ -345,7 +295,7 @@ fn main() -> ! {
     // =====================================================================
     esp_println::println!("PHASE:2:roast_curve");
 
-    let curve = create_pinout_verify_curve();
+    let curve = RoastCurve::pinout_verify();
     let total_duration_secs: u32 = 120;
     let tick_ms: u32 = 100;
     let ticks_per_sec: u32 = 1000 / tick_ms;

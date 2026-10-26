@@ -138,7 +138,7 @@ fn roaster_control_with_plant_rises_under_heater() {
     let cfg = ThermalPlantConfig::default();
     let source =
         SimulatedSensorSource::new(RoastCurve::default_medium_roast()).with_thermal_plant(cfg);
-    let mut hub = SensorConversionHub::new_simulated(source);
+    let hub = SensorConversionHub::new_simulated(source);
     let mut ctrl = RoasterControl::new(Box::new(StubHeater::new()), Box::new(StubFan::new()), hub)
         .expect("RoasterControl should build");
 

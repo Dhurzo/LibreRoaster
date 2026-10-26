@@ -1,50 +1,24 @@
 #!/usr/bin/env bash
+# Backwards-compatible wrapper for the manifest-based scenario runner.
+#
+# USAGE:
+#   ./scripts/sim-wokwi-scenario.sh
+#   ./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml
+#   ./scripts/sim-wokwi-scenario.sh scenarios/f1-smoke.yaml /tmp/f1.log
+#
+# The second argument is treated as a log directory override; the runner names
+# the file <scenario-id>.log inside it. New scripts should call
+# sim-wokwi-check.sh directly.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-# Relative to the Wokwi project root (sim/wokwi), per --scenario semantics.
 SCENARIO="${1:-scenarios/f3-roast.yaml}"
-SCENARIO_NAME="$(basename "$SCENARIO" .yaml)"
-LOG="${2:-$ROOT/target/wokwi-${SCENARIO_NAME}.log}"
+SCENARIO_ID="$(basename "$SCENARIO" .yaml)"
+LOG="${2:-}"
 
-if [[ ! -f sim/wokwi/libreroaster.bin ]]; then
-    echo "Missing sim/wokwi/libreroaster.bin." >&2
-    echo "Build the image for the scenario's feature set first, for example:" >&2
-    echo "  FEATURES=embedded,simulated-typical-roast ./scripts/sim-wokwi-prepare.sh" >&2
-    exit 2
+ARGS=(--scenario "$SCENARIO_ID")
+if [[ -n "$LOG" ]]; then
+    ARGS+=(--log-dir "$(dirname "$LOG")")
 fi
 
-if ! command -v wokwi-cli >/dev/null 2>&1; then
-    echo "wokwi-cli is not on PATH." >&2
-    echo "Install it from https://docs.wokwi.com/wokwi-ci/cli-installation" >&2
-    exit 2
-fi
-
-if [[ -z "${WOKWI_CLI_TOKEN:-}" ]]; then
-    echo "WOKWI_CLI_TOKEN is not set." >&2
-    echo "Create a CI token at https://wokwi.com/dashboard/ci and export it." >&2
-    exit 2
-fi
-
-mkdir -p "$(dirname "$LOG")"
-
-echo "Running $SCENARIO (90 s simulation timeout; image must match the scenario build)"
-if ! wokwi-cli sim/wokwi \
-    --scenario "$SCENARIO" \
-    --timeout 90000 \
-    --fail-text "safety_fault" \
-    --serial-log-file "$LOG"; then
-    echo "Wokwi scenario failed. Serial log: $LOG" >&2
-    exit 1
-fi
-
-if grep -Eq 'safety_fault|Emergency shutdown|BT RoR|Control update error' "$LOG"; then
-    echo "Safety/latch text found in the serial log: $LOG" >&2
-    grep -En 'safety_fault|Emergency shutdown|BT RoR|Control update error' "$LOG" >&2 || true
-    exit 1
-fi
-
-echo "Scenario passed (no latch or safety text in the serial log)."
-echo "Serial log: $LOG"
+exec "${ROOT}/scripts/sim-wokwi-check.sh" "${ARGS[@]}"

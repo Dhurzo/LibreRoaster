@@ -172,3 +172,47 @@ jobs:
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,simulated-sensors
       - name: Build HIL examples (ESP32-C3)
         run: cargo build --release --target riscv32imc-unknown-none-elf --features embedded,simulated-sensors --examples
+
+  simulation-profiles:
+    name: Simulation profile (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: F3 typical roast
+            features: embedded,simulated-typical-roast
+          - profile: F4 web medium roast
+            features: embedded,simulated-web-medium-roast
+          - profile: F5 closed-loop plant
+            features: embedded,simulated-plant
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+          targets: riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - name: Build simulation profile
+        run: |
+          cargo build --release --locked \
+            --target riscv32imc-unknown-none-elf \
+            --features "${{ matrix.features }}"
+      - name: Reject incompatible simulation features
+        if: matrix.features == 'embedded,simulated-typical-roast'
+        run: |
+          if cargo check --locked --target riscv32imc-unknown-none-elf \
+            --features embedded,simulated-sensors,heat-sense \
+            > /tmp/incompatible-features.log 2>&1; then
+            echo "expected simulated-sensors + heat-sense to be rejected" >&2
+            exit 1
+          fi
+          grep -q "incompatible" /tmp/incompatible-features.log
+
+          if cargo check --locked --target riscv32imc-unknown-none-elf \
+            --features embedded,simulated-typical-roast,simulated-web-medium-roast \
+            > /tmp/incompatible-profiles.log 2>&1; then
+            echo "expected both simulation profile features to be rejected" >&2
+            exit 1
+          fi
+          grep -q "mutually exclusive" /tmp/incompatible-profiles.log
